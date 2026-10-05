@@ -46,11 +46,11 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Install
         run: npm ci --prefix web
-      - name: Typecheck
-        run: npm run lint --prefix web
       - name: Install browser for index identity regression
         working-directory: web
         run: npx playwright install --with-deps chromium
+      - name: Typecheck and screen regressions
+        run: npm run lint --prefix web
       - name: Check index chart subject isolation
         run: node web/scripts/index-chart-isolation.test.mjs
       - name: Check news presentation hierarchy

@@ -28,8 +28,21 @@ export function isDigestHeadline(raw: string | null | undefined): boolean {
 
 
 export function newsAnalysisStatusJa(state: string | null | undefined, scope?: string): string {
-  return state === 'ANALYZED' ? (scope === 'stored_headline_only' ? '見出しのAI解析済み・本文未確認' : 'AI解析済み')
-    : state === 'AI_CACHED' ? '保存済み解析を参照'
+  const range = scope === 'mail_headline_and_bounded_excerpt' ? '見出し・抜粋を解析' : scope === 'stored_headline_only' ? '見出しを解析・本文未確認' : '解析範囲は未確認';
+  return state === 'ANALYZED' ? range
+    : state === 'AI_CACHED' ? `${range}（保存分）`
       : state === 'DETERMINISTIC_ONLY' ? 'AI未実行・規則による分類'
       : '詳細AI解析未完了・規則による判定';
+}
+
+/** 一覧の読取り成功と、メールの新着確認成功を混同しない。 */
+export function newsIntakeHealthJa(health: { status:string; lastSyncAt:string|null; configured:boolean; threadAlive:boolean; pending:number } | null | undefined, now = Date.now()) {
+  if (!health) return '取り込み状態は未確認';
+  if (!health.configured) return 'ニュースの取り込み未設定';
+  if (!health.threadAlive) return '取り込み処理が停止中';
+  if (health.status !== 'HEALTHY') return '取り込みに不具合があります';
+  const at = Date.parse(health.lastSyncAt ?? '');
+  if (!Number.isFinite(at) || at > now + 300000) return '取り込み時刻は未確認';
+  if (now - at > 15 * 60000) return '新着確認が15分以上遅れています';
+  return health.pending > 0 ? `新着 ${health.pending}件を整理中` : '新着を確認済み';
 }

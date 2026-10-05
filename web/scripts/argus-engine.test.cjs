@@ -116,7 +116,7 @@ const evidenceAt = panel.indexOf('at-evidence card');
 check('Primary Action is rendered before collapsed evidence', heroAt >= 0 && evidenceAt > heroAt
   && panel.includes('<details className="at-evidence card">'));
 check('data-gated Seven Sign is not imputed to level four',
-  panel.includes("view.actionScore == null ? '— / 7'")
+  panel.includes("view.actionScore == null ? '判断への有効性は検証中'")
   && !panel.includes('candidateLevel ?? 4'));
 check('Today contains no legacy market decision projection',
   !panel.includes('view.decisions') && !fs.existsSync(path.join(root, 'src/domain/argusEngine.ts'))
@@ -312,8 +312,8 @@ check('Today never claims an empty calendar it could not read',
   check('需給 sits with the market view of the same market',
     panel.indexOf('className="at-positioning"') > panel.indexOf('className="at-event card at-context"')
     && !panel.includes('title={`${view.selectedMarket} 需給`}'));
-  check('UNCLEAR news direction is named as a verdict',
-    panel.includes("UNCLEAR: '方向判定不能'") && panel.includes('この記事だけでは上下を決めません'));
+  check('Unconfirmed news impact remains separate from its market confirmation',
+    panel.includes('data-news-direction={primary}') && panel.includes('影響を確認中') && panel.includes('市場反応は未確認'));
   const alerts = fs.readFileSync(path.join(root, 'src/routes/NotificationsPage.tsx'), 'utf8');
   const newsPanel = fs.readFileSync(path.join(root, 'src/components/notifications/NewsAlertsPanel.tsx'), 'utf8');
   const notifPanel = fs.readFileSync(path.join(root, 'src/components/NotificationPanel.tsx'), 'utf8');

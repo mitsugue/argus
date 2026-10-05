@@ -24,16 +24,16 @@
 .at-view-hero summary { min-height:44px; align-content:center; cursor:pointer; }
 .at-view-hero .at-analysis-history { margin-top:0; padding-top:4px; }
 .at-view-hero .at-brief__fallback[open] { padding-bottom:12px; }
-.argus-today .at-primary-hero { padding:0 16px; background:#101a22; border:1px solid #293944; }
+.argus-today .at-primary-hero { padding:12px 16px; background:linear-gradient(135deg,color-mix(in srgb,var(--cyan) 6%,var(--surface)),var(--surface)); border:1px solid var(--line); border-top:2px solid var(--cyan); }
 .at-decision-details > summary { display:flex; justify-content:space-between; align-items:center; gap:12px; min-height:48px; cursor:pointer; font-size:13px; font-weight:500; color:#c6d1d9; }
 .at-decision-details > summary span { font-size:12px; color:#95a7b4; font-weight:400; }
 .at-decision-details[open] { padding-bottom:16px; }
 .at-decision-details .at-call strong { font-size:22px; }
 .argus-today .at-head b { font-size:15px; font-weight:500; letter-spacing:0; }
 .argus-today .at-head span { font-size:12px; }
-.argus-today .at-news-row { background:#111c25; border-radius:10px; }
+.argus-today .at-news-row { border-radius:14px; }
 .argus-today .at-news-row__head { align-items:baseline; gap:8px; }
-.argus-today .at-news-row__head b { font-size:15px; line-height:1.65; font-weight:600; }
+.argus-today .at-news-row__head b { font-size:16px; line-height:1.55; font-weight:650; }
 .argus-today .at-news-row__head mark,.argus-today .at-news-row__head i { font-size:11px; }
 .argus-today .at-news-row__why { font-size:13px; line-height:1.75; color:#b2c0cb; }
 .argus-today .at-news-direction,.argus-today .at-news-row__open > em,.argus-today .at-news-memory { font-size:12px; line-height:1.7; }
@@ -61,9 +61,9 @@
 .at-primary-hero > .at-seven { margin:0 0 12px; }
 
 .at-primary-hero > .at-seven > summary { display:grid; grid-template-columns:1fr auto; align-items:center; gap:8px 12px; padding:14px 0; }
-.at-primary-hero > .at-seven > summary > small { font-size:13px; font-weight:500; color:#c8d5df; opacity:1; letter-spacing:0; }
-.at-primary-hero > .at-seven > summary > b { grid-column:2; grid-row:1; font-size:22px; line-height:1.2; }
+.at-primary-hero > .at-seven > summary > small { font-size:15px; font-weight:600; color:var(--text-main); opacity:1; letter-spacing:0; }
+.at-primary-hero > .at-seven > summary > b { grid-column:2; grid-row:1; font-size:28px; color:var(--cyan); line-height:1.2; }
 .at-primary-hero > .at-seven .at-signals-cutoff { grid-column:1 / -1; font-size:12px; color:#9eafbc; }
 .at-primary-hero > .at-seven .at-seven-status { display:block; grid-column:1 / -1; font-size:12px; line-height:1.65; color:#aebfcb; }
-.at-primary-hero > .at-seven .at-seven-chips { grid-column:1 / -1; display:flex; gap:8px; flex-wrap:wrap; margin:2px 0; }
-.at-primary-hero > .at-seven .at-seven-chips i { width:26px; height:26px; display:grid; place-items:center; font-size:13px; }
+.at-primary-hero > .at-seven .at-seven-chips { grid-column:1 / -1; display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:6px; margin:2px 0; }
+.at-primary-hero > .at-seven .at-seven-chips i { width:auto; height:32px; display:grid; place-items:center; font-size:14px; }

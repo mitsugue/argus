@@ -20,7 +20,7 @@ import { FutureMapCard } from './FutureMapCard';
 import { useChartIntelligence } from '../../hooks/useChartIntelligence';
 import type { ArgusTodayView, TodayProjection } from '../../domain/argusTodayView';
 import { formatEventTime, quoteDisplayLabel, subjectDisplayName, confidenceBasisJa, waitKindJa } from '../../domain/argusTodayView';
-import { displayNewsHeadline, newsAnalysisStatusJa } from '../../lib/newsHeadline';
+import { displayNewsHeadline, newsAnalysisStatusJa, newsIntakeHealthJa } from '../../lib/newsHeadline';
 import type { RouteKey } from '../NavRail';
 import type { SettingsSection } from '../../navigation';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
@@ -73,6 +73,9 @@ interface Props {
   };
   newsIntel: {
     status: 'loading' | 'data' | 'error';
+    generatedAt?: string;
+    intakeStatus?: string;
+    intakeHealth?: import('../../hooks/useNewsIntelligence').NewsIntakeHealth | null;
     events: Array<{
       eventId: string; eventType: string; analysisState?: string; analysisInputScope?: string;
       revision?: number; processedAt?: string; staleness?: string; ageMinutes?: number;
@@ -325,11 +328,8 @@ const MarketViewStrip: React.FC = () => {
 // composite is structurally impossible because nothing here is summed.
 // v13.5.60 (owner: 「方向性不明。なぜか？」): UNCLEAR is a verdict — this news
 // does not decide up or down — not a missing value, and the label says so.
-const NEWS_DIRECTION_JA: Record<string, string> = {
-  BULLISH: '強気', BEARISH: '弱気', MIXED: '混在', UNCLEAR: '方向判定不能',
-};
 const NEWS_TARGET_JA: Record<string, string> = {
-  broadMarket: '市場全体', japanEquities: '日本株', growth: 'グロース',
+  broadMarket: '市場全体', japanEquities: '日本株', growth: '成長株',
   semiconductors: '半導体', banks: '銀行', exporters: '輸出', energy: 'エネルギー',
 };
 const NEWS_CONSTRAINT_JA: Record<string, string> = {
@@ -352,15 +352,15 @@ const NewsDirectionSummary: React.FC<{ event: Props['newsIntel']['events'][numbe
   const bearish = targets('BEARISH');
   const bullish = targets('BULLISH');
   return <span className="at-news-direction" data-argus-contract="news-event-signal-v1"
-    data-news-event-id={event.eventId}>
-    <span><b>影響の見立て: {NEWS_DIRECTION_JA[primary] ?? '不明'}</b>
-      {primary === 'UNCLEAR' && ' · この記事だけでは上下を決めません'}</span>
+    data-news-event-id={event.eventId} data-news-direction={primary}>
+    <span><b>{primary === 'BEARISH' ? '株価の重し' : primary === 'BULLISH' ? '株価の支え' : primary === 'MIXED' ? '影響は分かれる' : '影響を確認中'}</b>
+      <i>{event.confirmationState === 'MARKET_CONFIRMED' ? '市場反応を確認済み' : '市場反応は未確認'}</i></span>
     {(bearish.length > 0 || bullish.length > 0) && <span>
       {bearish.length > 0 && `逆風: ${bearish.join('・')}`}
       {bearish.length > 0 && bullish.length > 0 && ' ／ '}
       {bullish.length > 0 && `追い風: ${bullish.join('・')}`}
     </span>}
-    {event.executionConstraint && event.executionConstraint !== 'NO_CONSTRAINT'
+    {event.executionConstraint && !['NO_CONSTRAINT', 'CAUTION'].includes(event.executionConstraint)
       && <span>{NEWS_CONSTRAINT_JA[event.executionConstraint]}</span>}
   </span>;
 };
@@ -381,10 +381,11 @@ export const TodayNewsCards: React.FC<{ rows: readonly TodayNewsRow[]; onOpen: (
           className="at-news-row" data-shock-severity={row.severity} data-news-event-id={row.id}>
           <button type="button" className="at-news-row__open" onClick={() => onOpen(row.id)}>
           <span className="at-news-row__head"><mark data-severity={row.severity}>{NEWS_IMPORTANCE_JA[row.severity] ?? row.severity}</mark>
-            <i>{row.kind}</i><b>{row.headlineJa}</b></span>
-          <span className="at-news-row__why">{row.whyJa}</span>
+            <i>{row.newsEvent?.source ?? row.kind}</i><b>{row.headlineJa}</b></span>
           {row.newsEvent && <NewsDirectionSummary event={row.newsEvent} />}
-          <em>{row.metaJa} · 詳しく読む</em>
+          <span className="at-news-row__why">{row.whyJa}</span>
+          <em>{row.sourceReceivedAt ? `受信 ${new Date(row.sourceReceivedAt).toLocaleString('ja-JP', {timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}` : '受信時刻未確認'}{row.newsEvent ? ` · ${newsAnalysisStatusJa(row.newsEvent.analysisState, row.newsEvent.analysisInputScope)}` : ` · ${row.metaJa}`}</em>
+          <span className="at-news-read">影響と根拠を読む →</span>
           </button>
           {!!row.previousDeliveries?.length && <details className="at-news-memory">
             <summary>同じ見出しの以前の配信 · {row.previousDeliveries.length}件</summary>
@@ -412,7 +413,7 @@ export const TodayNewsCards: React.FC<{ rows: readonly TodayNewsRow[]; onOpen: (
             {' · 校正 SHADOW · 判断権限なし'}
           </span></details>}
           {row.sourceUrl && /^https?:\/\//i.test(row.sourceUrl)
-            && <a href={row.sourceUrl} target="_blank" rel="noopener noreferrer">配信元の記事を開く</a>}
+            && <a className="at-news-source" href={row.sourceUrl} target="_blank" rel="noopener noreferrer">元の記事 ↗</a>}
         </article>)}
       </div>
 );
@@ -810,7 +811,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 
     <article className={`at-decision at-primary-hero card is-${view.finalAction.toLowerCase()}`}
       aria-label="A.R.G.U.S. Primary Action">
-      <div className="at-kpis"><span>DATA <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span>
+      <div className="at-kpis"><span className="at-data-label">データの状態 <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span>
+        {view.dataQualityReasonCodes.length > 0 && <ul className="at-data-summary" aria-label="不足しているデータ">
+          {view.dataQualityReasonCodes.map(code => <li key={code}>{DATA_PARTIAL_REASON_JA[code] ?? '未確認のデータがあります'}</li>)}
+        </ul>}
         {/* v13.5.60 (owner iPhone review): the reasons behind a non-LIVE DATA
             state are ARGUS-side fetch/freshness facts, not trading information —
             they open on tap instead of occupying the decision area. */}
@@ -828,7 +832,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           {/* v13.5.61 (owner: 「どうなれば BUY になるのか」): the exact gate, in words. */}
           <span className="at-data-why at-buy-conditions">BUYが出る条件: ①リスク制約なし ②需給・トレンドの反転状態が反転初期・自律反発・回復試験・上昇確認のいずれかで検証済み ③検証済み買い成立レジストリの本番採用（現在は未採用＝構造的に無効。検証結果: docs/REVERSAL_BUY_VALIDATION.md） ④保有側の追加許可</span>
         </details>}
-        <span className="at-buy-note">BUYは検証完了まで出ません（方針・現在は構造的に無効）</span>
+        <span className="at-buy-note">買いの合図は無効です</span>
         {/* v13.5.65 (stabilization item 5): while this session's first fetch runs,
             the stored evidence is on screen — with its time, never silently. */}
         {decisionEvidence.loading && decisionEvidence.generatedAt && <span className="at-stored-note" data-argus-contract="stored-evidence-note-v1">
@@ -842,7 +846,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         <summary aria-label={topSignals
           ? `Market Signals ${topSignals.countLabel} · Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`
           : `Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`}>
-          <small>セブンサイン · 日本株の7条件</small>
+          <small>日本株の7条件</small>
           {/* v13.5.63 (GPT review item 1): the seven conditions are Japanese
               market inputs (credit balances, 1570, foreign flow…). With the US
               market selected they are labelled as Japan's, and the US
@@ -857,8 +861,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           <span className="at-seven-status">
             {usSelected ? '米国選択中: 7条件は日本固有（米国は適用外）· 米国の条件付けはVIX水準・VIX10日変化・対SPY相対力 · ' : ''}
             {topSignals ? `点灯 ${topSignals.activeCount} · ` : ''}
-            {view.actionScore == null ? '校正待ち · ' : ''}
-            判断レベル {view.actionScore == null ? '— / 7' : `${view.actionScore} / 7`}
+            {view.actionScore == null ? '判断への有効性は検証中' : `判断レベル ${view.actionScore} / 7`}
             {topSignals ? '' : ` · ${view.canonicalDecision.sevenSign.status}`}</span>
           <span className="at-seven-chips" aria-hidden="true">
             {topSignals
@@ -976,7 +979,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       data-argus-contract="today-material-news-v1" data-news-count={newsRows.length}>
       <div className="at-head"><b>重大ニュース・市場リスク</b>
         <span>{newsRows.length > NEWS_ROWS_CAP ? `${NEWS_ROWS_CAP} / ${newsRows.length}件` : `${newsRows.length}件`}</span></div>
-      <p className="at-news-order">重要度順 · 赤は重大、黄は重要。同じ重要度では新しい情報から表示します。</p>
+      <p className="at-news-freshness">{newsIntakeHealthJa(newsIntel.intakeHealth)}{newsIntel.intakeHealth?.lastSyncAt ? ` · 新着確認 ${new Date(newsIntel.intakeHealth.lastSyncAt).toLocaleTimeString('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit'})}` : ''}{newsIntel.generatedAt ? ` · 一覧確認 ${new Date(newsIntel.generatedAt).toLocaleTimeString('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit'})}` : ''}</p>
       {newsIntel.status === 'error' && <p className="at-shock-clear" role="status">
         {newsIntel.events.length ? 'ニュース更新失敗・前回取得分を表示しています。' : 'ニュースを取得できていません。'}</p>}
       {newsIntel.status === 'loading' && <p className="at-shock-clear"><TriangleStepLoader label="ニュースを更新しています。取得済みの記事は引き続き読めます" /></p>}
@@ -990,8 +993,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           （監視中: 中央銀行 · 雇用/物価 · 地政学 · 企業イベント）·
           予定されている経済イベントはイベント欄に表示されます</p>}
       {shock.status === 'error' && <p className="at-shock-clear">市場ショック監視: 取得できません</p>}
-      <p className="at-news-note">ニュースの方向はチャート観とは独立しています。ニュースは売買権限を持たない参考情報です。</p>
-      <button type="button" className="at-news-more" onClick={() => openNewsDetails()}>ニュース・続報をすべて見る ↗</button>
+      <button type="button" className="at-news-more" onClick={() => openNewsDetails()}>すべてのニュース・続報 →</button>
+      <details className="at-news-reading"><summary>ニュースの読み方</summary>
+        <p>ニュースの方向はチャート観とは独立しています。ニュースは売買権限を持たない参考情報です。</p>
+      </details>
 
     </section>
     <details id="today-news-details" className="at-event card" open={allNewsOpen}

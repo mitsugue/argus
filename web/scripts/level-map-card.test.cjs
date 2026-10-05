@@ -27,7 +27,7 @@ const score = (pre, mornings) => ({ firstMorning: pre ? '2026-10-05' : '2026-06-
 const state = { schemaVersion: 'jp-market-level-map-state-v1', status: 'AVAILABLE', latest, morningCount: 1,
   missedMornings: [], score: score(true, 1), retrospective: score(false, 84), actionAuthority: false };
 const html = renderToStaticMarkup(React.createElement(LevelMapView, { state }));
-assert.ok(html.includes('PER水準の地図') && html.includes('2026-10-05 朝') && html.includes('寄付前に固定保存'));
+assert.ok(html.includes('日経平均の価格の目盛り') && html.includes('2026-10-05 朝') && html.includes('寄付前に固定保存'));
 assert.ok(html.includes('企業の利益に対して、日経平均が何倍の値段になっているか'));
 assert.ok(html.includes('約17.37倍') && html.includes('70,787円まで上がると18倍、66,854円まで下がると17倍'));
 assert.ok(html.includes('PER18倍線（毎朝動く）') && html.includes('直前の天井と同じ倍率 17.884倍'));

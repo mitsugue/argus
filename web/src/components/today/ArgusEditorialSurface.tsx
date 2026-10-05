@@ -73,9 +73,8 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
             <small>{label}</small><p>{choice.id === 'changes' ? marketChanges(text) : marketWording(text)}</p></div> : null;
         })}
       </section>}
-      <LevelMapCard />
       <details className="argus-editorial__vault">
-        <summary>根拠・データ・過去の記録を見る</summary>
+        <summary>この見通しの根拠・過去の記録</summary>
         {plan.elements.map(choice => {
           if (choice.id === 'view' || choice.id === 'nikkei-comparison') return null;
           const source = brief.presentationCatalog!.elements.find(row => row.id === choice.id)!;
@@ -99,6 +98,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
         <FiscalEnvironmentDetails brief={brief} />
         <MarketAnalysisHistory key="saved-history" />
       </details>
+      <LevelMapCard />
     </section>;
   }
   return <section className="argus-editorial" aria-label={archived ? '当時のARGUSの説明' : 'ARGUSの今日の見立て'}

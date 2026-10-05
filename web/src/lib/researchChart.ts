@@ -12,6 +12,20 @@ export type ResearchChart = {
 };
 export const dayNumber = (day: string) => Date.parse(`${day}T00:00:00Z`);
 const DAY = 86400_000;
+export function researchViewport(chart: ResearchChart, days = 90, center = dayNumber(chart.today) + 15 * DAY) {
+  const first = dayNumber(chart.start), last = dayNumber(chart.end);
+  const size = Math.min(last - first, Math.max(14 * DAY, days * DAY));
+  const start = Math.max(first, Math.min(center - size / 2, last - size));
+  return { start, end: start + size };
+}
+/** 拡大の中心にある日付を動かさず、元の日付範囲内で止める。 */
+export function zoomResearchViewport(chart: ResearchChart, view: { start: number; end: number }, scale: number, anchor = .5) {
+  const fraction = Math.max(0, Math.min(1, anchor));
+  const days = Math.min((dayNumber(chart.end) - dayNumber(chart.start)) / DAY,
+    Math.max(14, (view.end - view.start) / DAY / Math.max(.1, scale)));
+  const at = view.start + fraction * (view.end - view.start);
+  return researchViewport(chart, days, at + (.5 - fraction) * days * DAY);
+}
 /** 拡大しても元の価格・日付を変えない。範囲を端へ移動した時だけ全体の端で止める。 */
 export function chartWindow(chart: ResearchChart, recent: boolean, shiftDays = 0) {
   if (!recent) return { start: dayNumber(chart.start), end: dayNumber(chart.end) };
@@ -45,7 +59,7 @@ export function externalPoints(doc: FutureMapDoc | null, chart: ResearchChart) {
     .map(r => ({ id: r.id, tag: r.tag, start: r.start, end: r.end,
       at: (dayNumber(r.start) + dayNumber(r.end)) / 2, low: r.level!.low, high: r.level!.high,
       value: (r.level!.low + r.level!.high) / 2 }))
-    .filter(r => r.at > dayNumber(chart.today) && r.at <= dayNumber(chart.end))
+    .filter(r => dayNumber(r.end) >= dayNumber(chart.today) && r.at >= dayNumber(chart.start) && r.at <= dayNumber(chart.end))
     .sort((a, b) => a.at - b.at);
 }
 

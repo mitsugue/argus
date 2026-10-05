@@ -5,6 +5,20 @@ require.extensions['.ts'] = (mod, filename) => mod._compile(ts.transpileModule(
   fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS,
     target: ts.ScriptTarget.ES2022 }, fileName: filename }).outputText, filename);
 const {groupRepeatedNewsHeadlines, orderMaterialNews} = require('../src/domain/newsPresentation.ts');
+const {newsAnalysisStatusJa,newsIntakeHealthJa}=require('../src/lib/newsHeadline.ts');
+assert.equal(newsAnalysisStatusJa('ANALYZED','mail_headline_and_bounded_excerpt'),'見出し・抜粋を解析');
+assert.equal(newsAnalysisStatusJa('ANALYZED','stored_headline_only'),'見出しを解析・本文未確認');
+assert.equal(newsAnalysisStatusJa('ANALYZED'),'解析範囲は未確認');
+assert.equal(newsAnalysisStatusJa('AI_CACHED','stored_headline_only'),'見出しを解析・本文未確認（保存分）');
+const now=Date.parse('2026-10-05T01:00:00Z');
+const health={status:'HEALTHY',lastSyncAt:'2026-10-05T00:59:00Z',configured:true,threadAlive:true,pending:0};
+assert.equal(newsIntakeHealthJa(health,now),'新着を確認済み');
+assert.equal(newsIntakeHealthJa({...health,pending:2},now),'新着 2件を整理中');
+assert.equal(newsIntakeHealthJa({...health,lastSyncAt:'2026-10-05T00:40:00Z'},now),'新着確認が15分以上遅れています');
+assert.equal(newsIntakeHealthJa({...health,status:'DEGRADED'},now),'取り込みに不具合があります');
+assert.equal(newsIntakeHealthJa({...health,lastSyncAt:null},now),'取り込み時刻は未確認');
+assert.equal(newsIntakeHealthJa({...health,threadAlive:false},now),'取り込み処理が停止中');
+assert.equal(newsIntakeHealthJa(null,now),'取り込み状態は未確認');
 const older={eventId:'delivery-a',revision:1,severity:'HIGH',source:'Official News',
   headlineJa:'政策見通しを更新',sourceReceivedAt:'2026-09-15T22:00:00Z',
   eventMemory:{episodeId:'episode-a'}};

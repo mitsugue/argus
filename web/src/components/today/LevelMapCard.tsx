@@ -45,15 +45,25 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
     below && `${yen(below.price)}円まで下がると${below.multiple}倍`].filter(Boolean);
   const distances = [above && `上の目印までは${signed(above.distancePct)}%`,
     below && `下の目印までは${signed(below.distancePct)}%`].filter(Boolean);
-  return <section className="lm-card card" aria-label="PER水準の地図" data-argus-contract="level-map-v1"
+  return <section className="lm-card card" aria-label="日経平均の価格の目盛り" data-argus-contract="level-map-v1"
     data-morning={map.morningOf}>
-    <div className="at-head"><b>日経平均 PER水準の地図</b><span>{map.morningOf} 朝 · 寄付前に固定保存（{jst(map.createdAt)}）</span></div>
+    <header className="lm-heading"><b>日経平均の価格の目盛り</b><span>PER · {map.morningOf.slice(5).replace('-', '/')}朝の保存値</span></header>
     <div className="lm-reading">
       <p>この表は、<strong>企業の利益に対して、日経平均が何倍の値段になっているか</strong>を示す目盛りです。</p>
+    </div>
+    <div className="lm-price-ladder" aria-label="価格と利益の倍率">
+      {above && <article data-side="UP"><span>{above.multiple}倍まで上がると</span><b>{yen(above.price)}<small>円</small></b><strong>{signed(above.distancePct)}%</strong></article>}
+      <article data-side="NOW"><span>前日終値 · {map.per.toFixed(2)}倍</span><b>{yen(map.previousClose)}<small>円</small></b><small>{map.previousSession.slice(5).replace('-', '/')}の終値</small></article>
+      {below && <article data-side="DOWN"><span>{below.multiple}倍まで下がると</span><b>{yen(below.price)}<small>円</small></b><strong>{signed(below.distancePct)}%</strong></article>}
+    </div>
+    <p className="lm-use">チャートのPER線と同じ目盛りです。値動きを、企業の利益に対する価格の大きさで比べられます。</p>
+    <details className="lm-explanation"><summary>倍率と価格の読み方</summary>
       <p>たとえば、この朝は約{map.per.toFixed(2)}倍。{examples.length > 0 && `日経平均が${examples.join('、')}になります。`}</p>
       {distances.length > 0 && <p>前日終値 {yen(map.previousClose)}円から、{distances.join('、')}です。</p>}
       <small>株価が動いた時の位置を確かめる表です。ここで反転するかは未確認のため、売買時期の判断には使えません。</small>
-    </div>
+    </details>
+    <details className="lm-all-levels"><summary>すべての価格・計算の根拠</summary>
+    <p className="lm-note">{map.morningOf} 朝 · 寄付前に固定保存（{jst(map.createdAt)}）</p>
     <p className="lm-note">前日終値 {yen(map.previousClose)}（{map.previousSession}）· ATR14 {yen(map.atr14)} ·
       EPS {map.eps.toFixed(1)}（{map.epsDate}）· PER {map.per.toFixed(2)}倍</p>
     <p className="lm-note lm-eps">{map.epsLabelJa}{cov ? `。予想が無く実績で補った社 ${cov.filledFromTrailing ?? 0}・赤字予想 ${cov.negativeForecast ?? 0}` : ''}
@@ -70,6 +80,8 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
     <p className="lm-guides">距離の目安 上 +1/+2/+3ATR: {map.atrGuides.UP.map(yen).join(' / ')}　下 −1/−2/−3ATR: {map.atrGuides.DOWN.map(yen).join(' / ')}</p>
     <p className="lm-small">「過去の頻度」は、その距離にある水準について、次の4%の転換点がその±1%に来た過去の頻度の帯です（2割前後・1〜2割・1割未満）。</p>
     <ul className="lm-fixed">{map.fixedNotesJa.map((note, i) => <li key={i}>{note}</li>)}</ul>
+    </details>
+    <details className="lm-records"><summary>PER線の答え合わせ・過去の記録</summary>
     {state.missedMornings.length > 0 && <p className="lm-small">寄付前に作れなかった朝: {state.missedMornings.join('、')}（後から作り直していません）</p>}
     {state.score && <Tally score={state.score} title={`答え合わせ（${state.score.firstMorning ?? ''}からの事前記録）`} />}
     {state.score && state.score.mornings < 60 && <p className="lm-small">件数が少ないうちは、成績として判断に使いません。精度の評価は数か月単位です。</p>}
@@ -77,6 +89,7 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
       <summary>後から数えた分（{state.retrospective.firstMorning}〜・判定には使いません）</summary>
       <Tally score={state.retrospective} title="後から数えた分" />
     </details>}
+    </details>
   </section>;
 }
 

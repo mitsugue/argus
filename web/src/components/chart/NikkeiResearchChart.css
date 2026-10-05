@@ -17,6 +17,7 @@
 .nr-band { fill: var(--text-main); opacity: .12; }
 .nr-point { fill: var(--text-main); stroke: var(--bg); }
 .nr-chart .nr-point-label { fill: var(--text-main); font-weight: 700; }
+.nr-point-leader { stroke:var(--text-main); stroke-width:.5; opacity:.4; }
 .nr-per-label text { fill: var(--text-sub); font-size: 9px; }
 .nr-per-label line { stroke: var(--cyan); opacity: .15; stroke-dasharray: 1 4; }
 .nr-per-label.is-near text { fill: var(--cyan); }
@@ -41,3 +42,26 @@
 .nr-point-hit { fill:transparent; cursor:pointer; }
 .nr-chart g[role="button"] { cursor:pointer; }
 .nr-chart g[role="button"]:focus .nr-point { stroke:var(--cyan); stroke-width:3; }
+.nr-plot-wrap { border:1px solid var(--line); border-radius:14px; padding:8px 4px; background:var(--surface); }
+.nr-plot-wrap svg { touch-action:pan-y; user-select:none; -webkit-user-select:none; }
+.nr-zoom { display:flex; justify-content:center; gap:4px; margin:8px 0 0; flex-wrap:nowrap; }
+.nr-zoom button { min-width:40px; min-height:44px; padding:5px; font-size:18px; }
+.nr-zoom button:nth-child(3) { font-size:12px; padding:5px 8px; }
+.nr-gesture-note { text-align:center; color:var(--text-sub); font-size:11px; margin:5px 0 0; }
+.nr-asof { padding:8px 10px; margin:8px 0; background:color-mix(in srgb,var(--blue) 8%,var(--surface)); border-radius:8px; font-size:12px; line-height:1.6; color:var(--text-main); }
+.nr-selection > small:first-child { color:var(--cyan); }
+.nr-selection > b { display:block; margin:3px 0; }
+.nr-selection .nr-selected-price { font-size:23px; font-weight:750; line-height:1.4; }
+.nr-selected-price span { margin-left:3px; font-size:12px; font-weight:400; }
+.nr-nearest { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; padding:12px 0; }
+.nr-nearest article { padding:12px; border:1px solid color-mix(in srgb,var(--cyan) 40%,var(--line)); border-radius:12px; background:linear-gradient(135deg,color-mix(in srgb,var(--cyan) 9%,var(--surface)),var(--surface)); }
+.nr-nearest article > b { display:block; font-size:22px; color:var(--text-main); font-variant-numeric:tabular-nums; margin:4px 0; }
+.nr-nearest article > b span { font-size:11px; font-weight:400; margin-left:3px; }
+.nr-nearest article > p { display:flex; flex-direction:column; gap:3px; }
+.nr-nearest article strong { font-size:30px; color:var(--cyan); font-variant-numeric:tabular-nums; }
+.nr-nearest article p span { font-size:11px; line-height:1.5; color:var(--text-sub); }
+.nr-nearest .nr-days { font-size:11px; color:var(--text-sub); }
+.nr-nearest .nr-days b { font-size:16px; color:var(--text-main); }
+.nr-nearest-note { grid-column:1/-1; line-height:1.6; }
+.nr-external-list button { min-height:44px; color:var(--text-main); }
+@media(max-width:350px) { .nr-nearest { gap:6px; }.nr-nearest article { padding:8px; }.nr-nearest article > b { font-size:19px; }.nr-zoom { gap:2px; }.nr-zoom button { min-width:34px; }.nr-zoom button:nth-child(3) { padding:5px; } }

@@ -85,7 +85,7 @@ try {
   // beginning a stateful release action, so the action cannot race a reload.
   await page.waitForTimeout(1_000);
   await page.locator('details.at-evidence').waitFor({ state: 'visible', timeout: 30_000 });
-  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.8.35');
+  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.8.36');
   evidence.identitiesConverged = true;
 
   const producerTriggerId = `full-release-simulation-${runNumber}-${candidateSha.slice(0, 12)}`;
@@ -153,7 +153,7 @@ try {
 
   const brand = await page.locator('.shell__brand').innerText();
   assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro/);
-  assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13.8.35/);
+  assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13.8.36/);
   for (const label of ['Today', 'Watchlist', '13M', 'Settings']) {
     assert.ok(await page.getByText(label, { exact: true }).count() > 0, label);
   }
@@ -167,7 +167,7 @@ try {
   assert.equal(await page.locator('.at-urgent-news').count(), 0, 'news has one list rather than a detached leading article');
   const topSignalsText = (await topSignals.innerText()).trim();
   assert.match(topSignalsText, /^(\d|—) \/ 7$/, `top MARKET SIGNALS count: ${topSignalsText}`);
-  assert.ok((await page.locator('.at-seven summary small').first().innerText()).includes('セブンサイン'),
+  assert.ok((await page.locator('.at-seven summary small').first().innerText()).includes('日本株の7条件'),
     'top block carries the owner-facing name');
   evidence.publicProductAcceptance = { status: 'pass', brand, topSignals: topSignalsText,
     surfaces: ['Today', 'Watchlist', 'Notifications', 'Settings'] };
