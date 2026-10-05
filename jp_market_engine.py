@@ -1152,6 +1152,9 @@ def evaluate_d06(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str,
             "identityRejectedRowCount": len(source) - len(identified),
             "missing": ["vix_history"],
         }
+    valid_visible, _ = point_in_time_rows(identified, cutoff)
+    valid_visible = [row for row in valid_visible if (_finite(row.get("close", row.get("value"))) or 0) > 0]
+    latest_valid = max(valid_visible, key=lambda row: str(row.get("periodEnd") or row.get("date") or ""))
     level = closes[-1]
     previous = closes[-2] if len(closes) > 1 else level
     window = closes[-60:]
@@ -1166,6 +1169,8 @@ def evaluate_d06(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str,
         "family": "D06", "propositionId": "JP_MARKET_ENGINE-D06-ORIGINAL",
         "lineage": "JP_MARKET_ENGINE_ORIGINAL", "status": "AVAILABLE",
         "originalParameter": "UNKNOWN",
+        "periodEnd": history[-1][0],
+        "knownAt": _knowledge_time(latest_valid).isoformat(),
         "level": round(level, 6), "velocity": round(velocity, 6),
         "percentile": percentile, "regime": regime,
         "jpMarketEngineOriginalTransition": None,
@@ -1183,6 +1188,9 @@ def evaluate_d06(rows: Iterable[Mapping[str, Any]], *, cutoff: str) -> Dict[str,
             "line": round(macd_rows[-1]["line"], 8),
             "signal": round(macd_rows[-1]["signal"], 8),
             "histogram": round(macd_rows[-1]["histogram"], 8),
+            "warningHistogram": macd_rows[-1]["histogram"],
+            "sampleCount": len(closes),
+            "uniqueSessionCount": len({day for day, _ in history}),
             "validationStatus": "UNVALIDATED",
         },
         "validationStatus": "UNVALIDATED", "pointInTimeProof": proof,
@@ -2825,6 +2833,7 @@ def project_today_sda_safe(*, cutoff: str,
             "hierarchy": copy.deepcopy(admitted["stockLens"].get("hierarchy")),
             "status": admitted["stockLens"].get("status"),
         }
+    from argus_warning_conditions import project_warning_conditions
     body = {
         "schemaVersion": CONSUMER_PROJECTION_SCHEMA,
         "canonicalRfcSha256": CANONICAL_JP_MARKET_ENGINE_RFC_SHA256,
@@ -2838,6 +2847,7 @@ def project_today_sda_safe(*, cutoff: str,
         # MARKET SIGNALS SIG-01..07 with a computed count (pure, no authority).
         "marketSignals": argus_market_signals.project_market_signals(
             family_projection),
+        "warningSignals": project_warning_conditions(admitted.get("evidence"), cutoff=cutoff),
         "reversal": reversal_projection,
         "targetZones": target_projection,
         "indexIdentity": identity_projection,

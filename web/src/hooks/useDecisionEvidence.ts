@@ -50,6 +50,8 @@ export interface JpMarketEngineMarketView {
   schemaVersion: string;
   informationCutoff: string;
   projection: {
+    informationCutoff?: string;
+    warningSignals?: import('../domain/marketSignals').MarketSignalsProjection | null;
     families?: Record<string, {
       status?: string; conditionMet?: boolean | null;
       lineage?: string; validationStatus?: string;

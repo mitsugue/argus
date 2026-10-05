@@ -26,3 +26,20 @@ export function signalPerformanceJa(family: string, study: SignEventStudy | null
   const direction = condition.expects === 'FALL' ? '下落' : condition.expects === 'RISE' ? '上昇' : '向き未確認';
   return `過去${study.primaryHorizon}営業日後の${direction} ${pct(metric?.hitShare)}（普段 ${pct(metric?.baselineHitShare)}）・${metric?.evaluated ?? 0}件・${VERDICT[condition.status] ?? '未確認'}`;
 }
+
+
+/** Distance to the measurement boundary, never time-to-hit or a forecast. */
+export function warningDistanceJa(row: import('./marketSignals').MarketSignalRow): string | null {
+  const d = row.distance;
+  if (!d || !['ACTIVE', 'CLEAR'].includes(row.state) || !Number.isFinite(d.signedFromBoundary)) return null;
+  if (d.atBoundary) return d.boundaryCounts ? '基準ちょうど・成立中' : '基準ちょうど・まだ成立していません';
+  const delta = Math.abs(d.signedFromBoundary);
+  const compact = (value: number) => value.toLocaleString('ja-JP', { maximumSignificantDigits: 6 });
+  const amount = d.unit === 'JPY' ? delta >= 1e8 ? `${compact(delta / 1e8)}億円` : `${compact(delta)}円`
+    : d.unit === 'RATIO' ? `${compact(delta)}倍` : `MACDの差 ${compact(delta)}`;
+  const side = d.signedFromBoundary > 0 ? '高い' : '低い';
+  return row.state === 'ACTIVE' ? `基準より${amount}${side}・成立中`
+    : d.operator === '>=' ? `成立まであと${amount}の上昇`
+    : d.operator === '>' ? `基準まであと${amount}（上回ると成立）`
+    : `基準まであと${amount}（下回ると成立）`;
+}

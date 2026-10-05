@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.56"
+PRODUCT_VERSION = "v13.8.57"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'web/src/components/today/WarningConditionsDetails.tsx': '484e530cdaf0036b5b16ef1808d1042aded1b946',
+    'test_argus_warning_conditions.py': 'cd94c4e14df6d03605e6eaad3da08c435d098707',
+    'argus_warning_conditions.py': '83a05a166e6875c478d74d48414181086db69a6b',
     'test_argus_jgb_auction.py': '4a3e3565b99b6b3e87d21024a4706a65a7ca89cf',
     'argus_jgb_auction.py': '5a8315b5e9553c3a8796867dacdeae6bc0f8a072',
     "docs/ops/recovery-phase-a-measurement-core.md": "e9ce722983325daf71a9ec1c0c106ec178cd25ba",
@@ -136,7 +139,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '00db5787896fc9818b61e6b1cf29f67592ba42dd',
+    'web/scripts/owner-today-https.mjs': 'e7e1ba35cc9d8ce7f8d4b75f76a289638aa52c76',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -291,7 +294,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_presentation_intent.py': '9ac401c4ea52103cb0efeedcf5774d25b78cda7d',
     'argus_persistent_storage.py': '4cb3737d9e865772a42ee238ca246e47158eee4f',
     'test_argus_checkpoint_stream_batches.py': 'a3e03b9cb28f6f62b88096bf651ef4eef02d451f',
-    'web/src/components/today/ReadingHierarchy.css': '5af058ef69fd60c5f7999f555f2d2805e1747bf4',
+    'web/src/components/today/ReadingHierarchy.css': '79b546d6c1eb0dfaafaad8b289960d0fb8222785',
     'web/src/components/AppShell.tsx': 'fa34bd3703246744c9eeec4411783b6234777a77',
     'web/src/routes/BackupPage.tsx': '7d082a20c08964bb00dc4de227827f7bcfc19abb',
     'web/src/navigation.ts': '7bbea49bee28dd07ead0273ea84f1092255a3ca3',
