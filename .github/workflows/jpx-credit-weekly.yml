@@ -9,18 +9,20 @@ name: jpx-credit-weekly
 
 on:
   schedule:
-    - cron: '30 10 * * 3'   # Wednesday 19:30 JST (JPX publishes Tue/Wed)
-    - cron: '30 10 * * 4'   # Thursday retry
-    # 2026-09-28: a Tuesday holiday pushed the 2026-09-18 week's workbook past
-    # both attempts, the ledger sat at 09-11 and nothing said so. A Friday
-    # attempt covers a holiday week; the summary below now warns on a gap.
-    - cron: '30 10 * * 5'   # Friday retry (holiday-shifted publication)
+    # 16:45 through 23:45 JST. Weekdays cover holiday-shifted publication.
+    # The held period is resolved first; a completed week performs no import.
+    - cron: '45 7-14 * * 1-5'
+    - cron: '30 10 * * 3-5'  # Existing Wednesday/Thursday/Friday fallback
   workflow_dispatch:
     inputs:
       since:
         description: last period already held (YYYY-MM-DD, exclusive); default = newest in the ledger
         required: false
         default: ''
+
+concurrency:
+  group: jpx-credit-weekly
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -36,14 +38,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install --quiet xlrd
+      - run: pip install --quiet xlrd==2.0.2 openpyxl==3.1.5
       - name: Resolve the newest credit period the ledger already holds
         id: since
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+          JPX_SINCE_INPUT: ${{ github.event.inputs.since }}
         run: |
           set -euo pipefail
-          since='${{ github.event.inputs.since }}'
+          since="$JPX_SINCE_INPUT"
           if [ -z "$since" ]; then
             # 2026-09-28: owner authentication gates every read of this host.
             # The existing operational token passes the gate; it is never logged.
@@ -51,40 +54,19 @@ jobs:
           import json, sys
           doc = json.load(sys.stdin)
           periods = [str(r.get("periodEnd") or "") for r in doc.get("table") or []
-                     if r.get("seriesId") == "credit.short_balance"]
-          best = max([p for p in periods if p] or ["2026-07-10"])
+                     if r.get("seriesId") in ("credit.short_balance", "credit.long_balance")]
+          best = min(periods) if len(periods) == 2 and all(periods) else "2026-07-10"
           print(best if best >= "2026-07-10" else "2026-07-10")')
           fi
+          since=$(JPX_VALIDATE_SINCE="$since" python3 -c 'import os; from datetime import date; print(date.fromisoformat(os.environ["JPX_VALIDATE_SINCE"]).isoformat())')
           echo "since=$since" >> "$GITHUB_OUTPUT"
-          echo "since=$since"
       - name: Fetch, validate and import the published weeks (token never logged)
         env:
+          JPX_SINCE_RESOLVED: ${{ steps.since.outputs.since }}
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
-          python3 -B scripts/jpx_credit_weekly.py --since '${{ steps.since.outputs.since }}' \
-            --import --backend "$BE" --out artifacts/jpx-credit-rows.csv --summary artifacts/jpx-credit-summary.json
-      - name: Summary
-        if: always()
-        run: |
-          echo "## jpx-credit-weekly" >> "$GITHUB_STEP_SUMMARY"
-          python3 - >> "$GITHUB_STEP_SUMMARY" <<'PY'
-          import json
-          try:
-              s = json.load(open("artifacts/jpx-credit-summary.json"))
-          except Exception as e:
-              print("- no summary:", e); raise SystemExit(0)
-          for key in ("since", "fetched", "gaps", "import", "ledger"):
-              print(f"- {key}: {json.dumps(s.get(key), ensure_ascii=False)}")
-          # A run that imported nothing is not a success worth staying quiet about:
-          # the conditioning window is 45 days and the ledger ages one week per gap.
-          if s.get("gaps") or not s.get("fetched"):
-              print(f"::warning title=jpx-credit-weekly::no week imported; gaps={json.dumps(s.get('gaps'), ensure_ascii=False)} since={s.get('since')}")
-          PY
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: jpx-credit-weekly-${{ github.run_id }}
-          path: artifacts/
-          if-no-files-found: ignore
-          retention-days: 90
+          python3 -B scripts/jpx_credit_weekly.py --since "$JPX_SINCE_RESOLVED" \
+            --import --backend "$BE" --summary "$RUNNER_TEMP/jpx-credit-summary.json"
+      # The ledger itself is persisted by the existing import route. Its
+      # authenticated readback and workbook rows are not public artifacts.
