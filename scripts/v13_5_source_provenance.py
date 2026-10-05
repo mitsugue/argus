@@ -35,13 +35,6 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    "web/scripts/owner-today-https.mjs": "c491bbac9ad59caed99ff5a745cd385e0051d577",
-    "docs/V13_8_REQUIREMENTS.md": "7025a156fe6fb7679b71e6214054b08a7e9e21a2",
-    "test_argus_macro_release_watch.py": "c1a9c8748a2332d7ebb6b5e77476f751e50011c2",
-    "test_argus_macro_release_glue.py": "0dbebc0d3ef025eff31c7a392eacf841a0c9fb53",
-    "test_argus_macro_release_reaction.py": "340e358de6bbd42fefcf768ac45d6a97f4902f29",
-    "argus_macro_release_watch.py": "90c7339eba055b1bf96965f46bb6039119a0d056",
-    "argus_macro_release_reaction.py": "878af4f8399fdd7dc558067c803f3fb17ce788f0",
     "docs/ops/recovery-phase-a-measurement-core.md": "e9ce722983325daf71a9ec1c0c106ec178cd25ba",
     # Bound local forecast read receipts; no new remote storage or authority.
     'argus_future_map_cache.py': '6320d47d3b49d384f3f57522c364ddc2a77e784a',
@@ -141,7 +134,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'eab8febb03c1e95626726f1716a5183af3c83d75',
+    'web/scripts/owner-today-https.mjs': 'c491bbac9ad59caed99ff5a745cd385e0051d577',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
