@@ -35,6 +35,8 @@ import sys
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
+from html.parser import HTMLParser
+from urllib.parse import urljoin, urlparse
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 URL_TEMPLATE = ("https://www.jpx.co.jp/markets/statistics-equities/margin/"
@@ -42,7 +44,9 @@ URL_TEMPLATE = ("https://www.jpx.co.jp/markets/statistics-equities/margin/"
 NEW_FORMAT_FROM = "2026-09-25"
 NEW_URL_TEMPLATE = ("https://www.jpx.co.jp/markets/statistics-equities/margin/"
                     "tvdivq0000001rk9-att/{ymd}_mtcurrent.xlsx")
+LISTING_URL = "https://www.jpx.co.jp/markets/statistics-equities/margin/04.html"
 MAX_WORKBOOK_BYTES = 4 * 1024 * 1024
+MAX_LISTING_BYTES = 512 * 1024
 CSV_COLUMNS = ("seriesId", "periodEnd", "publishedAt", "availableFrom",
                "observedAt", "value", "unit", "source", "sourceKind", "status")
 SERIES = {"short": "credit.short_balance", "long": "credit.long_balance"}
@@ -229,32 +233,110 @@ def fetch(url: str, timeout: int = 60) -> Optional[bytes]:
         raise
 
 
+
+def publication_due(period: str, now: datetime) -> Optional[bool]:
+    """Second actual TSE session after the held week, 16:00 JST.
+
+    The nominal publication schedule is not a historical receipt timestamp.
+    Outside the authoritative calendar coverage the due state is unknown.
+    """
+    import argus_market_clock as clock
+    day = date.fromisoformat(period)
+    sessions = 0
+    try:
+        for _ in range(14):
+            day += timedelta(days=1)
+            if clock.canonical_trading_day(clock.JP_EQUITY, day):
+                sessions += 1
+                if sessions == 2:
+                    due = datetime(day.year, day.month, day.day, 16, tzinfo=timezone(timedelta(hours=9)))
+                    return now >= due
+    except clock.CalendarUnavailableError:
+        return None
+    raise ValueError("jpx_publication_calendar_invalid")
+
+
+def workbook_links(html: str) -> Dict[str, str]:
+    """Only official two-market workbooks; never PDF, general-margin or offsite."""
+    class Links(HTMLParser):
+        def __init__(self):
+            super().__init__(); self.href = None; self.text = []; self.links = {}
+        def handle_starttag(self, tag, attrs):
+            if tag == 'a':
+                self.href = dict(attrs).get('href'); self.text = []
+        def handle_data(self, data):
+            if self.href is not None:
+                self.text.append(data)
+        def handle_endtag(self, tag):
+            if tag != 'a' or self.href is None:
+                return
+            href, title = self.href, ''.join(self.text)
+            self.href = None
+            url = urljoin(LISTING_URL, href)
+            parsed = urlparse(url)
+            if (parsed.scheme != 'https' or parsed.netloc != 'www.jpx.co.jp'
+                    or parsed.query or parsed.fragment
+                    or not parsed.path.startswith('/markets/statistics-equities/margin/tvdivq0000001rk9-att/')
+                    or not parsed.path.endswith(('.xls', '.xlsx'))
+                    or 'mtgaisan' in parsed.path):
+                return
+            matched = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', title)
+            if not matched:
+                matched = re.search(r'(\d{4})(\d{2})(\d{2})', parsed.path.rsplit('/', 1)[-1])
+            if not matched:
+                raise ValueError('jpx_listing_period_missing')
+            period = date(*map(int, matched.groups())).isoformat()
+            if period in self.links and self.links[period] != url:
+                raise ValueError('jpx_listing_period_ambiguous')
+            self.links[period] = url
+    parser = Links(); parser.feed(html); parser.close()
+    if not parser.links:
+        raise ValueError('jpx_listing_workbooks_missing')
+    return parser.links
+
+
+def fetch_listing() -> Dict[str, str]:
+    request = urllib.request.Request(LISTING_URL, headers={'User-Agent': 'Mozilla/5.0 (ARGUS jpx-credit-weekly)'})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        body = response.read(MAX_LISTING_BYTES + 1)
+        if len(body) > MAX_LISTING_BYTES:
+            raise ValueError('jpx_listing_too_large')
+    return workbook_links(body.decode('utf-8'))
+
 def collect(since: str, *, today: Optional[date] = None,
-            fetcher=fetch, now_iso: Optional[str] = None) -> Dict[str, Any]:
+            fetcher=fetch, now_iso: Optional[str] = None, listing_fetcher=fetch_listing) -> Dict[str, Any]:
     observed = now_iso or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    clock_now = datetime.fromisoformat(observed.replace('Z', '+00:00'))
+    links = listing_fetcher() if listing_fetcher is not None else {}
     rows: List[Dict[str, Any]] = []
     gaps: List[str] = []
+    failures: List[str] = []
     fetched: List[str] = []
     for friday in fridays_after(since, today):
         template = NEW_URL_TEMPLATE if friday >= NEW_FORMAT_FROM else URL_TEMPLATE
-        url = template.format(ymd=friday.replace("-", ""))
+        url = links.get(friday) or template.format(ymd=friday.replace("-", ""))
+        due = friday in links or publication_due(friday, clock_now) is True
         payload = fetcher(url)
         if payload is None:
             gaps.append(friday)
+            if due:
+                failures.append(friday + ":published_workbook_unavailable")
             continue
         try:
             parsed = parse_sheet(load_workbook_grid(payload))
         except ValueError as error:
             gaps.append(f"{friday}:{error}")
+            failures.append(friday + ":workbook_unreadable")
             continue
         if parsed["periodEnd"] != friday:
             gaps.append(f"{friday}:period_mismatch:{parsed['periodEnd']}")
+            failures.append(friday + ":period_mismatch")
             continue
         observed = now_iso or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         rows.extend(build_rows(parsed, url=url, sha256=hashlib.sha256(payload).hexdigest(),
                                observed_at=observed))
         fetched.append(friday)
-    return {"since": since, "fetched": fetched, "gaps": gaps, "rows": rows,
+    return {"since": since, "fetched": fetched, "gaps": gaps, "failures": failures, "rows": rows,
             "csv": rows_to_csv(rows), "observedAt": observed}
 
 
@@ -333,9 +415,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--token-env", default="ARGUS_ADMIN_TOKEN")
     parser.add_argument("--summary", default=None, help="write a JSON summary here")
     args = parser.parse_args(argv)
-    result = collect(args.since)
+    try:
+        result = collect(args.since)
+    except Exception as error:
+        # Do not expose raw responses, URLs or authenticated records in public logs.
+        print(json.dumps({'ok': False, 'stage': 'acquisition', 'errorClass': type(error).__name__}))
+        return 1
     summary: Dict[str, Any] = {"since": args.since, "fetched": result["fetched"],
-                               "gaps": result["gaps"], "rowCount": len(result["rows"]),
+                               "gaps": result["gaps"], "failures": result.get("failures", []), "rowCount": len(result["rows"]),
                                "newestPeriod": (result["fetched"] or [None])[-1]}
     if args.out:
         with open(args.out, "w", encoding="utf-8") as handle:
@@ -354,6 +441,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.summary:
         with open(args.summary, "w", encoding="utf-8") as handle:
             json.dump(summary, handle, ensure_ascii=False, indent=1)
+    if result.get("failures"):
+        print(json.dumps({"ok": False, "stage": "published_weeks_incomplete"}))
+        return 1
     print(json.dumps({"ok": not args.do_import or not result["rows"] or bool((summary.get("import") or {}).get("ok")),
                       "stage": (summary.get("import") or {}).get("stage", "complete")}, ensure_ascii=False))
     if args.do_import and result["rows"] and not (summary.get("import") or {}).get("ok"):

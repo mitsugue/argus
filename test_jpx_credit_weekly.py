@@ -54,7 +54,7 @@ def test_fridays_after_and_gaps_are_reported_not_filled():
     original = jw.load_workbook_grid
     jw.load_workbook_grid = loader
     try:
-        result = jw.collect("2026-07-10", today=date(2026, 7, 31), fetcher=fetcher,
+        result = jw.collect("2026-07-10", today=date(2026, 7, 31), fetcher=fetcher, listing_fetcher=None,
                             now_iso="2026-09-08T00:00:00Z")
     finally:
         jw.load_workbook_grid = original
@@ -163,7 +163,7 @@ def test_current_weeks_request_the_official_xlsx_name_and_old_weeks_keep_xls(mon
     def fetcher(url):
         calls.append(url)
         return None
-    out = jw.collect("2026-09-11", today=date(2026, 9, 25), fetcher=fetcher)
+    out = jw.collect("2026-09-11", today=date(2026, 9, 25), fetcher=fetcher, listing_fetcher=None)
     assert calls[0].endswith("mtseisan2026091800.xls")
     assert calls[1].endswith("20260925_mtcurrent.xlsx")
     assert out["fetched"] == [] and len(out["gaps"]) == 2
@@ -220,3 +220,74 @@ def test_script_resolves_shared_calendar_when_launched_outside_repo(tmp_path):
     script = Path(jw.__file__).resolve()
     code = "import runpy; d=runpy.run_path(" + repr(str(script)) + "); from datetime import date; assert d['fridays_after']('2026-03-13',today=date(2026,3,20))==['2026-03-19']"
     subprocess.run([sys.executable, "-c", code], cwd=tmp_path, check=True, capture_output=True, text=True)
+
+
+def test_listing_finds_renamed_current_workbook_and_excludes_pdf_general_or_offsite():
+    import pytest
+    html = '''<a href="tvdivq0000001rk9-att/new-credit.xlsx"><span>2026年9月25日申込現在</span></a>
+    <a href="tvdivq0000001rk9-att/new-credit.pdf">2026年9月25日申込現在</a>
+    <a href="tvdivq0000001rk9-att/mtgaisan2026091800.xls">2026年9月18日申込現在</a>
+    <a href="https://other.test/20260925_mtcurrent.xlsx">2026年9月25日申込現在</a>'''
+    assert jw.workbook_links(html) == {'2026-09-25': jw.LISTING_URL.rsplit('/', 1)[0] + '/tvdivq0000001rk9-att/new-credit.xlsx'}
+    with pytest.raises(ValueError, match='workbooks_missing'):
+        jw.workbook_links('<a href="https://other.test/data.xlsx">2026年9月25日</a>')
+    with pytest.raises(ValueError, match='period_ambiguous'):
+        jw.workbook_links(html + '<a href="tvdivq0000001rk9-att/20260925_mtcurrent.xlsx">2026年9月25日</a>')
+
+
+def test_publication_deadline_uses_actual_tse_sessions_and_does_not_claim_unknown_calendar():
+    from datetime import datetime
+    assert jw.publication_due('2026-10-02', datetime.fromisoformat('2026-10-06T15:59:59+09:00')) is False
+    assert jw.publication_due('2026-10-02', datetime.fromisoformat('2026-10-06T16:00:00+09:00')) is True
+    # Monday is Sports Day; Tuesday and Wednesday are the first two sessions.
+    assert jw.publication_due('2026-10-09', datetime.fromisoformat('2026-10-13T17:00:00+09:00')) is False
+    assert jw.publication_due('2026-10-09', datetime.fromisoformat('2026-10-14T16:00:00+09:00')) is True
+    assert jw.publication_due('2015-10-02', datetime.fromisoformat('2026-10-06T16:00:00+09:00')) is None
+
+
+def test_listed_missing_or_unreadable_workbook_is_failure_but_not_yet_published_is_pending(monkeypatch):
+    listed = lambda: {'2026-09-25': 'https://www.jpx.co.jp/renamed.xlsx'}
+    missing = lambda _: None
+    result = jw.collect('2026-09-18', today=date(2026, 9, 25), fetcher=missing,
+                        listing_fetcher=listed, now_iso='2026-09-25T00:00:00Z')
+    assert result['failures'] == ['2026-09-25:published_workbook_unavailable']
+    pending = jw.collect('2026-09-25', today=date(2026, 10, 2), fetcher=missing,
+                        listing_fetcher=lambda: {}, now_iso='2026-10-05T14:00:00Z')
+    assert pending['failures'] == [] and pending['gaps'] == ['2026-10-02']
+    overdue = jw.collect('2026-09-25', today=date(2026, 10, 2), fetcher=missing,
+                        listing_fetcher=lambda: {}, now_iso='2026-10-06T07:00:00Z')
+    assert overdue['failures'] == ['2026-10-02:published_workbook_unavailable']
+    monkeypatch.setattr(jw, 'load_workbook_grid', lambda _: [['unexpected shape']])
+    changed = jw.collect('2026-09-18', today=date(2026, 9, 25), fetcher=lambda _: b'data',
+                         listing_fetcher=listed, now_iso='2026-09-25T00:00:00Z')
+    assert changed['failures'] == ['2026-09-25:workbook_unreadable']
+
+
+def test_collector_follows_listing_link_and_preserves_fetch_availability(monkeypatch):
+    requests = []
+    renamed = jw.LISTING_URL.rsplit('/', 1)[0] + '/tvdivq0000001rk9-att/revised-name.xlsx'
+    monkeypatch.setattr(jw, 'load_workbook_grid', lambda _: current_grid())
+    out = jw.collect('2026-09-18', today=date(2026, 9, 25),
+                     fetcher=lambda url: requests.append(url) or b'workbook',
+                     listing_fetcher=lambda: {'2026-09-25': renamed}, now_iso='2026-09-29T07:01:00Z')
+    assert requests == [renamed] and out['failures'] == []
+    assert all(r['availableFrom'] == '2026-09-29T07:01:00Z' and r['publishedAt'] == '' for r in out['rows'])
+
+
+def test_published_gaps_and_listing_failure_cannot_exit_success(monkeypatch, capsys):
+    monkeypatch.setattr(jw, 'collect', lambda _: {'fetched': [], 'gaps': ['2026-09-25'], 'failures': ['published'], 'rows': [], 'csv': ''})
+    assert jw.main(['--import']) == 1
+    assert 'published_weeks_incomplete' in capsys.readouterr().out
+    def fail(_):
+        raise ValueError('private response must not be logged')
+    monkeypatch.setattr(jw, 'collect', fail)
+    assert jw.main(['--import']) == 1
+    output = capsys.readouterr().out
+    assert '"stage": "acquisition"' in output and 'private response' not in output
+
+
+def test_listing_byte_limit_is_checked_before_parse(monkeypatch):
+    import pytest
+    monkeypatch.setattr(jw.urllib.request, 'urlopen', lambda *a, **k: io.BytesIO(b'x' * (jw.MAX_LISTING_BYTES + 1)))
+    with pytest.raises(ValueError, match='listing_too_large'):
+        jw.fetch_listing()
