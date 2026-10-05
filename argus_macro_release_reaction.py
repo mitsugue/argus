@@ -212,6 +212,12 @@ READINGS = {
     "HAWKISH_FLAT": ("利上げ観測が強まったが株は動かず", "金利の予想だけが動き、株はまだ反応していない形。"),
     "DOVISH_FLAT": ("利上げ観測が後退したが株は動かず", "金利の予想だけが動き、株はまだ反応していない形。"),
     "FLAT": ("方向感なし", "政策金利の予想も株も、はっきり動いていない。"),
+    "EQUITY_UP_POLICY_UNMEASURED": ("株高・政策金利の変化は未取得", "株価の上昇は測れたが、政策金利の予想の変化は測れていない。"),
+    "EQUITY_DOWN_POLICY_UNMEASURED": ("株安・政策金利の変化は未取得", "株価の下落は測れたが、政策金利の予想の変化は測れていない。"),
+    "EQUITY_FLAT_POLICY_UNMEASURED": ("株価に大きな変化なし・政策金利の変化は未取得", "株価の変化は判定基準内。政策金利の予想の変化は測れていない。"),
+    "POLICY_UP_EQUITY_UNMEASURED": ("利上げ観測が強まる・株価の反応は未取得", "政策金利の予想の上昇は測れたが、株価の反応は測れていない。"),
+    "POLICY_DOWN_EQUITY_UNMEASURED": ("利上げ観測が後退・株価の反応は未取得", "政策金利の予想の低下は測れたが、株価の反応は測れていない。"),
+    "POLICY_FLAT_EQUITY_UNMEASURED": ("政策金利の予想に大きな変化なし・株価の反応は未取得", "政策金利の予想の変化は判定基準内。株価の反応は測れていない。"),
     "UNMEASURED": ("反応を測れていない", "基準値か発表後の値が取れていない。"),
 }
 POLICY_BP = 1.5
@@ -226,6 +232,12 @@ def reading(move: Mapping[str, Optional[float]]) -> Dict[str, str]:
         equity = move.get("spFuturesMovePct")
     if policy is None and equity is None:
         code = "UNMEASURED"
+    elif policy is None:
+        direction = "UP" if equity >= EQUITY_PCT else "DOWN" if equity <= -EQUITY_PCT else "FLAT"
+        code = f"EQUITY_{direction}_POLICY_UNMEASURED"
+    elif equity is None:
+        direction = "UP" if policy >= POLICY_BP else "DOWN" if policy <= -POLICY_BP else "FLAT"
+        code = f"POLICY_{direction}_EQUITY_UNMEASURED"
     else:
         p = "down" if policy is not None and policy <= -POLICY_BP else "up" if policy is not None and policy >= POLICY_BP else "flat"
         e = "up" if equity is not None and equity >= EQUITY_PCT else "down" if equity is not None and equity <= -EQUITY_PCT else "flat"

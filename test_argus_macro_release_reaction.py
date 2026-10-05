@@ -77,7 +77,7 @@ def test_reading_distinguishes_growth_scare_and_hawkish_cases():
     assert rr.reading({"ffImpliedRateMoveBp": 0.5, "nasdaqFuturesMovePct": 0.1})["code"] == "FLAT"
     assert rr.reading({"ffImpliedRateMoveBp": 4.0, "nasdaqFuturesMovePct": 0.27})["code"] == "HAWKISH_FLAT"   # CPI 2026-09-11
     assert rr.reading({"ffImpliedRateMoveBp": -4.0, "nasdaqFuturesMovePct": -0.19})["code"] == "DOVISH_FLAT"
-    assert rr.reading({"ffImpliedRateMoveBp": None, "nasdaqFuturesMovePct": 0.6})["code"] == "RISK_ON"
+    assert rr.reading({"ffImpliedRateMoveBp": None, "nasdaqFuturesMovePct": 0.6})["code"] == "EQUITY_UP_POLICY_UNMEASURED"
     assert rr.reading({})["code"] == "UNMEASURED"
 
 
@@ -139,7 +139,9 @@ def test_one_stale_asset_does_not_poison_valid_assets_or_invent_its_move():
     window = rec["windows"]["+5m"]
     assert window["moves"]["ffImpliedRateMoveBp"] is None
     assert window["moves"]["nasdaqFuturesMovePct"] == 0.86
-    assert window["reading"]["code"] == "RISK_ON"
+    assert window["reading"]["code"] == "EQUITY_UP_POLICY_UNMEASURED"
+    assert "利上げ観測は動かず" not in rr.prompt_text_ja(rec)
+    assert "政策金利の変化は未取得" in rr.prompt_text_ja(rec)
     assert rec["actionAuthority"] is False
 
 
@@ -206,3 +208,20 @@ def test_batch_start_and_each_quote_receipt_cannot_run_backwards():
     base = _capture(BEFORE, E(-2))
     base["captureStartedAt"] = (T - timedelta(minutes=1)).isoformat()
     assert rr.comparison_quotes(base, T)[0] == {}
+
+
+@pytest.mark.parametrize("policy,equity,code,missing", [
+    (None, 0.6, "EQUITY_UP_POLICY_UNMEASURED", "政策金利の変化は未取得"),
+    (None, -0.6, "EQUITY_DOWN_POLICY_UNMEASURED", "政策金利の変化は未取得"),
+    (None, 0.1, "EQUITY_FLAT_POLICY_UNMEASURED", "政策金利の変化は未取得"),
+    (4, None, "POLICY_UP_EQUITY_UNMEASURED", "株価の反応は未取得"),
+    (-4, None, "POLICY_DOWN_EQUITY_UNMEASURED", "株価の反応は未取得"),
+    (0.5, None, "POLICY_FLAT_EQUITY_UNMEASURED", "株価の反応は未取得"),
+])
+def test_partial_reaction_does_not_describe_missing_measurement_as_flat(policy, equity, code, missing):
+    actual = rr.reading({"ffImpliedRateMoveBp": policy, "nasdaqFuturesMovePct": equity})
+    assert actual["code"] == code
+    assert missing in actual["labelJa"]
+    assert "測れていない" in actual["meaningJa"]
+    assert "株はまだ反応していない" not in actual["meaningJa"]
+    assert "政策金利の予想は変わらず" not in actual["meaningJa"]
