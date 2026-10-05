@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.51"
+PRODUCT_VERSION = "v13.8.52"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,13 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    "web/scripts/owner-today-https.mjs": "c491bbac9ad59caed99ff5a745cd385e0051d577",
+    "docs/V13_8_REQUIREMENTS.md": "7025a156fe6fb7679b71e6214054b08a7e9e21a2",
+    "test_argus_macro_release_watch.py": "c1a9c8748a2332d7ebb6b5e77476f751e50011c2",
+    "test_argus_macro_release_glue.py": "0dbebc0d3ef025eff31c7a392eacf841a0c9fb53",
+    "test_argus_macro_release_reaction.py": "340e358de6bbd42fefcf768ac45d6a97f4902f29",
+    "argus_macro_release_watch.py": "90c7339eba055b1bf96965f46bb6039119a0d056",
+    "argus_macro_release_reaction.py": "878af4f8399fdd7dc558067c803f3fb17ce788f0",
     "docs/ops/recovery-phase-a-measurement-core.md": "e9ce722983325daf71a9ec1c0c106ec178cd25ba",
     # Bound local forecast read receipts; no new remote storage or authority.
     'argus_future_map_cache.py': '6320d47d3b49d384f3f57522c364ddc2a77e784a',

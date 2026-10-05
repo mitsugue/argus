@@ -14,6 +14,7 @@ not a forecast and carries no record of its own.
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Mapping, Optional
 
@@ -62,38 +63,105 @@ def _iso(moment: datetime) -> str:
 
 
 def parse_quote(payload: Any, *, received_epoch: float) -> Optional[Dict[str, Any]]:
-    """{price, tradedAt, receivedAt} from one Yahoo chart response; None when unusable."""
+    """A finite price with an actual source time no later than its receipt."""
     try:
         meta = (((payload or {}).get("chart") or {}).get("result") or [{}])[0].get("meta") or {}
-    except (AttributeError, IndexError, TypeError):
+        price = _finite(meta.get("regularMarketPrice"))
+        traded = _finite(meta.get("regularMarketTime"))
+        received = _finite(received_epoch)
+        if price is None or price <= 0 or traded is None or traded <= 0 or received is None or traded > received:
+            return None
+        return {"price": price, "tradedAt": _iso(datetime.fromtimestamp(traded, timezone.utc)),
+                "receivedAt": _iso(datetime.fromtimestamp(received, timezone.utc))}
+    except (AttributeError, IndexError, TypeError, ValueError, OverflowError, OSError):
         return None
-    price = _finite(meta.get("regularMarketPrice"))
-    traded = meta.get("regularMarketTime")
-    if price is None or price <= 0 or isinstance(traded, bool) or not isinstance(traded, (int, float)) or traded <= 0:
-        return None
-    return {"price": price, "tradedAt": _iso(datetime.fromtimestamp(float(traded), timezone.utc)),
-            "receivedAt": _iso(datetime.fromtimestamp(received_epoch, timezone.utc))}
 
 
-def capture(get: Callable[..., Any], *, received_epoch: float, symbols: Mapping[str, Mapping[str, str]] = SYMBOLS) -> Dict[str, Any]:
-    """Read every symbol once from the one provider; failures are listed, never invented."""
+def capture(get: Callable[..., Any], *, received_epoch: float,
+            symbols: Mapping[str, Mapping[str, str]] = SYMBOLS,
+            clock: Optional[Callable[[], float]] = None) -> Dict[str, Any]:
+    """Keep request start separate from each completed quote's receipt.
+
+    The caller's received_epoch is the batch start, not proof of when a
+    response arrived. Every response is closed, including unusable data.
+    """
+    clock = clock or time.time
     values: Dict[str, Dict[str, Any]] = {}
     missing = []
     for symbol in symbols:
+        response = None
         try:
             response = get(f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
                            params={"interval": "1m", "range": "1d"},
                            headers={"User-Agent": "Mozilla/5.0 (argus)"}, timeout=8)
-            quote = parse_quote(response.json(), received_epoch=received_epoch) \
-                if getattr(response, "status_code", 200) == 200 else None
+            payload = response.json() if getattr(response, "status_code", 200) == 200 else None
+            quote = parse_quote(payload, received_epoch=clock())
         except Exception:
             quote = None
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
         if quote is None:
             missing.append(symbol)
         else:
             values[symbol] = quote
-    return {"capturedAt": _iso(datetime.fromtimestamp(received_epoch, timezone.utc)),
+    return {"captureStartedAt": _iso(datetime.fromtimestamp(received_epoch, timezone.utc)),
+            "capturedAt": _iso(datetime.fromtimestamp(clock(), timezone.utc)),
             "source": PROVIDER, "values": values, "missing": missing}
+
+
+def comparison_quotes(capture: Optional[Mapping[str, Any]], event_time: Optional[datetime],
+                      window: Optional[str] = None) -> tuple[dict, dict]:
+    """Select comparable source timestamps without changing original quotes.
+
+    Baseline source prices must belong to the same fifteen-minute interval
+    before the release. A post-release source price must belong to that
+    window's target/grace interval, not merely have been downloaded then.
+    """
+    capture = capture or {}
+    values = capture.get("values") or {}
+    if not isinstance(values, Mapping):
+        return {}, {"capture": "INVALID_VALUES"}
+    observed = _instant(capture.get("capturedAt"))
+    started = _instant(capture.get("captureStartedAt"))
+    if event_time is None or observed is None or (started is not None and started > observed):
+        return {}, {symbol: "INVALID_CAPTURE_TIME" for symbol in values}
+    if capture.get("source") not in (None, PROVIDER):
+        return {}, {symbol: "SOURCE_MISMATCH" for symbol in values}
+    if window is None:
+        lower, upper = event_time - BASELINE_FROM, event_time
+        capture_ok = lower <= observed < event_time - BASELINE_UNTIL
+    else:
+        offset = dict(WINDOWS).get(window)
+        if offset is None:
+            return {}, {symbol: "UNKNOWN_WINDOW" for symbol in values}
+        lower, upper = event_time + offset, event_time + offset + WINDOW_GRACE[window]
+        capture_ok = lower <= observed <= upper
+    usable, rejected = {}, {}
+    for symbol, quote in values.items():
+        if not isinstance(quote, Mapping) or _finite(quote.get("price")) is None or quote["price"] <= 0:
+            rejected[symbol] = "INVALID_PRICE"
+            continue
+        source_at, received = _instant(quote.get("tradedAt")), _instant(quote.get("receivedAt"))
+        if not capture_ok:
+            reason = "OUTSIDE_CAPTURE_WINDOW"
+        elif source_at is None or received is None:
+            reason = "SOURCE_OR_RECEIPT_TIME_MISSING"
+        elif source_at > received or received > observed or (started is not None and received < started):
+            reason = "FUTURE_SOURCE_OR_RECEIPT_TIME"
+        elif not (lower <= source_at <= upper) or (window is None and source_at == upper):
+            reason = "OUTSIDE_SOURCE_WINDOW"
+        elif window is None and received >= event_time:
+            reason = "BASELINE_RECEIVED_AFTER_RELEASE"
+        else:
+            usable[symbol] = dict(quote)
+            continue
+        rejected[symbol] = reason
+    return usable, rejected
 
 
 def baseline_due(event_time: datetime, now: datetime) -> bool:
@@ -195,16 +263,27 @@ def build(event_id: str, event_time_utc: str, baseline: Optional[Mapping[str, An
                            "basis": "PRE_RELEASE_BASELINE", "source": PROVIDER,
                            "baseline": dict(baseline) if baseline else None, "windows": {},
                            "limitationsJa": [], "actionAuthority": False, "automaticAiCalls": 0}
-    if not baseline:
+    event_time = _instant(event_time_utc)
+    baseline_values, baseline_rejected = comparison_quotes(baseline, event_time)
+    out["baselineComparisonValues"] = baseline_values
+    out["baselineTimeRejections"] = baseline_rejected
+    if not baseline_values:
         out["limitationsJa"].append("発表直前の基準値が取れていない")
+    if baseline_rejected:
+        out["limitationsJa"].append("基準価格の時刻が発表直前の条件を満たさない")
     for name, _ in WINDOWS:
         after = windows.get(name)
         if not after:
             continue
-        move = moves(baseline or {}, after) if baseline else {}
+        after_values, rejected = comparison_quotes(after, event_time, name)
+        move = moves({"values": baseline_values}, {"values": after_values})
+        if rejected:
+            out["limitationsJa"].append(f"発表{name}の価格時刻を確認できない項目あり")
         read = reading(move)
         out["windows"][name] = {"observedAt": after.get("capturedAt"), "values": after.get("values"),
+                                "source": after.get("source"),
                                 "missing": after.get("missing") or [], "moves": move, "reading": read,
+                                "comparisonValues": after_values, "timeRejections": rejected,
                                 "summaryJa": window_summary_ja(name, move, read)}
     latest = next((out["windows"][n] for n, _ in reversed(WINDOWS) if n in out["windows"]), None)
     out["latestWindow"] = next((n for n, _ in reversed(WINDOWS) if n in out["windows"]), None)
@@ -220,7 +299,13 @@ def prompt_text_ja(record: Optional[Mapping[str, Any]], *, next_fomc: Optional[s
     if not record or not record.get("windows"):
         return ""
     lines = ["実測の反応(発表直前の基準値と同じ取得元で測定。反応の数字はここにあるものだけを使い、他の数字を作らない):"]
-    base = (record.get("baseline") or {}).get("values") or {}
+    # Older saved records are re-evaluated in memory; their raw inputs remain.
+    record = build(str(record.get("eventId") or ""), record.get("eventTimeUtc"),
+                   record.get("baseline"),
+                   {name: {"capturedAt": row.get("observedAt"), "values": row.get("values"), "source": row.get("source"),
+                           "missing": row.get("missing") or []}
+                    for name, row in record["windows"].items()})
+    base = record["baselineComparisonValues"]
     ff = base.get("ZQ=F")
     if ff and _finite(ff.get("price")) is not None:
         lines.append(f"発表前の織り込み: FF金利先物の示す政策金利の予想 {100 - ff['price']:.3f}%"
@@ -229,5 +314,6 @@ def prompt_text_ja(record: Optional[Mapping[str, Any]], *, next_fomc: Optional[s
         w = record["windows"].get(name)
         if w:
             lines.append(w["summaryJa"] + " " + w["reading"]["meaningJa"])
+    lines.extend(record["limitationsJa"])
     lines.append("読みの判定は上の『市場の読み』を基本にし、弱い/強いという数字だけで景気の良し悪しを断定しない。")
     return "\n".join(lines)

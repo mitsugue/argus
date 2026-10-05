@@ -1,4 +1,7 @@
 """Pre-release baseline, post-release windows and the deterministic reading."""
+from copy import deepcopy
+
+import pytest
 from datetime import datetime, timedelta, timezone
 
 import argus_macro_release_reaction as rr
@@ -15,8 +18,8 @@ def _capture(prices, epoch):
     class Response:
         status_code = 200
         def __init__(self, symbol): self.symbol = symbol
-        def json(self): return _payload(prices[self.symbol]) if self.symbol in prices else {"chart": {"result": []}}
-    return rr.capture(lambda url, **k: Response(url.rsplit("/", 1)[1]), received_epoch=epoch)
+        def json(self): return _payload(prices[self.symbol], traded=epoch) if self.symbol in prices else {"chart": {"result": []}}
+    return rr.capture(lambda url, **k: Response(url.rsplit("/", 1)[1]), received_epoch=epoch, clock=lambda: epoch)
 
 
 BEFORE = {"ZQ=F": 96.05, "ZT=F": 101.82, "ZN=F": 104.61, "NQ=F": 26800.0, "ES=F": 7650.0,
@@ -26,7 +29,7 @@ AFTER = {"ZQ=F": 96.075, "ZT=F": 101.95, "ZN=F": 105.02, "NQ=F": 27030.0, "ES=F"
 
 
 def test_quote_parse_rejects_missing_price_or_time():
-    assert rr.parse_quote(_payload(96.05), received_epoch=1790945000)["price"] == 96.05
+    assert rr.parse_quote(_payload(96.05), received_epoch=1790945400)["price"] == 96.05
     assert rr.parse_quote(_payload(None), received_epoch=1) is None
     assert rr.parse_quote(_payload(96.05, traded=None), received_epoch=1) is None
     assert rr.parse_quote({"chart": {"result": []}}, received_epoch=1) is None
@@ -91,3 +94,115 @@ def test_record_and_prompt_carry_only_measured_numbers():
     assert rr.prompt_text_ja(None) == "" and rr.prompt_text_ja(rr.build("x", None, None, {})) == ""
     missing = rr.build("x", None, None, {"+5m": w5})
     assert missing["readingJa"] == "反応を測れていない" and "基準値が取れていない" in missing["limitationsJa"][0]
+
+
+@pytest.mark.parametrize("change", [
+    {"tradedAt": (T + timedelta(minutes=1)).isoformat()},
+    {"tradedAt": (T - timedelta(days=1)).isoformat()},
+    {"tradedAt": "2026-10-02T12:28:00"},
+    {"receivedAt": (T + timedelta(minutes=1)).isoformat()},
+    {"receivedAt": None},
+    {"price": float("inf")},
+])
+def test_invalid_baseline_clock_never_becomes_a_measured_policy_change(change):
+    base = _capture(BEFORE, E(-2)); after = _capture(AFTER, E(5))
+    for quote in base["values"].values():
+        quote.update(change)
+    before_copy, after_copy = deepcopy(base), deepcopy(after)
+    rec = rr.build("cpi-test", T.isoformat(), base, {"+5m": after})
+    assert all(value is None for key, value in rec["windows"]["+5m"]["moves"].items()
+               if "Move" in key)
+    assert rec["windows"]["+5m"]["moves"]["ffImpliedRateBeforePct"] is None
+    assert rec["readingJa"] == "反応を測れていない"
+    assert "3.950%" not in rr.prompt_text_ja(rec)
+    assert base == before_copy and after == after_copy
+    assert rec["baseline"] == before_copy             # original evidence retained
+    assert rec["baselineTimeRejections"]
+
+
+@pytest.mark.parametrize("minute", [-1440, 1, 4, 10])
+def test_source_quote_must_belong_to_five_minute_window_not_just_be_downloaded_then(minute):
+    base = _capture(BEFORE, E(-2)); after = _capture(AFTER, E(5))
+    for quote in after["values"].values():
+        quote["tradedAt"] = (T + timedelta(minutes=minute)).isoformat()
+    rec = rr.build("cpi-test", T.isoformat(), base, {"+5m": after})
+    assert rec["windows"]["+5m"]["reading"]["code"] == "UNMEASURED"
+    assert rec["windows"]["+5m"]["timeRejections"]
+    assert rec["windows"]["+5m"]["values"] == after["values"]
+    assert "政策金利の予想-2.5bp" not in rr.prompt_text_ja(rec)
+
+
+def test_one_stale_asset_does_not_poison_valid_assets_or_invent_its_move():
+    base = _capture(BEFORE, E(-2)); after = _capture(AFTER, E(5))
+    after["values"]["ZQ=F"]["tradedAt"] = (T - timedelta(minutes=1)).isoformat()
+    rec = rr.build("cpi-test", T.isoformat(), base, {"+5m": after})
+    window = rec["windows"]["+5m"]
+    assert window["moves"]["ffImpliedRateMoveBp"] is None
+    assert window["moves"]["nasdaqFuturesMovePct"] == 0.86
+    assert window["reading"]["code"] == "RISK_ON"
+    assert rec["actionAuthority"] is False
+
+
+@pytest.mark.parametrize("name,minute", [("+5m", 5), ("+30m", 30), ("+60m", 60), ("+8h", 480)])
+def test_correct_source_clocks_preserve_every_existing_window_and_formula(name, minute):
+    base = _capture(BEFORE, E(-2)); after = _capture(AFTER, E(minute))
+    rec = rr.build("cpi-test", T.isoformat(), base, {name: after})
+    assert rec["windows"][name]["moves"]["ffImpliedRateMoveBp"] == -2.5
+    assert rec["windows"][name]["reading"]["code"] == "RATE_RELIEF_RISK_ON"
+    assert rec["windows"][name]["timeRejections"] == {}
+    assert rec["baselineTimeRejections"] == {}
+
+
+def test_rebuilt_old_prompt_rechecks_clocks_without_overwriting_saved_evidence():
+    base = _capture(BEFORE, E(-2)); after = _capture(AFTER, E(5))
+    rec = rr.build("cpi-test", T.isoformat(), base, {"+5m": after})
+    for quote in rec["windows"]["+5m"]["values"].values():
+        quote["tradedAt"] = (T - timedelta(days=1)).isoformat()
+    rec["windows"]["+5m"]["summaryJa"] = "政策金利の予想-99.9bp"
+    saved = deepcopy(rec)
+    text = rr.prompt_text_ja(rec)
+    assert "-99.9bp" not in text and "-2.5bp" not in text
+    assert "反応を測れていない" in text and rec == saved
+
+
+def test_capture_records_response_completion_and_closes_all_responses():
+    clocks = iter([E(-1), E(1), E(2)])
+    responses = []
+    class Response:
+        status_code = 200
+        closed = False
+        def json(self):
+            return _payload(100, traded=E(0))
+        def close(self):
+            self.closed = True
+    def get(*args, **kwargs):
+        response = Response(); responses.append(response); return response
+    batch = rr.capture(get, received_epoch=E(-2), symbols={"ES=F": {}, "NQ=F": {}},
+                       clock=lambda: next(clocks))
+    assert batch["captureStartedAt"] == (T - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+    assert batch["capturedAt"] == (T + timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+    assert "ES=F" in batch["missing"]              # source time later than actual receipt
+    assert batch["values"]["NQ=F"]["receivedAt"] == (T + timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+    assert all(response.closed for response in responses)
+    usable, rejected = rr.comparison_quotes(batch, T)
+    assert usable == {} and rejected             # batch crossed release: no baseline claim
+
+
+@pytest.mark.parametrize("traded", [True, float("inf"), float("nan"), 1e300, E(6)])
+def test_unusable_source_epochs_are_rejected_without_timestamp_exceptions(traded):
+    assert rr.parse_quote(_payload(100, traded=traded), received_epoch=E(5)) is None
+
+
+
+def test_different_provider_is_rejected_again_when_prompt_rebuilds_old_window():
+    base = _capture(BEFORE, E(-2)); after = _capture(AFTER, E(5))
+    after["source"] = "another-provider"
+    rec = rr.build("cpi-test", T.isoformat(), base, {"+5m": after})
+    assert rec["windows"]["+5m"]["reading"]["code"] == "UNMEASURED"
+    assert "-2.5bp" not in rr.prompt_text_ja(rec)
+
+
+def test_batch_start_and_each_quote_receipt_cannot_run_backwards():
+    base = _capture(BEFORE, E(-2))
+    base["captureStartedAt"] = (T - timedelta(minutes=1)).isoformat()
+    assert rr.comparison_quotes(base, T)[0] == {}

@@ -67,3 +67,32 @@ def test_reaction_failures_never_block_the_result_refresh(monkeypatch):
     log = []
     watch.tick(lambda: [NFP], lambda: None, now=AT + timedelta(minutes=7), window=lambda e, n: log.append(n))
     assert log == ["+5m"]
+
+
+
+def test_delayed_source_price_retries_inside_window_instead_of_claiming_capture_success(monkeypatch):
+    _fresh(monkeypatch)
+    import argus_macro_release_reaction as reaction
+    def capture(event, name):
+        return {"schemaVersion": reaction.SCHEMA, "windows": {name: {"comparisonValues": {}}}}
+    watch.tick(lambda: [NFP], lambda: None, now=AT + timedelta(minutes=5), window=capture)
+    assert NFP["id"] not in watch.status()["reaction"]["windows"]
+    assert watch.status()["reaction"]["lastError"] == "ValueError"
+    calls = []
+    def arrived(event, name):
+        calls.append(name)
+        return {"schemaVersion": reaction.SCHEMA, "windows": {name: {"comparisonValues": {"ES=F": {"price": 100}}}}}
+    watch.tick(lambda: [NFP], lambda: None, now=AT + timedelta(minutes=8), window=arrived)
+    watch.tick(lambda: [NFP], lambda: None, now=AT + timedelta(minutes=9), window=arrived)
+    assert calls == ["+5m"]
+    assert watch.status()["reaction"]["windows"] == {NFP["id"]: ["+5m"]}
+
+
+
+def test_unusable_baseline_is_not_counted_as_a_successful_measurement(monkeypatch):
+    _fresh(monkeypatch)
+    import argus_macro_release_reaction as reaction
+    watch.tick(lambda: [NFP], lambda: None, now=AT - timedelta(minutes=2),
+               baseline=lambda event: {"schemaVersion": reaction.SCHEMA, "baselineComparisonValues": {}})
+    assert watch.status()["reaction"]["baselines"] == 0
+    assert watch.status()["reaction"]["lastError"] == "ValueError"
