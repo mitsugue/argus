@@ -40,11 +40,15 @@ def project_warning_conditions(evidence, *, cutoff):
         family = f"D{n:02}"
         source = _mapping(families.get(family))
         status = source.get("status")
+        try:
+            fact = (fact_note_ja(family, source) or "").replace("公表", "利用可能") or None
+        except (OverflowError, ValueError, TypeError, AttributeError):
+            fact = None
         row = {"id": f"WARN-{n:02}", "family": family, "ruleId": f"{RULE_VERSION}.{family}",
                "nameJa": name, "direction": "WARNING", "status": status, "state": "UNAVAILABLE",
                "conditionMet": None, "ruleStatus": "DEFINED", "lineage": "ORIGINAL_DIRECTION",
                "conditionRuleJa": RULES.get(n), "distance": None,
-               "factNoteJa": (fact_note_ja(family, source) or "").replace("公表", "利用可能") or None, "valuationBasis": source.get("valuationBasis"),
+               "factNoteJa": fact, "valuationBasis": source.get("valuationBasis"),
                "performance": {"ruleId": f"{RULE_VERSION}.{family}", "status": "UNVALIDATED", "evaluated": 0},
                "probability": None, "actionAuthority": False}
         if n in UNDEFINED:
@@ -80,7 +84,7 @@ def project_warning_conditions(evidence, *, cutoff):
                         and type(proof.get("includedCount")) is int and proof["includedCount"] >= sample):
                     value = _number(baseline.get("warningHistogram"))
                 threshold, operator, unit = 0, ">", "MACD_GAP"
-            instant = _instant(known)
+            instant = _instant(known) if isinstance(known, str) and "T" in known else None
             if value is None or instant is None or instant > limit:
                 row.update(state="DATA_GATED", reasonJa="必要な値・定義・利用可能時刻・履歴を確認できません")
             else:

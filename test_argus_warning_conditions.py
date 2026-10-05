@@ -48,7 +48,7 @@ def test_tampered_or_wrong_cutoff_artifact_cannot_light_conditions():
     p=project_warning_conditions(e,cutoff=AT);assert p['activeCount']==0 and p['rejectedEvidence']
     p=project_warning_conditions(evidence(),cutoff='2026-10-06T00:00:01Z');assert p['activeCount']==0
 
-@pytest.mark.parametrize("known", [None, "2026-10-06", "2026-10-06T00:00:01Z"])
+@pytest.mark.parametrize("known", [None, "2026-10-06", "2026-10-05", "2026-10-06T00:00:01Z"])
 def test_missing_ambiguous_or_future_knowledge_never_counts(known):
     row=evidence()["families"]["D05"];row["availableFrom"]=known
     p=project_warning_conditions(evidence(D05=row),cutoff=AT)

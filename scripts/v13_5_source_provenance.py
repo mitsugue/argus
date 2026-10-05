@@ -36,8 +36,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/today/WarningConditionsDetails.tsx': '484e530cdaf0036b5b16ef1808d1042aded1b946',
-    'test_argus_warning_conditions.py': '983d8e1d9a30bfa16f9ef28dea481b1c907da1b4',
-    'argus_warning_conditions.py': '059edd873e332ecd6c087598567debae96dcc1ef',
+    'test_argus_warning_conditions.py': 'cd94c4e14df6d03605e6eaad3da08c435d098707',
+    'argus_warning_conditions.py': '83a05a166e6875c478d74d48414181086db69a6b',
     'test_argus_jgb_auction.py': '4a3e3565b99b6b3e87d21024a4706a65a7ca89cf',
     'argus_jgb_auction.py': '5a8315b5e9553c3a8796867dacdeae6bc0f8a072',
     "docs/ops/recovery-phase-a-measurement-core.md": "e9ce722983325daf71a9ec1c0c106ec178cd25ba",
