@@ -75,6 +75,22 @@ class ChartContractTest(unittest.TestCase):
         self.assertEqual(document["forecast"]["line"][0]["value"], 100)
         self.assertEqual(len(document["candidates"]), 2)
         self.assertEqual(document["unit"], "ANCHOR_100")
+        self.assertEqual(document["reviewConditionsJa"], [
+            "基準日や比較に使う市場条件が更新されたら、候補を選び直します。"])
+        yen_scale = {"status": "AVAILABLE", "date": current["anchorDate"],
+                     "anchorPrice": current["window"][-1]["close"], "eps": 2000,
+                     "per": current["window"][-1]["close"] / 2000,
+                     "basis": VALUATION_BASIS}
+        yen = comparison_document(current, selected, paths, ensemble, scale=yen_scale)
+        self.assertEqual(len(yen["reviewConditionsJa"]), 2)
+        self.assertIn("EPS", yen["reviewConditionsJa"][1])
+        # The explanation must not change paths, candidate identity or frequencies.
+        for layer in ("actual",):
+            self.assertEqual([p["value"] for p in yen[layer]],
+                             [p["value"] * yen_scale["anchorPrice"] / 100 for p in document[layer]])
+        self.assertEqual(yen["forecast"]["counts"], document["forecast"]["counts"])
+        self.assertEqual([c["snapshotId"] for c in yen["candidates"]],
+                         [c["snapshotId"] for c in document["candidates"]])
         self.assertEqual(document["forecast"]["validationStatus"], "UNVALIDATED")
         # 2026-09-30: the chart says how many market-condition series were
         # actually compared; a price-shape-only candidate reports zero.

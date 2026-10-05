@@ -395,6 +395,10 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
                      "flatThresholdPct": ensemble["classification"]["upAbove"]},
         "scaleExplanation": ("同じ基準日の指数EPS×指数PER×比較値/100で円換算しています。短期間のEPS一定を仮定しています。"
                              if use_yen else "現在と各過去局面の基準日を100に合わせた形状比較です。整合する指数EPS/PERがないため円換算は表示していません。"),
+        "reviewConditionsJa": [
+            "基準日や比較に使う市場条件が更新されたら、候補を選び直します。",
+            *(["EPSの値・計算方法が変わったら、円換算をやり直します。"] if use_yen else []),
+        ],
         "limitations": ["過去の参考経路は確定した未来ではありません。",
                         "単純トレンド等に対する独立期間の追加効果は未検証です。",
                         "取得済みの終値までを表示し、欠測した価格は補間していません。"],

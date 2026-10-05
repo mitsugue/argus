@@ -93,6 +93,7 @@ export interface JapanMarketComparison {
     signEventStudy?: SignEventStudy;
   };
   scaleExplanation: string;
+  reviewConditionsJa?: string[];
   valuationEvidence?: {
     date: string; eps: number; per: number; epsKind: string;
     knownAt: string; publishedAt: string | null; sourceRef: string;

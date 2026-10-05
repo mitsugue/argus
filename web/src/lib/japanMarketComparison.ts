@@ -21,6 +21,9 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
     || !points(v.actual) || !(v.actual as unknown[]).length
     || typeof v.scaleExplanation !== 'string' || !strings(v.limitations)
     || !Array.isArray(v.candidates) || v.candidates.length > 10) return false;
+  if (v.reviewConditionsJa !== undefined && (!strings(v.reviewConditionsJa)
+    || !v.reviewConditionsJa.length || v.reviewConditionsJa.length > 3
+    || !v.reviewConditionsJa.every(line => line.trim().length > 0 && line.length <= 200))) return false;
   if (v.historyCoverage !== undefined) {
     const h = v.historyCoverage;
     const count = (n: unknown) => finite(n) && Number.isInteger(n) && n >= 0;

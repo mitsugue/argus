@@ -166,6 +166,10 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
     {issued && trackRecord && <IssuedForecastRecord record={issued} minimum={trackRecord.minimumDirectionalForecasts} />}
     <details className="jp-comparison__details"><summary>比較元・尺度・検証状態を見る</summary>
       <p>{document.scaleExplanation}</p>
+      {document.reviewConditionsJa && <section aria-label="比較を見直す条件">
+        <h3>比較を見直すとき</h3>
+        {document.reviewConditionsJa.map(line => <p key={line}>{line}</p>)}
+      </section>}
       {document.historyCoverage && <>
         <p>価格の収録：{document.historyCoverage.sourceStart}〜{document.historyCoverage.sourceEnd}
           （{document.historyCoverage.sourceBars.toLocaleString('ja-JP')}営業日）。
