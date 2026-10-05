@@ -126,8 +126,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
-    'web/scripts/pwa-identity.test.mjs': '0c5c8de0cd0a20d712e1a2d135cdc80fb53ed034',
-    'web/scripts/owner-today-https.mjs': '2159941312cb9cb22d0e4fc6458d8482b57bbd7e',
+    'web/scripts/pwa-identity.test.mjs': 'bbee507ea6b95fd4a2daf67b25996ba43972f4fe',
+    'web/scripts/owner-today-https.mjs': '7517a14e2ab180a63386cb73de7c53f9c4842cfa',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -648,6 +648,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_credit_weekly_valuation.py",
     "test_argus_credit_valuation_d01.py",
     "test_argus_credit_valuation_ledger.py",
     "test_argus_jpx_credit_valuation.py",
