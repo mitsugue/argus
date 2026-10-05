@@ -9752,9 +9752,9 @@ def api_argus_intel_collect():
     # FUTURE MAP notification (2026-10-04): read the stored document once and
     # run nothing else of the collection.
     if (isinstance(body, dict) and body.get("only") == "future_map") or request.args.get("only") == "future_map":
-        _future_map_refresh(wait_seconds=30, trigger="notification")
+        read_completed = _future_map_refresh(wait_seconds=30, trigger="notification")
         status = _future_map_status()
-        ok_read = status["availability"] == "AVAILABLE" and not status["lastError"]
+        ok_read = read_completed is True and status["availability"] == "AVAILABLE" and not status["lastError"]
         return jsonify({**status, "only": "future_map", "ok": ok_read}), 200 if ok_read else 502
     if isinstance(body, dict) and (body.get("async") is True or body.get("statusOnly") is True):
         request_id = body.get("requestId")
@@ -39438,7 +39438,7 @@ def api_argus_analyst_targets():
 # on disk. No release is needed for a weekly update. Not ARGUS's judgment.
 _FUTURE_MAP = {"loaded": False, "public": None, "sha": None, "lastAttemptAt": None, "lastError": None,
                "lastChangedAt": None, "lastReadOkAt": None, "lastTrigger": None}
-_FUTURE_MAP_LOCK = threading.Lock()
+_FUTURE_MAP_LOCK = threading.RLock()
 #: The weekly writer notifies the app right after its write (火〜日 00:00 JST):
 #: the caos-scan workflow started with only=future_map calls the existing
 #: admin collection route with {"only": "future_map"}. One fallback read runs once a day at
@@ -39455,19 +39455,38 @@ def _future_map_path():
 
 
 def _future_map_load_saved():
-    """Disk only, once per process: the last validated version survives restarts."""
+    """Disk only, once per process: restore the forecast and bound read receipt."""
     if _FUTURE_MAP["loaded"]:
         return
-    _FUTURE_MAP["loaded"] = True
+    with _FUTURE_MAP_LOCK:
+        if _FUTURE_MAP["loaded"]:
+            return
+        _FUTURE_MAP["loaded"] = True
+        path = _future_map_path()
+        try:
+            if path and os.path.isfile(path):
+                import argus_future_map_cache as cache
+                public, receipt = cache.load(path, now_iso=_ai_now_iso())
+                _FUTURE_MAP.update(public=public, sha=public.get("remoteSha"))
+                if receipt:
+                    _FUTURE_MAP.update({k: receipt[k] for k in ("lastReadOkAt", "lastChangedAt", "lastTrigger")})
+                    fallback = receipt.get("fallback")
+                    if fallback:
+                        _FUTURE_MAP_FALLBACK.update(lastDay=fallback["day"], lastDecision=fallback)
+        except (OSError, ValueError):
+            pass
+
+
+def _future_map_save_saved(public=None, *, last_read_ok_at=None, last_changed_at=None, last_trigger=None):
     path = _future_map_path()
-    try:
-        if path and os.path.isfile(path):
-            with open(path, encoding="utf-8") as handle:
-                saved = json.load(handle)
-            if isinstance(saved, dict) and saved.get("schemaVersion") == argus_future_map.PUBLIC_SCHEMA:
-                _FUTURE_MAP.update(public=saved, sha=saved.get("remoteSha"))
-    except (OSError, ValueError):
-        pass
+    public = public if public is not None else _FUTURE_MAP.get("public")
+    if path and public:
+        import argus_future_map_cache as cache
+        cache.store(path, public,
+            last_read_ok_at=last_read_ok_at if last_read_ok_at is not None else _FUTURE_MAP.get("lastReadOkAt"),
+            last_changed_at=last_changed_at if last_changed_at is not None else _FUTURE_MAP.get("lastChangedAt"),
+            last_trigger=last_trigger if last_trigger is not None else _FUTURE_MAP.get("lastTrigger"),
+            fallback=_FUTURE_MAP_FALLBACK.get("lastDecision"))
 
 
 def _future_map_refresh(wait_seconds=0, trigger="unspecified"):
@@ -39476,68 +39495,80 @@ def _future_map_refresh(wait_seconds=0, trigger="unspecified"):
     else:
         acquired = _FUTURE_MAP_LOCK.acquire(blocking=False)
     if not acquired:
-        return
+        return False
     try:
-        _FUTURE_MAP["lastAttemptAt"] = _ai_now_iso()
-        _FUTURE_MAP["lastTrigger"] = trigger
-        path = _future_map_path()
         _future_map_load_saved()
+        attempted_at = _ai_now_iso()
+        _FUTURE_MAP.update(lastAttemptAt=attempted_at, lastTrigger=trigger)
         remote = _level_map_remote()
         if remote is None:
             _FUTURE_MAP["lastError"] = "remote_not_configured"
-            return
+            return False
         raw, sha = remote.get(argus_future_map.REMOTE_PATH)
-        if raw is None or sha == _FUTURE_MAP.get("sha"):
-            _FUTURE_MAP["lastError"] = None if raw is not None else "remote_document_missing"
-            if raw is not None:
-                _FUTURE_MAP["lastReadOkAt"] = _FUTURE_MAP["lastAttemptAt"]
-            return
-        public = argus_future_map.validate(json.loads(raw))
-        argus_product_naming.require_allowed(public)
-        public["remoteSha"] = sha
-        _FUTURE_MAP.update(public=public, sha=sha, lastChangedAt=_ai_now_iso(), lastError=None,
-                           lastReadOkAt=_FUTURE_MAP["lastAttemptAt"])
-        if path:
-            tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as handle:
-                json.dump(public, handle, ensure_ascii=False)
-            os.replace(tmp, path)
+        if raw is None:
+            _FUTURE_MAP["lastError"] = "remote_document_missing"
+            return False
+        completed_at = _ai_now_iso()
+        public = _FUTURE_MAP.get("public")
+        changed_at = _FUTURE_MAP.get("lastChangedAt")
+        if public is None or sha is None or sha != _FUTURE_MAP.get("sha"):
+            public = argus_future_map.validate(json.loads(raw))
+            argus_product_naming.require_allowed(public)
+            public["remoteSha"] = sha
+            changed_at = completed_at
+        # Even unchanged documents have a new successful read receipt. Persist
+        # before acknowledging success; a cached forecast alone is not a read.
+        _future_map_save_saved(public, last_read_ok_at=completed_at,
+                              last_changed_at=changed_at, last_trigger=trigger)
+        _FUTURE_MAP.update(public=public, sha=sha, lastChangedAt=changed_at,
+                           lastReadOkAt=completed_at, lastError=None)
+        return True
     except Exception as exc:
         _FUTURE_MAP["lastError"] = type(exc).__name__
+        return False
     finally:
         _FUTURE_MAP_LOCK.release()
 
 
 def _future_map_fallback_tick(now=None):
-    """Once a day at 06:00 JST, read only if no read succeeded since 00:00 JST.
-
-    Also covers a process that has nothing to show at all (no saved version):
-    then one read per hour until a version exists.
-    """
+    """Record one daily decision; an empty cache retries hourly as before."""
     now = now or datetime.now(TZ_JST)
-    _future_map_load_saved()
-    if not _FUTURE_MAP.get("public"):
-        retry_at = _FUTURE_MAP_FALLBACK.get("emptyRetryAt")
-        if retry_at is None or now >= retry_at:
-            _FUTURE_MAP_FALLBACK["emptyRetryAt"] = now + timedelta(hours=1)
-            _future_map_refresh(trigger="fallback_empty")
-            return "read_empty"
+    if not _FUTURE_MAP_LOCK.acquire(blocking=False):
         return None
-    day = now.strftime("%Y-%m-%d")
-    if now.hour < FUTURE_MAP_FALLBACK_HOUR_JST or _FUTURE_MAP_FALLBACK.get("lastDay") == day:
-        return None
-    _FUTURE_MAP_FALLBACK["lastDay"] = day
-    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    success = _FUTURE_MAP.get("lastReadOkAt")
+    trigger = None
     try:
-        fresh = bool(success) and datetime.fromisoformat(str(success).replace("Z", "+00:00")) >= midnight
-    except ValueError:
-        fresh = False
-    decision = "skipped_already_read" if fresh else "read"
-    _FUTURE_MAP_FALLBACK["lastDecision"] = {"day": day, "decision": decision}
-    if not fresh:
-        _future_map_refresh(trigger="fallback_daily")
-    return decision
+        _future_map_load_saved()
+        if not _FUTURE_MAP.get("public"):
+            retry_at = _FUTURE_MAP_FALLBACK.get("emptyRetryAt")
+            if retry_at is not None and now < retry_at:
+                return None
+            _FUTURE_MAP_FALLBACK["emptyRetryAt"] = now + timedelta(hours=1)
+            decision, trigger = "read_empty", "fallback_empty"
+        else:
+            day = now.strftime("%Y-%m-%d")
+            if now.hour < FUTURE_MAP_FALLBACK_HOUR_JST or _FUTURE_MAP_FALLBACK.get("lastDay") == day:
+                return None
+            midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            success = _FUTURE_MAP.get("lastReadOkAt")
+            try:
+                fresh = bool(success) and midnight <= datetime.fromisoformat(str(success).replace("Z", "+00:00")) <= now
+            except (ValueError, TypeError):
+                fresh = False
+            decision = "skipped_already_read" if fresh else "read"
+            _FUTURE_MAP_FALLBACK.update(lastDay=day, lastDecision={"day": day, "decision": decision})
+            try:
+                _future_map_save_saved()
+            except (OSError, ValueError) as exc:
+                _FUTURE_MAP["lastError"] = type(exc).__name__
+            if not fresh:
+                trigger = "fallback_daily"
+        if trigger:
+            # RLock also protects the decision and file replacement from a
+            # concurrent notification. The read has its own success receipt.
+            _future_map_refresh(trigger=trigger)
+        return decision
+    finally:
+        _FUTURE_MAP_LOCK.release()
 
 
 def _future_map_status():

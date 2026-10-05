@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Bound local forecast read receipts; no new remote storage or authority.
+    'argus_future_map_cache.py': '6320d47d3b49d384f3f57522c364ddc2a77e784a',
+    'test_argus_future_map_cache.py': 'a58a14490c087fa96d1a1914145f1d2bd1799f21',
     # Fixed local archive measurements, admin-only; no raw records.
     'argus_archive_health.py': 'bfe9b4143f25f74ef116b976d12be0abf4439f65',
     'test_argus_archive_health.py': '9f883cacfd8d4725dcb1bf2cfb7b80e20a4490f1',

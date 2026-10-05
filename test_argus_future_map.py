@@ -57,7 +57,7 @@ def test_refresh_reads_the_private_store_once_per_change_and_the_route_never_fet
     scanner._future_map_refresh()
     assert scanner._FUTURE_MAP["public"]["status"]["position"] == "天井圏"
     changed = scanner._FUTURE_MAP["lastChangedAt"]
-    scanner._future_map_refresh()                                     # same sha: nothing rewritten
+    scanner._future_map_refresh()                                     # same sha: content-change clock stays fixed
     assert scanner._FUTURE_MAP["lastChangedAt"] == changed
     assert json.loads((tmp_path / "future_map.json").read_text())["remoteSha"] == "sha-1"
     before = len(calls)
