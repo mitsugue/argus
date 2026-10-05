@@ -648,6 +648,9 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_private_membership.py",
+    "argus_watchlist_sync.py",
+    "argus_private_membership.py",
     "web/src/domain/sevenSignReading.ts",
     "docs/PER_CURRENT_AUTHORITY.md",
     "web/src/lib/watchlistMembershipRestore.ts",
