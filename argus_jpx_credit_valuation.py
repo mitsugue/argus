@@ -302,3 +302,13 @@ def ledger_observation_digest(row):
     content['publishedAt'] = content['publishedAt'] or None
     return hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False,
                                     allow_nan=False, separators=(',', ':')).encode()).hexdigest()
+
+
+def extend_audited_credit_inputs(base, by_series):
+    """Pass only verified official-input calculations to the existing D01 seam."""
+    from copy import deepcopy
+    out = list(base)
+    for row in by_series.get('credit.valuation_loss_pct', []) or []:
+        if audited_ledger_observation(row):
+            out.append(deepcopy(row))
+    return out

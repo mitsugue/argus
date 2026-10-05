@@ -45688,6 +45688,8 @@ def _jpx_credit_rows_effective():
                                  "availableFrom": available,
                                  "observedAt": str(row.get("observedAt") or ""),
                                  "value": float(value)})
+        from argus_jpx_credit_valuation import extend_audited_credit_inputs
+        base = extend_audited_credit_inputs(base, by_series)
     except Exception:
         pass
     return base
