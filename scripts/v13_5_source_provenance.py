@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.56"
+PRODUCT_VERSION = "v13.8.57"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'web/src/components/today/WarningConditionsDetails.tsx': '484e530cdaf0036b5b16ef1808d1042aded1b946',
+    'test_argus_warning_conditions.py': '27fc5c30ccc635711f84b4bbbca098452a422cfe',
+    'argus_warning_conditions.py': 'abf71dbbd2f5fc6b9d0526788b90225051f68792',
     'test_argus_jgb_auction.py': '4a3e3565b99b6b3e87d21024a4706a65a7ca89cf',
     'argus_jgb_auction.py': '5a8315b5e9553c3a8796867dacdeae6bc0f8a072',
     "docs/ops/recovery-phase-a-measurement-core.md": "e9ce722983325daf71a9ec1c0c106ec178cd25ba",
@@ -136,7 +139,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '00db5787896fc9818b61e6b1cf29f67592ba42dd',
+    'web/scripts/owner-today-https.mjs': 'e7e1ba35cc9d8ce7f8d4b75f76a289638aa52c76',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',

@@ -1,3 +1,4 @@
+import { WarningConditionsDetails } from './WarningConditionsDetails';
 import { revealNewsArticle } from '../../lib/revealNewsArticle';
 import { OwnerOverview } from '../dialogue/OwnerOverview';
 import { MarketBriefCard } from './MarketBriefCard';
@@ -824,7 +825,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         data-market-signals-active={topSignals?.activeCount ?? undefined}
         data-market-signals-total={topSignals?.total ?? undefined}>
         <summary aria-label={topSignals ? `成立している条件 ${topSignals.activeCount}件、全7条件` : '7条件の成立状況を確認中'}>
-          <small>日本株の7条件</small>
+          <small>{topSignals?.kind === 'warning' ? '日本株の7つの警戒条件' : '日本株の7条件'}</small>
           {/* v13.5.63 (GPT review item 1): the seven conditions are Japanese
               market inputs (credit balances, 1570, foreign flow…). With the US
               market selected they are labelled as Japan's, and the US
@@ -837,10 +838,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           <b data-argus-contract="market-signals-top-v1">
             {topSignals ? `成立している条件 ${topSignals.activeCount}件` : '成立状況を確認中'}</b>
           {usSelected&&<span className="at-seven-status">米国の条件付けはVIX水準・VIX10日変化・対SPY相対力です。7条件は日本固有（米国は適用外）。</span>}
-          <span className="at-seven-status">現行規則の向きと過去の成績を並べています。予測としての有効性は未検証です。</span>
+          <span className="at-seven-status">{topSignals?.kind === 'warning' ? '各条件の成立状況を表示。下落を予測できるかは未検証です。' : '現行規則の向きと過去の成績を並べています。予測としての有効性は未検証です。'}</span>
         </summary>
         <div className="at-seven-detail">
-          {topSignals && <div className="at-seven-signals" data-argus-contract="market-signals-top-detail-v1">
+          {topSignals?.kind === 'warning' && <WarningConditionsDetails view={topSignals}/> }
+          {topSignals && topSignals.kind !== 'warning' && <div className="at-seven-signals" data-argus-contract="market-signals-top-detail-v1">
             {topSignals.signals.map((row) => <div className="at-seven-row" key={row.id}>
               <i data-signal-id={row.id} data-signal-state={row.state}>
                 <GlossaryTip glossaryKey={row.glossaryKey}><span className="at-seven-condition">{Number(row.id.slice(-2))} · {SIGNAL_READING_JA[row.id]?.name ?? row.nameJa}</span></GlossaryTip><b>{row.stateJa}</b>
@@ -852,8 +854,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
             </div>)}
             <small>2018年理論の原典との照合待ち。成立件数だけで暴落は判断しません。</small>
           </div>}
-          {signStudy?.informationCutoff && <small className="at-seven-study-time">成績の集計時点：{new Date(signStudy.informationCutoff).toLocaleDateString('ja-JP', { timeZone:'Asia/Tokyo' })}{comparison.error ? '（更新を取得できず保存分）' : comparison.loading ? '（保存分を表示して更新中）' : ''}。割合は過去の頻度です。</small>}
-          <details className="at-seven-calibration"><summary>判断への採用状況・過去の検証</summary>
+          {topSignals?.kind !== 'warning' && signStudy?.informationCutoff && <small className="at-seven-study-time">成績の集計時点：{new Date(signStudy.informationCutoff).toLocaleDateString('ja-JP', { timeZone:'Asia/Tokyo' })}{comparison.error ? '（更新を取得できず保存分）' : comparison.loading ? '（保存分を表示して更新中）' : ''}。割合は過去の頻度です。</small>}
+          <details className="at-seven-calibration"><summary>{topSignals?.kind === 'warning' ? '旧規則の検証・売買判断への採用状況' : '判断への採用状況・過去の検証'}</summary>
+          {topSignals?.kind === 'warning' && <p>以下は旧規則の検証です。上昇を支える条件も含むため、新しい警戒条件の成績・成立件数とは別です。</p>}
           <p>売買判断への採用は未完了です。</p>
           {signStudy && <p>検証方法：成立が分かった次の営業日の終値から測定。{signStudy.cooldownSessions}営業日以内の再発生は1件にまとめ、{signStudy.minimumActivations}件未満は件数不足です。期間を3つに分けた最後の期間で、同じ向きに動いた割合の95%信頼下限が普段の基準を上回るかを確認します。</p>}
           <p className="at-seven-gated">判断レベル（SEVEN SIGN・売買判断側の校正段階）:</p>

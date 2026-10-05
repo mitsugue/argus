@@ -95,7 +95,7 @@ assert.ok(panel.includes('data-argus-contract="market-signals-top-v1"'), 'top bl
 assert.ok(panel.includes('const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null)'),
   'top block derives from the projection');
 assert.ok(panel.includes("{topSignals ? `成立している条件 ${topSignals.activeCount}件` : '成立状況を確認中'}"), 'top count from the view or truthful placeholder');
-assert.ok(panel.includes('<small>日本株の7条件</small>'), 'owner-facing name at the top');
+assert.ok(panel.includes('日本株の7つの警戒条件') && panel.includes('日本株の7条件'), 'new warning direction and legacy names are distinct');
 assert.ok(panel.includes('data-argus-contract="market-signals-top-detail-v1"'), 'seven per-signal states expand at the top');
 assert.ok(!/<b>1 \/ 7<\/b>/.test(panel), 'no hard-coded 1 / 7');
 
@@ -147,3 +147,28 @@ const derivedCurrent = ms.marketSignalsView({families:{D04:{status:'AVAILABLE',c
  ruleStatus:'RULE_NOT_DEFINED',valuationBasis:'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD',conditionRuleJa:'最新PERの警戒基準は未定義'}}});
 assert.equal(derivedCurrent.activeCount, 0);
 assert.equal(derivedCurrent.signals[3].valuationBasis, 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD');
+
+// The new rule is separate from the old upward-support count and study.
+const at = '2026-10-06T00:00:00Z';
+const warningSignals = {schemaVersion:'jp-warning-conditions-v2',informationCutoff:at,rejectedEvidence:false,
+ countPredictsCrash:false,actionAuthority:false,activeCount:99, signals:ms.MARKET_SIGNAL_DEFINITIONS.map(def=>({
+ id:def.id.replace('SIG-','WARN-'),family:def.family,ruleId:`jp-warning-conditions-v2.${def.family}`,
+ state:['D03','D04','D07'].includes(def.family)?'DATA_GATED':'ACTIVE',status:'AVAILABLE',
+ conditionMet:['D03','D04','D07'].includes(def.family)?null:true,
+ ruleStatus:['D03','D04','D07'].includes(def.family)?'RULE_NOT_DEFINED':'DEFINED',value:0.5,knowledgeTime:at,
+ distance:{signedFromBoundary:-.5,unit:'RATIO',operator:'>=',atBoundary:false,boundaryCounts:true}
+ }))};
+const view=ms.marketSignalsView({informationCutoff:at,warningSignals,marketSignals:{...server,activeCount:7}});
+assert.equal(view.kind,'warning');assert.equal(view.activeCount,4);assert.equal(view.measurableCount,4);
+assert.equal(view.signals[4].nameJa,'海外投資家の売り越し');
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:{...warningSignals,schemaVersion:'unknown'},families:{D01:fam('AVAILABLE',true)}}).activeCount,0);
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:{...warningSignals,informationCutoff:'different'}}).activeCount,0);
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:{...warningSignals,signals:[...warningSignals.signals.slice(1),warningSignals.signals[1]]}}).activeCount,0);
+const corrupted=structuredClone(warningSignals);corrupted.signals[2].state='ACTIVE';corrupted.signals[2].conditionMet=true;corrupted.signals[2].ruleStatus='DEFINED';
+corrupted.signals[4].knowledgeTime='2026-10-06T00:00:01Z';
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:corrupted}).activeCount,3);
+assert.equal(reading.warningDistanceJa({...view.signals[0],state:'CLEAR',distance:{signedFromBoundary:0,unit:'JPY',operator:'<',atBoundary:true,boundaryCounts:false}}),'基準ちょうど・まだ成立していません');
+assert.equal(reading.warningDistanceJa({...view.signals[1],state:'CLEAR',distance:{signedFromBoundary:-.25,unit:'RATIO',operator:'>=',atBoundary:false,boundaryCounts:true}}),'成立まであと0.25倍の上昇');
+assert.equal(reading.warningDistanceJa({...view.signals[1],state:'STALE'}),null);
+assert.match(reading.warningDistanceJa({...view.signals[5],state:'CLEAR',distance:{signedFromBoundary:-1e-10,unit:'MACD_GAP',operator:'>',atBoundary:false,boundaryCounts:false}}),/0.0000000001/);
+console.log('警戒v2：旧支持規則の非流用・版/時点/重複/未定義拒否・距離境界 PASS');
