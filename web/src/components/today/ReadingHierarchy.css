@@ -97,3 +97,10 @@
 .at-primary-hero .at-seven-signals .at-seven-row > i {white-space:normal;min-width:0}
 .at-seven-row .glossary-tip,.at-seven-row .glossary-tip__term {min-width:0;max-width:100%;white-space:normal;text-align:left}
 .at-primary-hero .at-seven-signals small {white-space:normal;overflow-wrap:anywhere}
+
+.at-primary-hero .at-seven > summary > b {grid-column:1/-1;grid-row:auto;font-size:22px;white-space:normal;line-height:1.5}
+.at-primary-hero .at-seven-signals .at-seven-direction {font-size:12px;font-style:normal;width:fit-content;padding:4px 8px;border:1px solid var(--line);border-radius:6px}
+.at-primary-hero .at-seven-signals .at-seven-direction[data-direction="warning"] {color:var(--amber);border-color:color-mix(in srgb,var(--amber) 50%,var(--line))}
+.at-primary-hero .at-seven-signals .at-seven-direction[data-direction="support"] {color:var(--value-positive);border-color:color-mix(in srgb,var(--value-positive) 50%,var(--line))}
+.at-primary-hero .at-seven-signals .at-seven-performance {grid-column:1/-1;font-size:13px;line-height:1.65;color:var(--text-main)}
+.at-primary-hero .at-seven-study-time {display:block;font-size:12px;line-height:1.7;margin-top:8px;color:var(--text-sub)}

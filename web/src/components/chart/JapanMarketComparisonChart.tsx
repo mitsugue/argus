@@ -271,34 +271,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
             : '判定：採用判断の期間で基準を満たさなかったため、重み付けは変えていません。'}</p>
         </section>;
       })()}
-      {document.forecast.signEventStudy && (() => {
-        const s = document.forecast.signEventStudy;
-        const pct = (n: number | null) => n === null ? '—' : `${Math.round(n * 100)}%`;
-        const names: Record<string, string> = {
-          D01: '二市場の信用売り残', D02: '日経レバの制度信用の倍率', D03: '日本株の相対的な強さ', D04: '日経平均の評価水準',
-          D05: '海外投資家の売買', D06: 'VIXのMACD', D07: '好決算でも下がる反応',
-        };
-        const verdict: Record<string, string> = {
-          INSUFFICIENT_SAMPLE: '件数不足', NOT_ABOVE_BASELINE: '基準を上回らない',
-          ABOVE_BASELINE: '基準を上回る', NOT_EVALUABLE: '過去判定なし',
-        };
-        const h = String(s.primaryHorizon);
-        return <section aria-label="七つの警戒条件の過去成績" data-sign-event-study={s.status}>
-          <h3>七つの警戒条件の過去成績</h3>
-          <ul>{Object.values(s.conditions).map(c => {
-            const m = c.horizons[h];
-            return <li key={c.family} data-sign-status={c.status}>
-              {c.family} {names[c.family] ?? c.family}：
-              {c.status === 'NOT_EVALUABLE' ? '市場全体の点灯規則がないため測れません'
-                : `発生${c.activations}回・その後${h}日で${c.expects === 'RISE' ? '上昇' : '下落'} ${pct(m?.hitShare ?? null)}（どの日でも ${pct(m?.baselineHitShare ?? null)}）`}
-              ・判定：{verdict[c.status] ?? c.status}
-            </li>;
-          })}</ul>
-          <p>条件が成立したと分かった次の営業日の終値から測っています。{s.cooldownSessions}営業日以内の再発生は1回に数えます。
-            各条件はその主張する向き（下落の警戒か、上昇・回復の確認か）で測ります。判定は期間を3つに分けた最後の期間で、その向きに動いた割合の95%信頼下限が「どの日でも同じ向きに動いた割合」を上回るかで決めます。
-            {s.minimumActivations}回未満は件数不足です。過去の割合であり、将来の確率ではありません。</p>
-        </section>;
-      })()}
+      {document.forecast.signEventStudy && <p><a href="#today-seven-conditions">七条件の向き・過去成績を見る</a></p>}
       <ul>{document.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}</ul>
     </details>
   </section>;

@@ -81,7 +81,7 @@ assert.ok(panel.includes('marketSignalsView(decisionEvidence.marketView?.project
 // Primary Action (tap to expand). The second copy in the market view is gone.
 assert.ok(!panel.includes('data-argus-contract="market-signals-v1"'), 'no duplicate MARKET SIGNALS block');
 assert.ok(!panel.includes('className="mv-fams"'), 'the seven family chips no longer repeat the signals');
-assert.ok(panel.includes('{topSignals ? topSignals.countLabel'), 'count must come from the view');
+assert.ok(panel.includes('`成立している条件 ${topSignals.activeCount}件`'), 'count must come from the view');
 // v13.5.63 (GPT additional item 1): with the US market selected the seven signals
 // are labelled as Japan's and the US conditioning inputs are named instead.
 assert.ok(panel.includes('data-argus-contract="market-signals-market-v1"'), 'US selection labels the signals as Japanese');
@@ -94,7 +94,7 @@ assert.ok(panel.includes('data-signal-state={row.state}'), 'per-signal state ren
 assert.ok(panel.includes('data-argus-contract="market-signals-top-v1"'), 'top block contract marker');
 assert.ok(panel.includes('const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null)'),
   'top block derives from the projection');
-assert.ok(panel.includes("{topSignals ? topSignals.countLabel : '— / 7'}"), 'top count from the view or truthful placeholder');
+assert.ok(panel.includes("{topSignals ? `成立している条件 ${topSignals.activeCount}件` : '成立状況を確認中'}"), 'top count from the view or truthful placeholder');
 assert.ok(panel.includes('<small>日本株の7条件</small>'), 'owner-facing name at the top');
 assert.ok(panel.includes('data-argus-contract="market-signals-top-detail-v1"'), 'seven per-signal states expand at the top');
 assert.ok(!/<b>1 \/ 7<\/b>/.test(panel), 'no hard-coded 1 / 7');
@@ -107,3 +107,19 @@ assert.equal(naState, 'NOT_APPLICABLE');
 assert.equal(ms.MARKET_SIGNAL_STATE_JA.NOT_APPLICABLE, '該当なし');
 assert.ok(glossary.GLOSSARY[glossary.MARKET_SIGNAL_STATE_GLOSSARY.NOT_APPLICABLE], 'glossary entry for NOT_APPLICABLE');
 console.log('market-signals.test: NOT_APPLICABLE state ok');
+
+const reading = require(path.join(src, 'domain', 'sevenSignReading.ts'));
+assert.equal(reading.signalDirectionJa('D01'), '警戒');
+assert.equal(reading.signalDirectionJa('D06'), '上昇を支える');
+assert.equal(reading.signalPerformanceJa('D01', null), '過去の成績：未取得');
+const study = { status:'AVAILABLE', primaryHorizon:5, conditions:{
+  D06:{ expects:'RISE', status:'NOT_ABOVE_BASELINE', horizons:{5:{hitShare:.55,baselineHitShare:.50,evaluated:40}} },
+  D04:{ expects:'FALL', status:'INSUFFICIENT_SAMPLE', horizons:{5:{hitShare:null,baselineHitShare:null,evaluated:0}} },
+  D07:{ status:'NOT_EVALUABLE' },
+}};
+assert.match(reading.signalPerformanceJa('D06',study), /上昇 55.0%（普段 50.0%）・40件・基準を上回らない/);
+assert.match(reading.signalPerformanceJa('D04',study), /下落 —（普段 —）・0件・件数不足/);
+assert.equal(reading.signalPerformanceJa('D07',study), '過去の成績：測定規則なし');
+assert.equal(reading.signalPerformanceJa('D06',{...study,status:'UNAVAILABLE'}), '過去の成績：未取得');
+study.conditions.D06.horizons[5].hitShare=0;
+assert.match(reading.signalPerformanceJa('D06',study), /上昇 0.0%/);
