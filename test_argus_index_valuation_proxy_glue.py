@@ -74,6 +74,7 @@ def lane(tmp_path, monkeypatch):
     # The per-company dividend reads that follow a warm have their own tests
     # (test_argus_ex_dividend_glue); this lane counts only bars and valuation.
     monkeypatch.setattr(scanner, "_jp_dividend_warm", lambda codes: None)
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: "2026-09-02T09:00:00Z")
     calls = []
     monkeypatch.setattr(scanner.requests, "get", _fake_get(calls))
     rows = [{"instrumentId": "NIKKEI_225_INDEX", "date": day, "close": _index_close(day)}
@@ -266,3 +267,27 @@ def test_the_index_chart_ladder_reads_the_recommended_variant_eps(lane):
     assert rows[-1]["eps"] == latest["variants"]["FORECAST_COVERED_ONLY"]["indexEps"]
     text = json.dumps(rows, ensure_ascii=False)
     assert "factor" not in text.lower() and "ウエート" not in text
+
+
+def test_proxy_cutoff_selects_latest_visible_session_without_using_later_receipts(lane):
+    scanner._jp_index_proxy_warm(lane["rows"])
+    history = lane["state"]["history"]
+    history["2026-09-01"].update(availableFrom="2026-09-01T09:00:00Z", knownAt="2026-09-01T09:00:00Z")
+    history["2026-09-02"].update(availableFrom="2026-09-02T09:00:00Z", knownAt="2026-09-03T01:00:00Z")
+    original = json.dumps(history, sort_keys=True)
+    # A newer session exists, but it was not received at the requested instant.
+    assert scanner._jp_index_proxy_row("2026-09-03T09:00:00+09:00")["date"] == "2026-09-01"
+    assert scanner._jp_index_proxy_row("2026-09-03T01:00:00Z")["date"] == "2026-09-02"
+    assert scanner._jp_index_proxy_row("2026-09-01T08:59:59Z") is None
+    assert json.dumps(history, sort_keys=True) == original
+
+
+def test_proxy_cutoff_does_not_admit_unknown_or_invalid_receipt_time(lane):
+    scanner._jp_index_proxy_warm(lane["rows"])
+    for row in lane["state"]["history"].values():
+        row.update(availableFrom=None, knownAt=None)
+    assert scanner._jp_index_proxy_row("2026-09-03T00:00:00Z") is None
+    for row in lane["state"]["history"].values():
+        row.update(availableFrom="2026-09-02T09:00:00Z", knownAt="invalid")
+    assert scanner._jp_index_proxy_row("2026-09-03T00:00:00Z") is None
+    assert scanner._jp_index_proxy_row("invalid") is None

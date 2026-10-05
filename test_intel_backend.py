@@ -53,13 +53,14 @@ def test_feed_allowlist_is_valid_and_no_dead_reuters():
         assert M.SOURCE_RIGHTS[sid].get("collection") == "rss", sid
     # the dead reuters source is gone (no name-only 0-item placeholder)
     assert "reuters_public" not in M.SOURCE_RIGHTS
-    # finance + macro + official + Bloomberg EN & JP coverage present
+    # Active finance, macro and official sources retain metadata coverage.
     sources = {e[0] for e in scanner._INTEL_FEEDS}
-    assert {"bloomberg_public", "bloomberg_jp", "nikkei_web", "cnbc_public", "marketwatch_public",
+    assert {"bloomberg_public", "nikkei_web", "cnbc_public", "marketwatch_public",
             "nasdaq_public", "yahoo_finance_public", "federal_reserve", "sec_press"} <= sources
-    # Bloomberg EN (rss) AND JP (sitemap) are both monitored
-    kinds = {e[0]: e[3] for e in scanner._INTEL_FEEDS}
-    assert kinds["bloomberg_public"] == "rss" and kinds["bloomberg_jp"] == "sitemap"
+    assert {"meti_official", "boj_official"} <= sources
+    assert not ({"bloomberg_jp", "reuters_jp"} & sources)
+    # Disabling failed acquisition must not delete source identity for stored news.
+    assert {"bloomberg_jp", "reuters_jp"} <= M.SOURCE_RIGHTS.keys()
 
 
 def test_collect_reports_per_feed(monkeypatch):

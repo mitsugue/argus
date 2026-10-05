@@ -6801,8 +6801,7 @@ _INTEL_FEEDS = [
     ("bloomberg_public",     "bbg:markets",      "https://feeds.bloomberg.com/markets/news.rss",      "rss"),
     ("bloomberg_public",     "bbg:economics",    "https://feeds.bloomberg.com/economics/news.rss",    "rss"),
     ("bloomberg_public",     "bbg:technology",   "https://feeds.bloomberg.com/technology/news.rss",   "rss"),
-    # Bloomberg 日本語版 — official robots-declared news sitemap (no RSS exists)
-    ("bloomberg_jp",         "bbg-jp:news",      "https://www.bloomberg.co.jp/feeds/cojp/sitemap_news.xml", "sitemap"),
+    # Japanese legacy sitemap retired after HTTP 404; saved source records remain.
     # 日経 web headlines (metadata only). Nikkei has no official public RSS, so this
     # uses a public 3rd-party RSS aggregator of Nikkei's free headlines; links resolve
     # to nikkei.com. PUBLIC_METADATA — titles + links only, no full text.
@@ -6825,11 +6824,10 @@ _INTEL_FEEDS = [
     ("sec_press",            "sec:press",        "https://www.sec.gov/news/pressreleases.rss", "rss"),
     # JP official + JP-language macro/markets (v10.191). Whale/大量保有 = EDINET (already
     # integrated as official catalyst); TDnet/株探/みんかぶ/FISCO have no free public RSS
-    # (HTML/403) so they stay out of the allow-list. These four ARE public feeds (200):
+    # (HTML/403) so they stay out of the allow-list. Official feeds remain active:
     ("boj_official",         "boj:whatsnew",     "https://www.boj.or.jp/rss/whatsnew.xml", "rss"),           # 日銀 公表資料
     ("meti_official",        "meti:release",     "https://www.meti.go.jp/ml_index_release_atom.xml", "rss"), # 経産省 (Atom — _parse_rss handles <entry>)
-    ("reuters_jp",           "reuters:jp-top",   "https://assets.wor.jp/rss/rdf/reuters/top.rdf", "rss"),    # ロイター日本語 トップ
-    ("reuters_jp",           "reuters:jp-biz",   "https://assets.wor.jp/rss/rdf/reuters/business.rdf", "rss"),
+    # The two third-party Japanese wire feeds return 403. Do not retry or bypass them.
     # V11.5.3 watchtower coverage: NHK 経済 (JP professional media) + crypto specialist
     # media (Core Portfolio CRYPTO_BTC_ETH had no news source). Public RSS, metadata only.
     ("nhk_business",         "nhk:keizai",       "https://www3.nhk.or.jp/rss/news/cat5.xml", "rss"),
@@ -7471,6 +7469,7 @@ def collect_institutional_intel():
     # whenever one was in the store (silent 24/7-patrol killer). Tolerate them.
     seen = {(i.get("intelligenceId") or f"t:{i.get('title') or ''}") for i in _INTEL_STORE}
     per_feed, per_source, total_new = [], {}, 0
+    _intel_collect_stage("news_feeds")
     for sid, label, url, kind in _INTEL_FEEDS:
         txt = _fetch_public_text(url)
         if not txt:
@@ -7495,10 +7494,12 @@ def collect_institutional_intel():
         per_feed.append({"feed": label, "source": sid, "fetched": len(rows),
                          "new": new, "ok": bool(txt) and len(rows) > 0})
     del _INTEL_STORE[_INTEL_STORE_MAX:]
+    _intel_collect_stage("news_translation")
     _intel_translate_titles()                          # attach titleJa (cron-time only)
     # v10.201: bias toward the owner's held/incident/watchlist names. generate_queries
     # (previously unused) builds the targeted query PLAN, and matching collected intel
     # gets an importance boost so those names surface first in the brief/rankings.
+    _intel_collect_stage("news_ranking")
     query_plan = []
     try:
         watch = _intel_watchlist_symbols()
@@ -7521,6 +7522,7 @@ def collect_institutional_intel():
     _INTEL_LAST.update({"ts": time.time(), "collected": total_new,
                         "perSource": per_source, "perFeed": per_feed,
                         "queryPlan": query_plan[:12]})
+    _intel_collect_stage("news_persist")
     _intel_persist()                                   # §27 survive restarts
     # one-line, human-readable summary echoed by the cron (どのfeedから何件)
     summary = " | ".join(f"{f['feed']}:{f['fetched']}(+{f['new']})" for f in per_feed)
@@ -9585,6 +9587,30 @@ def _investor_types_autorefresh():
 
 _INTEL_COLLECT_LOCK = threading.Lock()
 _INTEL_COLLECT_RUN = {}
+_INTEL_COLLECT_CONTEXT = threading.local()
+_INTEL_COLLECT_STAGES = frozenset((
+    "news_feeds", "news_translation", "news_ranking", "news_persist",
+    "investor_types", "calendar", "jsf", "jp_watchlist", "us_watchlist",
+    "extra_symbols", "owner_watchlist", "market_inputs", "fiscal_inputs"))
+
+
+def _intel_collect_stage(name):
+    """Admin tracking only: fixed stage IDs and durations, never data or symbols."""
+    run_id = getattr(_INTEL_COLLECT_CONTEXT, "run_id", None)
+    if not run_id or name not in _INTEL_COLLECT_STAGES:
+        return
+    with _INTEL_COLLECT_LOCK:
+        current = _INTEL_COLLECT_RUN
+        if current.get("runId") != run_id or current.get("status") != "running":
+            return
+        now = time.monotonic()
+        previous = getattr(_INTEL_COLLECT_CONTEXT, "stage_started", None)
+        if previous is not None:
+            current.setdefault("completedStages", []).append({
+                "stage": current["stage"], "elapsedSeconds": round(max(0, now - previous), 3)})
+            current["completedStages"] = current["completedStages"][-len(_INTEL_COLLECT_STAGES):]
+        _INTEL_COLLECT_CONTEXT.stage_started = now
+        current.update(stage=name, stageStartedAt=_ai_now_iso())
 
 
 def _intel_collect_tracked(request_id, *, status_only=False):
@@ -9604,13 +9630,19 @@ def _intel_collect_tracked(request_id, *, status_only=False):
                        finishedAt=None, errorClass=None)
 
         def work():
+            _INTEL_COLLECT_CONTEXT.run_id = request_id
+            _INTEL_COLLECT_CONTEXT.stage_started = None
             try:
                 result = _collect_institutional_intel_and_warm()
                 terminal = {"status": "done", "result": result}
             except Exception as exc:
                 terminal = {"status": "failed", "errorClass": type(exc).__name__}
             with _INTEL_COLLECT_LOCK:
+                started = _INTEL_COLLECT_CONTEXT.stage_started
+                if started is not None:
+                    current["stageElapsedSeconds"] = round(max(0, time.monotonic() - started), 3)
                 current.update(terminal, finishedAt=_ai_now_iso())
+            _INTEL_COLLECT_CONTEXT.run_id = None
 
         worker = threading.Thread(target=work, name="argus-intel-collect", daemon=True)
         try:
@@ -9646,10 +9678,12 @@ def api_argus_intel_collect():
 
 def _collect_institutional_intel_and_warm():
     out = collect_institutional_intel()
+    _intel_collect_stage("investor_types")
     try:
         _investor_types_autorefresh()      # v13.5.36: keep JP_MARKET_ENGINE D05 fed (daily)
     except Exception:
         pass
+    _intel_collect_stage("calendar")
     try:
         _jp_canonical_calendar_autoregister()   # daily-authority calendar
     except Exception:
@@ -9659,12 +9693,14 @@ def _collect_institutional_intel_and_warm():
     # cold and every 需給ランク reads Unknown until the owner happens to tap
     # エントリー診断. Both fetchers honor their own TTLs (12h margin / 6h JSF),
     # so this 30-min cron is a cheap no-op most runs.
+    _intel_collect_stage("jsf")
     warmed = {"jsf": False, "margin": 0}
     try:
         table, _d = _jsf_balance_table()
         warmed["jsf"] = bool(table)
     except Exception:
         pass
+    _intel_collect_stage("jp_watchlist")
     for s in _JP_WATCHLIST:
         try:
             code4 = str(s.get("symbol") or "")[:4]
@@ -9674,6 +9710,7 @@ def _collect_institutional_intel_and_warm():
                 _jq_price_history(code4)   # daily bars → avgVolume/daysToCover/runup
         except Exception:
             continue
+    _intel_collect_stage("us_watchlist")
     for s in _US_WATCHLIST:                    # v11.11.0: US bars for 需給/outcome
         try:
             if _us_price_history(str(s.get("symbol") or "")):
@@ -9682,6 +9719,7 @@ def _collect_institutional_intel_and_warm():
             continue
     # v12.0.6: デバイスから要求された追加銘柄(有界レジストリ)もウォームする —
     # 公開GETはcached-onlyのため、ここが唯一のfetch経路(30分毎・TTL付き)。
+    _intel_collect_stage("extra_symbols")
     for xs, meta in list(_SD_EXTRA_SYMBOLS.items()):
         try:
             if meta.get("market") == "JP":
@@ -9700,6 +9738,7 @@ def _collect_institutional_intel_and_warm():
     # fetched by anything, and the public GET is cache-only, so they stayed
     # 「価格なし」 forever. Warm them here on every collect (J-Quants EOD, one
     # bounded batch); the cache-only reads then assemble them per symbol.
+    _intel_collect_stage("owner_watchlist")
     owner_codes = _owner_jp_symbols_for_warm()
     if owner_codes:
         try:
@@ -9711,11 +9750,13 @@ def _collect_institutional_intel_and_warm():
     # v13.5.36: warm the JP_MARKET_ENGINE CORE input caches (^N225/^VIX OHLCV, 1570 weekly
     # margin, FRED VIX). This admin/cron path is the ONLY fetch route; the
     # public decision-evidence GET reads these caches cached-only.
+    _intel_collect_stage("market_inputs")
     try:
         out["jpMarketEngineInputWarm"] = dict(
             _jp_market_engine_pit_inputs(warm=True).get("sourceStatus") or {})
     except Exception as exc:
         out["jpMarketEngineInputWarm"] = {"error": type(exc).__name__}
+    _intel_collect_stage("fiscal_inputs")
     out["jpFiscalEnvironmentWarm"] = _jp_fiscal_environment_warm()
     return out
 
@@ -39579,11 +39620,18 @@ def _level_map_public():
 
 
 def _jp_index_proxy_row(cutoff):
-    """The latest session's proxy in the shape the price scale and D04 consume."""
+    """Latest session known at cutoff, with the original receipt times intact."""
     history = _JP_INDEX_PROXY.get("history") or {}
-    if not history:
+    at = jp_market_engine._instant(cutoff)
+    if at is None:
         return None
-    latest = history[max(history)]
+    visible = {day: row for day, row in history.items()
+               if isinstance(row, dict)
+               and (known := jp_market_engine._knowledge_time(row)) is not None
+               and known <= at}
+    if not visible:
+        return None
+    latest = visible[max(visible)]
     variant = _JP_INDEX_PROXY.get("recommendedVariant") or argus_index_valuation_proxy.RECOMMENDED_VARIANT
     row = argus_index_valuation_proxy.select_variant({**latest, "basis": argus_index_valuation_proxy.PROXY_BASIS,
         "epsKind": "PROXY_FROM_CONSTITUENT_FORECAST_EPS"}, variant)
