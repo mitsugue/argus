@@ -416,10 +416,13 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          curl -sS -X POST --max-time 300 \
-            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "https://argus-backend-3j2m.onrender.com/api/argus/institutional-intelligence/collect" \
-            | head -c 600 || echo "collect-warm failed (cron will recover)"
+          if curl -fsS -X POST --max-time 300 --output /dev/null \
+              -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "https://argus-backend-3j2m.onrender.com/api/argus/institutional-intelligence/collect" 2>/dev/null; then
+            echo "収集処理の起動を確認しました。応答本文は表示しません。"
+          else
+            echo "::warning title=collect-warm::収集処理を起動できませんでした。次の定期実行で再確認します。"
+          fi
       - name: Publish producer trigger evidence
         if: always()
         uses: actions/upload-artifact@v4
