@@ -62,10 +62,15 @@ def project(quotes, histories, sectors, *, now=None, benchmark='1306', max_delay
         for period in PERIODS:
             anchor = anchors.get(period)
             base = (histories.get(symbol) or {}).get(anchor)
-            valid = state == 'AVAILABLE' and number(base) and base > 0
+            observed_valid = state in ('AVAILABLE', 'DELAYED') and number(base) and base > 0
+            observed_return = round((q['price']/base-1)*100, 4) if observed_valid else None
             values[str(period)] = {'startDate': anchor, 'endDate': target.isoformat(),
-                'returnPct': round((q['price']/base-1)*100, 4) if valid else None}
+                'returnPct': observed_return if state == 'AVAILABLE' else None,
+                # Keep the last same-session observation distinct from a current value.
+                # A delayed row remains grey; yesterday never becomes today's return.
+                'lastObservedReturnPct': observed_return}
         return {'sourceTimestamp': q.get('sourceTimestamp'), 'source': q.get('source'),
+                'receivedAt': q.get('receivedAt'),
                 'observedDelaySeconds': max(0, int((now-stamp).total_seconds())) if stamp else None,
                 'state': state, 'periods': values}
 

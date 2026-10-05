@@ -40,3 +40,16 @@ def test_weekend_keeps_last_session_label_separate_from_today():
     q,b=data();r=h.project(q,b,SECTORS,now=datetime(2026,9,19,1,tzinfo=timezone.utc))
     assert r['session']['session']=='WEEKEND_CLOSED'
     assert r['targetDate']=='2026-09-18' and not r['isToday']
+
+
+def test_delayed_same_day_observation_retained_without_current_color_or_relative_value():
+    q, b = data()
+    q['1631']['sourceTimestamp'] = '2026-09-18T00:00:00Z'
+    row = h.project(q, b, SECTORS, now=NOW)['rows'][0]
+    assert row['state'] == 'DELAYED'
+    assert row['periods']['1']['returnPct'] is None
+    assert row['periods']['1']['lastObservedReturnPct'] == 10
+    assert row['periods']['1']['relativeToBenchmarkPct'] is None
+    q['1631']['sourceTimestamp'] = '2026-09-17T06:30:00Z'
+    row = h.project(q, b, SECTORS, now=NOW)['rows'][0]
+    assert row['periods']['1']['lastObservedReturnPct'] is None

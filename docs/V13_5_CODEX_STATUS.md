@@ -577,3 +577,7 @@ It changes no calculation, threshold, action authority or prediction rule.
 Owner-iPhone persistence and an actual closed-app notification receipt remain
 separate device acceptance items. v13.7 work remains prohibited until the owner
 explicitly restarts it.
+
+### 2026-10-05：後続版との整理
+
+13.7の保留は後日の明示指示により解除済み。現在の範囲は `V13_7_SHAPEUP_REQUIREMENTS.md` と `V13_8_REQUIREMENTS.md` を優先する。旧対話・保有管理・個別ライブ等の残件を復活させない。指数PERの公式取得不能と代理系列の利用、実機通知、運用上の残件は `V13_7_SHAPEUP_ACCEPTANCE.md` の2026-10-05節で追跡する。以前の完了記録を削除せず、配信検査・本番データの充足・実機受入を区別する。

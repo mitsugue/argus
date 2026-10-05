@@ -1,6 +1,6 @@
 import React from 'react';
 import { useJapanMarketComparison } from '../../hooks/useJapanMarketComparison';
-import { evidenceJa, rowLabelJa, type LevelMapRow, type LevelMapScore, type LevelMapState } from '../../lib/levelMap';
+import { evidenceJa, rowLabelJa, validValuationHistory, type LevelMapRow, type LevelMapScore, type LevelMapState } from '../../lib/levelMap';
 import './LevelMapCard.css';
 
 // Nikkei morning level map (2026-10-04). The map is fixed before the open and
@@ -38,6 +38,8 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
   const up = map.rows.filter(r => r.side === 'UP').sort((a, b) => b.price - a.price);
   const down = map.rows.filter(r => r.side === 'DOWN').sort((a, b) => b.price - a.price);
   const cov = map.epsCoverage;
+  const history = validValuationHistory(state.chart?.valuationHistory)
+    && state.chart.valuationHistory.lastDate <= map.epsDate ? state.chart.valuationHistory : null;
   const perRows = map.rows.filter(r => r.kinds.includes('PER_LINE'));
   const above = perRows.filter(r => r.side === 'UP').sort((a, b) => a.price - b.price)[0];
   const below = perRows.filter(r => r.side === 'DOWN').sort((a, b) => b.price - a.price)[0];
@@ -57,10 +59,13 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
       {below && <article data-side="DOWN"><span>{below.multiple}倍まで下がると</span><b>{yen(below.price)}<small>円</small></b><strong>{signed(below.distancePct)}%</strong></article>}
     </div>
     <div className="lm-use">
-      <b>上の価格まで届きやすいか</b>
-      <p>{above && `上の${above.multiple}倍までは、前日終値から${signed(above.distancePct)}%の上昇が必要です。`}
-        PERの倍率は上値の限界ではありません。超えるか、そこで止まるかは、この目盛りだけでは判断できません。</p>
-      <p>株価が上がった時に、利益も伸びたのか、同じ利益に高い値段を付けているのかを比べるために使います。</p>
+      <b>過去と比べて、利益に対する株価は高いか</b>
+      {history?.sufficient && above?.multiple === history.upperMultiple ? <>
+        <p><strong>{history.upperMultiple}倍は、この期間の中央値{history.median.toFixed(1)}倍{history.upperMultiple > history.median ? 'より上' : history.upperMultiple < history.median ? 'より下' : 'と同じ位置'}です。</strong></p>
+        <p>{history.upperMultiple}倍以上の日は <strong>{history.atOrAboveUpper} / {history.count}営業日</strong>。最高は{history.maximum.toFixed(1)}倍でした。</p>
+        <small>{history.firstDate.replaceAll('-', '/')}〜{history.lastDate.replaceAll('-', '/')} · 同じ方式で再計算{history.missingSessions ? ` · 未集計${history.missingSessions}日` : ''}</small>
+      </> : <p>同じ計算方式の過去データを集計中です。</p>}
+      <p>利益に対して高いかを比べる目盛りです。{above?.multiple ?? '整数の'}倍が天井という意味ではありません。</p>
     </div>
     <div className="lm-reach" aria-label="同じ距離の過去の到達割合">
       {[above, below].filter((r): r is LevelMapRow => !!r).map(row => <article key={row.side} data-side={row.side}>
@@ -68,10 +73,7 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
         <strong>{Number.isFinite(row.reachedWithin10SessionsPct) ? `${row.reachedWithin10SessionsPct}%` : '未集計'}</strong>
         <span>同じくらいの距離で、10営業日以内に届いた過去の割合</span>
       </article>)}
-      {above&&below&&Number.isFinite(above.reachedWithin10SessionsPct)&&Number.isFinite(below.reachedWithin10SessionsPct)&&<p>{above.reachedWithin10SessionsPct!<below.reachedWithin10SessionsPct!
-        ? '過去の到達割合は、上の価格より下の価格の方が高い位置です。'
-        : above.reachedWithin10SessionsPct!>below.reachedWithin10SessionsPct! ? '過去の到達割合は、下の価格より上の価格の方が高い位置です。' : '上の価格と下の価格への過去の到達割合は同じです。'}今の上昇・下落予測ではありません。</p>}
-      <small>個別のPER線を超える確率ではなく、同じ距離帯の過去の集計です。反発した割合でもありません。</small>
+      <small>同じ距離帯の集計です。今後の確率や、反発した割合ではありません。</small>
     </div>
     <details className="lm-explanation"><summary>倍率と価格の読み方</summary>
       <p>たとえば、この朝は約{map.per.toFixed(2)}倍。{examples.length > 0 && `日経平均が${examples.join('、')}になります。`}</p>
@@ -112,5 +114,10 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
 /** Today: the five-session comparison reply carries the stored morning map. */
 export function LevelMapCard() {
   const state = useJapanMarketComparison(5);
-  return <LevelMapView state={state.levelMap} />;
+  if (!state.levelMap?.latest) return <section className="lm-card card" aria-label="日経平均の価格の目盛り">
+    <header className="lm-heading"><b>日経平均の価格の目盛り</b></header>
+    <p role="status">{state.loading ? '朝の保存データを読み込んでいます' : state.error ? '朝の保存データを読み込めませんでした' : '朝の価格と利益のデータを準備しています'}</p>
+    {state.error && <button type="button" onClick={state.retry}>再取得</button>}
+  </section>;
+  return <><LevelMapView state={state.levelMap} />{state.error && <p role="status">更新できなかったため、保存済みの目盛りを表示しています。</p>}</>;
 }

@@ -45,3 +45,14 @@ const singleSide = renderToStaticMarkup(React.createElement(LevelMapView, { stat
   latest: { ...latest, rows: latest.rows.filter(r => r.side === 'DOWN') } } }));
 assert.ok(singleSide.includes('日経平均が66,854円まで下がると17倍になります。'));
 console.log('Level map card PASS');
+
+const history = {basis:'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD',firstDate:'2024-01-04',lastDate:'2026-10-02',
+ count:600,missingSessions:12,sufficient:true,median:16.9,minimum:12.5,maximum:21.2,upperMultiple:18,atOrAboveUpper:210,retrospective:true,actionAuthority:false};
+const renderHistory = value => renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{valuationHistory:value}}}));
+assert.ok(renderHistory(history).includes('中央値16.9倍より上'));
+assert.ok(renderHistory(history).includes('210 / 600営業日'));
+assert.ok(renderHistory(history).includes('未集計12日'));
+for (const invalid of [{...history,basis:'INDEX_WEIGHTED'},{...history,lastDate:'2026-10-06'},
+ {...history,atOrAboveUpper:601},{...history,sufficient:false}]) {
+ assert.ok(!renderHistory(invalid).includes('210 / 600営業日'));
+}
