@@ -8412,7 +8412,7 @@ def _public_diagnostics_snapshot():
 
 
 def _collection_health_inputs(now_iso):
-    """Cached metadata only; no restore, provider call, payload, or identifier."""
+    """Cached metadata and bounded local counts; no restore/provider/payload."""
     sources = {}
     by_series = argus_market_ledger.latest_by_series(_MARKET_LEDGER, now_iso)
     short = by_series.get("credit.short_balance") or []
@@ -8450,7 +8450,13 @@ def _collection_health_inputs(now_iso):
         policy = "not_configured" if configured == "NOT_CONFIGURED" else "configured_valid"
     except Exception:
         policy = "invalid"
-    return {"sources": sources, "inputSpans": _JP_MARKET_FEATURE_INPUT_SPANS, "namingPolicy": policy}
+    from argus_archive_health import read_archive_metadata
+    root = _DURABILITY_PATHS.get("root") if _cost_policy_durable_enabled() else None
+    archives = {key: read_archive_metadata(os.path.join(root, filename) if root else None, kind=key)
+                for key, filename in (("analysis_history", "market_analysis_history.sqlite3"),
+                                      ("source_history", "jp_market_source_history.sqlite3"))}
+    return {"sources": sources, "inputSpans": _JP_MARKET_FEATURE_INPUT_SPANS,
+            "namingPolicy": policy, "archives": archives}
 
 
 def _operational_diagnostics_snapshot():

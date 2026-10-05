@@ -17,6 +17,7 @@ SOURCE_SPECS = {
     "news_collection": ("ニュース収集", "既存の定期巡回", 3 * 3600),
 }
 WINDOW_LIMIT = 3000
+from argus_archive_health import TABLES as ARCHIVE_TABLES
 WINDOW_SOURCES = {"vix": "VIX", "topix": "TOPIX", "us10y": "米10年金利", "usdjpy": "ドル円"}
 
 
@@ -92,9 +93,33 @@ def build_collection_health(inputs, *, now_iso):
                         "warningAt": WINDOW_LIMIT * 4 // 5,
                         "status": "unknown" if count is None else "warning" if count >= WINDOW_LIMIT * 4 // 5 else "within_limit",
                         "scope": "calculation_window", "archiveRowsMeasured": False})
+    raw_archives = inputs.get("archives") if isinstance(inputs.get("archives"), Mapping) else {}
+    archives = []
+    for key, names in ARCHIVE_TABLES.items():
+        raw = raw_archives.get(key) if isinstance(raw_archives.get(key), Mapping) else {}
+        raw_tables = raw.get("tables") if isinstance(raw.get("tables"), Mapping) else {}
+        tables = []
+        for name in names:
+            table = raw_tables.get(name) if isinstance(raw_tables.get(name), Mapping) else {}
+            count = _count(table.get("rows"))
+            measured = table.get("status") == "measured" and count is not None
+            tables.append({"key": name, "status": "measured" if measured else
+                           "not_created" if table.get("status") == "not_created" else "unknown",
+                           "rows": count if measured else None})
+        status = raw.get("status")
+        db_bytes, wal_bytes = _count(raw.get("databaseBytes")), _count(raw.get("walBytes"))
+        measured = status == "measured" and db_bytes is not None and wal_bytes is not None
+        archives.append({"key": key, "status": "measured" if measured else
+                         status if status in ("not_configured", "missing", "unavailable") else "unknown",
+                         "databaseBytes": db_bytes if measured else None,
+                         "walBytes": wal_bytes if measured else None,
+                         "tables": tables if measured else [{**t, "rows": None, "status": "unknown"} for t in tables],
+                         "scope": "local_sqlite_archive", "rowLimit": None,
+                         "storageQuotaBytes": None, "automaticPruning": False,
+                         "remoteRecoveryMeasured": False})
     policy = inputs.get("namingPolicy")
     return {"schemaVersion": "argus-collection-health-v1", "asOf": now_iso,
-            "sources": rows, "inputWindows": windows,
+            "sources": rows, "inputWindows": windows, "archives": archives,
             "namingPolicy": policy if policy in ("configured_valid", "not_configured", "invalid") else "unknown",
             "noteJa": "データ更新と確認時刻は別です。窓の上限は分析対象で、原本の保存件数ではありません。",
             "actionAuthority": False}
