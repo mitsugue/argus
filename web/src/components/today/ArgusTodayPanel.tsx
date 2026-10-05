@@ -24,6 +24,8 @@ import { useDecisionEvidence } from '../../hooks/useDecisionEvidence';
 import { GlossaryTip } from '../common/GlossaryTip';
 import { REVERSAL_STATE_GLOSSARY, FAMILY_STATE_GLOSSARY } from '../../domain/glossary';
 import { marketSignalsView } from '../../domain/marketSignals';
+import { useJapanMarketComparison } from '../../hooks/useJapanMarketComparison';
+import { CURRENT_SIGNAL_DIRECTION, signalDirectionJa, signalPerformanceJa } from '../../domain/sevenSignReading';
 import type { NewsIntelEvent } from '../../hooks/useNewsIntelligence';
 import { orderMaterialNews, groupRepeatedNewsHeadlines, NEWS_IMPORTANCE_JA } from '../../domain/newsPresentation';
 import type { MarketHorizon, MarketInstrumentSymbol } from '../../domain/marketInstruments';
@@ -609,6 +611,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   // from the real market-view projection — the seven-signal system the owner
   // reads first.  The SDA Seven Sign level stays as a secondary line.
   const decisionEvidence = useDecisionEvidence();
+  const comparison = useJapanMarketComparison(5);
+  const signStudy = comparison.document?.forecast.signEventStudy;
   const { brief: editorialBrief } = useMarketBrief();
   const editorialScope = view.selectedMarket === 'JP' && selectedSymbol === '1321' && horizon === 5;
   const [otherMarketsOpen, setOtherMarketsOpen] = React.useState(false);
@@ -814,14 +818,12 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         {decisionEvidence.loading && decisionEvidence.generatedAt && <span className="at-stored-note" data-argus-contract="stored-evidence-note-v1">
           <TriangleStepLoader compact label="判断の根拠を更新中" /> 保存分 {new Date(decisionEvidence.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} を表示中（更新取得中）</span>}</div>
 
-      <details className="at-seven" open data-argus-contract="seven-sign-ladder-v1"
+      <details id="today-seven-conditions" className="at-seven" open data-argus-contract="seven-sign-ladder-v1"
         data-seven-status={view.canonicalDecision.sevenSign.status}
         data-seven-level={view.actionScore ?? undefined}
         data-market-signals-active={topSignals?.activeCount ?? undefined}
         data-market-signals-total={topSignals?.total ?? undefined}>
-        <summary aria-label={topSignals
-          ? `Market Signals ${topSignals.countLabel} · Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`
-          : `Seven Sign ${view.actionScore ?? '未確定'} / 7 · ${view.canonicalDecision.sevenSign.status}`}>
+        <summary aria-label={topSignals ? `成立している条件 ${topSignals.activeCount}件、全7条件` : '7条件の成立状況を確認中'}>
           <small>日本株の7条件</small>
           {/* v13.5.63 (GPT review item 1): the seven conditions are Japanese
               market inputs (credit balances, 1570, foreign flow…). With the US
@@ -833,23 +835,27 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           {decisionEvidence.marketView?.informationCutoff && <i className="at-signals-cutoff" data-argus-contract="market-signals-cutoff-v1">
             {new Date(decisionEvidence.marketView.informationCutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })} 時点</i>}
           <b data-argus-contract="market-signals-top-v1">
-            {topSignals ? topSignals.countLabel : '— / 7'}</b>
+            {topSignals ? `成立している条件 ${topSignals.activeCount}件` : '成立状況を確認中'}</b>
           {usSelected&&<span className="at-seven-status">米国の条件付けはVIX水準・VIX10日変化・対SPY相対力です。7条件は日本固有（米国は適用外）。</span>}
-          <span className="at-seven-status">{topSignals ? `全${topSignals.total}条件のうち${topSignals.activeCount}条件が成立` : '7条件の成立状況を確認中'}。現在採用している7つの点灯条件です。</span>
+          <span className="at-seven-status">現行規則の向きと過去の成績を並べています。予測としての有効性は未検証です。</span>
         </summary>
         <div className="at-seven-detail">
           {topSignals && <div className="at-seven-signals" data-argus-contract="market-signals-top-detail-v1">
             {topSignals.signals.map((row) => <div className="at-seven-row" key={row.id}>
               <i data-signal-id={row.id} data-signal-state={row.state}>
                 <GlossaryTip glossaryKey={row.glossaryKey}><span className="at-seven-condition">{Number(row.id.slice(-2))} · {SIGNAL_READING_JA[row.id]?.name ?? row.nameJa}</span></GlossaryTip><b>{row.stateJa}</b>
+                <span className="at-seven-direction" data-direction={CURRENT_SIGNAL_DIRECTION[row.family] ?? 'unknown'}>成立時：{signalDirectionJa(row.family)}</span>
+                <small className="at-seven-performance">{signalPerformanceJa(row.family, signStudy)}</small>
                 {SIGNAL_READING_JA[row.id] && <small className="at-seven-rule">{SIGNAL_READING_JA[row.id].condition}</small>}
                 {row.gateNoteJa ? <small className="at-seven-gate-note"> {row.gateNoteJa}</small> : null}
                 {row.factNoteJa && <small className="at-seven-fact">{row.factNoteJa}</small>}</i>
             </div>)}
-            <small>現在の点灯規則には、上昇を支える条件も含まれています。点灯数が多いほど暴落が近い、と読める仕組みにはなっていません。</small>
+            <small>2018年理論の原典との照合待ち。成立件数だけで暴落は判断しません。</small>
           </div>}
+          {signStudy?.informationCutoff && <small className="at-seven-study-time">成績の集計時点：{new Date(signStudy.informationCutoff).toLocaleDateString('ja-JP', { timeZone:'Asia/Tokyo' })}{comparison.error ? '（更新を取得できず保存分）' : comparison.loading ? '（保存分を表示して更新中）' : ''}。割合は過去の頻度です。</small>}
           <details className="at-seven-calibration"><summary>判断への採用状況・過去の検証</summary>
-          <p>過去の検証では、同時に成立しても5日後の成績は普段と同じでした。現在は売買の合図には使いません。</p>
+          <p>売買判断への採用は未完了です。</p>
+          {signStudy && <p>検証方法：成立が分かった次の営業日の終値から測定。{signStudy.cooldownSessions}営業日以内の再発生は1件にまとめ、{signStudy.minimumActivations}件未満は件数不足です。期間を3つに分けた最後の期間で、同じ向きに動いた割合の95%信頼下限が普段の基準を上回るかを確認します。</p>}
           <p className="at-seven-gated">判断レベル（SEVEN SIGN・売買判断側の校正段階）:</p>
           <ul>
             {[1, 2, 3, 4, 5, 6, 7].map((level) => <li key={level}

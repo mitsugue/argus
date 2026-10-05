@@ -34,7 +34,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   // SAME market-view document as the MARKET SIGNALS header, stamped with its
   // information cutoff, so the two never show different counts.
   const cutoffJa = cutoff ? new Date(cutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : null;
-  const chartChip = signals ? `成立 ${signals.activeCount}/${signals.total}${cutoffJa ? `（${cutoffJa} 時点）` : ''}`
+  const chartChip = signals ? `成立している条件 ${signals.activeCount}件${cutoffJa ? `（${cutoffJa} 時点）` : ''}`
     : market === 'US' ? '米国: 7条件は適用外（類似局面のみ）' : brief?.chips.chart;
   const updateState = loading ? <p className="at-brief__update"><TriangleStepLoader label={brief ? "前回の見立てを表示しながら更新しています" : "見立てを読み込んでいます"} /></p> : error ? <p role="status" className="at-brief__update">
     {brief ? '見立てを更新できません。最後に取得した説明を表示しています。' : '見立てを取得できません。'}

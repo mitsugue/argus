@@ -246,7 +246,7 @@ check('Today never claims an empty calendar it could not read',
 // what is actually the case instead of "waiting".
 {
   const kpis = panel.indexOf('className="at-kpis"');
-  const seven = panel.indexOf('<details className="at-seven"');
+  const seven = panel.indexOf('className="at-seven"');
   const nextEvent = panel.indexOf('aria-label="重要イベント"');
   const otherMarkets = panel.indexOf('className="at-other-markets card"');
   const context = panel.indexOf('className="at-event card at-context"');
