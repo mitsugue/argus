@@ -253,6 +253,28 @@ def _number(value: Any) -> Optional[float]:
         raise ValueError("invalid_number") from exc
 
 
+def _observation_metadata(value: Any) -> Dict[str, Any]:
+    """CSV transports typed, bounded JSON; old dictionary metadata stays valid."""
+    if value is None or value == "":
+        return {}
+    if isinstance(value, str):
+        if len(value.encode("utf-8")) > 16_384:
+            raise ValueError("metadata_size")
+        try:
+            value = json.loads(value)
+        except (ValueError, TypeError, RecursionError):
+            raise ValueError("metadata_json") from None
+    if not isinstance(value, dict) or len(value) > 32:
+        raise ValueError("metadata_object")
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
+    except (ValueError, TypeError, RecursionError):
+        raise ValueError("metadata_json") from None
+    if len(encoded.encode("utf-8")) > 16_384:
+        raise ValueError("metadata_size")
+    return deepcopy(value)
+
+
 def append_observation(state: Dict[str, Any], candidate: Dict[str, Any],
                        *, now_iso: str, import_id: str = "") -> Tuple[Dict[str, Any], Dict[str, Any]]:
     st = normalize_state(state)
@@ -290,6 +312,11 @@ def _append_observation_in_place(st: Dict[str, Any], candidate: Dict[str, Any],
         raise ValueError("invalid_published_at")
     if value is None and status not in ("missing", "delayed"):
         raise ValueError("missing_value_status")
+    metadata = _observation_metadata(candidate.get("metadata"))
+    if sid == "credit.valuation_loss_pct" and (source_kind == "derived" or "valuationCalculation" in metadata):
+        from argus_jpx_credit_valuation import validate_ledger_observation
+        validate_ledger_observation({**candidate, "value": value, "unit": unit,
+                                     "sourceKind": source_kind, "metadata": metadata})
     rolled = set(st["rolledBackImports"])
     if prior_index is None:
         prior = [x for x in st["observations"] if x.get("seriesId") == sid
@@ -310,7 +337,7 @@ def _append_observation_in_place(st: Dict[str, Any], candidate: Dict[str, Any],
             "value": value, "unit": unit, "source": str(candidate.get("source") or "manual"),
             "sourceKind": source_kind,
             "revision": revision, "status": status,
-            "metadata": dict(candidate.get("metadata") or {}), "importId": import_id or None}
+            "metadata": metadata, "importId": import_id or None}
     body["id"] = "mo-" + _hash(body)
     st["observations"].append(body)
     if prior_index is not None:
@@ -621,6 +648,9 @@ def parse_csv(text: str) -> List[Dict[str, Any]]:
     if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
         raise ValueError("csv_columns")
     rows = [dict(x) for x in reader]
+    if "metadata" in reader.fieldnames:
+        for row in rows:
+            row["metadata"] = _observation_metadata(row.get("metadata"))
     if len(rows) > 5000:
         raise ValueError("csv_row_limit")
     return rows
@@ -682,6 +712,15 @@ def public_view(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
     table = []
     for sid, (_, label, acquisition, source_kind) in SERIES.items():
         rows = by.get(sid) or []
+        if sid == "credit.valuation_loss_pct":
+            from argus_jpx_credit_valuation import audited_ledger_observation, ledger_observation_digest
+            audited = [row for row in rows if audited_ledger_observation(row)]
+            if audited:
+                # Do not change the SERIES licensing policy or expose legacy
+                # manual rows through history, ranks or week-to-week changes.
+                rows = audited
+                label = "信用評価損益率（JPX公表入力から算式で計算）"
+                acquisition, source_kind = "jpx_official_formula", "derived"
         drows = metric_history.get(sid) or []
         cur, prev = ((rows[-1] if rows else None),
                      (rows[-2] if len(rows) > 1 else None))
@@ -734,13 +773,13 @@ def public_view(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
                       "unit": SERIES[sid][0],
                       "previousChange": (None if licensed_redacted or not cur or not prev or cur.get("value") is None or prev.get("value") is None
                                          else cur["value"] - prev["value"]),
-                      "fourPeriodDirection": direction4,
+                      "fourPeriodDirection": (None if licensed_redacted else direction4),
                       "fourPeriodTotal": (None if licensed_redacted else four_period_total),
                       "consecutiveDirectionCount": (None if licensed_redacted else consecutive_direction_count),
                       "thresholdDistance": (None if licensed_redacted else threshold_distance),
                       "thresholdSide": (None if licensed_redacted else threshold_side),
                       "thresholdStreak": (None if licensed_redacted else threshold_streak),
-                      "historicalPercentile": rank,
+                      "historicalPercentile": (None if licensed_redacted else rank),
                       "periodEnd": (cur.get("periodEnd") or cur.get("asOf")) if cur else None,
                       "availableFrom": cur.get("availableFrom") if cur else None,
                       "status": ("licensed_redacted" if licensed_redacted and cur else
@@ -752,7 +791,13 @@ def public_view(state: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
                                    # Replay may consume a weekly point only
                                    # after publication, never at period end.
                                    "availableFrom": x.get("availableFrom")
-                                   or x.get("periodEnd") or x.get("asOf")}
+                                   or x.get("periodEnd") or x.get("asOf"),
+                                   **({"calculationDigest": ledger_observation_digest(x)}
+                                      if sid == "credit.valuation_loss_pct" else {}),
+                                   **({"auditedObservation": {key: deepcopy(x.get(key)) for key in
+                                      ("seriesId", "periodEnd", "publishedAt", "availableFrom", "observedAt",
+                                       "value", "unit", "source", "sourceKind", "status", "metadata")}}
+                                      if sid == "credit.valuation_loss_pct" and x is cur else {})}
                                   for x in (rows or drows)[-1300:]])})
     for mid, label in (("valuation.eps", "日経平均EPS"),
                        ("valuation.bps", "日経平均BPS"),
