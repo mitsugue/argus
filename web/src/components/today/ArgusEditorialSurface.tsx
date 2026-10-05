@@ -9,7 +9,6 @@ import { JapanMarketComparisonChart } from '../chart/JapanMarketComparisonChart'
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import { TodayDecisionStrip, type CriticalTodayNews } from './TodayDecisionStrip';
 import { MarketPositionCard } from './MarketPositionCard';
-import { LevelMapCard } from './LevelMapCard';
 import { friendlyFactText } from '../../lib/todayDecision';
 import { marketChanges, marketWording } from '../../lib/marketWording';
 import './ArgusEditorialSurface.css';
@@ -98,7 +97,6 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
         <FiscalEnvironmentDetails brief={brief} />
         <MarketAnalysisHistory key="saved-history" />
       </details>
-      <LevelMapCard />
     </section>;
   }
   return <section className="argus-editorial" aria-label={archived ? '当時のARGUSの説明' : 'ARGUSの今日の見立て'}

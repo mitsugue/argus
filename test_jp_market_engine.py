@@ -583,3 +583,15 @@ def test_fact_notes_name_the_week_and_publication_without_signal_words():
     for text in (d01, d02, d05):
         for word in ("確率", "買い", "売り時", "BUY", "SELL", "合図"):
             assert word not in text
+
+
+def test_signal_fact_notes_keep_basis_and_missing_values():
+    import jp_market_engine as engine
+    assert engine.fact_note_ja("D03", {"status":"AVAILABLE", "relativeStrengthValue":.032, "sourceType":"ETF_PROXY"}) == "20営業日の日米相対力 +3.20ポイント（ETFの比較）"
+    assert "19.50倍" in engine.fact_note_ja("D04", {"status":"AVAILABLE", "per":19.5})
+    assert engine.fact_note_ja("D04", {"status":"AVAILABLE", "per":float("nan")}) is None
+    assert "-0.100" in engine.fact_note_ja("D06", {"status":"AVAILABLE", "level":15.3, "argusBaseline":{"histogram":-.1}})
+    assert engine.fact_note_ja("D06", {"status":"AVAILABLE", "level":15.3}) is None
+    assert "1営業日 +2.00%" in engine.fact_note_ja("D07", {"status":"AVAILABLE", "eventDate":"2026-10-01", "reaction":{"return5dPct":None, "return1dPct":2}})
+    assert "5営業日 +0.00%" in engine.fact_note_ja("D07", {"status":"AVAILABLE", "reaction":{"return5dPct":0, "return1dPct":2}})
+    assert engine.fact_note_ja("D07", {"status":"MISSING", "reaction":{"return5dPct":4}}) is None

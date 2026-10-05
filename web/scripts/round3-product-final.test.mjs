@@ -54,7 +54,7 @@ assert.ok(today.indexOf('at-primary-hero') >= 0);
 assert.ok(today.indexOf('at-primary-hero')
   < today.indexOf('<details className="at-evidence card">'));
 assert.match(today, /view\.canonicalDecision/);
-assert.match(today, /判断への有効性は検証中/);
+assert.match(today, /点灯数が多いほど暴落が近い、と読める仕組みにはなっていません/);
 assert.doesNotMatch(today, /candidateLevel \?\? 4|view\.decisions/);
 assert.match(command, /sdaBySymbol/);
 assert.match(command, /canonicalDecisions/);
@@ -87,7 +87,7 @@ assert.match(shell, /\{versionLabel\}/);
 assert.equal((shell.match(/shell__brand-version/g) ?? []).length, 1);
 assert.doesNotMatch(shell, /Frontend v|Backend v|backendSha|deploymentId/);
 assert.deepEqual(productVersion, {
-  schemaVersion: 'argus-product-version-v1', productVersion: 'v13.8.36',
+  schemaVersion: 'argus-product-version-v1', productVersion: 'v13.8.37',
 });
 assert.match(versionTruth, /runtimeVersionLabel\(productVersion: string\)/);
 assert.match(versionTruth, /product version unavailable/);

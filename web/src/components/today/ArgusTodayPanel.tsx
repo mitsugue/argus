@@ -2,8 +2,6 @@ import { revealNewsArticle } from '../../lib/revealNewsArticle';
 import { OwnerOverview } from '../dialogue/OwnerOverview';
 import { MarketBriefCard } from './MarketBriefCard';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
-import { useDashboardEvents } from '../../hooks/useDashboardEvents';
-import { releasedEventResultLabel } from '../../lib/dashboardEventState';
 import { editorialCoversNews, editorialEdition } from '../../lib/presentationIntent';
 import React from 'react';
 import { MarginDynamicsCard } from './MarginDynamicsCard';
@@ -12,10 +10,8 @@ import { JpyPositionCard } from './JpyPositionCard';
 import { ImportantEventsCard } from '../dashboard/ImportantEventsCard';
 import { JapanSqCalendarCard } from '../dashboard/JapanSqCalendarCard';
 import { NewsAlertsPanel } from '../notifications/NewsAlertsPanel';
-import { useJapanSqCalendar } from '../../hooks/useJapanSqCalendar';
-import { EquityEventList } from './EquityEventList';
-import { sqCalendarIsCurrent } from '../../lib/japanSqCalendar';
 import { JapanMarketHorizonComparison } from '../chart/JapanMarketComparisonPanel';
+import { LevelMapCard } from './LevelMapCard';
 import { FutureMapCard } from './FutureMapCard';
 import { useChartIntelligence } from '../../hooks/useChartIntelligence';
 import type { ArgusTodayView, TodayProjection } from '../../domain/argusTodayView';
@@ -106,6 +102,16 @@ interface Props {
 const ACTION_TONE = {
   BUY: 'var(--value-positive)', HOLD: 'var(--accent)', WAIT: 'var(--amber, #fbbf24)',
   REDUCE: 'var(--event-high)', EXIT: 'var(--value-negative)',
+};
+const ACTION_JA = { BUY:'買い', HOLD:'保有を継続', WAIT:'見送り', REDUCE:'保有を減らす', EXIT:'保有を解消' };
+const SIGNAL_READING_JA: Record<string,{name:string;condition:string}> = {
+  'SIG-01':{name:'市場全体の信用売り残',condition:'点灯条件：二市場の信用売り残が8,000億円未満。'},
+  'SIG-02':{name:'日経レバの制度信用倍率',condition:'点灯条件：制度信用の買い残÷売り残が1倍以上。'},
+  'SIG-03':{name:'日本株と米国株の強さの比較',condition:'点灯条件：20営業日の比較で日本株が米国株より強い。'},
+  'SIG-04':{name:'日経平均の割高・割安（PER）',condition:'点灯条件：日経平均のPERが19倍以上。ARGUSの候補規則。'},
+  'SIG-05':{name:'海外投資家の買い・売り',condition:'点灯条件：最新の公表値で海外投資家が買い越し。'},
+  'SIG-06':{name:'米国市場の不安の勢い（VIX）',condition:'点灯条件：VIXの勢いを測るMACD（12・26・9）が低下側。'},
+  'SIG-07':{name:'決算発表後の株価の反応',condition:'点灯条件：発表後5営業日、未取得なら1営業日の騰落率がプラス。'},
 };
 const MARKET_STANCE = {
   BUY: 'BUY', HOLD: 'HOLD', WAIT: 'WAIT', REDUCE: 'REDUCE', EXIT: 'EXIT',
@@ -604,9 +610,6 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   // reads first.  The SDA Seven Sign level stays as a secondary line.
   const decisionEvidence = useDecisionEvidence();
   const { brief: editorialBrief } = useMarketBrief();
-  const dashboardEvents = useDashboardEvents();
-  const sqCalendar = useJapanSqCalendar();
-  const sqCalendarCurrent = sqCalendarIsCurrent(sqCalendar.data, sqCalendar.checkedAt);
   const editorialScope = view.selectedMarket === 'JP' && selectedSymbol === '1321' && horizon === 5;
   const [otherMarketsOpen, setOtherMarketsOpen] = React.useState(false);
   const [allNewsOpen, setAllNewsOpen] = React.useState(false);
@@ -631,21 +634,6 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   }[view.finalAction];
   const target = view.canonicalDecision.targets[0];
   const invalidation = view.canonicalDecision.invalidation;
-  // The complete macro-event review lives on Today. Keep this interaction on
-  // the same surface while the former Alerts route is retired in stages.
-  const openEventDetails = () => {
-    const jump = () => document.getElementById('today-event-details')
-      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    jump();
-  };
-  const openSqDetails = (eventId: string) => {
-    const jump = () => {
-      const item = document.getElementById(eventId);
-      if (item instanceof HTMLDetailsElement) item.open = true;
-      item?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    };
-    jump();
-  };
   // v13.5.60 (owner iPhone review 2026-09-07): 重大ニュース and 市場リスク are
   // Keep the first five headlines compact. Full current and historical news
   // is mounted only when the owner asks to read it on Today.
@@ -718,19 +706,6 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     return () => window.clearTimeout(timer);
   }, [notificationNewsId, notificationNewsRow?.eventId]);
   const criticalNewsCount = newsRows.filter(row => row.severity === 'CRITICAL').length;
-  const scheduledEvents = [
-    ...(view.nextEvent ? [{ kind: 'macro' as const, id: view.nextEvent.id,
-      sortAt: Date.parse(view.nextEvent.at ?? ''), event: view.nextEvent }] : []),
-    ...view.comingEvents.map((event) => ({ kind: 'macro' as const, id: event.id,
-      sortAt: Date.parse(event.at ?? ''), event })),
-    ...(sqCalendar.data?.events ?? []).map((event) => ({ kind: 'sq' as const,
-      id: event.eventId, sortAt: Date.parse(`${event.sqDate}T08:45:00+09:00`), event })),
-  ].sort((left, right) => {
-    const leftAt = Number.isFinite(left.sortAt) ? left.sortAt : Number.MAX_SAFE_INTEGER;
-    const rightAt = Number.isFinite(right.sortAt) ? right.sortAt : Number.MAX_SAFE_INTEGER;
-    return leftAt - rightAt || left.id.localeCompare(right.id);
-  });
-  const nextScheduledEvent = scheduledEvents[0] ?? null;
   React.useEffect(() => {
     try {
       sessionStorage.setItem('argus.todayDecisionMirror', JSON.stringify({
@@ -796,6 +771,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         重大なニュース・市場変化 {criticalNewsCount}件を確認する ↓
       </button>}
     </section>
+    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && <LevelMapCard />}
     {/* 2026-10-04: external views of the coming weeks, directly above the chart. */}
     {view.selectedMarket === 'JP' && selectedSymbol === '1321' && <FutureMapCard />}
     {view.selectedMarket === 'JP' && selectedSymbol === '1321'
@@ -838,7 +814,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         {decisionEvidence.loading && decisionEvidence.generatedAt && <span className="at-stored-note" data-argus-contract="stored-evidence-note-v1">
           <TriangleStepLoader compact label="判断の根拠を更新中" /> 保存分 {new Date(decisionEvidence.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} を表示中（更新取得中）</span>}</div>
 
-      <details className="at-seven" data-argus-contract="seven-sign-ladder-v1"
+      <details className="at-seven" open data-argus-contract="seven-sign-ladder-v1"
         data-seven-status={view.canonicalDecision.sevenSign.status}
         data-seven-level={view.actionScore ?? undefined}
         data-market-signals-active={topSignals?.activeCount ?? undefined}
@@ -858,32 +834,22 @@ export const ArgusTodayPanel: React.FC<Props> = ({
             {new Date(decisionEvidence.marketView.informationCutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })} 時点</i>}
           <b data-argus-contract="market-signals-top-v1">
             {topSignals ? topSignals.countLabel : '— / 7'}</b>
-          <span className="at-seven-status">
-            {usSelected ? '米国選択中: 7条件は日本固有（米国は適用外）· 米国の条件付けはVIX水準・VIX10日変化・対SPY相対力 · ' : ''}
-            {topSignals ? `点灯 ${topSignals.activeCount} · ` : ''}
-            {view.actionScore == null ? '判断への有効性は検証中' : `判断レベル ${view.actionScore} / 7`}
-            {topSignals ? '' : ` · ${view.canonicalDecision.sevenSign.status}`}</span>
-          <span className="at-seven-chips" aria-hidden="true">
-            {topSignals
-              ? topSignals.signals.map((row) => <i key={row.id}
-                className={row.state === 'ACTIVE' ? 'is-current' : ''}
-                data-signal-id={row.id} data-signal-state={row.state}
-                title={`${row.id} ${row.nameJa} ${row.stateJa}${row.gateNoteJa ? ` · ${row.gateNoteJa}` : ''}`}>{row.id.slice(-1)}</i>)
-              : [1, 2, 3, 4, 5, 6, 7].map((level) => <i key={level}
-                className={level === view.actionScore ? 'is-current' : ''}
-                data-seven-sign-level={level}>{level}</i>)}
-          </span>
+          {usSelected&&<span className="at-seven-status">米国の条件付けはVIX水準・VIX10日変化・対SPY相対力です。7条件は日本固有（米国は適用外）。</span>}
+          <span className="at-seven-status">{topSignals ? `全${topSignals.total}条件のうち${topSignals.activeCount}条件が成立` : '7条件の成立状況を確認中'}。現在採用している7つの点灯条件です。</span>
         </summary>
         <div className="at-seven-detail">
           {topSignals && <div className="at-seven-signals" data-argus-contract="market-signals-top-detail-v1">
-            {topSignals.signals.map((row) => <GlossaryTip key={row.id} glossaryKey={row.glossaryKey}>
+            {topSignals.signals.map((row) => <div className="at-seven-row" key={row.id}>
               <i data-signal-id={row.id} data-signal-state={row.state}>
-                {row.id} {row.nameJa} <b>{row.stateJa}</b>
+                <GlossaryTip glossaryKey={row.glossaryKey}><span className="at-seven-condition">{Number(row.id.slice(-2))} · {SIGNAL_READING_JA[row.id]?.name ?? row.nameJa}</span></GlossaryTip><b>{row.stateJa}</b>
+                {SIGNAL_READING_JA[row.id] && <small className="at-seven-rule">{SIGNAL_READING_JA[row.id].condition}</small>}
                 {row.gateNoteJa ? <small className="at-seven-gate-note"> {row.gateNoteJa}</small> : null}
-                {row.factNoteJa ? <small className="at-seven-gate-note"> {row.factNoteJa}</small> : null}</i>
-            </GlossaryTip>)}
-            <small>点灯 = 条件成立のみ数える（判定不能・欠測・古い・要ライセンスは数えない）。成立の数は状況の整理で、上昇・下落の確率や売買の合図ではありません（過去の検証で、同時に成立しても5日後の成績は基準と同じでした）。</small>
+                {row.factNoteJa && <small className="at-seven-fact">{row.factNoteJa}</small>}</i>
+            </div>)}
+            <small>現在の点灯規則には、上昇を支える条件も含まれています。点灯数が多いほど暴落が近い、と読める仕組みにはなっていません。</small>
           </div>}
+          <details className="at-seven-calibration"><summary>判断への採用状況・過去の検証</summary>
+          <p>過去の検証では、同時に成立しても5日後の成績は普段と同じでした。現在は売買の合図には使いません。</p>
           <p className="at-seven-gated">判断レベル（SEVEN SIGN・売買判断側の校正段階）:</p>
           <ul>
             {[1, 2, 3, 4, 5, 6, 7].map((level) => <li key={level}
@@ -909,10 +875,13 @@ export const ArgusTodayPanel: React.FC<Props> = ({
               && ` · ${view.canonicalDecision.sevenSign.reasonCodes.map((code) =>
                 SEVEN_SIGN_REASON_JA[code] ?? code).join(' / ')}`}
           </p>}
+          </details>
         </div>
       </details>
+      <p className="at-decision-status">現在の判断：<strong>{ACTION_JA[view.finalAction]}</strong></p>
+      {waitKindJa(view.canonicalDecision) && <p className="at-wait-kind" data-argus-contract="wait-kind-v1">{waitKindJa(view.canonicalDecision)}</p>}
       <details className="at-decision-details">
-        <summary>売買判断：{MARKET_STANCE[view.finalAction]}<span>判断条件とデータの状態を見る</span></summary>
+        <summary>判断の根拠と更新条件を見る</summary>
       <div className="at-call">
         {/* v13.5.54: name the instrument the DECISION is anchored on, not the
             series being drawn. Since the headline chart switched to the index,
@@ -922,16 +891,14 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         {/* v13.5.61 (owner: 「数字の表示は止めること」): the subject is named in
             words on Today; its code stays on the Holdings page and in the
             data-canonical-instrument contract attribute. */}
-        <small>PRIMARY ACTION · {view.selectedMarket}{' '}
+        <small>判断の対象 · {' '}
           {subjectDisplayName(view.canonicalDecision.subject?.instrumentId
             || view.selectedInstrument?.symbol || '', view.selectedInstrument?.label)}</small>
-        <strong style={{ color: ACTION_TONE[view.finalAction] }}>{MARKET_STANCE[view.finalAction]}</strong>
+        <strong style={{ color: ACTION_TONE[view.finalAction] }}>{ACTION_JA[view.finalAction]}</strong>
         <span className={`at-authority is-${view.canonicalDecision.status.toLowerCase()}`}>
           {view.canonicalDecision.status === 'EVALUATED' ? '確認済み' : '判断データ確認中'}</span>
       </div>
-      <p className="at-impact-copy">{actionCopy}</p>
-      {/* v13.5.62 (GPT review item 1): which WAIT this is — data-gated, risk-constrained, or no BUY case. */}
-      {waitKindJa(view.canonicalDecision) && <p className="at-wait-kind" data-argus-contract="wait-kind-v1">{waitKindJa(view.canonicalDecision)}</p>}
+
       {/* v13.5.2: Seven Sign is COMPACT — one summary line + seven chips,
           with meanings and the exact machine reason codes expanding on tap.
           All truthful canonical states are preserved; while everything is
@@ -941,9 +908,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       {/* Data availability qualifies the decision before the signals. */}
 
       <div className="at-action-plan" aria-label="行動条件">
-        <div><b>今すること</b><span>{actionCopy}</span></div>
-        <div><b>目標</b><span>{target ? `${target.value} ${target.unit}` : '検証済み目標なし'}</span></div>
-        <div><b>無効化</b><span>{invalidation ? `${invalidation.value} ${invalidation.unit}` : '検証済み無効化条件なし'}</span></div>
+
+        {target && <div><b>目標</b><span>{target.value} {target.unit}</span></div>}
+        {invalidation && <div><b>見直す価格</b><span>{invalidation.value} {invalidation.unit}</span></div>}
         <div><b>次の確認</b><span>{nextReviewLabel(view.canonicalDecision.nextReviewConditionCodes[0])
           ?? (view.nextEvent ? `${view.nextEvent.code}（${formatEventTime(view.nextEvent.at, view.nextEvent.dateOnly)}）` : '正本証拠の更新')}</span></div>
       </div>
@@ -1006,50 +973,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     </details>
 
     <section id="today-events" className="at-event card" aria-label="重要イベント" data-argus-contract="unified-event-schedule-v1">
-      <div className="at-head"><b>重要イベント</b><span>30日先まで</span></div>
-      {nextScheduledEvent ? <button type="button"
-        onClick={() => nextScheduledEvent.kind === 'sq'
-          ? openSqDetails(nextScheduledEvent.event.eventId) : openEventDetails()}>
-        {nextScheduledEvent.kind === 'sq' ? <>
-          <strong>{nextScheduledEvent.event.title}（{nextScheduledEvent.event.sqDate.replaceAll('-', '/')}・寄付き基準）</strong>
-          <time>{nextScheduledEvent.event.kind === 'MAJOR_SQ' ? 'メジャーSQ' : 'SQ'}</time>
-          <small>取引所日程。方向判断ではありません</small>
-        </> : <>
-          <strong>{nextScheduledEvent.event.code}（{formatEventTime(nextScheduledEvent.event.at, nextScheduledEvent.event.dateOnly)}）</strong>
-          <time>{nextScheduledEvent.event.impact.toUpperCase()}</time>
-          {nextScheduledEvent.event.descriptionJa && <small>{nextScheduledEvent.event.descriptionJa.slice(0, 32)}</small>}
-        </>}
-      </button> : <p className="at-quiet">{view.eventsAuthorityUnknown
-        ? 'イベント情報を取得できていません（予定がないという意味ではありません）'
-        : '直近の重要イベントなし'}</p>}
-      {/* v13.5.54: a release that just fired must not vanish from Today the
-          moment it happens — that is when the owner most needs it. */}
-      {view.releasedEvent && <p className="at-released">
-        <b>発表済み</b> {view.releasedEvent.code}
-        <time>（{formatEventTime(view.releasedEvent.at, view.releasedEvent.dateOnly)}）</time>
-        <span>{releasedEventResultLabel(view.releasedEvent, dashboardEvents)}</span>
-      </p>}
-      <EquityEventList />
-      <div className="at-coming"><b>この先の予定</b>
-        {scheduledEvents.length > 1
-          ? scheduledEvents.slice(1).map((row) => row.kind === 'sq'
-            ? <button type="button" key={row.id} onClick={() => openSqDetails(row.event.eventId)}
-              data-event-kind={row.event.kind}>{row.event.title}（{row.event.sqDate.replaceAll('-', '/')}・寄付き基準）
-              <small>{sqCalendarCurrent && !sqCalendar.failed ? row.event.stage === 'TODAY' ? '本日' : row.event.stage === 'LAST_TRADING_DAY'
-                ? '最終取引日' : row.event.stage === 'EVENT_WEEK' ? '今週' : '予定' : '保存済み日程'}</small></button>
-            : <button type="button" key={row.id} onClick={openEventDetails}>
-              {row.event.code}（{formatEventTime(row.event.at, row.event.dateOnly)}）</button>)
-          : <span>{view.eventsAuthorityUnknown ? '取得待ち' : '予定なし'}</span>}
-        {sqCalendar.loading && <span><TriangleStepLoader compact label="SQ日程を更新中" /></span>}
-        {sqCalendar.failed && !sqCalendar.data?.events.length && <span> SQ日程は更新を確認できません</span>}
-      </div>
-      <button type="button" className="at-event-more" onClick={openEventDetails}>イベントの結果・出典を見る ↗</button>
-      {/* Event scenarios, official results and SQ source details share this
-          event section. The SQ notice above opens the matching detail here. */}
+      <div className="at-head"><b>相場を動かす予定と結果</b><span>45日先まで</span></div>
       <ImportantEventsCard embedded sectionId="today-event-details" />
-      <div className="at-event-sq-details">
+      <details className="at-event-sq-details"><summary>SQの公式日程・出典</summary>
         <JapanSqCalendarCard />
-      </div>
+      </details>
     </section>
 
     <details className="at-other-markets card" data-argus-contract="other-markets-actuals-v1"
@@ -1077,7 +1005,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         together — JP with JP, US with US — instead of alternating. */}
     {/* v13.5.61 (owner): Japan first, then the US — each market's live line,
         market view, 需給 and (for the US) MACRO in its own block, never mixed. */}
-    <section className="at-event card at-context" aria-label="市場観・需給（参考）">
+    <details className="at-event card at-context" aria-label="市場観・需給（参考）"><summary>市場データの一覧・従来の判定を見る</summary>
       <div className="at-context__block" data-market="JP">
         <small className="at-context__title">日本株</small>
         <MarketViewStrip />
@@ -1109,7 +1037,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         {view.positioningByMarket.US.length === 0 && view.macroMoves.length === 0
           && <span className="at-quiet">米国株の需給・MACROは取得待ち</span>}
       </div>
-    </section>
+    </details>
 
     <details className="at-evidence card">
       <summary>根拠・市場データ・システム情報</summary>

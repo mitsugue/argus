@@ -47,18 +47,30 @@ export function MarginDynamicsCard({ document, refreshFailed = false }: { docume
   const diff = (v: number) => `${v >= 0 ? '+' : ''}${v.toLocaleString('ja-JP')}口`;
   return <section className="card at-margin-dynamics" aria-label="日経レバの信用需給">
     <h3>日経レバの信用需給</h3>
-    <p>{current.periodEnd}時点 · 信用倍率 <strong>{current.ratio.toFixed(4)}倍</strong></p>
-    <p>買残 {units(current.longBalance)} ／ 売残 {units(current.shortBalance)}</p>
-    {change.status === 'AVAILABLE' && previous ? <>
-      <p>{previous.periodEnd}からの{change.isOneWeekChange ? '前週差' : '期間差'}：{signed(change.ratioChange!)}倍</p>
-      <p>買残の差 {change.longBalanceChange! >= 0 ? '+' : ''}{units(change.longBalanceChange!)} ／ 売残の差 {change.shortBalanceChange! >= 0 ? '+' : ''}{units(change.shortBalanceChange!)}</p>
-      <p>買残の変化による寄与 {signed(change.longContribution!)}倍<br />売残の変化による寄与 {signed(change.shortContribution!)}倍</p>
-    </> : <p>比較に必要な前回の残高が不足しています。</p>}
-    {showDaily && <p data-margin-daily={latestDay}>最新(日次) {latestDay}：買残 {units(latestLong!.value)}（週末から{diff(latestLong!.value - current.longBalance)}）／ 売残 {units(latestShort!.value)}（週末から{diff(latestShort!.value - current.shortBalance)}）· 倍率 {(latestLong!.value / latestShort!.value).toFixed(4)}倍<br /><small>日次の残高は2026年9月25日分から。変化の判断の基準は、日次の記録がたまるまで週次のままです。</small></p>}
-    <p>残高の変化です。実際の買い戻し注文を観測したものではなく、買いサインではありません。</p>
+    <p className="at-context-lead">{change.status==='AVAILABLE'&&previous
+      ? `買い残が${change.longBalanceChange!>0?'増え':change.longBalanceChange!<0?'減り':'横ばいで'}、売り残は${change.shortBalanceChange!>0?'増えています':change.shortBalanceChange!<0?'減っています':'横ばいです'}`
+      : '買い・売りの残高は取得済み。変化を比べる前回値は不足しています'}</p>
+    <p className="at-context-date">{previous ? `${previous.periodEnd} → ` : ''}{current.periodEnd} · {change.isOneWeekChange?'前週との比較':'取得済み期間の比較'}</p>
+    {change.status==='AVAILABLE'&&previous&&<div className="at-context-metrics">
+      <article><span>信用買いの残高の変化</span><strong>{diff(change.longBalanceChange!)}</strong></article>
+      <article><span>信用売りの残高の変化</span><strong>{diff(change.shortBalanceChange!)}</strong></article>
+    </div>}
+    <div className="at-context-use"><b>これから出る返済売り・買い戻しの余地を見る</b>
+      <p>信用買いの残高は、将来返済の売りに回る可能性があります。信用売りの残高は、買い戻されると上昇を支える可能性があります。残高が増えた側と、実際の値動きを合わせて読みます。</p>
+      <small>実際の買い戻し注文は未観測。買いサインではありません。</small></div>
+    {showDaily&&<div className="at-context-latest" data-margin-daily={latestDay}>
+      <span>最新の日次残高 · {latestDay}</span><strong>{(latestLong!.value/latestShort!.value).toFixed(2)}<small>倍</small></strong>
+      <p>買い残÷売り残。変化の比較は上の週次記録が基準です。</p></div>}
     {failed && <p role="status">更新に失敗しています。最後に取得できた残高を表示しています。</p>}
     {document.sourceStatus === 'PARTIAL' && <p role="status">取得は一部です。未取得ページまたは検証できない行があります。</p>}
     <details><summary>信用の内訳・出典と計算</summary>
+      <p>{current.periodEnd}時点 · 信用倍率 {current.ratio.toFixed(4)}倍</p>
+      <p>買残 {units(current.longBalance)} ／ 売残 {units(current.shortBalance)}</p>
+      {change.status === 'AVAILABLE' && previous ? <>
+        <p>{previous.periodEnd}からの{change.isOneWeekChange ? '前週差' : '期間差'}：{signed(change.ratioChange!)}倍</p>
+        <p>買残の変化による寄与 {signed(change.longContribution!)}倍<br />売残の変化による寄与 {signed(change.shortContribution!)}倍</p>
+      </> : <p>比較に必要な前回の残高が不足しています。</p>}
+      {showDaily && <p>最新(日次) {latestDay}：買残 {units(latestLong!.value)}（週末から{diff(latestLong!.value - current.longBalance)}）／ 売残 {units(latestShort!.value)}（週末から{diff(latestShort!.value - current.shortBalance)}）<br /><small>日次の残高は2026年9月25日分から。変化の判断の基準は、日次の記録がたまるまで週次のままです。</small></p>}
       <p>制度信用：買残 {component('margin.standardized.long_balance')} ／ 売残 {component('margin.standardized.short_balance')}</p>
       <p>一般信用：買残 {component('margin.negotiable.long_balance')} ／ 売残 {component('margin.negotiable.short_balance')}</p>
       <p>日証金の貸借残とは別系列です。残高から個別建玉の返済期日を確定することはできません。</p>

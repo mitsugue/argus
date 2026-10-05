@@ -748,6 +748,37 @@ def fact_note_ja(family: str, row: Mapping[str, Any]) -> Optional[str]:
         basis = "制度信用の倍率" if row.get("ratioBasis") == "STANDARDIZED_MARGIN" else "信用倍率"
         week, known = _period_day(row.get("periodEnd")), _jst_day(row.get("knownAt"))
         return f"日経レバの{basis} {ratio:.2f}倍" + (f"・{week}の値" if week else "") + (f"・{known}に入手" if known else "")
+    if family == "D03":
+        value = _finite(row.get("relativeStrengthValue"))
+        if value is None:
+            return None
+        if row.get("sourceType") == "ETF_PROXY":
+            return f"20営業日の日米相対力 {value * 100:+.2f}ポイント（ETFの比較）"
+        return f"日米相対力 {value:+.4f}（指数の比較）"
+    if family == "D04":
+        value = _finite(row.get("per"))
+        if value is None or value <= 0:
+            return None
+        kind = "ARGUS推計" if row.get("propositionId") == "ARGUS-D04-PROXY-CONSTITUENT-EPS" else "指数ベース"
+        return f"日経平均のPER {value:.2f}倍（{kind}）"
+    if family == "D06":
+        level = _finite(row.get("level"))
+        baseline = row.get("argusBaseline")
+        histogram = _finite(baseline.get("histogram")) if isinstance(baseline, Mapping) else None
+        if level is None or histogram is None:
+            return None
+        return f"VIX {level:.2f}・MACDの差 {histogram:+.3f}（12・26・9）"
+    if family == "D07":
+        reaction = row.get("reaction")
+        if not isinstance(reaction, Mapping):
+            return None
+        days, value = 5, _finite(reaction.get("return5dPct"))
+        if value is None:
+            days, value = 1, _finite(reaction.get("return1dPct"))
+        if value is None:
+            return None
+        day = _period_day(row.get("eventDate"))
+        return (f"{day}の決算発表後" if day else "決算発表後") + f"{days}営業日 {value:+.2f}%"
     if family == "D05":
         value = _finite(row.get("flowValue"))
         if value is None:

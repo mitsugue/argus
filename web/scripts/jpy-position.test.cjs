@@ -20,4 +20,7 @@ assert.ok(render(document).includes('売り建玉がなくなったという意�
 assert.ok(render({...document,acquisition:{status:'FAILED'}}).includes('前回取得分'));
 assert.ok(render({...document,status:'STALE'}).includes('時間が経過'));
 assert.ok(render(null).includes('公式データを確認中'));
+const switched={...document,current:{...document.current,longContracts:80,netContracts:-10},change:{...document.change,longContracts:-15,netContracts:-13}};
+assert.ok(validJpyPosition(switched));assert.ok(render(switched).includes('円売り越しへ転換'));assert.ok(!render(switched).includes('偏りが拡大'));
+assert.ok(render(document).includes('円買いの偏りが拡大'));
 console.log('JPY weekly scope, arithmetic, freshness and source display PASS');

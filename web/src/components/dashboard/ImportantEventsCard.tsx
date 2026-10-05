@@ -16,6 +16,7 @@ import { deriveDashboardEventDisplayState, type DashboardEvent, type DashboardEv
 import { useLocale, t, pick } from '../../i18n';
 import { EVENT_DESC_JA } from '../../lib/eventLabels';
 import { formatEventWhenJa } from '../../domain/argusTodayView';
+import { TodayEventSchedule } from './TodayEventSchedule';
 import './ImportantEventsCard.css';
 
 // v11.4.1 tone → color for the unified state badge.
@@ -136,7 +137,7 @@ const CaosAnalysisBlock: React.FC<{ ai: MacroAnalysis; released: boolean }> = ({
   );
 };
 
-const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis }> = ({ e, open, ai }) => {
+const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis; compact?:boolean }> = ({ e, open, ai,compact }) => {
   const loc = useLocale();
   const impact = e.displayImpact;
   const color = IMPACT_TOKEN[impact] ?? IMPACT_TOKEN.low;
@@ -154,21 +155,22 @@ const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis 
   const when = [eventWhenJa(jstIso, e.date), released ? t('ie.released') : null].filter(Boolean).join(' · ');
 
   return (
-    <details className="ie-row" open={open}>
+    <details className={`ie-row${compact?' ie-row--reading':''}`} open={open}>
       <summary aria-label={`${e.eventCode}, ${impactLabel}, ${when}`}>
         <span className="ie-when">{when}</span>
-        <span className="ie-code">{e.eventCode}</span>
+        {!compact&&<span className="ie-code">{e.eventCode}</span>}
         <span className="ie-title-ja" data-argus-contract="event-title-ja-v1">{eventTitleJa(e.eventCode, e.title)}</span>
-        <span className="ie-impact" style={{ color }} aria-hidden>{IMPACT_ICON[impact]} {impactLabel}</span>
+        <span className="ie-impact" style={{ color }} aria-hidden>{compact ? `影響 ${impact==='critical'?'特大':impact==='high'?'大':impact==='medium'?'中':'小'}` : `${IMPACT_ICON[impact]} ${impactLabel}`}</span>
+        {compact&&<span className="ie-peek">{EVENT_DESC_JA[e.eventCode]||e.noviceJa}</span>}
       </summary>
       <div className="ie-body">
-        <p className="ie-line"><span className="ie-k">{t('ie.whyMatters')}</span>{novice}</p>
-        {!released && (
+        <p className="ie-line">{compact ? (e.noviceJa||EVENT_DESC_JA[e.eventCode]) : novice}</p>
+        {!released && !compact && (
           <p className="ie-line"><span className="ie-k">{t('ie.untilRelease')}</span><b style={{ color: actionUntil.includes('禁止') || actionUntil.toUpperCase().includes('BLOCKED') ? 'var(--value-negative)' : 'var(--text-main)' }}>{actionUntil}</b></p>
         )}
-        <p className="ie-line"><span className="ie-k">{t('ie.nextReview')}</span>{nextReview}</p>
+        {!compact&&<p className="ie-line"><span className="ie-k">{t('ie.nextReview')}</span>{nextReview}</p>}
         {ai && <CaosAnalysisBlock ai={ai} released={released} />}
-        <p className="ie-data">{t('ie.forecast')}: {t('ie.unavailable')} · {t('ie.previous')}: {t('ie.unavailable')}{e.source ? ` · ${e.source}` : ''}</p>
+        <details><summary>出典・取得状態</summary><p className="ie-data">{e.source || '出典未確認'} · 予想値・前回値の取得は未確認</p></details>
       </div>
     </details>
   );
@@ -206,8 +208,8 @@ const ReleaseSoWhat: React.FC<{ ev: DashboardEvent; reactionValues: string[]; re
   </div>;
 };
 
-const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh?: string }>
-  = ({ ev, open, lastRefresh }) => {
+const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh?: string; compact?:boolean }>
+  = ({ ev, open, lastRefresh,compact }) => {
   const aiNote = useEventAiScenarioNote();
   const ds = deriveDashboardEventDisplayState(ev);
   const color = STATE_TONE_COLOR[ds.tone] ?? STATE_TONE_COLOR.neutral;
@@ -219,11 +221,12 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
   const { chips: reactionValues, tone: reactionTone } = reactionChips(ev.marketReaction);
 
   return (
-    <details className="ie-row" open={open}>
+    <details className={`ie-row${compact?' ie-row--reading':''}`} open={open}>
       <summary aria-label={`${ev.eventCode}, ${ds.released ? '発表済' : ev.stateLabelJa}, ${when}`}>
         <span className="ie-when">{when}</span>
-        <span className="ie-code">{ev.eventCode}{ev.lifecycleTierJa && <small className="ie-tier" data-argus-contract="event-lifecycle-tier-v1" data-tier={ev.lifecycleTier}>{ev.lifecycleTierJa}</small>}</span>
+        {!compact&&<span className="ie-code">{ev.eventCode}{ev.lifecycleTierJa && <small className="ie-tier" data-argus-contract="event-lifecycle-tier-v1" data-tier={ev.lifecycleTier}>{ev.lifecycleTierJa}</small>}</span>}
         <span className="ie-title-ja" data-argus-contract="event-title-ja-v1">{eventTitleJa(ev.eventCode, ev.title)}</span>
+        {compact&&<span className="ie-importance" style={{color:IMPACT_TOKEN[ev.importance]}}>影響 {ev.importance==='critical'?'特大':ev.importance==='high'?'大':ev.importance==='medium'?'中':'小'}</span>}
         {ds.stampBoxed ? (
           // v11.5: clear boxed "発表済" stamp so it's obvious the event has printed.
           <span className="ie-stamp" style={{
@@ -234,6 +237,7 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
         ) : (
           <span className="ie-impact" style={{ color, fontWeight: 700 }} aria-hidden>{ds.stampJa}</span>
         )}
+        {compact&&<span className="ie-peek">{EVENT_DESC_JA[ev.eventCode]}</span>}
       </summary>
       <div className="ie-body">
         {EVENT_DESC_JA[ev.eventCode] && (
@@ -250,7 +254,7 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
                 : ds.showPendingResult
                   ? <p>発表時刻通過・取得待ち</p>
                   : <p>発表待ち</p>}
-              {ev.officialResult.source && <small>source：{ev.officialResult.source}</small>}
+              {ev.officialResult.source && <small>出典：{ev.officialResult.source}</small>}
               <MacroResultDetails result={ev.officialResult} />
               {ds.showPendingResult && <small>定期更新待ち{lastRefresh
                 ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</small>}
@@ -273,27 +277,27 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
               {c.marketPricingJa && <small>織り込み：{c.marketPricingJa}</small>}
               {c.whatWouldSurpriseJa && <small>サプライズ：{c.whatWouldSurpriseJa}</small>}
             </section>
-            <section className="ie-phase">
+            {(!compact || ds.showPendingResult)&&<section className="ie-phase">
               <b>公式結果</b>
               {ds.showActualFirst
                 ? <p><strong>{ev.officialResult.headlineJa || '取得済み'}</strong></p>
                 : ds.showPendingResult
                   ? <p>発表時刻通過・取得待ち</p>
                   : <p>発表待ち</p>}
-              {ev.officialResult.source && <small>source：{ev.officialResult.source}</small>}
+              {ev.officialResult.source && <small>出典：{ev.officialResult.source}</small>}
               <MacroResultDetails result={ev.officialResult} />
               {ds.showPendingResult && <small>定期更新待ち{lastRefresh
                 ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</small>}
-            </section>
-            <section className="ie-phase">
+            </section>}
+            {!compact&&<section className="ie-phase">
               <b>発表後</b>
               {ds.showActualFirst ? <ReleaseSoWhat ev={ev} reactionValues={reactionValues} reactionTone={reactionTone}
                 vColor={vColor} showAnswerCheck={ds.showAnswerCheck} /> : <p>公式結果取得後に更新</p>}
-            </section>
+            </section>}
           </>}
         </div>
         {(c.assetsToWatch || []).length > 0 && (
-          <p className="ie-data">注目: {(c.assetsToWatch || []).join(' · ')} ・ AIシナリオはコンセンサスや売買指示ではありません</p>
+          <details className="ie-assets"><summary>確認する市場</summary><p className="ie-data">{(c.assetsToWatch || []).map(code=>({'^TNX':'米10年金利','US10Y':'米10年金利','TLT':'米長期国債','USDJPY':'ドル円','UUP':'米ドル指数','SPY':'米国株全体','QQQ':'米国の主要成長株','VIX':'米国株の不安指数'} as Record<string,string>)[code]||code).join(' · ')}</p></details>
         )}
       </div>
     </details>
@@ -315,6 +319,10 @@ export const ImportantEventsCard: React.FC<Props> = ({ embedded, sectionId = 'im
   const dash = useDashboardEvents();             // v11.4.1: unified event feed (preferred)
   const { data } = useImportantEvents();
   const analysis = useMacroEventAnalysis();      // v11.3.2: C.A.O.S. pre/post overlay (fallback)
+
+  if (embedded) return <TodayEventSchedule dashboard={dash} legacy={data?.events??[]} sectionId={sectionId}
+    renderDashboard={ev=><UnifiedEventRow ev={ev} open={false} compact lastRefresh={(dash?.status?.lastHotRefreshAt as string)||undefined}/>}
+    renderLegacy={e=><EventRow e={e} open={false} compact ai={analysis[e.eventId]||analysis[e.eventCode]}/>}/>;
 
   // Preferred path: the unified dashboard-events surface (single source of truth).
   if (dash && dash.items.length > 0) {

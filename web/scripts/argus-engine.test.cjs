@@ -116,7 +116,7 @@ const evidenceAt = panel.indexOf('at-evidence card');
 check('Primary Action is rendered before collapsed evidence', heroAt >= 0 && evidenceAt > heroAt
   && panel.includes('<details className="at-evidence card">'));
 check('data-gated Seven Sign is not imputed to level four',
-  panel.includes("view.actionScore == null ? '判断への有効性は検証中'")
+  panel.includes("view.actionScore == null &&") && panel.includes("現在のレベルは未確定")
   && !panel.includes('candidateLevel ?? 4'));
 check('Today contains no legacy market decision projection',
   !panel.includes('view.decisions') && !fs.existsSync(path.join(root, 'src/domain/argusEngine.ts'))
@@ -135,8 +135,8 @@ check('an unread event feed is distinguishable from an empty calendar',
   unknownView.eventsAuthorityUnknown === true && knownView.eventsAuthorityUnknown === false
   && unknownView.nextEvent === null && knownView.nextEvent === null);
 check('Today never claims an empty calendar it could not read',
-  panel.includes('view.eventsAuthorityUnknown')
-  && panel.includes('予定がないという意味ではありません'));
+  fs.readFileSync(path.join(root,'src/components/dashboard/TodayEventSchedule.tsx'),'utf8').includes('予定・結果を取得できていません')
+  && panel.includes('<ImportantEventsCard embedded sectionId="today-event-details" />'));
 
 // v13.5.54 (owner 2026-09-04: 「イベントが出たばかりなので米雇用統計が出てない」).
 // The forward filter drops a release the instant it fires, which is exactly
@@ -162,7 +162,7 @@ check('Today never claims an empty calendar it could not read',
       lifecycleTier: 'HISTORY' },
   ] });
   check('an aged-out release is not resurrected', aged.releasedEvent === null);
-  check('Today renders the released release', panel.includes('view.releasedEvent'));
+  check('Today renders the released release', fs.readFileSync(path.join(root,'src/components/dashboard/TodayEventSchedule.tsx'),'utf8').includes('直近の発表結果・市場の反応'));
 }
 
 // v13.5.54 (owner 2026-09-04). Treasury auctions and BOJ meeting days publish a
@@ -259,8 +259,8 @@ check('Today never claims an empty calendar it could not read',
     !/<MarketBriefCard \/>\s*<MarketViewStrip \/>/.test(panel));
   check('retired individual live band is absent from Today',
     !panel.includes('mv-tachibana') && !panel.includes('tachibanaLive'));
-  check('tapping an event stays on Today and jumps to the complete event review',
-    panel.includes("document.getElementById('today-event-details')")
+  check('the complete event review stays mounted on Today',
+    panel.includes('<ImportantEventsCard embedded sectionId="today-event-details" />')
     && panel.includes('<JapanSqCalendarCard />'));
   const eventSection = panel.slice(panel.indexOf('aria-label="重要イベント"'),
     panel.indexOf('className="at-other-markets card"'));

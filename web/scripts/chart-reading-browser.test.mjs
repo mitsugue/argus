@@ -70,7 +70,9 @@ try{
     const boxes=labels.map(el=>el.getBoundingClientRect());
     return boxes.every((a,i)=>boxes.slice(i+1).every(b=>a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top));
   }),true,'the five price labels do not overlap');
-  assert.equal(await page.locator('.nr-nearest article strong').first().evaluate(el=>parseFloat(getComputedStyle(el).fontSize)),30);
+  assert.equal(await page.locator('.lm-reach article strong').first().evaluate(el=>parseFloat(getComputedStyle(el).fontSize)),30);
+  assert.equal(await page.locator('.nr-nearest').count(),0,'the reach statistic has one reading location');
+  assert.ok((await page.locator('.lm-reach').innerText()).includes('個別のPER線を超える確率ではなく'));
   assert.equal(await page.locator('.lm-heading > b').evaluate(el=>el.getBoundingClientRect().height<=parseFloat(getComputedStyle(el).lineHeight)*1.1),true,'title stays on one line');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false,'no horizontal page overflow');
   assert.deepEqual(errors,[]);

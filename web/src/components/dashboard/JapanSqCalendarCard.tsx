@@ -11,7 +11,7 @@ export const JapanSqCalendarCard: React.FC = () => {
     const focus = () => {
       const match = /^#notifications\/sq\/(jp-monthly-sq-\d{4}-\d{2})$/.exec(window.location.hash);
       const item = match && document.getElementById(match[1]);
-      if (item instanceof HTMLDetailsElement) { item.open = true; item.scrollIntoView({block:'start'}); }
+      if (item instanceof HTMLDetailsElement) { for(let parent:HTMLElement|null=item;parent;parent=parent.parentElement) if(parent instanceof HTMLDetailsElement) parent.open=true; item.scrollIntoView({block:'start'}); }
     };
     focus(); window.addEventListener('hashchange',focus);
     return () => window.removeEventListener('hashchange',focus);
@@ -51,6 +51,7 @@ export const JapanSqApproachNotice: React.FC = () => {
   const openDetails = () => {
     const element = document.getElementById(approaching.eventId);
     if (element instanceof HTMLDetailsElement) element.open = true;
+    for(let parent:HTMLElement|null=element;parent;parent=parent.parentElement) if(parent instanceof HTMLDetailsElement) parent.open=true;
     element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   return <aside className="jp-sq-approach" aria-label="接近するSQの案内">
