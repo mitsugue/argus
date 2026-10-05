@@ -36,8 +36,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/today/WarningConditionsDetails.tsx': '484e530cdaf0036b5b16ef1808d1042aded1b946',
-    'test_argus_warning_conditions.py': '27fc5c30ccc635711f84b4bbbca098452a422cfe',
-    'argus_warning_conditions.py': 'abf71dbbd2f5fc6b9d0526788b90225051f68792',
+    'test_argus_warning_conditions.py': '983d8e1d9a30bfa16f9ef28dea481b1c907da1b4',
+    'argus_warning_conditions.py': '059edd873e332ecd6c087598567debae96dcc1ef',
     'test_argus_jgb_auction.py': '4a3e3565b99b6b3e87d21024a4706a65a7ca89cf',
     'argus_jgb_auction.py': '5a8315b5e9553c3a8796867dacdeae6bc0f8a072',
     "docs/ops/recovery-phase-a-measurement-core.md": "e9ce722983325daf71a9ec1c0c106ec178cd25ba",
@@ -294,7 +294,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_presentation_intent.py': '9ac401c4ea52103cb0efeedcf5774d25b78cda7d',
     'argus_persistent_storage.py': '4cb3737d9e865772a42ee238ca246e47158eee4f',
     'test_argus_checkpoint_stream_batches.py': 'a3e03b9cb28f6f62b88096bf651ef4eef02d451f',
-    'web/src/components/today/ReadingHierarchy.css': '7ef89ca57759ccaffb92271c852a72dedf76e6d2',
+    'web/src/components/today/ReadingHierarchy.css': '79b546d6c1eb0dfaafaad8b289960d0fb8222785',
     'web/src/components/AppShell.tsx': 'fa34bd3703246744c9eeec4411783b6234777a77',
     'web/src/routes/BackupPage.tsx': '7d082a20c08964bb00dc4de227827f7bcfc19abb',
     'web/src/navigation.ts': '7bbea49bee28dd07ead0273ea84f1092255a3ca3',

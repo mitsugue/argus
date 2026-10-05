@@ -73,3 +73,17 @@ def test_actual_macd_sample_count_excludes_bad_closes_and_legacy_projection_is_u
     assert projection["marketSignals"]["signals"][5]["conditionMet"]==d6["conditionMet"]
     assert e==before and not projection["actionAuthority"]
     assert engine._content_id_valid(projection,"jp-market-engine-consumer-projection-")
+
+@pytest.mark.parametrize("value,met",[(-.00000000001,False),(0,False),(.00000000001,True)])
+def test_warning_macd_sign_uses_unrounded_value_not_legacy_display(value,met):
+    row=evidence()["families"]["D06"];row["argusBaseline"].update(warningHistogram=value,histogram=0)
+    found=project_warning_conditions(evidence(D06=row),cutoff=AT)["signals"][5]
+    assert found["conditionMet"] is met
+    assert found["distance"]["signedFromBoundary"]==value
+
+def test_duplicate_macd_sessions_and_unbounded_numeric_values_are_not_admitted():
+    row=evidence()["families"]["D06"];row["argusBaseline"]["uniqueSessionCount"]=59
+    assert project_warning_conditions(evidence(D06=row),cutoff=AT)["signals"][5]["state"]=="DATA_GATED"
+    for value in (True,10**400):
+        row=evidence()["families"]["D05"];row["flowValue"]=value
+        assert project_warning_conditions(evidence(D05=row),cutoff=AT)["signals"][4]["state"]=="DATA_GATED"

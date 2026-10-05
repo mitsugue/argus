@@ -109,3 +109,5 @@
 .at-primary-hero [data-argus-contract="warning-conditions-v2"] .at-seven-row > i > small,
 .at-primary-hero [data-argus-contract="warning-conditions-v2"] .at-seven-distance {grid-column:1/-1;text-align:left;line-height:1.65}
 .at-primary-hero [data-argus-contract="warning-conditions-v2"] .at-seven-distance {font-size:15px;color:var(--amber)}
+
+.at-primary-hero [data-argus-contract="warning-conditions-v2"] i[data-signal-state="ACTIVE"] {border-color:color-mix(in srgb,var(--amber) 50%,var(--line));background:color-mix(in srgb,var(--amber) 6%,var(--surface))}

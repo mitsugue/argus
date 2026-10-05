@@ -13,7 +13,12 @@ UNDEFINED = {3: "低下を測る期間・基準が未確定", 4: "最新推計EP
 
 
 def _number(value):
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value) else None
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    try:
+        return float(value) if isfinite(value) else None
+    except (OverflowError, ValueError):
+        return None
 
 
 def _mapping(value):
