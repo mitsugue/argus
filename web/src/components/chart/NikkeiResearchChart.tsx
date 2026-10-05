@@ -172,10 +172,10 @@ export function NikkeiResearchChartView({ chart, future }: { chart: ResearchChar
     {layers.per && <div className="nr-nearest">{chart.nearest.map(n => <article key={n.side} data-side={n.side}>
       <small>{n.side === 'UP' ? '上がった時の目盛り' : '下がった時の目盛り'} · PER{n.multiple}</small>
       <b>{yen(n.price)}<span>円</span></b>
-      <p><strong>{n.reachedWithin10SessionsPct}%</strong><span>過去に10営業日以内に届いた割合</span></p>
+      <p><strong>{n.reachedWithin10SessionsPct}%</strong><span>同じくらいの距離で、10営業日以内に届いた過去の割合</span></p>
       <p className="nr-days">到達までの中央値 <b>{n.sessionsMedian}営業日</b></p></article>)}
       {!chart.current && <p>今日のPER水準は未取得です。</p>}
-      <small className="nr-nearest-note">過去に届いた頻度です。この線で反発した割合ではありません。日数は到達した事例だけの中央値です。</small></div>}
+      <small className="nr-nearest-note">同じ距離帯の過去の集計です。PER線で反発した割合ではありません。日数は到達した事例だけの中央値です。</small></div>}
     {layers.external && <div className="nr-external-list" aria-label="参考予測の期間と価格">
       {external.map((p, i) => <button key={p.id} type="button" aria-pressed={selectedPoint?.id === p.id} onClick={() => selectPoint(p)}>
         {i + 1} {p.tag} · {md(p.start)}{p.end !== p.start ? `〜${md(p.end)}` : ''} · {yen(p.value)}円</button>)}
