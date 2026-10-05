@@ -3,7 +3,7 @@ import React, { useState, useEffect, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { OWNER_AUTH_REQUIRED, subscribeOwner, hasOwnerSession, passwordLogin,
   logoutOwner, revokeOwnerDevices, useOwnerPasskey, restoreOwnerSession, hasSavedOwnerSession,
-  ownerLockReason } from '../lib/ownerSession';
+  ownerLockReason, ownerLoginFailure } from '../lib/ownerSession';
 import './OwnerAccess.css';
 
 /** The lock reason in owner wording, with the fixed code for a screenshot. */
@@ -61,14 +61,9 @@ export function OwnerAccess({ children }: { children: React.ReactNode }) {
     setBusy(true); setMessage(''); setCode('');
     try { await fn(); setMessage(success); setRecovery(false); }
     catch (error) {
-      // The visible text stays generic; the fixed error code (never a
-      // credential or server body) rides a data attribute so the owner-mode
-      // acceptance can name the stage a login failed at.
-      const reason = error instanceof Error ? error.message : 'unknown';
-      setCode(/^[a-z_]{1,40}$/.test(reason) ? reason : 'unknown');
-      setMessage(reason === 'try_later'
-        ? 'しばらく待ってから、もう一度お試しください。'
-        : '操作を完了できませんでした。接続と認証情報を確認してください。');
+      const failure = ownerLoginFailure(error);
+      setCode(failure.code);
+      setMessage(failure.message);
     }
     finally { setBusy(false); setPassword(''); }
   };

@@ -9,6 +9,40 @@
 export const OWNER_AUTH_REQUIRED = import.meta.env.VITE_ARGUS_OWNER_AUTH_REQUIRED === '1';
 const base = String(import.meta.env.VITE_ARGUS_BACKEND_URL ?? '').replace(/\/$/, '');
 const prefix = '/api/argus/owner-auth/';
+// Fixed diagnostic codes only: never include a credential, URL or server body.
+type AuthStage = 'password' | 'passkey_start' | 'passkey_finish' | 'register_start' | 'register_finish' | 'session' | 'logout' | 'revoke';
+class OwnerAuthFailure extends Error {
+  constructor(reason: string, readonly ownerCode: string) { super(reason); }
+}
+const stageOf = (name: string): AuthStage => ({ password: 'password', 'login-options': 'passkey_start',
+  'login-verify': 'passkey_finish', 'register-options': 'register_start', 'register-verify': 'register_finish',
+  'revoke-all': 'revoke', logout: 'logout' } as Record<string, AuthStage>)[name] ?? 'session';
+const httpFailure = (stage: AuthStage, status: number, reason: string) => new OwnerAuthFailure(reason,
+  `${stage}_${status === 401 ? 'rejected' : status === 403 ? 'forbidden' : status === 429 ? 'limited' : status >= 500 ? 'unavailable' : 'invalid'}`);
+const connectionFailure = (stage: AuthStage, error: unknown, reason = 'session_check_unavailable') => new OwnerAuthFailure(reason,
+  `${stage}_${error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name) ? 'timeout' : 'network'}`);
+/** A useful user-facing explanation without exposing raw exceptions or authentication data. */
+export function ownerLoginFailure(error: unknown): { code: string; message: string } {
+  const code = error instanceof OwnerAuthFailure ? error.ownerCode :
+    error instanceof Error && error.message === 'try_later' ? 'limited' :
+    error instanceof Error && error.message === 'authentication_cancelled' ? 'session_cancelled' : 'unknown';
+  const part = code.split('_').at(-1);
+  const stage = code.slice(0, -(part?.length ?? 0) - 1);
+  const where = stage === 'password' ? 'パスワードの確認' : stage === 'passkey_start' ? 'パスキーの開始' :
+    stage === 'passkey_finish' ? 'パスキーの確認' : stage === 'session' ? 'ログイン後の確認' : '本人確認';
+  const message = part === 'timeout' ? `${where}が時間内に終わりませんでした。通信環境を確認して、もう一度お試しください。` :
+    part === 'network' ? `${where}でサーバーに接続できませんでした。通信環境を確認してください。` :
+    part === 'limited' || code === 'limited' ? '短時間に本人確認が重なりました。1分ほど待ってから、もう一度お試しください。' :
+    part === 'unavailable' ? `${where}でサーバーが一時的に応答できませんでした。少し待ってから、もう一度お試しください。` :
+    code === 'password_rejected' ? 'パスワードがサーバーに認められませんでした。入力したパスワードを確認してください。' :
+    code === 'passkey_device_incomplete' ? '端末でのパスキー確認を完了できませんでした。パスワードで開くこともできます。' :
+    code === 'passkey_device_unsupported' ? 'この端末ではパスキーを利用できません。パスワードで開いてください。' :
+    part === 'cancelled' ? '本人確認の操作が中断されました。もう一度お試しください。' :
+    code === 'session_unverified' ? '本人確認の応答を確認できませんでした。ログインは完了していません。もう一度お試しください。' :
+    part === 'rejected' || part === 'forbidden' ? `${where}がサーバーに認められませんでした。` :
+    `${where}の応答を読み取れませんでした。`;
+  return { code, message: `${message}（確認コード: ${code}）` };
+}
 let token = '';
 let expiresAt = 0;
 let ceremonyEpoch = 0;
@@ -224,18 +258,23 @@ export async function restoreOwnerSession(): Promise<boolean> {
 }
 
 async function action(name: string, body: unknown = {}) {
-  const response = await fetch(base + prefix + name, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body), cache: 'no-store', redirect: 'error',
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error(response.status === 429 ? 'try_later' : 'authentication_failed');
-  return response.json();
+  const stage = stageOf(name);
+  let response: Response;
+  try {
+    response = await fetch(base + prefix + name, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), cache: 'no-store', redirect: 'error',
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) { throw connectionFailure(stage, error); }
+  if (!response.ok) throw httpFailure(stage, response.status, response.status === 429 ? 'try_later' : 'authentication_failed');
+  try { return await response.json(); }
+  catch { throw new OwnerAuthFailure('authentication_failed', `${stage}_invalid`); }
 }
 async function verifyAndSetSession(value: { token?: unknown; expiresAt?: unknown }, epoch: number) {
   if (typeof value.token !== 'string' || !/^[A-Za-z0-9_-]{32,128}$/.test(value.token)
       || typeof value.expiresAt !== 'number' || value.expiresAt <= Date.now()
-      || value.expiresAt > Date.now() + MAX_SESSION_MS) throw new Error('authentication_failed');
+      || value.expiresAt > Date.now() + MAX_SESSION_MS) throw new OwnerAuthFailure('authentication_failed', 'session_invalid');
   // Do not publish provisional credentials: an old SW may replay a cached login.
   // Only a fresh server echo can unlock existing device-local results.
   const nonce = crypto.randomUUID();
@@ -245,15 +284,16 @@ async function verifyAndSetSession(value: { token?: unknown; expiresAt?: unknown
       headers: { 'X-ARGUS-OWNER-SESSION': value.token, 'X-ARGUS-OWNER-NONCE': nonce },
       cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(10_000),
     });
-  } catch { throw new Error('session_check_unavailable'); }
+  } catch (error) { throw connectionFailure('session', error); }
   // Only the server's own 401/403 or its explicit "not authenticated" is a
   // rejection. A timeout, a 429/5xx or an unechoed body (an old Service
   // Worker's replay) says nothing about the session.
-  if (response.status === 401 || response.status === 403) throw new Error('authentication_failed');
-  if (!response.ok || response.headers.get('X-ARGUS-OWNER-NONCE') !== nonce) throw new Error('session_check_unavailable');
+  if (response.status === 401 || response.status === 403) throw httpFailure('session', response.status, 'authentication_failed');
+  if (!response.ok) throw httpFailure('session', response.status, 'session_check_unavailable');
+  if (response.headers.get('X-ARGUS-OWNER-NONCE') !== nonce) throw new OwnerAuthFailure('session_check_unavailable', 'session_unverified');
   let body: { authenticated?: unknown } | null = null;
-  try { body = await response.json(); } catch { throw new Error('session_check_unavailable'); }
-  if (body?.authenticated !== true) throw new Error('authentication_failed');
+  try { body = await response.json(); } catch { throw new OwnerAuthFailure('session_check_unavailable', 'session_invalid'); }
+  if (body?.authenticated !== true) throw new OwnerAuthFailure('authentication_failed', 'session_rejected');
   if (epoch !== ceremonyEpoch || navigator.onLine === false) throw new Error('authentication_cancelled');
   setSession(value);
 }
@@ -286,10 +326,16 @@ export async function useOwnerPasskey(register: boolean) {
   for (const key of ['excludeCredentials', 'allowCredentials']) {
     if (options[key]) options[key] = options[key].map((entry: { id: string }) => ({ ...entry, id: decode(entry.id) }));
   }
-  const credential = (register
-    ? await navigator.credentials.create({ publicKey: options })
-    : await navigator.credentials.get({ publicKey: options })) as PublicKeyCredential | null;
-  if (!credential) throw new Error('authentication_cancelled');
+  let credential: PublicKeyCredential | null;
+  try {
+    credential = (register
+      ? await navigator.credentials.create({ publicKey: options })
+      : await navigator.credentials.get({ publicKey: options })) as PublicKeyCredential | null;
+  } catch (error) {
+    throw new OwnerAuthFailure('authentication_cancelled', error instanceof Error && error.name === 'NotSupportedError'
+      ? 'passkey_device_unsupported' : 'passkey_device_incomplete');
+  }
+  if (!credential) throw new OwnerAuthFailure('authentication_cancelled', 'passkey_device_incomplete');
   const common = { id: credential.id, rawId: encode(credential.rawId), type: credential.type,
     clientExtensionResults: credential.getClientExtensionResults() };
   // WebAuthn fields are prototype properties, not enumerable object entries.
