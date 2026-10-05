@@ -70,7 +70,7 @@ jobs:
       - name: Install deps (ci.ymlと同一セット)
         run: >-
           pip install --quiet anthropic flask flask-cors requests pytz
-          python-dotenv json-repair pytest pytest-xdist==3.8.0 cryptography==49.0.0 pywebpush==2.3.0 webauthn==2.7.1
+          python-dotenv json-repair pytest pytest-xdist==3.8.0 cryptography==49.0.0 pywebpush==2.3.0 webauthn==2.7.1 openpyxl==3.1.5 xlrd==2.0.2
       - name: Install web deps
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
