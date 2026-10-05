@@ -314,7 +314,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_ai_usage_view.py': '729a3e9155a2106069ad68d8b9efb590ab10f3a9',
     'requirements.txt': '65b71f9a15d11e673f90fdc9d1cf46a8b3c9c5c8',
     'jp_market_valuation.py': '8813012bcab02e9269007a8850870da2ef050565',
-    'docs/V13_6_INDEX_VALUATION.md': 'aa7a1a35a12be9657139cb3e9488ea4b136f087b',
+    'docs/V13_6_INDEX_VALUATION.md': '86f949af07f9cee61e570dc11d3062542c832269',
     'argus_web_push.py': 'e6ea726935fb8ceb60bc16deaf1a4b50cb9f8355',
     'argus_owner_vault.py': '9c3d105716b1115a205bc69dbbbd18e3a7356457',
     'argus_ai_usage_view.py': 'cd86138feaaa5f61a305b2eaa4e74f2b8de3b163',
@@ -648,6 +648,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "docs/PER_CURRENT_AUTHORITY.md",
     "web/src/lib/watchlistMembershipRestore.ts",
     "web/scripts/watchlist-membership-restore.test.cjs",
     "test_intel_backend.py",
