@@ -54,7 +54,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # the owner-mode machine readers and the post-merge 4 GiB gate
     'docs/ARGUS_CHECKPOINT_V2_RSS_RETENTION_REPORT.md': 'de1dcfe52957ef040bc7a12e22a076e6819843ff',
     # the owner-mode machine readers and the post-merge 4 GiB gate
-    '.github/workflows/smoke-test.yml': '98cf30aabc06648f15c4147199322f2db55b31a6',
+    '.github/workflows/smoke-test.yml': '027a542bab6a1154c1d6c807d7b8de1de9264560',
     # the market store residency (v13.7.59 candidate)
     'test_argus_market_store_residency.py': '0461ce83cd33c82ea5e6cfd2fdfa49c55e3bbe3d',
     # the market store residency (v13.7.59 candidate)
@@ -268,7 +268,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/common/TriangleStepLoader.css': '055ab6673461550f1cc0f38577da9e261a4bc647',
     'web/src/i18n/index.ts': '933221ee4ca1f3adccdb8ebf5c950419fe7ce019',
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
-    'test_prediction_ledger_workflow.py': 'c56ab18cdedbf04fd37c7362209172fe92e409cf',
+    'test_prediction_ledger_workflow.py': '7e985330c0b4853aeef39e4635177ddc09f0f63f',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
     'web/src/hooks/useAssets.ts': '7378e41e1b7fdf6ff6b14f29e5271639054f370b',
     'web/src/components/dialogue/OwnerOverview.tsx': '237fac885c233c84baf128924f0b4cc92aa7e334',
@@ -648,6 +648,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_smoke_execution.py",
+    "docs/V13_LEGACY_RUNTIME_REPAIR_2026-10-05.md",
     "web/src/components/dashboard/EventImpactBadge.tsx",
     "web/src/lib/todayEventSchedule.ts",
     "web/src/components/dashboard/TodayEventSchedule.tsx",
