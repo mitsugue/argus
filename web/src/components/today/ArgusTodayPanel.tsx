@@ -844,9 +844,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
             {topSignals.signals.map((row) => <div className="at-seven-row" key={row.id}>
               <i data-signal-id={row.id} data-signal-state={row.state}>
                 <GlossaryTip glossaryKey={row.glossaryKey}><span className="at-seven-condition">{Number(row.id.slice(-2))} · {SIGNAL_READING_JA[row.id]?.name ?? row.nameJa}</span></GlossaryTip><b>{row.stateJa}</b>
-                <span className="at-seven-direction" data-direction={CURRENT_SIGNAL_DIRECTION[row.family] ?? 'unknown'}>成立時：{signalDirectionJa(row.family)}</span>
-                <small className="at-seven-performance">{signalPerformanceJa(row.family, signStudy)}</small>
-                {SIGNAL_READING_JA[row.id] && <small className="at-seven-rule">{SIGNAL_READING_JA[row.id].condition}</small>}
+                <span className="at-seven-direction" data-direction={row.ruleStatus === 'RULE_NOT_DEFINED' ? 'unknown' : CURRENT_SIGNAL_DIRECTION[row.family] ?? 'unknown'}>{row.ruleStatus === 'RULE_NOT_DEFINED' ? '警戒の判定基準は未定義' : `成立時：${signalDirectionJa(row.family)}`}</span>
+                <small className="at-seven-performance">{signalPerformanceJa(row.family, signStudy, row.valuationBasis)}</small>
+                {SIGNAL_READING_JA[row.id] && <small className="at-seven-rule">{row.conditionRuleJa ?? SIGNAL_READING_JA[row.id].condition}</small>}
                 {row.gateNoteJa ? <small className="at-seven-gate-note"> {row.gateNoteJa}</small> : null}
                 {row.factNoteJa && <small className="at-seven-fact">{row.factNoteJa}</small>}</i>
             </div>)}

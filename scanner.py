@@ -39280,11 +39280,14 @@ def _level_map_warm(nikkei_rows):
                         constituents_as_of=members_label)
                 except jp_market_level_map.LevelMapError:
                     continue
-                estimate["recordedAt"] = now
+                estimate["recordedAt"] = _ai_now_iso()
                 stored = argus_analysis_history.append_level_map_eps(path, estimate)
                 if stored["inserted"]:
                     _LEVEL_MAP["eps"][day] = estimate
                     _LEVEL_MAP["estimatesLastWarm"] += 1
+        # Provider collection may cross the open; the morning record must
+        # be admitted against completion time, never the warm's start time.
+        now = _ai_now_iso()
         latest = sessions[-1]
         morning = _level_map_next_session(latest)
         stored_mornings = {row.get("morningOf") for row in _LEVEL_MAP["mornings"]}
@@ -39698,6 +39701,37 @@ def _level_map_score_summary(score):
         "latestMorning": (score.get("perMorning") or [None])[-1]}
 
 
+def _level_map_current_valuation(cutoff, *, nikkei_rows=None):
+    """Reuse the existing estimate for the latest completed index session.
+
+    Cache-only: no provider request, new history, or old-definition fallback.
+    Missing current estimates remain missing even when a legacy proxy exists.
+    """
+    limit = jp_market_engine._instant(cutoff)
+    rows = nikkei_rows if nikkei_rows is not None else (
+        _N225_ANALOG_HISTORY.get("data") or
+        (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}).get("data") or [])
+    visible = []
+    for bar in rows:
+        known = jp_market_engine._instant(bar.get("availableFrom"))
+        close = jp_market_engine._finite(bar.get("close"))
+        if limit is not None and known is not None and known <= limit and close is not None and close > 0 \
+                and bar.get("instrumentId") == "NIKKEI_225_INDEX" and str(bar.get("date") or "") <= limit.date().isoformat():
+            visible.append(bar)
+    if not visible:
+        return {}
+    last = max(visible, key=lambda bar: bar["date"])
+    row = (_LEVEL_MAP.get("eps") or {}).get(last["date"])
+    if not isinstance(row, dict):
+        return {}
+    # A copied projection carries the store's existing acquisition time.
+    current = {**row, "instrumentId": "NIKKEI_225_INDEX", "currency": "JPY",
+               "sourceRef": "level-map-eps:" + last["date"]}
+    scale = jp_market_price_paths.current_estimate_scale(current, cutoff=cutoff,
+        anchor_date=last["date"], anchor_price=last["close"])
+    return current if scale["status"] == "AVAILABLE" else {}
+
+
 def _level_map_public():
     """The latest stored morning map and the estimate lane's state (no per-member values)."""
     eps = _LEVEL_MAP.get("eps") or {}
@@ -40009,9 +40043,9 @@ def _jp_market_comparison_calculate(horizon):
         result = jp_market_price_paths.cached_index_comparison(
             rows, cutoff=cutoff, session_dates=sessions, horizon_sessions=horizon,
             acquired_at=cached.get("acquiredAt"),
-            # The official row when it exists; otherwise the labelled ARGUS proxy,
-            # which the scale keeps distinguishable by basis.
-            valuation=(_JP_INDEX_VALUATION.snapshot(cutoff) or _jp_index_proxy_row(cutoff)),
+            # The same current estimate as the morning map and D04. An
+            # unavailable estimate is not substituted by the old PER lane.
+            valuation=(_level_map_current_valuation(cutoff, nikkei_rows=rows) or {"basis": jp_market_level_map.EPS_BASIS}),
             state_rows=_JP_MARKET_FEATURE_HISTORY.get("features", ()),
             condition_rows=_JP_MARKET_FEATURE_HISTORY.get("conditions", ()),
             # Walk-forward validation, computed when the history or the
@@ -40031,8 +40065,12 @@ def _jp_market_comparison_calculate(horizon):
         if horizon == 5:
             result["marketFeatureSnapshot"] = _JP_MARKET_FEATURE_HISTORY.get("latest")
             result["levelMap"] = _level_map_public()
-        result["valuationAcquisition"] = dict(_JP_INDEX_VALUATION.status)
-        result["proxyValuation"] = _jp_index_proxy_public()
+        current = _level_map_current_valuation(cutoff, nikkei_rows=rows)
+        result["valuationAcquisition"] = {
+            "status": "AVAILABLE" if current else "CURRENT_ESTIMATE_UNAVAILABLE",
+            "basis": jp_market_level_map.EPS_BASIS,
+            "date": current.get("date"), "recordedAt": current.get("recordedAt")}
+        result["proxyValuation"] = None
         if missing_calendar and result.get("comparison"):
             result["comparison"]["limitations"].append(
                 "公式営業日表の範囲外の過去局面は、比較候補から除外しています。")
@@ -41055,8 +41093,7 @@ def _jp_market_engine_market_view():
         inputs = _jp_market_engine_pit_inputs()
         evidence = jp_market_engine.evaluate_d01_d07(
             cutoff=cutoff, two_market_rows=inputs["creditRows"],
-            nikkei_valuation=_JP_INDEX_VALUATION.snapshot(cutoff),
-            nikkei_proxy_valuation=_jp_index_proxy_row(cutoff),
+            nikkei_current_estimate=_level_map_current_valuation(cutoff, nikkei_rows=inputs["nikkeiRows"]),
             margin_1570_rows=inputs["margin1570Rows"],
             relative_strength_proxy=inputs["rsProxy"],
             foreign_flow_rows=inputs["flowRows"],

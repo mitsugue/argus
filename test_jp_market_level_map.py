@@ -311,3 +311,22 @@ def test_a_valuation_day_is_all_pages_or_nothing(monkeypatch):
     monkeypatch.setattr(scanner, "_JQ_VALUATION_DAY_CACHE", {})
     assert scanner._jq_valuation_for_date("2026-10-02", {}) == {}
     assert "2026-10-02" not in scanner._JQ_VALUATION_DAY_CACHE
+
+
+def test_collection_crossing_the_open_uses_completion_time_and_never_backdates_morning(monkeypatch, tmp_path):
+    import argus_analysis_history as history
+    scanner, path, rows, _ = _glue(monkeypatch, tmp_path, "2026-10-04T23:59:50Z")
+    rows = [r for r in rows if r["date"] <= "2026-10-02"]
+    original_fetch = scanner._jq_valuation_for_date
+    clock = ["2026-10-04T23:59:50Z"]
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: clock[0])
+    def arriving_after_open(day, headers):
+        payload = original_fetch(day, headers)
+        clock[0] = "2026-10-05T00:00:10Z"
+        return payload
+    monkeypatch.setattr(scanner, "_jq_valuation_for_date", arriving_after_open)
+    scanner._level_map_warm(rows)
+    state = history.read_level_map_state(path)
+    assert state["eps"]["2026-10-02"]["recordedAt"] == "2026-10-05T00:00:10Z"
+    assert state["mornings"] == []
+    assert "2026-10-05" in scanner._LEVEL_MAP["missedMornings"]

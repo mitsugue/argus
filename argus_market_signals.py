@@ -57,6 +57,8 @@ def signal_state(row: Optional[Mapping[str, Any]]) -> str:
     status = row.get("status")
     condition = row.get("conditionMet")
     if status == "AVAILABLE":
+        if row.get("ruleStatus") == "RULE_NOT_DEFINED":
+            return "DATA_GATED"
         if condition is True:
             return "ACTIVE"
         if condition is False:
@@ -77,6 +79,8 @@ def signal_state(row: Optional[Mapping[str, Any]]) -> str:
 
 
 def _gate_note_ja(row: Any, state: str) -> Optional[str]:
+    if isinstance(row, Mapping) and row.get("ruleStatus") == "RULE_NOT_DEFINED":
+        return "最新PERの警戒基準は未定義。旧方式の19倍判定は使いません。"
     if state != "DATA_GATED" or not isinstance(row, Mapping):
         return None
     # The families reach this projection reduced to status/conditionMet, so
@@ -113,6 +117,8 @@ def project_market_signals(
             # DATA_GATED covers two different situations; the note tells the
             # owner which one this is, without changing the counting rule.
             "gateNoteJa": _gate_note_ja(row, state),
+            **{key: row.get(key) if isinstance(row, Mapping) else None
+               for key in ("ruleStatus", "valuationBasis", "conditionRuleJa")},
             # 2026-10-04: the value, its week and when it was published, as a
             # situation summary (never a probability or a trading signal).
             "factNoteJa": (row.get("factNoteJa") if isinstance(row, Mapping)
