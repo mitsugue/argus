@@ -39,6 +39,22 @@ def fixture(monkeypatch):
         'SERIES_CODE':'FXERD04','UNIT':'Yen per U.S. Dollar','FREQUENCY':'DAILY',
         'VALUES':{'SURVEY_DATES':[20260908,20260909,20260910,20260911,20260914,20260915],
                   'VALUES':[150.0]*6}}]}).encode()
+    import argus_jgb_auction as auctions
+    from test_argus_jgb_auction import result_raw
+    days = {10:1,20:2,30:3,40:4}
+    rows = []
+    for tenor,day in days.items():
+        rows.append('<tr><td>9月'+str(day)+'日（火）</td><td>'+str(tenor)+'年利付国債</td>'
+            '<td></td><td></td><td><a href="nyusatsu/resul202609'+f'{day:02d}'+'.htm">結果</a></td><td></td></tr>')
+        bodies[auctions.ROOT+'nyusatsu/resul202609'+f'{day:02d}'+'.htm'] = result_raw(tenor).replace(
+            '令和8年10月6日'.encode(),f'令和8年9月{day}日'.encode())
+    bodies[auctions.ROOT+'2608.htm'] = '<h1>入札カレンダー：令和8年8月</h1>'.encode()
+    bodies[auctions.ROOT+'2609.htm'] = ('<h1>入札カレンダー：令和8年9月</h1><table>'+''.join(rows)+'</table>').encode()
+    real_refresh = runtime.refresh
+    def fixture_refresh(*args, **kwargs):
+        kwargs.setdefault('clock', lambda: kwargs['now_iso'])
+        return real_refresh(*args, **kwargs)
+    monkeypatch.setattr(runtime, 'refresh', fixture_refresh)
     calls=[]
     def get(url,**kwargs):
         calls.append((url,kwargs)); assert kwargs['allow_redirects'] is False
@@ -59,7 +75,7 @@ def test_real_ledger_registry_roundtrip_daily_reuse_and_revision_gate(monkeypatc
     get,calls,bodies,table=fixture(monkeypatch)
     original=ledger.empty_state(); legacy_hash=ledger.state_hash(original)
     initial=runtime.refresh(original,now_iso=AT,calendar=calendar(),get=get)
-    assert initial['status']=='AVAILABLE' and initial['requests']==len(calls)==4
+    assert initial['status']=='AVAILABLE' and initial['requests']==len(calls)==10
     assert 'fiscalMonitor' not in original and ledger.state_hash(original)==legacy_hash
     saved=ledger.normalize_state(json.loads(json.dumps(initial['state'])))
     monitor=saved['fiscalMonitor']
@@ -68,7 +84,7 @@ def test_real_ledger_registry_roundtrip_daily_reuse_and_revision_gate(monkeypatc
     assert ledger.state_hash(saved)!=legacy_hash
     assert ledger.effective_observations(saved,AT)==[]
     repeat=runtime.refresh(saved,now_iso='2026-09-16T08:00:00Z',calendar=calendar(),get=get)
-    assert repeat['status']=='NOT_DUE' and repeat['requests']==0 and len(calls)==4
+    assert repeat['status']=='NOT_DUE' and repeat['requests']==0 and len(calls)==10
     # Same document URL with changed bytes is a revision, not a trusted new table.
     bodies[table['sourceUrl']]=b'%PDF-unreviewed-change'
     revised=runtime.refresh(saved,now_iso='2026-09-17T07:01:00Z',calendar=calendar(),get=get)
@@ -175,20 +191,20 @@ def test_existing_collector_merges_and_retries_save_without_duplicate_fetch(monk
     assert scanner._jp_fiscal_environment_warm()['status']=='ALREADY_RUNNING'
     assert len(calls)==0
     work.pop()()
-    assert len(calls)==4
+    assert len(calls)==10
     assert any(row['id']=='unrelated-row' for row in scanner._MARKET_LEDGER['observations'])
     assert scanner._JP_FISCAL_REFRESH_STATE['persistenceStatus']=='UNVERIFIED'
     # A failed read-back is retried through the same checkpoint without refetch.
     scanner._jp_fiscal_environment_warm(); work.pop()()
-    assert len(calls)==4
+    assert len(calls)==10
     assert scanner._JP_FISCAL_REFRESH_STATE['persistenceStatus']=='VERIFIED'
     assert not scanner._JP_FISCAL_REFRESH_STATE['pendingPersistence']
     with scanner.app.test_request_context('/api/argus/jp-fiscal-environment'):
         document=scanner.api_argus_jp_fiscal_environment().get_json()
     assert document['id']==scanner._JP_FISCAL_REFRESH_STATE['verifiedReportId']
-    assert document['fetchesDuringRead']==0 and len(calls)==4
+    assert document['fetchesDuringRead']==0 and len(calls)==10
     scanner._jp_fiscal_environment_warm(); work.pop()()
-    assert scanner._JP_FISCAL_REFRESH_STATE['status']=='NOT_DUE' and len(calls)==4
+    assert scanner._JP_FISCAL_REFRESH_STATE['status']=='NOT_DUE' and len(calls)==10
 
 
 def test_unified_context_and_existing_history_hold_same_fiscal_snapshot(monkeypatch,tmp_path):
@@ -321,3 +337,67 @@ def test_fx_projection_reports_its_acquisition_and_own_source(monkeypatch):
     assert '17時' in fx['provenance']['sourceLabel']
     assert jgb['provenance']['url']==sources.JGB_URL
     assert runtime.context_reference(doc)['fxAcquisitionStatus']=='AVAILABLE'
+
+
+def test_auction_receipt_is_completion_not_start_and_read_uses_saved_snapshot(monkeypatch):
+    from datetime import datetime, timedelta
+    import argus_jgb_auction as auctions
+    get, calls, _, _ = fixture(monkeypatch)
+    start = datetime.fromisoformat(AT.replace('Z','+00:00'))
+    ticks = iter((start+timedelta(seconds=i)).isoformat() for i in range(1,8))
+    result = runtime.refresh(ledger.empty_state(), now_iso=AT, calendar=calendar(), get=get, clock=lambda:next(ticks))
+    state = ledger.normalize_state(json.loads(json.dumps(result['state'])))
+    saved = auctions.saved_rows(state, as_of=state['fiscalMonitor']['updatedAt'])
+    assert len(saved) == 4
+    assert [row['knownAt'] for row in saved] == [(start+timedelta(seconds=i)).isoformat() for i in range(3,7)]
+    assert auctions.saved_rows(state, as_of=AT) == []
+    before = deepcopy(state); count = len(calls)
+    document = runtime.public_document(state)
+    reference = runtime.context_reference(document)
+    assert reference['auctions'] == document['auctions'] == state['fiscalMonitor']['auctionReport']
+    assert state == before and len(calls) == count
+    assert reference['market'].get('auctionStatus') is None
+    assert document['market']['warningLevel'] == state['fiscalMonitor']['report']['cases']['baseline']['market']['warningLevel']
+    assert document['auctions']['predictivePerformance'] == 'UNVALIDATED'
+    assert not document['auctions']['actionAuthority']
+
+
+def test_pending_auction_retries_hourly_keeps_prior_result_and_does_not_guess(monkeypatch):
+    import argus_jgb_auction as auctions
+    get, calls, bodies, _ = fixture(monkeypatch)
+    first = runtime.refresh(ledger.empty_state(), now_iso=AT, calendar=calendar(), get=get)['state']
+    bodies[auctions.ROOT+'2609.htm'] += ('<table><tr><td>9月16日（水）</td><td>10年利付国債</td>'
+        '<td></td><td></td><td>入札結果</td><td></td></tr></table>').encode()
+    pending = runtime.refresh(first, now_iso='2026-09-17T07:00:01Z', calendar=calendar(), get=get)
+    m = pending['state']['fiscalMonitor']
+    assert m['auctionAcquisitionStatus'] == 'UPDATE_WAIT'
+    view = m['auctionReport']['series']['10']
+    assert view['status'] == 'UPDATE_WAIT' and view['latestResult']['sessionDate'] == '2026-09-01'
+    assert not any(url.endswith('resul20260916.htm') for url, _ in calls)
+    assert runtime.refresh(pending['state'], now_iso='2026-09-17T07:30:01Z', calendar=calendar(), get=get)['requests'] == 0
+    retry = runtime.refresh(pending['state'], now_iso='2026-09-17T08:00:01Z', calendar=calendar(), get=get)
+    assert retry['requests'] == 9
+    assert retry['state']['observations'] == pending['state']['observations']
+
+
+def test_auction_failure_is_separate_from_fiscal_warning_and_shared_restore(monkeypatch):
+    import argus_jgb_auction as auctions
+    get, _, _, _ = fixture(monkeypatch)
+    initial = runtime.refresh(ledger.empty_state(), now_iso=AT, calendar=calendar(), get=get)['state']
+    def broken(url, **kwargs):
+        if url.startswith(auctions.ROOT): raise TimeoutError('synthetic')
+        return get(url, **kwargs)
+    failed = runtime.refresh(initial, now_iso='2026-09-16T08:01:00Z', calendar=calendar(), get=broken)
+    # Not due on a healthy day; make the existing official publication become due next day.
+    assert failed['status'] == 'NOT_DUE'
+    comparable = runtime.refresh(initial, now_iso='2026-09-17T07:01:00Z', calendar=calendar(), get=get)['state']
+    failed = runtime.refresh(initial, now_iso='2026-09-17T07:01:00Z', calendar=calendar(), get=broken)['state']
+    restored = ledger.merge_restored_state(initial, failed)
+    assert restored['fiscalMonitor']['auctionAcquisitionStatus'] == 'FAILED'
+    assert len(auctions.saved_rows(restored, as_of='2026-09-17T07:01:00Z')) == 4
+    for case, row in restored['fiscalMonitor']['report']['cases'].items():
+        assert row['currentReasons'] == comparable['fiscalMonitor']['report']['cases'][case]['currentReasons']
+        assert row['fiscal']['values'] == comparable['fiscalMonitor']['report']['cases'][case]['fiscal']['values']
+        assert row['warningLevel'] == comparable['fiscalMonitor']['report']['cases'][case]['warningLevel']
+        assert row['releaseConditions'] == comparable['fiscalMonitor']['report']['cases'][case]['releaseConditions']
+    assert restored['fiscalMonitor']['notification'] == initial['fiscalMonitor']['notification']

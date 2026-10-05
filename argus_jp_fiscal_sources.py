@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 import re
 
+import argus_jgb_auction as auctions
+
 from argus_jp_fiscal_monitor import METRICS, calculate, digest, instant, market_assessment, environment_assessment
 
 JGB_URL = 'https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv'
@@ -194,6 +196,7 @@ def ledger_series():
     for tenor in (10,20,30,40):
         series['jp.market.jgb.'+str(tenor)+'y'] = ('PERCENT', str(tenor)+'年国債市場利回り', 'mof', 'official')
     series['fx.usdjpy'] = ('JPY_PER_USD', '東京市場17時のドル円', 'boj', 'official')
+    series.update(auctions.ledger_series())
     return series
 
 

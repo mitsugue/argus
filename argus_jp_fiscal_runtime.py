@@ -1,11 +1,12 @@
 """Scheduled bounded acquisition into the existing market ledger; no LLM calls."""
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
+import argus_jgb_auction as auctions
 import argus_market_ledger as ledger
 import argus_jp_fiscal_sources as sources
 from argus_jp_fiscal_monitor import instant
@@ -71,8 +72,8 @@ def _read(get, url, limit, *, headers=None):
         return b''.join(chunks), dict(response.headers)
 
 
-def refresh(state, *, now_iso, calendar, get, fx_rows=()):
-    """At most four fixed official reads per day; failed acquisition retries hourly.
+def refresh(state, *, now_iso, calendar, get, fx_rows=(), clock=None):
+    """At most ten bounded official reads; pending/failed acquisition retries hourly.
 
     Source hash changes wait for a reviewed table edition. Old observations and
     warnings survive failure. The returned ledger uses the caller's existing
@@ -86,7 +87,8 @@ def refresh(state, *, now_iso, calendar, get, fx_rows=()):
         calendar_error=str(exc)
     last = previous.get('lastAttemptAt')
     healthy = previous.get('acquisitionStatus') == 'AVAILABLE'
-    wait = 86400 if healthy else 3600
+    auction_healthy = previous.get('auctionAcquisitionStatus') == 'AVAILABLE'
+    wait = 86400 if healthy and auction_healthy else 3600
     newly_due = healthy and session and session != previous.get('expectedMarketSession')
     if last and not newly_due and 0 <= (now-instant(last)).total_seconds() < wait:
         return {'changed':False,'status':'NOT_DUE','state':state,'requests':0}
@@ -140,12 +142,27 @@ def refresh(state, *, now_iso, calendar, get, fx_rows=()):
         fx_status='AVAILABLE' if session and rates[-1]['sessionDate'] >= session else 'UPDATE_WAIT'
     except Exception as exc:
         errors['fx']=type(exc).__name__+':'+str(exc)[:120]
+    def read_auction(url, limit):
+        control['requests'] += 1
+        raw, _ = _read(get, url, limit)
+        completed_at = clock() if clock is not None else datetime.now(timezone.utc).isoformat()
+        return raw, completed_at
+    auction_result = auctions.collect(state, as_of=now_iso, read=read_auction)
+    candidates += auction_result['candidates']
+    finished_at = clock() if clock is not None else datetime.now(timezone.utc).isoformat()
+    if instant(finished_at) < instant(auction_result['completedAt']):
+        raise ValueError('fiscal_completion_clock_precedes_receipt')
+    control.update(auctionAcquisitionStatus=auction_result['acquisitionStatus'],
+        auctionExpected=auction_result['expected'], auctionErrors=auction_result['errors'],
+        auctionLastCheckedAt=finished_at, updatedAt=finished_at)
     updated=state
     if candidates:
-        result=ledger.import_rows(state,candidates,now_iso=now_iso,dry_run=False,rebuild_after_commit=False)
+        result=ledger.import_rows(state,candidates,now_iso=finished_at,dry_run=False,rebuild_after_commit=False)
         if not result['ok']:
             raise ValueError('fiscal_ledger_import_failed')
         updated=result['state']
+    control['auctionReport'] = auctions.projection(updated, as_of=finished_at,
+        expected=auction_result['expected'], acquisition=auction_result['acquisitionStatus'])
     control.update(fiscalAcquisitionStatus=fiscal_status,marketAcquisitionStatus=market_status,
         fxAcquisitionStatus=fx_status,
         acquisitionStatus='AVAILABLE' if fiscal_status==market_status==fx_status=='AVAILABLE' and session else 'INCOMPLETE',
@@ -153,13 +170,16 @@ def refresh(state, *, now_iso, calendar, get, fx_rows=()):
     if session:
         year=now.astimezone(JST).year-(now.astimezone(JST).month<4)
         control['report']=sources.ledger_environment_report(updated,fiscal_year=year,
-            expected_session=session,as_of=now_iso,fx_rows=fx_rows,
+            expected_session=session,as_of=finished_at,fx_rows=fx_rows,
             previous=previous.get('report'),market_acquisition=market_status if fx_status != 'FAILED' else 'FAILED',
             fiscal_acquisition=fiscal_status)
     else:
         # A missing official calendar is not a new calculation or an all-clear.
         control['reportStatus']='CALENDAR_UNAVAILABLE'
     if session:
+        from argus_jp_fiscal_monitor import digest
+        control['report']['id'] = 'fiscal-report-' + digest({
+            'fiscalReport':control['report']['id'], 'auctions':control['auctionReport']['id']})
         control['reportStatus']='AVAILABLE'
         transitions={case:deepcopy(row['notificationCandidate'])
             for case,row in control['report'].get('cases',{}).items()
@@ -188,7 +208,7 @@ def public_document(state):
             'sourceUrl','sourceRevision','sourceHash','publishedDate','publishedAt','knownAt')}
             for v in inputs.values()]
     first=next(iter(report.get('cases',{}).values()),{})
-    return {'schemaVersion':'jp-fiscal-public-v1','id':report.get('id'),
+    document = {'schemaVersion':'jp-fiscal-public-v1','id':report.get('id'),
         'status':stored.get('reportStatus','NOT_RUN'),
         'acquisitionStatus':stored.get('acquisitionStatus','NOT_RUN'),
         'fiscalAcquisitionStatus':stored.get('fiscalAcquisitionStatus','NOT_RUN'),
@@ -202,6 +222,11 @@ def public_document(state):
         'actionAuthority':False,'predictivePerformance':'UNVALIDATED',
         'automaticAiCalls':0,'fetchesDuringRead':0,'notificationDelivery':'EXISTING_WEB_PUSH_NEWS_SETTING',
         'persistenceMechanism':'SHARED_LEDGER_CHECKPOINT'}
+    auction_report = stored.get('auctionReport')
+    if isinstance(auction_report, dict):
+        document['auctions'] = deepcopy(auction_report)
+        document['auctionAcquisitionStatus'] = stored.get('auctionAcquisitionStatus', 'NOT_RUN')
+    return document
 
 
 def explanation_facts(document):
@@ -279,9 +304,14 @@ def context_reference(document):
             source_documents[identity] = {key:deepcopy(source.get(key)) for key in (
                 'sourceHash','sourceUrl','sourceRevision','publishedDate','publishedAt','knownAt')}
     reference['sources'] = list(source_documents.values())
+    if isinstance(document.get('auctions'), dict):
+        reference['auctions'] = deepcopy(document['auctions'])
+        reference['auctionAcquisitionStatus'] = document.get('auctionAcquisitionStatus', 'NOT_RUN')
     market = document.get('market') or {}
     reference['market'] = {key:deepcopy(market.get(key)) for key in (
         'id','status','warningLevel','adverseGroups','groups','auctionStatus','rule','causalityConfirmed')}
+    if isinstance(reference.get('auctions'), dict):
+        reference['market'].pop('auctionStatus', None)
     reference['market']['series'] = {sid:{key:deepcopy(row.get(key)) for key in (
         'status','adverse','latestValue','change','comparisonFrom','comparisonTo',
         'comparisonSessions','confirmationSessions','threshold','sourceUrl','observedAt')}

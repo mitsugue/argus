@@ -33,6 +33,8 @@ export function FiscalEnvironmentDetails({ brief }: { brief: MarketBrief }) {
   if (!rows.length) return null;
   const market = object(doc.market) ? doc.market : {};
   const series = object(market.series) ? market.series : {};
+  const auctions = object(doc.auctions) && doc.auctions.actionAuthority === false ? doc.auctions : null;
+  const auctionSeries = object(auctions?.series) ? auctions.series : {};
   return <details className="argus-editorial__evidence fiscal-evidence" data-fiscal-reference={doc.id}>
     <summary>日本の財政・金利の根拠</summary>
     <p>この説明に使った公式試算と市場金利です。財政の作用を点検する参考計算で、株価や財政危機の予測ではありません。</p>
@@ -75,7 +77,35 @@ export function FiscalEnvironmentDetails({ brief }: { brief: MarketBrief }) {
       })}</dl>
       <small>計算ルール：{typeof market.rule?.version === 'string' ? market.rule.version : '未確認'}。丸め幅を超える変化の検出であり、危機や株価を予測できる閾値として検証していません。</small>
     </details>
-    <p>警戒ルールと予測性能は未検証です。国債入札・借換構成は未接続。為替の判定は{series['fx.usdjpy']?.status === 'AVAILABLE' ? '取得済みの別系列を使用します。' : '未取得です。'}</p>
+    {auctions && <section aria-label="日本国債の入札結果">
+      <h3>国債入札への応募</h3>
+      <p>応募額が落札額の何倍あったかを確認します。年限と入札方式を分け、金利の変化と合わせて読みます。</p>
+      {auctions.acquisitionStatus !== 'AVAILABLE' && <p>最新の入札結果は更新確認中です。取得済みの結果は日付を付けて残しています。</p>}
+      {[10, 20, 30, 40].map(tenor => {
+        const view = object(auctionSeries[String(tenor)]) ? auctionSeries[String(tenor)] : {};
+        const result = object(view.latestResult) ? view.latestResult : null;
+        return <details key={tenor}>
+          <summary>{tenor}年国債 · {result ? `保存 ${typeof result.sessionDate === 'string' ? result.sessionDate.slice(5).replace('-', '/') : '日付未確認'} · 応募 ${number(result.bidToCover)}倍` : '結果未取得'}</summary>
+          {view.status !== 'AVAILABLE' && <p>最新の入札結果を確認中{typeof view.expectedSessionDate === 'string' ? `（対象日 ${view.expectedSessionDate}）` : ''}。</p>}
+          {result && <>
+            <p>保存した結果：{typeof result.sessionDate === 'string' ? result.sessionDate : '日付未確認'} · {result.auctionMethod === 'UNIFORM_YIELD' ? '単一利回りの入札' : '価格競争入札'}</p>
+            <dl>
+              <dt>応募額</dt><dd>{number(result.competitiveBidAmountJpy, 0)}円</dd>
+              <dt>落札額</dt><dd>{number(result.competitiveAcceptedAmountJpy, 0)}円</dd>
+              <dt>最高落札利回り</dt><dd>{number(result.highestAcceptedYieldPct, 3)}%</dd>
+              {result.auctionMethod === 'PRICE_COMPETITIVE' ? <>
+                <dt>平均落札利回り</dt><dd>{number(result.averageAcceptedYieldPct, 3)}%</dd>
+                <dt>最高と平均の利回り差</dt><dd>{number(result.yieldTailBp)}bp</dd>
+              </> : <><dt>平均利回り・利回り差</dt><dd>この方式では公表されません</dd></>}
+            </dl>
+            <small>取得 {stamp(result.acquiredAt)}（日本時間） · 公表時刻は未確認</small>
+            {sourceUrl(result.sourceUrl) && <p><a href={sourceUrl(result.sourceUrl)!} target="_blank" rel="noopener noreferrer">財務省の入札結果</a></p>}
+          </>}
+        </details>;
+      })}
+      <p>入札結果と株価方向の関係は未検証です。財政・市場金利の警戒条件には加算しません。</p>
+    </section>}
+    <p>警戒ルールと予測性能は未検証です。{auctions ? '借換構成は未接続。' : '国債入札・借換構成は未接続。'}為替の判定は{series['fx.usdjpy']?.status === 'AVAILABLE' ? '取得済みの別系列を使用します。' : '未取得です。'}</p>
     <p>解除には、比較可能な財政入力と市場データがそろい、警戒条件の解消を確認する必要があります。取得障害だけで解除しません。</p>
     {(Array.isArray(doc.sources) ? doc.sources : []).filter(object).slice(0, 6).map((source, index) => <p key={index}>
       {sourceUrl(source.sourceUrl) && <a href={sourceUrl(source.sourceUrl)!} target="_blank" rel="noopener noreferrer">内閣府の原資料</a>}

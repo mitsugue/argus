@@ -163,3 +163,33 @@ def test_runtime_failed_refresh_retains_last_good_received_report(monkeypatch):
     assert result['current']['shortContracts'] == 167995
     assert result['acquisition']['status'] == 'FAILED'
     assert scanner._MARKET_LEDGER == state
+
+
+def test_correction_reversion_retains_three_vintages_and_first_receipt():
+    initial = document(); original = imported(initial)
+    corrected_raw = REPORT.replace(b'178,791', b'178,792').replace(b'249,469', b'249,468')
+    corrected_raw = corrected_raw.replace(b'61,622', b'61,623').replace(b'24,280', b'24,279')
+    correction = document(corrected_raw, at='2026-09-13T13:00:00Z')
+    corrected = imported(correction, original)
+    reverted_report = document(REPORT, at='2026-09-14T13:00:00Z')
+    restored = imported(reverted_report, corrected)
+    assert len(restored['observations']) == 12
+    assert len(original['observations']) == 4 and len(corrected['observations']) == 8
+    for at, expected in [(RECEIVED, initial), (correction['receivedAt'], correction),
+                         (reverted_report['receivedAt'], reverted_report)]:
+        read = positioning.latest_from_ledger(restored, cutoff=at)
+        assert read['reportId'] == expected['reportId'] and read['receivedAt'] == expected['receivedAt']
+    assert positioning.ledger_candidates(document(at='2026-09-15T13:00:00Z'), restored) == []
+    rollback = ledger.rollback_import(restored, restored['observations'][-1]['importId'], '2026-09-15T13:00:00Z')
+    assert positioning.latest_from_ledger(rollback, cutoff='2026-09-15T13:00:00Z')['reportId'] == correction['reportId']
+    assert initial['publishedAt'] is correction['publishedAt'] is reverted_report['publishedAt'] is None
+    assert not positioning.latest_from_ledger(restored, cutoff=reverted_report['receivedAt'])['actionAuthority']
+
+
+def test_future_receipt_does_not_suppress_current_report_and_other_dates_do_not_mix():
+    future = imported(document(at='2026-09-14T13:00:00Z'))
+    current = document()
+    assert len(positioning.ledger_candidates(current, future)) == 4
+    tampered = deepcopy(future)
+    for row in tampered['observations']: row['metadata']['reportId'] = 'wrong'
+    assert len(positioning.ledger_candidates(document(at='2026-09-15T13:00:00Z'), tampered)) == 4

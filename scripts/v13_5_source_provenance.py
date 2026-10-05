@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.55"
+PRODUCT_VERSION = "v13.8.56"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_jgb_auction.py': '4a3e3565b99b6b3e87d21024a4706a65a7ca89cf',
+    'argus_jgb_auction.py': '5a8315b5e9553c3a8796867dacdeae6bc0f8a072',
     "docs/ops/recovery-phase-a-measurement-core.md": "e9ce722983325daf71a9ec1c0c106ec178cd25ba",
     # Bound local forecast read receipts; no new remote storage or authority.
     'argus_future_map_cache.py': '6320d47d3b49d384f3f57522c364ddc2a77e784a',
@@ -134,7 +136,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'fc734b79b2662d620d320b85c5fb38098ddcbbe2',
+    'web/scripts/owner-today-https.mjs': '00db5787896fc9818b61e6b1cf29f67592ba42dd',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -219,16 +221,16 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_breadth_freshness_workflow.py': 'e8ed1942175b75416caec8711363cfc771b90e3d',
     'argus_tick_durability.py': 'fd2f2a97652cf1f3bb18084fd1aa5f54a19247da',
     'argus_jp_fiscal_monitor.py': '3584e845b3c66c2ebdbb41aae6e8b3bfd9866117',
-    'argus_jp_fiscal_runtime.py': 'aa3057527ac28c95226afa4962553fd03486ca91',
-    'argus_jp_fiscal_sources.py': '63f14c6cce3f9bb6080cd09fbf823b3f54ab4874',
+    'argus_jp_fiscal_runtime.py': 'cb2a6a333fa9bbe09c9d0ae7180d18086b3f2acb',
+    'argus_jp_fiscal_sources.py': '275738feebfefbc7cef3be1442f00d1e3d264bde',
     'docs/V13_7_JP_FISCAL_MONITOR.md': '58498e9819208825f203c37acff3d5c33c473dff',
     'ops/fiscal/cao_20260730.json': '72b7f9ded706ebf1aa9ae92ebb4396b8bf055ae6',
     'scripts/extract_cao_fiscal_table.py': '7b274ad6a393577802e0c6efb0d09882c244df32',
     'test_argus_jp_fiscal_monitor.py': 'c15814b4a0ca8f0c38e137e882320b0d377315e5',
-    'test_argus_jp_fiscal_runtime.py': 'cb232ef6510368c4dd9699e053de5fabfd7a8c02',
+    'test_argus_jp_fiscal_runtime.py': 'bc7750dda91361a4de924fa9f60ec3248445913f',
     'test_argus_jp_fiscal_sources.py': 'd0fb62aef16b6a14705ab67ba99c15f924f5d4c8',
     'web/src/components/today/FiscalEnvironmentDetails.css': 'c5830b9d9414c8b7fafb69b5fa4f7d4a0db83700',
-    'web/src/components/today/FiscalEnvironmentDetails.tsx': 'd696c18bf0e8e18abbd3ca167e135fe02d581386',
+    'web/src/components/today/FiscalEnvironmentDetails.tsx': '48b4fec064313833fc0f8ffc9dc783568cbf47c6',
     'web/src/lib/revealNewsArticle.ts': '807735f5bd95556ed64af7019cf0b3f26608a07c',
     'web/scripts/news-delivery-grouping.test.cjs': 'e646d83148430f802aeec014dfd6f8985f5babc6',
     'docs/V13_7_INDEX_ANALOG_COVERAGE.md': '905dca1b82c5c24ed1e7e11ce6278e8503221564',
@@ -363,8 +365,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_analysis_history.py': 'e60a14420055c58ec921126fc5a923bcf3e9dacd',
     'argus_analysis_history.py': '6b2ca15dbd974b00ca3342299359b9fa9794c64e',
     'argus_market_ledger.py': 'e497d1c6020adead5e823303e7a144ef6b1e7911',
-    'jp_market_positioning.py': '37661655f15f27baf2beec9e08fb2b5977cfbe9f',
-    'test_jp_market_positioning.py': 'f6134d86859e836ca26ab54b0c707ed7b7c8aa14',
+    'jp_market_positioning.py': '265c103ffdbc995123cdbfbfbf86db00d264c9f0',
+    'test_jp_market_positioning.py': '25652d6b817191b47053d3c9bef22f56e15d7a37',
     'web/scripts/jpy-position.test.cjs': 'b06ad4ed402a187d9d949a0d30aea45ac6a648d7',
     'web/src/components/today/JpyPositionCard.tsx': '38a7da45a161ed0611c39abf57ed275e070b808f',
     # Owner-authorized staged analysis delivery; exact tested file contents only.
