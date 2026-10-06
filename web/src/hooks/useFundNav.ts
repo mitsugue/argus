@@ -1,4 +1,4 @@
-import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { calendarDateExpiresAt, dailyFundNavDecisionUsable } from '../domain/liveQuote';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
@@ -128,7 +128,7 @@ function fundNavStore(codeKey: string): SharedPollingStore<State> {
 
       const retained = getState();
       if (retained.authority === 'fresh') accept({ funds: retained.funds });
-      const interval = window.setInterval(() => {
+      const interval = scheduleVisibleInterval(() => {
         if (!isPageVisible()) return;
         void acquire(load);
       }, FUND_NAV_VISIBLE_MS);
@@ -140,7 +140,7 @@ function fundNavStore(codeKey: string): SharedPollingStore<State> {
         cancelExpiry();
         for (const controller of controllers) controller.abort();
         controllers.clear();
-        window.clearInterval(interval);
+        interval();
         stopInitialOnVisible();
       };
     },

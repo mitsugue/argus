@@ -53,3 +53,30 @@ export function subscribeInitialVisibleRead(read: () => void): () => void {
   document.addEventListener('visibilitychange', visible);
   return () => document.removeEventListener('visibilitychange', visible);
 }
+
+/** Pause periodic acquisition in the background; start a full interval on return.
+ * This also prevents suspended, overdue timers from forming a resume burst.
+ */
+export function scheduleVisibleInterval(read: () => void, intervalMs: number | (() => number)): () => void {
+  let timer: number | null = null;
+  let generation = 0;
+  let stopped = false;
+  const pause = () => {
+    generation += 1;
+    if (timer !== null) window.clearInterval(timer);
+    timer = null;
+  };
+  const visible = () => {
+    pause();
+    if (stopped || !isPageVisible()) return;
+    const startedGeneration = generation;
+    timer = window.setInterval(() => {
+      if (stopped || generation !== startedGeneration || !isPageVisible()) return;
+      read();
+      if (typeof intervalMs === 'function') visible();
+    }, typeof intervalMs === 'function' ? intervalMs() : intervalMs);
+  };
+  visible();
+  document.addEventListener('visibilitychange', visible);
+  return () => { stopped = true; pause(); document.removeEventListener('visibilitychange', visible); };
+}

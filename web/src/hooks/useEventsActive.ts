@@ -1,4 +1,4 @@
-import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
 import { WATCHLIST_VISIBLE_MS } from '../lib/pollingPolicy';
@@ -75,11 +75,11 @@ const eventsActiveStore = createSharedPollingStore<EventsActiveState>(
     const onVisible = () => { if (!document.hidden) void load(); };
     const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
     void load();
-    const timer = window.setInterval(() => void load(), WATCHLIST_VISIBLE_MS);
+    const timer = scheduleVisibleInterval(() => void load(), WATCHLIST_VISIBLE_MS);
     return () => {
       cancelled = true;
       controller?.abort();
-      window.clearInterval(timer);
+      timer();
       stopInitialOnVisible();
     };
   },

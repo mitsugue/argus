@@ -1,4 +1,4 @@
-import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useEffect, useState } from 'react';
 import { FEED_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
 
@@ -86,13 +86,13 @@ export function useMarketShock(): MarketShockState {
     void load();
     // v13.5.50: refresh on visibility resume and on online transition (was a
     // single fetch per mount); the visible-page cadence replaced the 5-minute poll.
-    const timer = window.setInterval(() => { if (isPageVisible()) void load(); }, FEED_VISIBLE_MS);
+    const timer = scheduleVisibleInterval(() => { if (isPageVisible()) void load(); }, FEED_VISIBLE_MS);
     const onVisible = () => { if (!document.hidden) void load(); };
     const onOnline = () => void load();
     const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
     window.addEventListener('online', onOnline);
     return () => {
-      cancelled = true; window.clearInterval(timer);
+      cancelled = true; timer();
       stopInitialOnVisible();
       window.removeEventListener('online', onOnline);
     };

@@ -1,4 +1,4 @@
-import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { exactAuthorityEpoch } from '../domain/liveAuthority';
 import {
@@ -273,7 +273,7 @@ const ratesStore = createSharedPollingStore<RatesState>(
     if (retained.data && retained.authority === 'fresh') {
       accept(retained.data, retained.attempt);
     }
-    const interval = window.setInterval(() => void acquire(refresh), CALENDAR_VISIBLE_MS);
+    const interval = scheduleVisibleInterval(() => void acquire(refresh), CALENDAR_VISIBLE_MS);
     const onVisible = () => {
       if (document.hidden) return;
       const current = getState();
@@ -287,7 +287,7 @@ const ratesStore = createSharedPollingStore<RatesState>(
       cancelExpiry();
       for (const controller of controllers) controller.abort();
       controllers.clear();
-      window.clearInterval(interval);
+      interval();
       document.removeEventListener('visibilitychange', onVisible);
       stopInitialRead();
     };

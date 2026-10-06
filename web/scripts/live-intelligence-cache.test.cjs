@@ -16,7 +16,7 @@ for (const hook of ['useNewsIntelligence.ts', 'useMarketShock.ts']) {
   assert.ok(text.includes("setState({ status: 'error', view: memory })"), `${hook}: failure marks status error`);
   assert.ok(text.includes('subscribeInitialVisibleRead'), `${hook}: only deferred initial reads resume on visibility`);
   assert.ok(text.includes("addEventListener('online'"), `${hook}: refresh on online transition`);
-  assert.ok(text.includes('setInterval'), `${hook}: periodic refresh`);
+  assert.ok(text.includes('scheduleVisibleInterval'), `${hook}: periodic refresh`);
 }
 const panel = fs.readFileSync(path.join(src, 'components', 'chart', 'ChartIntelligencePanel.tsx'), 'utf8');
 assert.ok(panel.includes('data-argus-contract="index-chart-selector-v1"'), 'index selector rendered on the market chart');

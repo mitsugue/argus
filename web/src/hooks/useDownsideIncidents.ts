@@ -1,4 +1,4 @@
-import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { deauthorizeDownsideSnapshot, liveAuthorityState,
   scheduleLiveAuthorityExpiry } from '../domain/liveAuthority';
@@ -181,7 +181,7 @@ const downsideStore = createSharedPollingStore<State>(
 
     const retained = getState();
     if (retained.data && retained.authority === 'fresh') accept(retained.data);
-    const interval = window.setInterval(
+    const interval = scheduleVisibleInterval(
       () => void acquire(fetchOnce), REFRESH_INTERVAL_MS);
     const onVisible = () => { if (!document.hidden) void acquire(fetchOnce); };
     const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
@@ -191,7 +191,7 @@ const downsideStore = createSharedPollingStore<State>(
       cancelExpiry();
       for (const controller of controllers) controller.abort();
       controllers.clear();
-      window.clearInterval(interval);
+      interval();
       stopInitialOnVisible();
     };
   },

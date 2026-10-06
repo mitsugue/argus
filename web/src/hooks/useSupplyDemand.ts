@@ -1,4 +1,4 @@
-import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { deauthorizeSupplySignals, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
@@ -157,7 +157,7 @@ function supplyStore(extraSymbols: string): SharedPollingStore<State> {
       if (retained.authority === 'fresh') {
         accept({ asOf: retained.asOf ?? undefined, signals: retained.signals });
       }
-      const interval = window.setInterval(() => {
+      const interval = scheduleVisibleInterval(() => {
         if (!isPageVisible()) return;
         void acquire(load);
       }, POLL_MS);
@@ -169,7 +169,7 @@ function supplyStore(extraSymbols: string): SharedPollingStore<State> {
         cancelExpiries();
         for (const controller of controllers) controller.abort();
         controllers.clear();
-        window.clearInterval(interval);
+        interval();
         stopInitialOnVisible();
       };
     },

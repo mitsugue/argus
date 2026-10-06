@@ -1,4 +1,4 @@
-import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
 import { validMarketBrief, type MarketBrief } from '../lib/marketBrief';
@@ -40,9 +40,9 @@ const store = createSharedPollingStore<State>({ brief: null, error: false, loadi
   };
   retry = () => { void load(); };
   const visible = () => { if (document.visibilityState === 'visible') void load(); };
-  const timer = window.setInterval(() => { if (Date.now() >= nextPollAt) visible(); }, 30_000);
+  const timer = scheduleVisibleInterval(() => { if (Date.now() >= nextPollAt) visible(); }, 30_000);
   const stopInitialVisible = subscribeInitialVisibleRead(visible); void load();
-  return () => { stopped = true; flight?.abort(); window.clearInterval(timer);
+  return () => { stopped = true; flight?.abort(); timer();
     stopInitialVisible(); retry = () => {}; };
 });
 export function useMarketBrief() {

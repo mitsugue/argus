@@ -1,6 +1,6 @@
 import React, {useState, useSyncExternalStore} from 'react';
 import {createSharedPollingStore} from '../../lib/sharedPollingStore';
-import {FEED_VISIBLE_MS,isPageVisible,subscribeInitialVisibleRead} from '../../lib/pollingPolicy';
+import {FEED_VISIBLE_MS,isPageVisible,scheduleVisibleInterval,subscribeInitialVisibleRead} from '../../lib/pollingPolicy';
 import {validMarketInternals} from '../../lib/marketInternals';
 import {useAssets} from '../../hooks/useAssets';
 import {TriangleStepLoader} from '../common/TriangleStepLoader';
@@ -21,9 +21,9 @@ const store=createSharedPollingStore<{data:Document|null;error:boolean;loading:b
       if(alive)set({data,error:false,loading:false});
     }catch{if(alive)set(old=>({...old,error:true,loading:false}));}finally{clearTimeout(timeout);controller=null;}
   }
-  void read();const timer=setInterval(()=>{if(isPageVisible())void read();},FEED_VISIBLE_MS);
+  void read();const timer=scheduleVisibleInterval(()=>{if(isPageVisible())void read();},FEED_VISIBLE_MS);
   const onVisible=()=>{if(isPageVisible())void read();};const stopInitialRead=subscribeInitialVisibleRead(onVisible);
-  return()=>{alive=false;controller?.abort();clearInterval(timer);stopInitialRead();};
+  return()=>{alive=false;controller?.abort();timer();stopInitialRead();};
 });
 const pct=(value:number|null|undefined,relative=false)=>typeof value==='number'&&Number.isFinite(value)?`${value>0?'+':''}${value.toFixed(2)}${relative?'pt':'%'}`:'未取得';
 const shortStamp=(value:string|null)=>value?new Date(value).toLocaleTimeString('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit'}):'時刻不明';

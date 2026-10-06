@@ -380,11 +380,11 @@ def test_reviewed_extension_accepts_only_exact_blob_and_rejects_future_edits(tmp
 
 def test_visible_event_polling_review_pins_are_exact():
     assert source.REVIEWED_EXTENSION_BLOBS["web/src/hooks/useEventsActive.ts"] == (
-        "fba000a3eb23ab625df6eb155c2be5874aa460a4")
+        "f41889e9c9dedd003690b4eba2c2774c0c43cf81")
     assert source.REVIEWED_EXTENSION_BLOBS["web/scripts/polling-singleton.test.mjs"] == (
-        "d06ffc82f0267da3884629d80a0bc5be0ec20468")
+        "f82386d4d1c9dff02968de0ee316e5e523bf5b26")
 
 
 def test_visibility_guard_visible_polling_review_pin_is_exact():
     assert source.REVIEWED_EXTENSION_BLOBS["web/src/hooks/useVisibilityGuard.ts"] == (
-        "c849fc6e33d6c1e6ab8f258d5000fb852e398af4")
+        "044d3c9e5a4d7edb0db1c27f8a4cd6f6423936b9")

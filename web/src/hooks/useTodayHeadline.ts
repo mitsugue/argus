@@ -1,4 +1,4 @@
-import { FEED_VISIBLE_MS, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { FEED_VISIBLE_MS, scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useEffect, useState } from 'react';
 import { readDrawingState, writeDrawingState } from '../lib/verifiedSnapshot';
 import {
@@ -104,11 +104,11 @@ export function useTodayHeadline(): TodayHeadlineState {
       if (document.visibilityState === 'visible') void revalidate(memory);
     };
     const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
-    const timer = window.setInterval(onVisible, FEED_VISIBLE_MS);
+    const timer = scheduleVisibleInterval(onVisible, FEED_VISIBLE_MS);
     return () => {
       cancelled = true;
       stopInitialOnVisible();
-      window.clearInterval(timer);
+      timer();
     };
   }, []);
 

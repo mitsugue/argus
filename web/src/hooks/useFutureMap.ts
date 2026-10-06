@@ -1,4 +1,4 @@
-import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useEffect, useSyncExternalStore } from 'react';
 
 // FUTURE MAP (2026-10-04): external views written by the research side to the
@@ -70,9 +70,9 @@ let stopSync: (() => void) | null = null;
 function startSync(): () => void {
   const visible = () => document.visibilityState === 'visible';
   const onVisibility = () => { if (visible()) void refreshFutureMap(); };
-  const timer = window.setInterval(() => { if (visible()) void refreshFutureMap(); }, FUTURE_MAP_POLL_MS);
+  const timer = scheduleVisibleInterval(() => { if (visible()) void refreshFutureMap(); }, FUTURE_MAP_POLL_MS);
   const stopInitialOnVisibility = subscribeInitialVisibleRead(onVisibility);
-  return () => { window.clearInterval(timer); stopInitialOnVisibility(); };
+  return () => { timer(); stopInitialOnVisibility(); };
 }
 
 function subscribe(listener: () => void): () => void {

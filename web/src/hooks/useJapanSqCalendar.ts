@@ -1,4 +1,4 @@
-import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
 import { CALENDAR_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
@@ -28,12 +28,12 @@ const store = createSharedPollingStore<State>({ data: null, loading: true, faile
     };
     retry = () => { void refresh(); };
     const visible = () => { if (document.visibilityState === 'visible') void refresh(); };
-    const interval = window.setInterval(() => {
+    const interval = scheduleVisibleInterval(() => {
       if (!isPageVisible()) return;
       set({ ...get(), checkedAt: Date.now() }); visible();
     }, CALENDAR_VISIBLE_MS);
     const stopInitialVisible = subscribeInitialVisibleRead(visible); void refresh();
-    return () => { stopped = true; flight?.abort(); window.clearInterval(interval);
+    return () => { stopped = true; flight?.abort(); interval();
       stopInitialVisible(); retry = () => {}; };
   });
 export function useJapanSqCalendar() {

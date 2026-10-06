@@ -49,7 +49,7 @@ const flush = () => new Promise(r => setImmediate(r));
   global.fetch = async () => { reads += 1; throw new Error('offline'); };
   intervalFn(); await flush(); assert.equal(renders, 3);
   // Unsubscribing stops the timer and the front/back listener.
-  stop(); assert.equal(cleared, 1); assert.equal(handlers.visibilitychange, undefined);
+  stop(); assert.equal(cleared, 2, 'hidden pause and final cleanup clear timers'); assert.equal(handlers.visibilitychange, undefined);
   // The 30-minute reuse is gone.
   const src = require('node:fs').readFileSync(entry, 'utf8');
   assert.ok(!src.includes('30 * 60_000') && src.includes("useEffect(() => { void refreshFutureMap(); }, [])"));
