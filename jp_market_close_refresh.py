@@ -32,7 +32,7 @@ def due(now_iso, *, last_slot=None, close_date=None, eps_date=None):
     if last_slot is not None and last_slot >= slot:
         return None
     price = close_date != session.isoformat()
-    valuation = (not regular or (hour, minute) >= (16, 5)) and eps_date != session.isoformat()
+    valuation = (not regular or (hour, minute) >= (16, 35)) and eps_date != session.isoformat()
     if not price and not valuation:
         return None
     return {'slot': slot, 'session': session.isoformat(), 'price': price, 'valuation': valuation}
