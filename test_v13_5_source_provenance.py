@@ -387,4 +387,4 @@ def test_visible_event_polling_review_pins_are_exact():
 
 def test_visibility_guard_visible_polling_review_pin_is_exact():
     assert source.REVIEWED_EXTENSION_BLOBS["web/src/hooks/useVisibilityGuard.ts"] == (
-        "044d3c9e5a4d7edb0db1c27f8a4cd6f6423936b9")
+        "adabb8a4b58e04361a97c930ea82aee2f5c500e7")
