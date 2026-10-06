@@ -35,9 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    'web/src/components/today/WarningConditionsDetails.tsx': 'c7d049d3f744fa7d3a56d195083d496fd2639b2a',
+    'web/src/components/today/WarningConditionsDetails.tsx': '809e507434df548d7c59a50f6bf70bb74f53ef5a',
     'test_argus_warning_conditions.py': 'cd94c4e14df6d03605e6eaad3da08c435d098707',
-    'argus_warning_conditions.py': '83a05a166e6875c478d74d48414181086db69a6b',
+    'argus_warning_conditions.py': '3285389bd216c94b8e772bcacbd4d53ca265b36a',
     'test_argus_jgb_auction.py': '4a3e3565b99b6b3e87d21024a4706a65a7ca89cf',
     'argus_jgb_auction.py': '5a8315b5e9553c3a8796867dacdeae6bc0f8a072',
     "docs/ops/recovery-phase-a-measurement-core.md": "e9ce722983325daf71a9ec1c0c106ec178cd25ba",
@@ -398,7 +398,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_jp_market_events.py': '7b1fa0c860980bf5a493cfb3d25c13191e04b8ab',
     'test_jp_market_events_runtime.py': '7c48758326ab15df5c35790e68a3016dfa887d79',
     'test_jp_market_features.py': '9255e905406bb42aa9138cb06abd0193ac005753',
-    'test_jp_market_margin_runtime.py': '3841357e5e6520e44f8c4fdffff243d57f01fff9',
+    'test_jp_market_margin_runtime.py': '6a2da71b93fca9a6b6b109f5faa0a461d8ca1930',
     'test_jp_market_price_paths.py': 'abb27d1d239f11588eb1ab73713d766edbf7db1d',
     'test_jp_market_source_adapters.py': '116bf3c3481dd1f9d62f5b42d66fe37d3b109c95',
     'web/scripts/japan-market-comparison.test.cjs': 'a009d85cf1963aa4a4a68c993da803fcbc396009',
@@ -661,6 +661,12 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/scripts/warning-performance.test.cjs",
+    "test_argus_warning_history.py",
+    "test_argus_earnings_history.py",
+    "docs/WARNING_CONDITIONS_VALIDATION.md",
+    "argus_warning_history.py",
+    "argus_earnings_history.py",
     "web/src/lib/japanMarketComparisonReply.ts",
     "web/src/components/dashboard/MobileStickyCommand.tsx",
     "test_persist_backup_vault.py",
