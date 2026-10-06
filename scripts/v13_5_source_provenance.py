@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.57"
+PRODUCT_VERSION = "v13.8.58"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -139,7 +139,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'e7e1ba35cc9d8ce7f8d4b75f76a289638aa52c76',
+    'web/scripts/owner-today-https.mjs': '96ada4e265ca26987115af66400af4e4e06c136e',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -215,7 +215,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/lib/tradeJournal.ts': '149dec98cbf3d17e9860e235c91c28248aa6c2d1',
     'web/scripts/polling-singleton.test.mjs': 'd06ffc82f0267da3884629d80a0bc5be0ec20468',
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
-    'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '131bf7dfca4742c0c9b0d50d9d2de7bffdbeacbe',
+    'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '2671df4f78c2e1b7c7a2538e81d8df21926ba17d',
     'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '81eb94257d88974c18828cb6bc8e635108f41785',
     'test_rules.py': '36c1d8b92e9a68f606586c00607d1e9c400c1b2c',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
@@ -413,7 +413,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '421e18ed7bfcf3a3c6729c62a3c56b7d4d436ccc',
     'web/src/components/dashboard/MacroResultDetails.tsx': '1ae4f62354c917002f6b60b1b8e72de1a126a3f6',
     'web/src/components/today/MarginDynamicsCard.tsx': 'ad2e582df6452f1eb5a5505f1146ff2a87cbf771',
-    'web/src/hooks/useJapanMarketComparison.ts': 'a8569e793928957e91fdf131bd4ab599ef2cf78b',
+    'web/src/hooks/useJapanMarketComparison.ts': 'e9783d672c34d2ae9fa82efc606e1c50fd49c6de',
     'web/src/hooks/useJapanSqCalendar.ts': '24751f5205496b8263c9712ae71103a42b4ba8c8',
     'web/src/lib/japanMarketComparison.ts': 'db624bbac584fc2344589940d4f87a7381c1494c',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',
@@ -661,6 +661,11 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_tachibana_readonly_return.py",
+    "scripts/tachibana_price_measure.py",
+    "docs/operations/tachibana-readonly-return.md",
+    "argus_providers/tachibana/usage_policy.py",
+    "argus_providers/tachibana/price_runtime.py",
     "test_argus_credit_publication.py",
     "argus_credit_publication.py",
     "test_argus_collection_health.py",

@@ -184,6 +184,26 @@ def current_quote_safe() -> Dict[str, Any]:
         quote, error = _state["quote"], _state["error"]
         futures, futures_error = _state.get("futures"), _state.get("futuresError")
         policy, policy_error = _state.get("policyRate"), _state.get("policyRateError")
+    try:
+        import argus_tachibana_live
+        evidence = argus_tachibana_live.current_evidence_safe()
+        row = evidence.get("symbols", {}).get("101", {})
+        now = datetime.now(timezone.utc)
+        source = datetime.fromisoformat(row.get("sourceTimestamp", ""))
+        received = datetime.fromisoformat(row.get("receivedAt", ""))
+        age = (now - source).total_seconds()
+        transport_age = (now - received).total_seconds()
+        if (evidence.get("displayApproved") is True and row.get("provider") == "TACHIBANA"
+                and row.get("freshness") == "FRESH" and row.get("marketStatus") == "OPEN"
+                and 0 <= age <= 15 and 0 <= transport_age <= 15 and _finite(row.get("price"))):
+            quote = {"schemaVersion": SCHEMA, "instrumentId": "NIKKEI_225_INDEX", "symbol": SYMBOL,
+                     "price": row["price"], "previousClose": row.get("previousClose"),
+                     "changePct": row.get("changePct"), "tradedAt": row["sourceTimestamp"],
+                     "receivedAt": row["receivedAt"], "delaySeconds": int(age), "sessionOpen": True,
+                     "source": "立花証券", "realtime": True, "actionAuthority": False}
+            error = None
+    except Exception:
+        pass  # An isolated provider failure must not remove the delayed fallback.
     overnight = {"overnightFutures": dict(futures) if futures else None,
                  "overnightFuturesError": futures_error,
                  "policyRateFutures": dict(policy) if policy else None,

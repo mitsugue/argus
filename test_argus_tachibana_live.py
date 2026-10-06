@@ -441,21 +441,18 @@ def test_session_ended_by_a_terminal_error_holds_before_reconnecting():
     assert service.current_evidence_safe()["lastErrorClass"] == ErrorClass.AUTH_REJECTED.value
 
 
-def test_retired_product_boundary_preserves_shared_bootstrap(monkeypatch):
-    import argus_tachibana_live as live
+def test_product_boundary_preserves_bootstrap_and_requires_shadow_measurement(monkeypatch):
     import argus_chart_bootstrap as bootstrap
     calls = []
     monkeypatch.setattr(bootstrap, "ensure_started", lambda: calls.append("chart"))
-    def forbidden(*args, **kwargs):
-        raise AssertionError("retired provider must not execute")
-    monkeypatch.setattr(live._SERVICE, "ensure_started", forbidden)
-    monkeypatch.setattr(live._SERVICE, "current_evidence_safe", forbidden)
-    assert live.ensure_started({"ARGUS_TACHIBANA_ENABLED": "true"}) == "RETIRED"
+    service = live.TachibanaLiveService()
+    monkeypatch.setattr(live, "_SERVICE", service)
+    assert live.ensure_started({}) == "DISABLED"
+    assert live.ensure_started({"ARGUS_TACHIBANA_ENABLED": "true"}) == "MEASUREMENT_REQUIRED"
+    assert calls == ["chart", "chart"]
+    assert service._thread is None
     evidence = live.current_evidence_safe(TRADING_NOW)
-    assert calls == ["chart"]
-    assert evidence["reason"] == "feature_retired"
     assert evidence["symbols"] == {} and evidence["authAttempts"] == 0
-    assert evidence["enabled"] is False
     assert evidence["historicalRecordsPreserved"] is True
 
 
@@ -487,17 +484,17 @@ def test_withheld_login_stops_contact_until_the_next_day():
     assert service._may_contact(TRADING_NOW + timedelta(days=1)) is True
 
 
-def test_daily_login_budget_caps_reconnects():
+def test_network_error_stops_after_the_first_login():
     config = TachibanaConfig.from_env({"ARGUS_TACHIBANA_ENABLED": "true"})
     service = live.TachibanaLiveService(
         config_loader=lambda env=None: config,
         runtime_factory=lambda cfg, *, symbols: _FakeRuntime(cfg, symbols=symbols, fail=ErrorClass.NETWORK),
         lease_factory=_FakeLease, clock=lambda: TRADING_NOW, sleeper=lambda s: None, symbols=("8058",))
-    for _ in range(live._MAX_AUTH_PER_DAY):
-        assert service._may_contact(TRADING_NOW) is True
-        service._run_session(config, ("8058",))
+    assert service._may_contact(TRADING_NOW) is True
+    service._run_session(config, ("8058",))
     assert service._may_contact(TRADING_NOW) is False
-    assert service.current_evidence_safe(TRADING_NOW)["usagePolicy"]["stopReason"] == "DAILY_AUTH_BUDGET_EXHAUSTED"
+    assert service._auth_attempts == 1
+
 
 
 def test_a_provider_error_inside_a_session_ends_contact_for_the_day():

@@ -125,13 +125,13 @@ export const AssetDecisionCard: React.FC<Props> = ({
                 </Section>
                 <details className="ad-evidence-details">
                   <summary>検証詳細</summary>
-                  <Section symbol={sym} id="flow-supply" title="FLOW / SUPPLY">
+                  <Section symbol={sym} id="flow-supply" title="需給">
                     <AssetFlowPanel d={d} />
                   </Section>
-                  <Section symbol={sym} id="events" title="EVENTS">
+                  <Section symbol={sym} id="events" title="イベント">
                     <AssetEventsPanel d={d} />
                   </Section>
-                  <Section symbol={sym} id="evidence-raw" title="CAUSE / DOWNSIDE">
+                  <Section symbol={sym} id="evidence-raw" title="変化の理由">
                     <AssetWhyPanel d={d} />
                   </Section>
                 </details>
@@ -141,12 +141,12 @@ export const AssetDecisionCard: React.FC<Props> = ({
           <details className="ad-research-drawer" open={supportOpen}
             data-secondary-utility="research-data"
             onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
-            <summary>Utility · Research &amp; Data</summary>
+            <summary>調査・データの詳細</summary>
             {supportOpen && <div className="ad-research-drawer__body">
-              <Section symbol={sym} id="research" title="RESEARCH / NOTES">
+              <Section symbol={sym} id="research" title="調査・メモ">
                 <AssetResearchPanel d={d} onRemove={onRemove} />
               </Section>
-              <Section symbol={sym} id="data-quality" title="DATA QUALITY">
+              <Section symbol={sym} id="data-quality" title="データの状態">
                 <AssetDataQuality d={d} nowMs={nowMs} />
               </Section>
             </div>}

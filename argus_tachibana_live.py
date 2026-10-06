@@ -1,9 +1,8 @@
-"""Retired individual live adapter and preserved research helpers.
+"""Read-only, gated price adapter and preserved research helpers.
 
-The product entry point retains shared historical-chart bootstrap only; it never
-starts the archived provider service. Product reads return a disabled envelope
-without accessing credentials or live observations. The service implementation
-and numerical/provenance helpers remain available for historical research tests.
+The default-disabled product entry shares the historical-chart bootstrap.
+After the owner's measurement gates, it runs bounded PRICE reads only.
+Shadow prices never replace product quotes; display approval is separate.
 
 Authority remains SHADOW_NON_AUTHORITATIVE; no order capability is exposed.
 """
@@ -304,8 +303,23 @@ class TachibanaLiveService:
     def _symbols(self, environ: Mapping[str, str]) -> tuple:
         if self._symbols_override:
             return tuple(self._symbols_override)
-        raw = environ.get("ARGUS_TACHIBANA_SYMBOLS", "8058,9984,5803")
-        return tuple(item.strip().upper() for item in raw.split(",") if item.strip())[:3]
+        raw = environ.get("ARGUS_TACHIBANA_SYMBOLS")
+        if raw is not None:
+            return tuple(dict.fromkeys(item.strip().upper() for item in raw.split(",") if item.strip()))[:50]
+        # Reuse authenticated membership, never derive subscriptions from public query hints.
+        import sys
+        host = sys.modules.get("scanner")
+        supplier = getattr(host, "_owner_overview_registered_subjects", None)
+        rows = supplier() if callable(supplier) else None
+        if not isinstance(rows, list):
+            raise ValueError("registered_symbols_unavailable")
+        from argus_providers.tachibana.client import _security_code
+        result = []
+        for row in rows:
+            if isinstance(row, dict) and row.get("market") == "JP" and row.get("enabled", True) is True:
+                symbol = _security_code(str(row.get("symbol") or "").strip().upper())
+                if symbol not in result: result.append(symbol)
+        return tuple(result[:50])
 
     # ── lifecycle ────────────────────────────────────────────────────────
     def ensure_started(self, environ: Optional[Mapping[str, str]] = None) -> str:
@@ -323,11 +337,26 @@ class TachibanaLiveService:
             if self._runtime_factory is None or self._lease_factory is None:
                 # Production wiring binds the real runtime and lease; the
                 # module never imports them unless the service is enabled.
-                from argus_providers.tachibana.runtime import TachibanaLiveRuntime
+                from argus_providers.tachibana.price_runtime import TachibanaPriceRuntime
                 from argus_providers.tachibana.singleton import ProcessSingletonLease
-                self._runtime_factory = self._runtime_factory or TachibanaLiveRuntime
+                policy_path = env.get("ARGUS_TACHIBANA_POLICY_PATH")
+                if env.get("ARGUS_TACHIBANA_RUNTIME_APPROVED") != "true" or not policy_path:
+                    self._last_error_class = "SHADOW_MEASUREMENT_REQUIRED"
+                    return "MEASUREMENT_REQUIRED"
+                from dataclasses import replace
+                config = replace(config, max_symbols=64, max_read_attempts=1, websocket_enabled=False)
+                self._config = config
+                self._runtime_factory = self._runtime_factory or (lambda cfg, *, symbols:
+                    TachibanaPriceRuntime(cfg, symbols=symbols, policy_path=policy_path,
+                        symbols_supplier=lambda: (("101",) if env.get("ARGUS_TACHIBANA_NIKKEI_CONFIRMED") == "true" else ()) + self._symbols(env)))
                 self._lease_factory = self._lease_factory or ProcessSingletonLease
-            symbols = self._symbols(env)
+            try:
+                symbols = self._symbols(env)
+            except (ValueError, TachibanaError):
+                self._last_error_class = "REGISTRATION_UNAVAILABLE"
+                return "REGISTRATION_UNAVAILABLE"
+            if env.get("ARGUS_TACHIBANA_NIKKEI_CONFIRMED") == "true":
+                symbols = ("101", *symbols)
             lock_path = Path(env.get("ARGUS_TACHIBANA_SINGLETON_PATH",
                                      "/tmp/argus-tachibana-live-sensor.lock"))
             self._stop.clear()
@@ -410,21 +439,14 @@ class TachibanaLiveService:
             self._last_error_class = exc.classification.value
             self._capture_auth_diagnostic(runtime)
             runtime.stop()
-            if exc.classification == ErrorClass.SESSION_EXPIRED and \
-                    self._consume_reauth_budget(_time.monotonic()):
-                self._sleeper(30.0)
-                return True
+            self._block_today(self._clock(), exc.classification.value)
             self._set_idle()
-            if exc.classification.value in _AUTH_CLASSES and exc.classification.value != "AUTH_HTTP_FAILED":
-                # A refused or withheld login will not fix itself today: stop until tomorrow.
-                self._block_today(self._clock(), exc.classification.value)
-                self._sleeper(_HOLD_SECONDS)
-            else:
-                self._sleeper(_TRANSIENT_HOLD_SECONDS)
-            return exc.classification not in {ErrorClass.CONFIGURATION, ErrorClass.DISABLED}
+            self._sleeper(_HOLD_SECONDS)
+            return True
         except Exception:
             self._last_error_class = "UNCLASSIFIED_SAFE_FAILURE"
             runtime.stop()
+            self._block_today(self._clock(), self._last_error_class)
             self._set_idle()
             self._sleeper(_HOLD_SECONDS)
             return True
@@ -435,7 +457,12 @@ class TachibanaLiveService:
         terminal = False
         try:
             while not self._stop.is_set() and in_live_window(self._clock()):
-                self._refresh(runtime, symbols)
+                try:
+                    self._refresh(runtime, symbols)
+                except Exception as exc:
+                    self._last_error_class = getattr(getattr(exc, "classification", None), "value", "UNCLASSIFIED_SAFE_FAILURE")
+                    terminal = True
+                    break
                 if runtime.terminal_error != ErrorClass.NONE:
                     self._last_error_class = runtime.terminal_error.value
                     terminal = True
@@ -484,6 +511,7 @@ class TachibanaLiveService:
             runtime.stop()
             with self._lock:
                 self._probe_result, self._probe_stages = "FAIL", stages
+            self._block_today(self._clock(), self._last_error_class)
             self._set_idle()
             return
         except Exception:
@@ -491,6 +519,7 @@ class TachibanaLiveService:
             runtime.stop()
             with self._lock:
                 self._probe_result, self._probe_stages = "FAIL", {}
+            self._block_today(self._clock(), self._last_error_class)
             self._set_idle()
             return
         self._last_error_class = None
@@ -526,8 +555,10 @@ class TachibanaLiveService:
 
     def _refresh(self, runtime: Any, symbols: tuple) -> None:
         now = self._clock()
+        refresh = getattr(runtime, "refresh", None)
+        if callable(refresh): refresh()
         rows: Dict[str, Dict[str, Any]] = {}
-        for symbol in symbols:
+        for symbol in getattr(runtime, "symbols", symbols):
             observation = runtime.sensor.latest(symbol, now=now)
             if observation is None:
                 observation = getattr(runtime, "_price_observations", {}).get(symbol)
@@ -645,18 +676,20 @@ def ensure_started(environ: Optional[Mapping[str, str]] = None) -> str:
         argus_chart_bootstrap.ensure_started()
     except Exception:
         pass
-    # Individual live monitoring is retired; shared historical chart warmup remains.
-    return "RETIRED"
+    return _SERVICE.ensure_started(environ)
 
 
 def current_evidence_safe(now: Optional[datetime] = None) -> Dict[str, Any]:
-    # Keep a truthful compatibility envelope for old clients without provider access.
-    return {"schemaVersion": SCHEMA, "provider": PROVIDER, "authority": AUTHORITY,
-            "status": "DISABLED", "reason": "feature_retired", "enabled": False,
-            "shadowOnly": True, "authoritative": False, "executionCapability": False,
-            "symbols": {}, "symbolCount": 0, "authAttempts": 0,
-            "asOf": _iso(now or _utcnow()), "updatedAt": None,
-            "historicalRecordsPreserved": True, "productBoot": _product_boot_summary()}
+    evidence = _SERVICE.current_evidence_safe(now)
+    evidence["historicalRecordsPreserved"] = True
+    evidence["displayApproved"] = os.environ.get("ARGUS_TACHIBANA_DISPLAY_APPROVED") == "true"
+    evidence["mode"] = "DISPLAY" if evidence["displayApproved"] else "SHADOW"
+    if not evidence["displayApproved"]:
+        evidence["shadowSymbolCount"] = evidence["symbolCount"]
+        evidence["symbols"], evidence["symbolCount"] = {}, 0
+        evidence["status"] = "UNAVAILABLE" if evidence["enabled"] else "DISABLED"
+        evidence["reason"] = "shadow_measurement_pending" if evidence["enabled"] else "configured_disabled"
+    return evidence
 
 
 __all__ = [

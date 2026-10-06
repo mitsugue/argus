@@ -29,7 +29,7 @@ assert.ok(absent.reasonJa.includes('未接続'));
 assert.equal(absent.rows.length, 0);
 
 // 2) LIVE requires current FRESH priced evidence — a connected-but-empty LIVE claim is demoted.
-const emptyLive = tl.tachibanaLiveView({ provider: 'TACHIBANA', status: 'LIVE', symbols: {} });
+const emptyLive = tl.tachibanaLiveView({ provider: 'TACHIBANA', status: 'LIVE', displayApproved: true, mode: 'DISPLAY', symbols: {} });
 assert.equal(emptyLive.status, 'UNAVAILABLE');
 
 const doc = {
@@ -89,7 +89,7 @@ const jpSnapshot = {
   ],
 };
 const liveDoc = {
-  provider: 'TACHIBANA', status: 'LIVE',
+  provider: 'TACHIBANA', status: 'LIVE', displayApproved: true, mode: 'DISPLAY',
   symbols: {
     '9984': { provider: 'TACHIBANA', price: 9000, changeAbs: 100, changePct: 1.12, volume: 1200000,
       vwap: 8975.5, bestBid: 8999, bestAsk: 9001, freshness: 'FRESH', marketStatus: 'OPEN',
@@ -168,7 +168,7 @@ assert.ok(authLamp.detailJa.includes('認証失敗') && authLamp.detailJa.includ
 assert.equal(authHealth.overall, 'warning');
 // a LIVE claim without current rows never turns the lamp green
 const emptyHealth = tl.applyTachibanaHealthOverlay(backendHealth,
-  { provider: 'TACHIBANA', status: 'LIVE', enabled: true, symbols: {} }, nowMs);
+  { provider: 'TACHIBANA', status: 'LIVE', displayApproved: true, mode: 'DISPLAY', enabled: true, symbols: {} }, nowMs);
 assert.notEqual(emptyHealth.lamps.find((l) => l.key === 'jp_realtime').status, 'ok');
 // disabled / absent document: backend lamp is left exactly as published
 assert.equal(tl.applyTachibanaHealthOverlay(backendHealth, null, nowMs), backendHealth);
@@ -215,7 +215,7 @@ console.log('tachibana-live.test: archived board calculation preserved; product 
 
 // ── v13.5.42: CLOSED session vocabulary, board baseline, chart current point ──
 const closedDoc = {
-  provider: 'TACHIBANA', status: 'CLOSED', enabled: true, lastAuthResult: 'PASS',
+  provider: 'TACHIBANA', status: 'CLOSED', displayApproved: true, mode: 'DISPLAY', enabled: true, lastAuthResult: 'PASS',
   updatedAt: '2026-09-03T07:35:00+00:00', marketPhase: 'CLOSED',
   symbols: {
     '5803': { provider: 'TACHIBANA', price: 12000, previousClose: 11900, changePct: 0.84, volume: 5000000,
@@ -259,3 +259,7 @@ const chartPanel = fs.readFileSync(path.join(src, "components", "chart", "ChartI
 assert.ok(!chartPanel.includes('data-argus-contract="chart-current-point-v1"'), 'retired live point must not render');
 assert.ok(!chartPanel.includes('useTachibanaLiveDocument'), 'chart must not subscribe to retired live observations');
 console.log('tachibana-live.test: archived CLOSED and current-point helpers preserved; live chart overlay removed');
+
+assert.equal(tl.overlayTachibanaLive(jpSnapshot, { ...liveDoc, displayApproved: false }, nowMs), jpSnapshot);
+assert.equal(tl.overlayTachibanaLive(jpSnapshot, { ...liveDoc, mode: 'SHADOW' }, nowMs), jpSnapshot);
+assert.equal(tl.overlayTachibanaLive(jpSnapshot, liveDoc, nowMs + 16_000), jpSnapshot);

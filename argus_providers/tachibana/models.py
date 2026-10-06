@@ -193,13 +193,16 @@ class TachibanaObservation:
     error_classification: ErrorClass = ErrorClass.NONE
     normalization_version: str = "tachibana-v4r10-normalization-v1"
     authority_state: AuthorityState = AuthorityState.SHADOW_NON_AUTHORITATIVE
+    instrument_type: str = "STOCK"
 
     def __post_init__(self) -> None:
         if (
             self.provider != "TACHIBANA"
             or self.endpoint_category not in {"PRICE", "EVENT"}
             or not isinstance(self.symbol, str)
-            or not re.fullmatch(r"[0-9ACDFGHJKLMNPRSTUWXY]{4}", self.symbol)
+            or self.instrument_type not in {"STOCK", "INDEX"}
+            or not (self.instrument_type == "INDEX" and self.symbol == "101" and self.endpoint_category == "PRICE"
+                    or self.instrument_type == "STOCK" and re.fullmatch(r"[0-9ACDFGHJKLMNPRSTUWXY]{4}", self.symbol))
             or not any(character.isdigit() for character in self.symbol)
             or not isinstance(self.freshness, Freshness)
             or not isinstance(self.market_status, MarketStatus)
