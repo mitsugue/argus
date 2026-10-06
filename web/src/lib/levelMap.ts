@@ -36,7 +36,7 @@ export function validValuationHistory(value: unknown): value is ValuationHistory
 }
 export type LevelMapState = {
   schemaVersion: 'jp-market-level-map-state-v1'; status: string; latest: LevelMapRecord | null;
-  chart?: { valuationHistory?: unknown };
+  chart?: { valuationHistory?: unknown; displayMap?: LevelMapRecord & { displayOnly: true; asOf: string; valuationPending: boolean } };
   morningCount: number; missedMornings: string[]; score: LevelMapScore | null; retrospective: LevelMapScore | null;
   actionAuthority: false;
 };
@@ -69,4 +69,16 @@ export function evidenceJa(row: LevelMapRow): string {
   if (row.kinds.includes('SAME_MULTIPLE') && !row.kinds.includes('PER_LINE')) return '山・谷の予測力は未確認';
   if (row.kinds.includes('PER_LINE')) return '山・谷の予測力は偶然並み（2010〜2023年）';
   return '参考';
+}
+
+export function currentLevelMap(state: LevelMapState): LevelMapRecord | null {
+  const shown = state.chart?.displayMap;
+  if (!shown) return state.latest;
+  const valid = shown.displayOnly === true && typeof shown.valuationPending === 'boolean'
+    && /^\d{4}-\d{2}-\d{2}$/.test(shown.asOf) && shown.asOf === shown.previousSession
+    && typeof shown.epsDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(shown.epsDate)
+    && shown.epsDate <= shown.asOf && shown.morningOf > shown.asOf
+    && [shown.previousClose, shown.eps, shown.atr14, shown.per].every(n => num(n) && n > 0)
+    && validLevelMap({ ...state, latest: shown });
+  return valid ? shown : state.latest;
 }
