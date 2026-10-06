@@ -32,3 +32,49 @@ assert.ok(summary.includes('<AssetOutlookSummary') && !summary.includes('gapPct.
 const desk = fs.readFileSync('src/components/assetDesk/AssetDeskList.tsx', 'utf8');
 assert.ok(desk.includes('sdBySym.get(`${a.market}:${sym}`)'));
 console.log('Initial analyst/supply facts, current quote comparison, saved/missing states PASS');
+
+// A different symbol's failed acquisition must not label a successful target as saved.
+(async () => {
+  const Module = require('module');
+  const path = require('path');
+  const file = path.resolve('src/hooks/useAnalystTargets.ts');
+  const subscriptions = [];
+  let interval, calls = 0, failRead = false;
+  const originalFetch = global.fetch;
+  global.fetch = async () => {
+    calls++;
+    if (failRead) throw new Error('offline');
+    return { ok:true, json:async () => ({actionAuthority:false, lastError:'partial_target_fetch_failed',
+      items:{'JP:1001':{...target,acquisitionStatus:'AVAILABLE'}},
+      availability:{'JP:1001':{status:'AVAILABLE'},'JP:1002':{status:'HTTP_503'}}}) };
+  };
+  try {
+    const m = new Module(file, module); m.filename = file; m.paths = module.paths;
+    const nativeRequire = m.require.bind(m);
+    m.require = name => name === 'react' ? {useSyncExternalStore: (subscribe, snapshot) => {
+      subscriptions.push(subscribe(() => {})); return snapshot();
+    }} : name.endsWith('/pollingPolicy') ? {
+      scheduleVisibleInterval: fn => {interval = fn; return () => {};},
+      subscribeInitialVisibleRead: () => () => {},
+    } : nativeRequire(name);
+    m._compile(ts.transpileModule(fs.readFileSync(file,'utf8').replaceAll('import.meta.env',
+      '({VITE_ARGUS_BACKEND_URL:"https://snapshot.test"})'),{
+      compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}
+    }).outputText,file);
+    const hook = m.exports.useAnalystTargetState;
+    hook(); hook();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls,1);
+    const current = hook();
+    assert.equal(current.items['JP:1001'].mean,1200);
+    assert.equal(current.refreshFailed,false);
+    assert.equal(current.availability['JP:1002'].status,'HTTP_503');
+    failRead = true; interval(); interval();
+    await new Promise(resolve => setImmediate(resolve));
+    const saved = hook();
+    assert.equal(calls,2);
+    assert.equal(saved.refreshFailed,true);
+    assert.equal(saved.items['JP:1001'].mean,1200);
+    console.log('Shared target read, per-symbol failure isolation and retained snapshot PASS');
+  } finally { subscriptions.forEach(stop => stop()); global.fetch = originalFetch; }
+})().catch(error => { console.error(error); process.exitCode = 1; });

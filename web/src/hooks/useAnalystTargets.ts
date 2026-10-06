@@ -29,7 +29,7 @@ const store = createSharedPollingStore<AnalystTargetsState>(
         const availability = Object.fromEntries(Object.entries(body.availability ?? {}).filter(([, value]) =>
           value && typeof value === 'object' && typeof (value as { status?: unknown }).status === 'string'));
         if (alive) set({ items: items as Record<string, AnalystTarget>, availability: availability as AnalystTargetsState['availability'],
-          loading: false, refreshFailed: !!body.lastError });
+          loading: false, refreshFailed: !!body.lastError && body.lastError !== 'partial_target_fetch_failed' });
       } catch {
         if (alive) set({ ...get(), loading: false, refreshFailed: true });
       }
