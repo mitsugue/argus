@@ -31,6 +31,8 @@ export interface MarketSignalRow {
   knowledgeTime?: string | null;
   sourcePeriodEnd?: string | null;
   distance?: { signedFromBoundary: number; unit: string; operator: string; atBoundary: boolean; boundaryCounts: boolean } | null;
+  performance?: { ruleId: string; status: string; evaluated: number;
+    horizons?: Record<string, { evaluated: number; falls: number; baselineFallShare: number | null }> };
 }
 
 export interface MarketSignalsProjection {
@@ -51,6 +53,7 @@ export interface MarketSignalsProjection {
     ruleId?: string; lineage?: string; reasonJa?: string; value?: number;
     knowledgeTime?: string | null; sourcePeriodEnd?: string | null;
     distance?: MarketSignalRow['distance'];
+    performance?: MarketSignalRow['performance'];
   }>;
 }
 
@@ -152,7 +155,8 @@ export function marketSignalsView(
         knowledgeTime: raw?.knowledgeTime, sourcePeriodEnd: raw?.sourcePeriodEnd,
         distance: state === 'ACTIVE' || state === 'CLEAR' ? raw?.distance : null,
         gateNoteJa: raw?.reasonJa ?? (valid ? null : '警戒条件の版・根拠・時点を確認できません'),
-        factNoteJa: raw?.factNoteJa, valuationBasis: raw?.valuationBasis };
+        factNoteJa: raw?.factNoteJa, valuationBasis: raw?.valuationBasis,
+        performance: raw && raw.performance?.ruleId === raw.ruleId ? raw.performance : undefined };
     });
     const activeCount = rows.filter(row => row.state === 'ACTIVE').length;
     return { label: 'MARKET SIGNALS', total: 7, activeCount, countLabel: `${activeCount} / 7`,

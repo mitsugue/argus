@@ -796,7 +796,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 
     <article className={`at-decision at-primary-hero card is-${view.finalAction.toLowerCase()}`}
       aria-label="A.R.G.U.S. Primary Action">
-      <div className="at-kpis"><span className="at-data-label">データの状態 <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span>
+      <details className="at-data-detail" data-argus-contract="other-analysis-data-status-v1">
+      <summary>登録銘柄・他の分析データの状態</summary>
+      <small>7条件の判定状況は下の各項目で確認できます。</small>
+      <div className="at-kpis"><span className="at-data-label">他の分析データの状態 <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span>
         {view.dataQualityReasonCodes.length > 0 && <ul className="at-data-summary" aria-label="不足しているデータ">
           {view.dataQualityReasonCodes.map(code => <li key={code}>{DATA_PARTIAL_REASON_JA[code] ?? '未確認のデータがあります'}</li>)}
         </ul>}
@@ -825,6 +828,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
             the stored evidence is on screen — with its time, never silently. */}
         {decisionEvidence.loading && decisionEvidence.generatedAt && <span className="at-stored-note" data-argus-contract="stored-evidence-note-v1">
           <TriangleStepLoader compact label="判断の根拠を更新中" /> 保存分 {new Date(decisionEvidence.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} を表示中（更新取得中）</span>}</div>
+      </details>
 
       <details id="today-seven-conditions" className="at-seven" open data-argus-contract="seven-sign-ladder-v1"
         data-seven-status={view.canonicalDecision.sevenSign.status}
