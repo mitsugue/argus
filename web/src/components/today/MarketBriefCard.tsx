@@ -5,7 +5,7 @@ import React from 'react';
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
 import './ArgusToday.css';
-import { editorialEdition } from '../../lib/presentationIntent';
+import { editorialEdition, readableBriefEdition } from '../../lib/presentationIntent';
 import type { MarketBrief } from '../../lib/marketBrief';
 import { ArgusEditorialSurface } from './ArgusEditorialSurface';
 import { TodayDecisionStrip, type CriticalTodayNews } from './TodayDecisionStrip';
@@ -29,26 +29,43 @@ export function gateNoteJa(brief: MarketBrief): string | null {
   return `${gate.reasonJa}${budget}。${when ? `${when}。` : ''}`;
 }
 
+/** Absence of a generated edition does not prove that its worker stopped. */
+export function briefWaitingTitle(brief: MarketBrief): string {
+  if (brief.generationWorker?.status === 'RUNNING') return '新しい見立てを作成しています';
+  if (['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief.generationWorker?.status ?? '')
+    || ['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief.unifiedStatus ?? '')) {
+    return '新しい見立てを作成できませんでした。';
+  }
+  return '新しい見立てを待っています。';
+}
+
+export function retainedBriefNote(brief: MarketBrief | null, requestFailed: boolean): string {
+  if (requestFailed) return '最新の見立てを取得できません。保存済みの見立てを表示しています。';
+  return `${brief ? briefWaitingTitle(brief) : '新しい見立てを待っています。'} 保存済みの見立てを表示しています。`;
+}
+
 export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number } | null;
   cutoff?: string | null; market?: string; editorial?: boolean; criticalNews?: CriticalTodayNews[] }> = ({ signals, cutoff, market, editorial = false, criticalNews }) => {
-  const { brief, error, loading, retry } = useMarketBrief();
+  const { brief: responseBrief, error, loading, retry } = useMarketBrief();
+  const brief = readableBriefEdition(responseBrief) ?? responseBrief;
+  const retained = brief !== responseBrief;
   // v13.5.62 (GPT review item 4): the brief's 成立x/7 chip is rendered from the
   // SAME market-view document as the MARKET SIGNALS header, stamped with its
   // information cutoff, so the two never show different counts.
   const cutoffJa = cutoff ? new Date(cutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : null;
   const chartChip = signals ? `成立している条件 ${signals.activeCount}件${cutoffJa ? `（${cutoffJa} 時点）` : ''}`
     : market === 'US' ? '米国: 7条件は適用外（類似局面のみ）' : brief?.chips.chart;
-  const updateState = loading ? <p className="at-brief__update"><TriangleStepLoader label={brief ? "前回の見立てを表示しながら更新しています" : "見立てを読み込んでいます"} /></p> : error ? <p role="status" className="at-brief__update">
-    {brief ? '見立てを更新できません。最後に取得した説明を表示しています。' : '見立てを取得できません。'}
+  const updateState = loading ? <p className="at-brief__update"><TriangleStepLoader label={brief ? "前回の見立てを表示しながら更新しています" : "見立てを読み込んでいます"} /></p> : error || retained ? <p role="status" className="at-brief__update">
+    {brief ? retainedBriefNote(responseBrief, Boolean(error)) : '見立てを取得できません。'}
     {brief && <small> 要約作成 {new Date(brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</small>}
     <button type="button" onClick={retry} disabled={loading}>再読込</button>
   </p> : null;
   if (!brief) return <div className="at-brief" aria-label="ARGUSの今日の見立て">
     {updateState ?? <p role="status">見立てはまだありません。</p>}<MarketAnalysisHistory key="saved-history" /></div>;
   const edition = editorial ? editorialEdition(brief) : null;
-  const gateNote = gateNoteJa(brief);
+  const gateNote = gateNoteJa(responseBrief ?? brief);
   if (edition) return <ArgusEditorialSurface brief={edition} updateState={updateState} retained={edition !== brief}
-    generationStatus={brief.generationWorker?.status} retainedNote={gateNote} criticalNews={criticalNews} />;
+    generationStatus={responseBrief?.generationWorker?.status} retainedNote={gateNote} criticalNews={criticalNews} />;
   const unified = brief.unifiedSummary;
   const hasSixSections = unified && ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'].every(key => {
     const row = unified.sections?.[key as keyof typeof unified.sections];
@@ -112,7 +129,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   return <div className="at-brief" data-argus-contract="market-brief-v1"
     aria-label="今の市場（売買権限なし）">
     <small>ARGUSの今日の見立て</small>
-    <p className="at-brief__unavailable-title">{brief.generationWorker?.status === 'RUNNING' ? <TriangleStepLoader label="新しい見立てを作成しています" /> : '見立ての更新が止まっています。'}</p>
+    <p className="at-brief__unavailable-title">{brief.generationWorker?.status === 'RUNNING' ? <TriangleStepLoader label={briefWaitingTitle(brief)} /> : briefWaitingTitle(brief)}</p>
     {updateState}
     {brief.unifiedStatus && brief.unifiedStatus !== 'GENERATED' && <p role="status">
       {providerMessage ?? gateNote ?? (brief.generationWorker?.status === 'RUNNING' ? '統合AIが見立てを更新しています。'

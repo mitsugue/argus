@@ -1,3 +1,4 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { deauthorizeActionSnapshot, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
@@ -182,13 +183,12 @@ function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<Stat
     if (retained.data && retained.authority === 'fresh') {
       accept(retained.data, retained.attempt);
     }
-    const refreshTimer = window.setInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
-    // Returning to the tab after a while → refresh immediately, don't wait out
-    // the remainder of the interval.
+    const refreshTimer = scheduleVisibleInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
+    // Preserve the screen on return; acquisition follows the existing timer.
     const onVisible = () => {
       if (!document.hidden) void acquire(refresh);
     };
-    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
 
     void acquire(run);
     return () => {
@@ -196,8 +196,8 @@ function actionLabelStore(jpKey: string, usKey: string): SharedPollingStore<Stat
       cancelExpiry();
       for (const controller of controllers) controller.abort();
       controllers.clear();
-      window.clearInterval(refreshTimer);
-      document.removeEventListener('visibilitychange', onVisible);
+      refreshTimer();
+      stopInitialOnVisible();
     };
   });
   actionLabelStores.set(queryKey, store);

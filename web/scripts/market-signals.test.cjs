@@ -172,3 +172,15 @@ assert.equal(reading.warningDistanceJa({...view.signals[1],state:'CLEAR',distanc
 assert.equal(reading.warningDistanceJa({...view.signals[1],state:'STALE'}),null);
 assert.match(reading.warningDistanceJa({...view.signals[5],state:'CLEAR',distance:{signedFromBoundary:-1e-10,unit:'MACD_GAP',operator:'>',atBoundary:false,boundaryCounts:false}}),/0.0000000001/);
 console.log('警戒v2：旧支持規則の非流用・版/時点/重複/未定義拒否・距離境界 PASS');
+
+require.extensions['.tsx']=(mod,filename)=>mod._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'),{
+ compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX},fileName:filename}).outputText,filename);
+const React=require('react');
+const {renderToStaticMarkup}=require('react-dom/server');
+const {WarningConditionsDetails}=require(path.join(src,'components/today/WarningConditionsDetails.tsx'));
+const html=renderToStaticMarkup(React.createElement(WarningConditionsDetails,{view}));
+assert.match(html,/基準未確定/);
+assert.match(html,/条件の計算が動くことと、下落を予測できることは別/);
+assert.match(html,/時間がたつだけで検証済みにはなりません/);
+assert.match(html,/測定できる条件 4件/);
+assert.match(html,/この警戒規則の成績：未検証/);

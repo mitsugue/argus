@@ -99,7 +99,7 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
   };
   const activePeriod = selectedPoint && selectedPoint.start <= chart.today && selectedPoint.end >= chart.today;
   return <div className="nr-chart" ref={ref} data-argus-contract="nikkei-research-chart-v1">
-    <p className="nr-note">日経平均・終値 {last ? `${md(last.date)} ${yen(last.close)}円` : '未取得'}<br />PER線：ARGUS推計（公式値ではない）</p>
+    <p className="nr-note">日経平均・終値 {last ? `${md(last.date)} ${yen(last.close)}円` : '未取得'}<br />PER線：決算データから計算したARGUS推計</p>
     {layers.external && selectedPoint && <div className="nr-selection" aria-live="polite">
       <small>{activePeriod ? 'いま該当する予測期間' : '選んだ予測期間'} · FUTURE MAPの参考予測</small>
       <b>{external.indexOf(selectedPoint) + 1} {selectedPoint.tag} · {md(selectedPoint.start)}〜{md(selectedPoint.end)}</b>
@@ -164,7 +164,8 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
       {chart.candidates.length > 0 && <span>検証中の目標・撤回ライン</span>}
       {layers.pivots && <span>確定した高値・安値</span>}</div>
     <details className="nr-guide"><summary>チャートの線と点の意味</summary>
-      <p>PER線：企業の利益の何倍の価格かを示す目盛りです。</p>
+      <p>PER線：取得した構成銘柄の決算データから推計したEPSに、倍率を掛けた価格です。</p>
+      <p>日経の公式PERは公開されています。公式は日経の予想利益、ARGUSは取得した決算データを使うため、値は一致するとは限りません。今の線は公式PERから引いた線ではありません。</p>
       <p>白い点線：FUTURE MAPの参考予測です。点は期間と価格の中央で、毎日の予測ではありません。</p>
       <p>目標・撤回ライン：事前に記録した条件の答え合わせに使う線です。実線は目標、点線は想定が崩れる価格です。</p>
       <p>高値・安値の印：終値が4%反転して確定した点です。輪だけの点はまだ未確定です。</p>
