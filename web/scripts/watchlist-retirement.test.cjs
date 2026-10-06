@@ -42,6 +42,9 @@ const hook = moduleAt('src/hooks/useAssets.ts', name => {
   if (name.endsWith('/watchlistProjection')) return { watchlistProjection };
   if (name.endsWith('/vault')) return { markLocalEdit: () => edits++ };
   if (name.endsWith('/watchlistAutoSync')) return auto;
+  if (name.endsWith('/ownerSession')) return { OWNER_AUTH_REQUIRED: false };
+  if (name.endsWith('/accountWatchlistSync')) return { stageAccountRegistrations: () => null,
+    commitAccountRegistrations: () => {}, cancelAccountRegistrations: () => {} };
   if (name.endsWith('/assetMerge')) return { recordTombstone: () => {} };
   throw Error(`unexpected hook dependency ${name}`);
 }, { localStorage, window: { addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: () => {} } });

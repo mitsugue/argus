@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.61"
+PRODUCT_VERSION = "v13.8.62"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,14 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'web/scripts/round3-product-final.test.mjs': '335c6b5900886eaad74873ce7b2e04cf049777dc',
+    'web/scripts/runtime-version-truth.test.mjs': '890c1afb61294078877998e4d7fcc89709c84ef5',
+    'web/scripts/full-release-simulation.mjs': '26a7042c3a251f20b710e937cd79f8e6a67682b3',
+    'web/src/types/assetItem.ts': '5c0e3ddc92203798069de0654ba96a5d1f7865aa',
+    'web/src/routes/Watchlist.tsx': '5280e31ba8231fff4f2f3fc36bf71bb852c38072',
+    'web/src/hooks/useWatchlistSync.ts': '7907d7ffcce7ea632c4be350be2a8c3b1d3b1515',
+    'web/scripts/account-watchlist-sync.test.cjs': '735a7614bb3d93c9e8ee8fcc966af530e7dadb4c',
+    'web/src/lib/accountWatchlistSync.ts': '9ce6e73e42083a7d74d9513eeeff538505537f78',
     'web/src/components/today/WarningConditionsDetails.tsx': 'c7d049d3f744fa7d3a56d195083d496fd2639b2a',
     'test_argus_warning_conditions.py': 'cd94c4e14df6d03605e6eaad3da08c435d098707',
     'argus_warning_conditions.py': '83a05a166e6875c478d74d48414181086db69a6b',
@@ -139,7 +147,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '34be3300edbc831c8b67d39619bbb3c5df5621fe',
+    'web/scripts/owner-today-https.mjs': 'c6c6b7df30a60721d0a3c5beae81f2ed14dc80ec',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -210,7 +218,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_overview_policy.py': '15a4a5cea4eb079ca2589484bd94c4cf54c102ca',
     'test_jp_market_feature_delta.py': '5cf423e0f9514fa1a87841277adc4b50ea0ad035',
     'web/src/domain/watchlistProjection.ts': '36b5e0c3eba3a67ce9fec128f422ce3af89498cc',
-    'web/scripts/watchlist-retirement.test.cjs': '77874ff308076b1ab969369b437a23ad87b5e62d',
+    'web/scripts/watchlist-retirement.test.cjs': '6718c86f516c1162a62d49b008abdc93403c0dee',
     'web/scripts/positions-risk.test.cjs': '602f5d856f2e12f4088df04ced74de4ae35f2b32',
     'web/src/lib/tradeJournal.ts': '149dec98cbf3d17e9860e235c91c28248aa6c2d1',
     'web/scripts/polling-singleton.test.mjs': 'f82386d4d1c9dff02968de0ee316e5e523bf5b26',
@@ -282,7 +290,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
     'test_prediction_ledger_workflow.py': '7e985330c0b4853aeef39e4635177ddc09f0f63f',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
-    'web/src/hooks/useAssets.ts': '6e0577a96275f2427e7edf88e7d3c6c6bacfa80b',
+    'web/src/hooks/useAssets.ts': '0a82da6958f58aaba4c3bd7659c2af2032b4e93f',
     'web/src/components/dialogue/OwnerOverview.tsx': '237fac885c233c84baf128924f0b4cc92aa7e334',
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
