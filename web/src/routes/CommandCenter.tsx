@@ -619,7 +619,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         onNavigate={onNavigate} onNavigateToAsset={onNavigateToAsset}
         onNavigateToSettings={onNavigateToSettings}
         aiButton={null} />
-      <MobileStickyCommand text={argusToday.footerText} />
+      <MobileStickyCommand text={argusToday.footerText} event={argusToday.footerEvent} />
     </PageShell>
   );
 };
