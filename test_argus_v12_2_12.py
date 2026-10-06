@@ -191,9 +191,11 @@ def test_migrated_features_present():
 def test_portfolio_wide_features_moved_to_core():
     wl = _read("routes", "Watchlist.tsx")
     assert "WhatIfPanel" not in wl and "ExposureCard" not in wl
-    assert "WATCHLIST" in wl
-    assert "日本株・米国株・投資信託・仮想通貨ごとに整理します。" in wl
-    assert "区分内は長押しで並べ替えられます。" in wl
+    assert "登録銘柄" in wl
+    assert "価格と変化を確認し、銘柄をタップして見通しへ。" in wl
+    asset_list = _read("components", "assetDesk", "AssetDeskList.tsx")
+    assert "GENRES.map" in asset_list and "a.sortOrder - b.sortOrder" in asset_list
+    assert "⠿ を長押しして移動" in asset_list and "delay: 450" in asset_list
     assert "<CorePortfolio" not in wl
     # The portfolio route and its cards were retired (2026-10-02); stored
     # records stay readable through the archived helpers below.
