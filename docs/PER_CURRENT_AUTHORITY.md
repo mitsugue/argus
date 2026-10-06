@@ -30,7 +30,7 @@
 
 | 利用箇所 | 現在の実装 | 現行基準への扱い |
 |---|---|---|
-| 価格の目盛り | `jp_market_level_map` / `LevelMapCard` | 現行方式。朝の保存記録を表示 |
+| 価格の目盛り | `jp_market_level_map` / `LevelMapCard` | 現行方式。引け後の表示用計算と朝の固定記録を区別 |
 | 日経平均チャートのPER線 | `jp_market_chart_layers` | 現行方式。同じ推計EPSを使用 |
 | 候補の価格水準・答え合わせ | `jp_market_candidates` | 現行方式。事前記録と採点結果を保持 |
 | 七条件のD04現在値 | `scanner._level_map_current_valuation` → `jp_market_engine.evaluate_d04` | 現行の推計記録へ接続済み。警戒の期間・低下基準は未定義で成立させない。旧19倍と旧成績は分離。本番の各画面の同一値照合は未完了 |
