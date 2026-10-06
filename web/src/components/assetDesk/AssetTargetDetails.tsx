@@ -24,7 +24,7 @@ export function AssetTargetDetails({ d }: { d: DeskCardData }) {
       </> : <p className="ad-detail-note">{state.loading ? '目標株価の内訳を読み込んでいます。' :
         state.availability[`${market}:${d.decisionFirst.symbol.toUpperCase()}`]?.status === 'NO_TARGET'
           ? '取得元に目標株価の集計がありません。' : '目標株価の内訳は未取得です。'}</p>}
-      <p className="ad-detail-note">複数のアナリストの目標を集計したものです。到達の保証や、今日の証券会社の変更速報ではありません。</p>
+      <p className="ad-detail-note">アナリストの集計値です。到達保証・変更速報ではありません。</p>
     </section>}
     {(d.decisionFirst.targets.length > 0 || d.decisionFirst.invalidation) && <section aria-label="ARGUSの参考水準">
       <h4>ARGUSの参考水準</h4>
