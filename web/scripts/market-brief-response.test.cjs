@@ -48,7 +48,7 @@ let shown=doc;
 const cardContext={exports:{},Date,require(name){
  if(name.endsWith('.css')) return {};
  if(name.includes('/useMarketBrief')) return {useMarketBrief:()=>({brief:shown,error:false,loading:false,retry:()=>{}})};
- if(name.includes('/presentationIntent')) return {editorialEdition:()=>null};
+ if(name.includes('/presentationIntent')) return {editorialEdition:()=>null,readableBriefEdition:v=>v};
  if(name.includes('/TodayDecisionStrip')) return {TodayDecisionStrip:()=>React.createElement('section',{'data-four-cards':'visible'})};
  if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>null};
  if(name.includes('/marketWording')) return {marketChanges:v=>v,marketWording:v=>v};

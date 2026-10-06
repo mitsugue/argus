@@ -5,7 +5,7 @@ import React from 'react';
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
 import './ArgusToday.css';
-import { editorialEdition } from '../../lib/presentationIntent';
+import { editorialEdition, readableBriefEdition } from '../../lib/presentationIntent';
 import type { MarketBrief } from '../../lib/marketBrief';
 import { ArgusEditorialSurface } from './ArgusEditorialSurface';
 import { TodayDecisionStrip, type CriticalTodayNews } from './TodayDecisionStrip';
@@ -31,14 +31,16 @@ export function gateNoteJa(brief: MarketBrief): string | null {
 
 export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number } | null;
   cutoff?: string | null; market?: string; editorial?: boolean; criticalNews?: CriticalTodayNews[] }> = ({ signals, cutoff, market, editorial = false, criticalNews }) => {
-  const { brief, error, loading, retry } = useMarketBrief();
+  const { brief: responseBrief, error, loading, retry } = useMarketBrief();
+  const brief = readableBriefEdition(responseBrief) ?? responseBrief;
+  const retained = brief !== responseBrief;
   // v13.5.62 (GPT review item 4): the brief's 成立x/7 chip is rendered from the
   // SAME market-view document as the MARKET SIGNALS header, stamped with its
   // information cutoff, so the two never show different counts.
   const cutoffJa = cutoff ? new Date(cutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : null;
   const chartChip = signals ? `成立している条件 ${signals.activeCount}件${cutoffJa ? `（${cutoffJa} 時点）` : ''}`
     : market === 'US' ? '米国: 7条件は適用外（類似局面のみ）' : brief?.chips.chart;
-  const updateState = loading ? <p className="at-brief__update"><TriangleStepLoader label={brief ? "前回の見立てを表示しながら更新しています" : "見立てを読み込んでいます"} /></p> : error ? <p role="status" className="at-brief__update">
+  const updateState = loading ? <p className="at-brief__update"><TriangleStepLoader label={brief ? "前回の見立てを表示しながら更新しています" : "見立てを読み込んでいます"} /></p> : error || retained ? <p role="status" className="at-brief__update">
     {brief ? '見立てを更新できません。最後に取得した説明を表示しています。' : '見立てを取得できません。'}
     {brief && <small> 要約作成 {new Date(brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</small>}
     <button type="button" onClick={retry} disabled={loading}>再読込</button>
