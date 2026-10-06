@@ -25,6 +25,7 @@ Terminology (kept consistent with the data feeds):
 from __future__ import annotations
 
 import hashlib
+import math
 from typing import Any, Dict, List, Optional
 
 SCHEMA_VERSION = "supply-demand-v1"
@@ -80,7 +81,20 @@ EVIDENCE_KEYS = ("marginBuyingBalance", "marginSellingBalance", "marginBalanceCh
 
 
 def _f(v) -> Optional[float]:
-    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
+
+
+def recent_margin_rows(rows, valid_date):
+    """One valid week is enough for levels; two distinct weeks are needed for changes."""
+    by_date, conflicts = {}, set()
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or not valid_date(row.get("date")):
+            continue
+        day = row["date"]
+        if day in by_date and by_date[day] != row:
+            conflicts.add(day)
+        by_date[day] = row
+    return [by_date[d] for d in sorted(by_date, reverse=True) if d not in conflicts][:2]
 
 
 def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
@@ -95,6 +109,9 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
     mb, ms = _f(ev.get("marginBuying")), _f(ev.get("marginSelling"))
     mb_prev, ms_prev = _f(ev.get("marginBuyingPrev")), _f(ev.get("marginSellingPrev"))
     loan, lend = _f(ev.get("jsfLoan")), _f(ev.get("jsfLending"))
+    mb, ms, mb_prev, ms_prev, loan, lend = [
+        value if value is not None and value >= 0 else None
+        for value in (mb, ms, mb_prev, ms_prev, loan, lend)]
     avg_vol = _f(ev.get("avgDailyVolume"))
     vr, chg = _f(ev.get("volumeRatio")), _f(ev.get("changePct"))
     runup = _f(ev.get("priorRunupPct"))
@@ -103,8 +120,8 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
     missing: List[str] = []
     evidence: Dict[str, Any] = {k: None for k in EVIDENCE_KEYS}
 
-    has_margin = mb is not None or ms is not None
-    has_jsf = loan is not None or lend is not None
+    has_margin = mb is not None and ms is not None
+    has_jsf = loan is not None and lend is not None
     # v11.11.0 US支援(オーナー質問「アメリカ株の需給はわからないのかな」への正直な
     # 答え): 米国には信用残/日証金に相当する公開日次データが無い。代わりに実測の
     # 大口資金フロー(ブリッジ)を直接証拠として使い、squeeze/信用過多系は
@@ -129,10 +146,13 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
 
     # ── derived structure numbers (only from real inputs) ───────────────────
     ratio = None                                      # 貸借倍率 (JSF preferred)
+    ratio_source = None
     if loan is not None and lend and lend > 0:
         ratio = round(loan / lend, 2)
+        ratio_source = "JSF"
     elif mb is not None and ms and ms > 0:
         ratio = round(mb / ms, 2)
+        ratio_source = "MARGIN"
     uri_naga = (ratio is not None and ratio < 1.0)    # 売り長
     days_to_cover = (round(ms / avg_vol, 1)
                      if ms is not None and avg_vol and avg_vol > 0 else None)
@@ -327,7 +347,8 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
               "liquidity_thin": "no_action", "unknown": "no_action"}[condition]
 
     why = _why_ja(condition, rank, ratio, days_to_cover, buy_overhang_days,
-                  mb_chg, direct, conf, is_us=is_us, measured_flow=measured_flow)
+                  mb_chg, direct, conf, is_us=is_us, measured_flow=measured_flow,
+                  ratio_source=ratio_source)
     ev_score = round(sum(1 for v in evidence.values() if v is not None) / len(EVIDENCE_KEYS), 2)
     risk = round(min(1.0, (0.6 if condition in ("credit_overhang", "distribution_risk",
                                                 "bad", "deteriorating") else 0.3)
@@ -342,6 +363,12 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
         "asOf": now_iso,
         "dataDate": ev.get("marginDate") or ev.get("jsfDate"),
         "sourceUpdatedAt": ev.get("sourceUpdatedAt"),
+        "sourceDates": {"weeklyMargin": ev.get("marginDate"),
+                        "previousWeeklyMargin": ev.get("marginPrevDate"),
+                        "jsfDaily": ev.get("jsfDate")},
+        "ratios": {"margin": margin_ratio,
+                   "jsf": round(loan / lend, 2) if loan is not None and lend and lend > 0 else None,
+                   "usedSource": ratio_source},
         "sourceAvailability": {"jqMarginWeekly": has_margin, "jsfDailyBalance": has_jsf,
                                "shortSellingRatio": _f(ev.get("shortSellingRatio")) is not None,
                                "reverseStockLendingFee": False},
@@ -378,7 +405,7 @@ def classify(symbol: str, market: str, ev: Dict[str, Any], now_iso: str) -> Dict
 
 
 def _why_ja(condition, rank, ratio, days_to_cover, buy_overhang_days, mb_chg,
-            direct, conf, is_us=False, measured_flow=None):
+            direct, conf, is_us=False, measured_flow=None, ratio_source=None):
     if is_us and measured_flow is not None:
         us = {
             'good': f'実測の大口資金が流入超(純比率{measured_flow:+.2f})で、上値を抑える売り圧力は目立たない状態',
@@ -389,7 +416,8 @@ def _why_ja(condition, rank, ratio, days_to_cover, buy_overhang_days, mb_chg,
         if condition in us:
             return (us[condition] + '。米国は信用残に相当する公開データが無いため簡易判定。')[:220]
 
-    ratio_txt = (f"貸借倍率{ratio}" if ratio is not None else "")
+    ratio_txt = (("日証金の貸借倍率" if ratio_source == "JSF" else "信用倍率") + str(ratio)
+                 if ratio is not None else "")
     base = {
         "very_good": "信用買い残が軽く売り圧力も減少中で、上値を抑える玉が少ない状態",
         "good": "信用買い残の重さは目立たず、上値を抑える玉が比較的少ない状態",

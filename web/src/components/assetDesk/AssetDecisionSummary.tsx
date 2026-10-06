@@ -4,6 +4,8 @@ import { tachibanaCurrentRows, formatJpy } from '../../domain/tachibanaLive';
 import type { DeskCardData } from './types';
 import { SignedValue } from '../common/SignedValue';
 import { quoteAsOf, quoteFreshnessJa } from '../../domain/liveQuote';
+import { useAnalystTargetState } from '../../hooks/useAnalystTargets';
+import { AssetOutlookSummary } from './AssetOutlookSummary';
 
 // V12.2.12 — 閉じたカード(§6): 開かなくても「何をどうするか」が分かる1枚。
 // 主判断は検証済み Single Decision Authority の出力だけを表示する。
@@ -18,6 +20,7 @@ export const AssetDecisionSummary: React.FC<{
 }> = ({ d, open, onToggle, interactive = true }) => {
   const view = d.decisionFirst;
   const liveDocument = useTachibanaLiveDocument();
+  const analyst = useAnalystTargetState();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (liveDocument?.displayApproved !== true) return;
@@ -27,6 +30,8 @@ export const AssetDecisionSummary: React.FC<{
   // Display projection only: decisionFirst, its evidence and actions stay unchanged.
   const live = d.genre === 'jp' ? tachibanaCurrentRows(liveDocument, Math.max(now, Date.now())).get(view.symbol.toUpperCase()) : null;
   const shownChange = live?.changePct ?? view.changePct;
+  const targetKey = `${d.asset.market}:${view.symbol.toUpperCase()}`;
+  const currentPrice = live?.price ?? (d.strat.status === 'mock' ? null : d.strat.price ?? d.card?.price ?? null);
   const shownAction = ({ WAIT: '確認待ち', HOLD: '維持', REDUCE: '縮小を検討', EXIT: '売却を検討', BUY: '買い候補' } as Record<string, string>)[view.currentActionJa] ?? view.currentActionJa;
   const sigColor = ACTION_TONE[view.canonicalPrimaryAction ?? 'WAIT'];
 
@@ -62,6 +67,9 @@ export const AssetDecisionSummary: React.FC<{
             source stamp stays reachable on long-press. */}
         <span title={quoteAsOf(view.quoteTruth)}>{quoteFreshnessJa(view.quoteTruth)}</span>
       </span>}
+      <AssetOutlookSummary market={d.asset.market} target={analyst.items[targetKey]}
+        targetStatus={analyst.availability[targetKey]?.status} loading={analyst.loading}
+        refreshFailed={analyst.refreshFailed} currentPrice={currentPrice} supply={d.sdg} />
     </>;
   const label = `${view.symbol} ${view.name}, ${view.currentActionJa}`;
   return interactive ? (

@@ -7931,8 +7931,9 @@ def _supply_demand_signal_for(symu, market="JP"):
         raw_margin = (margin_cache.get("data") or []
                       if _cache_expiry_usable(
                           margin_cache, now_epoch=now_epoch) else [])
-        hist, _margin_reason = _entry_weekly_margin_evidence(
-            raw_margin, now_epoch=now_epoch)
+        hist = argus_supply_demand.recent_margin_rows(raw_margin, lambda day:
+            _bounded_market_session_date(day, "JP", _ENTRY_WEEKLY_MARGIN_MAX_CALENDAR_DAYS,
+                accepted_formats=("%Y-%m-%d",), now_epoch=now_epoch)[0] is not None)
         if hist:
             ev["marginBuying"] = hist[0].get("longVol")
             ev["marginSelling"] = hist[0].get("shortVol")
@@ -7940,6 +7941,7 @@ def _supply_demand_signal_for(symu, market="JP"):
             if len(hist) > 1:
                 ev["marginBuyingPrev"] = hist[1].get("longVol")
                 ev["marginSellingPrev"] = hist[1].get("shortVol")
+                ev["marginPrevDate"] = hist[1].get("date")
     except Exception:
         pass
     try:
@@ -9335,10 +9337,10 @@ def _sd_register_extra(symu, mkt):
             _SD_EXTRA_SYMBOLS.pop(k, None)
 
 
-def _sd_parse_extra_symbols(raw, base_syms):
+def _sd_parse_extra_symbols(raw, base_syms, cap=10):
     """?symbols=6965,7011,IONQ → validated (sym, market) pairs not already served."""
     pairs = []
-    for tok in str(raw or "").split(",")[:24]:
+    for tok in str(raw or "").split(",")[:50]:
         s = tok.strip().upper()
         if not s or s in base_syms or any(s == p[0] for p in pairs):
             continue
@@ -9346,7 +9348,7 @@ def _sd_parse_extra_symbols(raw, base_syms):
             pairs.append((s, "JP"))
         elif _US_SYM_RE.match(s):
             pairs.append((s, "US"))
-        if len(pairs) >= 10:
+        if len(pairs) >= cap:
             break
     return pairs
 
@@ -9366,7 +9368,17 @@ def api_argus_supply_demand():
                         "signal": sig, "disclaimerJa": sig["complianceNote"]})
     signals = _supply_demand_list(cap=12)
     base_syms = {s["symbol"] for s in signals}
-    for xs, xmkt in _sd_parse_extra_symbols(request.args.get("symbols"), base_syms):
+    raw_symbols = request.args.get("symbols")
+    extra_pairs = _sd_parse_extra_symbols(raw_symbols, base_syms)
+    # Saved, enabled owner registrations can fill all fifty requested rows;
+    # unregistered extras retain the original ten-row bound. Cached-only.
+    registered = {(str(row.get("symbol") or "").upper(), str(row.get("market") or "").upper())
+                  for row in (_OWNER_OVERVIEW_MEMBERSHIP.get("members") or [])
+                  if isinstance(row, dict) and row.get("enabled", True) is not False}
+    for pair in _sd_parse_extra_symbols(raw_symbols, base_syms, cap=50):
+        if pair in registered and pair not in extra_pairs:
+            extra_pairs.append(pair)
+    for xs, xmkt in extra_pairs:
         try:
             xsig = _supply_demand_signal_for(xs, xmkt)
             q = _quote_cached_only(xs, xmkt) or {}
@@ -9831,6 +9843,12 @@ def _collect_institutional_intel_and_warm():
     # bounded batch); the cache-only reads then assemble them per symbol.
     _intel_collect_stage("owner_watchlist")
     owner_codes = _owner_jp_symbols_for_warm()
+    for code in _owner_jp_symbols_for_warm(limit=50):
+        try:
+            _jq_weekly_margin(code)
+            _jq_price_history(code)
+        except Exception:
+            continue
     if owner_codes:
         try:
             _get_japan_watchlist_core(list(owner_codes), allow_provider_fetch=True)
@@ -39366,6 +39384,7 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
 _ANALYST_TARGETS = {"loaded": False, "items": {}, "lastAttemptAt": None, "lastError": None,
                     "fetchedLastWarm": 0}
 _ANALYST_TARGETS_LOCK = threading.Lock()
+_ANALYST_TARGETS_LOAD_LOCK = threading.Lock()
 _ANALYST_TARGETS_PER_WARM = 25
 
 
@@ -39385,24 +39404,37 @@ def _analyst_targets_symbols():
                 pairs.add((str(member["market"]), str(member["symbol"]).upper()))
     except Exception:
         pass
+    for symbol, meta in list(_SD_EXTRA_SYMBOLS.items()):
+        if meta.get("market") in ("JP", "US") and time.time() - meta.get("ts", 0) <= _SD_EXTRA_TTL:
+            pairs.add((meta["market"], symbol))
     return sorted(pairs)
 
+
+def _analyst_targets_load_saved():
+    with _ANALYST_TARGETS_LOAD_LOCK:
+        if _ANALYST_TARGETS["loaded"]:
+            return
+        path = _analyst_targets_path()
+        try:
+            if path and os.path.isfile(path):
+                with open(path, encoding="utf-8") as handle:
+                    saved = json.load(handle)
+                if not isinstance(saved, dict) or saved.get("schemaVersion") != argus_analyst_targets.SCHEMA:
+                    raise ValueError("invalid_target_store")
+                _ANALYST_TARGETS["items"] = dict(saved.get("items") or {})
+            _ANALYST_TARGETS["loaded"] = True
+        except Exception:
+            _ANALYST_TARGETS["lastError"] = "saved_targets_unavailable"
 
 def _analyst_targets_warm():
     if not _ANALYST_TARGETS_LOCK.acquire(blocking=False):
         return
+    session = None
     try:
         now = _ai_now_iso()
         today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
         _ANALYST_TARGETS.update(lastAttemptAt=now, fetchedLastWarm=0)
-        path = _analyst_targets_path()
-        if not _ANALYST_TARGETS["loaded"]:
-            _ANALYST_TARGETS["loaded"] = True
-            if path and os.path.isfile(path):
-                with open(path, encoding="utf-8") as handle:
-                    saved = json.load(handle)
-                if isinstance(saved, dict) and saved.get("schemaVersion") == argus_analyst_targets.SCHEMA:
-                    _ANALYST_TARGETS["items"] = dict(saved.get("items") or {})
+        _analyst_targets_load_saved()
         pending = [(market, symbol) for market, symbol in _analyst_targets_symbols()
                    if argus_analyst_targets.due(_ANALYST_TARGETS["items"].get(f"{market}:{symbol}"), today)]
         if not pending:
@@ -39410,44 +39442,67 @@ def _analyst_targets_warm():
         session = requests.Session()
         session.headers["User-Agent"] = "Mozilla/5.0 (argus)"
         session.get("https://fc.yahoo.com", timeout=10, allow_redirects=True)
-        crumb = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=10).text.strip()
-        if not crumb or len(crumb) > 64:
+        crumb_response = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=10)
+        crumb = crumb_response.text.strip()
+        if crumb_response.status_code != 200 or not crumb or len(crumb) > 64:
             raise ValueError("yahoo_crumb_unavailable")
+        failed = False
         for market, symbol in pending[:_ANALYST_TARGETS_PER_WARM]:
             ticker = argus_analyst_targets.yahoo_symbol(market, symbol)
             key = f"{market}:{symbol}"
             if not ticker:
                 continue
-            response = session.get(f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}",
-                                   params={"modules": "financialData", "crumb": crumb}, timeout=10)
-            row = (argus_analyst_targets.parse_financial_data(symbol, response.json(), fetched_at=now)
-                   if response.status_code == 200 else None)
-            _ANALYST_TARGETS["items"][key] = ({**row, "market": market, "fetchedDayJst": today} if row else
-                                              {"symbol": symbol, "market": market, "unavailable": True,
-                                               "httpStatus": response.status_code, "fetchedDayJst": today})
+            row, status = None, "FETCH_FAILED"
+            try:
+                response = session.get(f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}",
+                                       params={"modules": "financialData", "crumb": crumb}, timeout=10)
+                if response.status_code == 200:
+                    row = argus_analyst_targets.parse_financial_data(symbol, response.json(), fetched_at=_ai_now_iso())
+                    status = "AVAILABLE" if row else "NO_TARGET"
+                    if row:
+                        # Targets are listing prices; financialCurrency is the company's reporting currency.
+                        row["currency"] = "JPY" if market == "JP" else "USD"
+                else:
+                    status = "HTTP_" + str(response.status_code)
+            except Exception:
+                status = "FETCH_FAILED"
+            at = _ai_now_iso()
+            _ANALYST_TARGETS["items"][key] = argus_analyst_targets.attempt_result(
+                _ANALYST_TARGETS["items"].get(key), row, market=market, symbol=symbol,
+                today=today, at=at, status=status)
+            failed = failed or status not in ("AVAILABLE", "NO_TARGET")
             _ANALYST_TARGETS["fetchedLastWarm"] += 1
+        path = _analyst_targets_path()
         if path:
             tmp = path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as handle:
                 json.dump({"schemaVersion": argus_analyst_targets.SCHEMA, "items": _ANALYST_TARGETS["items"]},
                           handle, ensure_ascii=False)
             os.replace(tmp, path)
-        _ANALYST_TARGETS["lastError"] = None
-    except Exception as exc:
-        _ANALYST_TARGETS["lastError"] = type(exc).__name__
+        _ANALYST_TARGETS["lastError"] = "partial_target_fetch_failed" if failed else None
+    except Exception:
+        _ANALYST_TARGETS["lastError"] = "target_acquisition_failed"
     finally:
+        close = getattr(session, "close", None)
+        if callable(close):
+            close()
         _ANALYST_TARGETS_LOCK.release()
 
 
 @app.route("/api/argus/analyst-targets")
 def api_argus_analyst_targets():
-    """PUBLIC cached-only: consensus target prices of watched stocks (never fetches)."""
-    items = {key: row for key, row in (_ANALYST_TARGETS.get("items") or {}).items()
+    """Cached-only: persisted targets are readable even before collection warms."""
+    _analyst_targets_load_saved()
+    rows = dict(_ANALYST_TARGETS.get("items") or {})
+    items = {key: row for key, row in rows.items()
              if isinstance(row, dict) and not row.get("unavailable")}
+    availability = {key: {"status": row.get("acquisitionStatus", "AVAILABLE" if not row.get("unavailable") else "UNAVAILABLE"),
+                          "lastAttemptAt": row.get("lastAttemptAt")}
+                    for key, row in rows.items() if isinstance(row, dict)}
     return jsonify({"schemaVersion": argus_analyst_targets.SCHEMA, "items": items,
+                    "availability": availability,
                     "sourceLabel": argus_analyst_targets.SOURCE_LABEL, "asOf": _ANALYST_TARGETS.get("lastAttemptAt"),
                     "lastError": _ANALYST_TARGETS.get("lastError"), "actionAuthority": False})
-
 
 # ── FUTURE MAP: external views of the coming weeks (2026-10-04) ───────────────
 # The research side writes future_map.v1 to the existing private store; the

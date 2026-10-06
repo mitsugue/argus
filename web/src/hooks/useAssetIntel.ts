@@ -375,7 +375,7 @@ export function useAssetIntel(opts: {
     peJp.data, peUs.data, fundNav.funds, cw.byId]);
   // v11.12.0: ACTION PRIORITY — 登録銘柄の市場材料を「今日これを見る」に統合。
   const apItems: APItem[] = useMemo(() => {
-    const sdBySym = new Map(sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
+    const sdBySym = new Map(sdSignals.map((s) => [`${s.market.toUpperCase()}:${s.symbol.toUpperCase()}`, s]));
     const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r]));
     const regLabel = regime.data?.regime?.label ?? null;
     const riskOff = regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT';
@@ -397,7 +397,7 @@ export function useAssetIntel(opts: {
     }
     const items = assets.map((a) => {
       const sym = a.symbol.toUpperCase();
-      const sd = sdBySym.get(sym);
+      const sd = sdBySym.get(`${a.market}:${sym}`);
       const fl = flowBySym.get(sym);
       const missing: string[] = [];
       if (!fl) missing.push('フロー未取得');
@@ -455,7 +455,7 @@ export function useAssetIntel(opts: {
   // v11.17.0: SCENARIOS — 条件付きの分岐(端末内合成)。単一予測ではなく
   // ベース/強気/弱気/踏み上げ失速/イベント待ちを全レイヤーから決定論合成。帯のみ。
   const scenarioSets: LocalScenarioSet[] = useMemo(() => {
-    const sdBySym = new Map(sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
+    const sdBySym = new Map(sdSignals.map((s) => [`${s.market.toUpperCase()}:${s.symbol.toUpperCase()}`, s]));
     const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r]));
     const regLabel = regime.data?.regime?.label ?? null;
     const riskOff = regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT';
@@ -469,7 +469,7 @@ export function useAssetIntel(opts: {
     }
     const sets = assets.map((a) => {
       const sym = a.symbol.toUpperCase();
-      const sd = sdBySym.get(sym);
+      const sd = sdBySym.get(`${a.market}:${sym}`);
       const fl = flowBySym.get(sym);
       return buildScenarioSet({
         symbol: sym, market: a.market, assetName: a.displayNameJa || a.displayName,
@@ -501,7 +501,7 @@ export function useAssetIntel(opts: {
   // v11.18.0: POSITION PLAN — 「入っていいか/買い増しか/利確検討か/持ち越しか」を
   // 条件として合成(端末内・数量なし)。売買指示ではない。
   const positionPlans: LocalPlan[] = useMemo(() => {
-    const sdBySym = new Map(sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
+    const sdBySym = new Map(sdSignals.map((s) => [`${s.market.toUpperCase()}:${s.symbol.toUpperCase()}`, s]));
     const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r]));
     const scBySym = new Map(scenarioSets.map((s) => [s.symbol, s]));
     const apBySym = new Map(apItems.map((it) => [it.symbol, it]));
@@ -516,7 +516,7 @@ export function useAssetIntel(opts: {
     }
     const plans = assets.map((a) => {
       const sym = a.symbol.toUpperCase();
-      const sd = sdBySym.get(sym);
+      const sd = sdBySym.get(`${a.market}:${sym}`);
       const fl = flowBySym.get(sym);
       return buildPlan({
         symbol: sym, market: a.market, assetName: a.displayNameJa || a.displayName,

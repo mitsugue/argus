@@ -18,7 +18,9 @@ export const AssetFlowPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
   const detailRows = sdg ? [
     ev.marginBuyingBalance != null ? `信用買い残 ${Number(ev.marginBuyingBalance).toLocaleString()}` : null,
     ev.marginSellingBalance != null ? `信用売り残 ${Number(ev.marginSellingBalance).toLocaleString()}` : null,
-    ev.lendingBorrowingRatio != null ? `信用・貸借倍率 ${Number(ev.lendingBorrowingRatio).toFixed(2)}` : null,
+    sdg.ratios?.margin != null ? `信用倍率 ${sdg.ratios.margin.toFixed(2)}倍` : null,
+    sdg.ratios?.jsf != null ? `日証金の貸借倍率 ${sdg.ratios.jsf.toFixed(2)}倍` : null,
+    !sdg.ratios && ev.lendingBorrowingRatio != null ? `倍率（旧保存値・参照元未確認） ${Number(ev.lendingBorrowingRatio).toFixed(2)}` : null,
     balanceChange?.buyPct != null || balanceChange?.sellPct != null
       ? `前週差 買${balanceChange?.buyPct == null ? '未取得' : `${balanceChange.buyPct > 0 ? '+' : ''}${balanceChange.buyPct.toFixed(1)}%`} / 売${balanceChange?.sellPct == null ? '未取得' : `${balanceChange.sellPct > 0 ? '+' : ''}${balanceChange.sellPct.toFixed(1)}%`}` : null,
     sdg.levelJa ? `買い残の重さ ${sdg.levelJa}` : null,
@@ -45,7 +47,7 @@ export const AssetFlowPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
               {detailRows.join(' / ')}
             </p>}
             <p style={{ margin: '2px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
-              逆日歩 未取得。需給Turning Pointと過去の価格反応は下のCHART INTELLIGENCE、判断履歴の結果はRESEARCH &amp; NOTESで確認できます。
+              信用残は公表された残高、日証金は証券会社の調達分です。現在の注文量ではありません。逆日歩は未取得です。
             </p>
           </details>
         </div>
