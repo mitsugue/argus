@@ -12,8 +12,8 @@ export const AssetEventsPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
     // the important-events request had timed out (2026-09-04).
     return <p className="uac-next" style={{ margin: 0, color: 'var(--text-faint)' }}>{
       d.eventsAuthorityUnknown
-        ? 'イベント情報を取得できていないため、関連の有無を判定できません。'
-        : '直近の関連イベント・材料の紐付けはありません。'
+        ? 'イベント情報を取得できていないため、関連イベントを確認できません。'
+        : '取得した一覧には、この銘柄に関連づけられた直近のイベント・材料はありません。'
     }</p>;
   }
   return (
@@ -27,7 +27,7 @@ export const AssetEventsPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
       )}
       {d.strat.catalystNoteJa && (
         <p className="uac-next" style={{ marginBottom: 0 }}>
-          <span className="asset-detail__k" style={{ marginRight: 6 }}>Catalyst</span>
+          <span className="asset-detail__k" style={{ marginRight: 6 }}>関連する材料</span>
           <span style={{ color: 'var(--text-sub)' }}>{d.strat.catalystNoteJa}</span>
         </p>
       )}

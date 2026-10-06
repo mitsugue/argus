@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { DeskCardData, DeskTab } from './types';
 import { sectionAnchorId, tabForDeskSection } from './types';
 import { AssetDecisionSummary } from './AssetDecisionSummary';
+import { AssetTargetDetails } from './AssetTargetDetails';
 import { AssetDecisionDetails } from './AssetDecisionDetails';
 import { AssetMarketContext } from './AssetMarketContext';
 import { AssetWhyPanel } from './AssetWhyPanel';
@@ -28,9 +29,9 @@ interface Props {
 }
 
 const TABS: Array<{ id: DeskTab; label: string }> = [
-  { id: 'decision', label: '判断' },
-  { id: 'chart', label: '見通し' },
-  { id: 'evidence', label: '根拠' },
+  { id: 'decision', label: '見立て' },
+  { id: 'chart', label: '目標・条件' },
+  { id: 'evidence', label: '需給・材料' },
 ];
 
 const Section: React.FC<{
@@ -104,18 +105,16 @@ export const AssetDecisionCard: React.FC<Props> = ({
               <Section symbol={sym} id="decision">
                 <AssetDecisionDetails d={d} />
                 <AssetMarketContext symbol={sym} market={d.asset.market} asset={d.asset} />
-                <details className="ad-plan-detail">
-                  <summary>条件と分岐を確認</summary>
-                  <AssetScenarioPanel d={d} />
-                </details>
               </Section>
             )}
             {tab === 'chart' && (
               <Section symbol={sym} id="technical">
-                {/* 2026-10-01 (owner): individual-stock charts are not generated;
-                    the owner checks individual stocks in another application. */}
+                <AssetTargetDetails d={d} />
+                <Section symbol={sym} id="scenarios" title="状況ごとの条件">
+                  <AssetScenarioPanel d={d} />
+                </Section>
                 <p className="ad-chart-retired" data-asset-chart="retired">
-                  個別銘柄のチャートは表示していません。値動きは他のアプリで確認してください。
+                  値動きのチャートは他のアプリで確認できます。
                 </p>
               </Section>
             )}
@@ -124,17 +123,17 @@ export const AssetDecisionCard: React.FC<Props> = ({
                 <Section symbol={sym} id="why-downside">
                   <AssetEvidenceSummary d={d} />
                 </Section>
-                <details className="ad-evidence-details">
-                  <summary>検証詳細</summary>
-                  <Section symbol={sym} id="flow-supply" title="需給">
-                    <AssetFlowPanel d={d} />
-                  </Section>
-                  <Section symbol={sym} id="events" title="イベント">
-                    <AssetEventsPanel d={d} />
-                  </Section>
-                  <Section symbol={sym} id="evidence-raw" title="変化の理由">
-                    <AssetWhyPanel d={d} />
-                  </Section>
+                <details className="ad-evidence-details" open>
+                  <summary>需給の根拠と数値</summary>
+                  <Section symbol={sym} id="flow-supply"><AssetFlowPanel d={d} /></Section>
+                </details>
+                <details className="ad-evidence-details" open={focusSection === 'events'}>
+                  <summary>関連イベント・材料</summary>
+                  <Section symbol={sym} id="events"><AssetEventsPanel d={d} /></Section>
+                </details>
+                <details className="ad-evidence-details" open={focusSection === 'why-downside'}>
+                  <summary>値動きの経緯・原因候補</summary>
+                  <Section symbol={sym} id="evidence-raw"><AssetWhyPanel d={d} /></Section>
                 </details>
               </>
             )}
@@ -142,9 +141,9 @@ export const AssetDecisionCard: React.FC<Props> = ({
           <details className="ad-research-drawer" open={supportOpen}
             data-secondary-utility="research-data"
             onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
-            <summary>調査・データの詳細</summary>
+            <summary>記録・データ</summary>
             {supportOpen && <div className="ad-research-drawer__body">
-              <Section symbol={sym} id="research" title="調査・メモ">
+              <Section symbol={sym} id="research" title="銘柄メモ・調査記録">
                 <AssetResearchPanel d={d} onRemove={onRemove} />
               </Section>
               <Section symbol={sym} id="data-quality" title="データの状態">
