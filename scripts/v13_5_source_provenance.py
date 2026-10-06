@@ -401,7 +401,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_jp_market_margin_runtime.py': '3841357e5e6520e44f8c4fdffff243d57f01fff9',
     'test_jp_market_price_paths.py': 'abb27d1d239f11588eb1ab73713d766edbf7db1d',
     'test_jp_market_source_adapters.py': '116bf3c3481dd1f9d62f5b42d66fe37d3b109c95',
-    'web/scripts/japan-market-comparison.test.cjs': 'd7d34f966b29f7e9bc7ea3d21065594d3b84db48',
+    'web/scripts/japan-market-comparison.test.cjs': '0fcfdf01ae3659a1ba120ed1525471b7110eecae',
     'web/scripts/japan-sq-calendar.test.cjs': '41fc84761bab22b8218bb5c1347767521472a2c6',
     'web/scripts/macro-result-details.test.cjs': 'b2bcdb290db61a0ef8d8ffcd090a55e5020e10a1',
     'web/scripts/margin-dynamics.test.cjs': 'd969a73de0e7b669ecaed83da07f9481ab16cc8c',
