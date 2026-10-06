@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_account_watchlist.py': '5978f2fd6feda30ef7c1fd4f3929b530b18b3058',
+    'docs/operations/account-watchlist-sync.md': 'f79a212aff3ca2b09016bc653978145d6c069752',
+    'argus_account_watchlist.py': '8acc9ac15c11ef5042a318103615e7068045809a',
     'web/src/components/today/WarningConditionsDetails.tsx': '484e530cdaf0036b5b16ef1808d1042aded1b946',
     'test_argus_warning_conditions.py': 'cd94c4e14df6d03605e6eaad3da08c435d098707',
     'argus_warning_conditions.py': '83a05a166e6875c478d74d48414181086db69a6b',
@@ -162,9 +165,9 @@ REVIEWED_EXTENSION_BLOBS = {
     '.github/actions/warm-profile-seed/action.yml': 'eda05275ed6f5f0eb86d866c15022535194cd5bb',
     '.github/actions/warm-profile-consumer/action.yml': '12934bafbf41522ba487c3b26328f74276dfc732',
     # Exact opt-in owner authentication, UI, backup and regression candidate.
-    'argus_owner_auth.py': '1556a85b442acd859676abc7ca1bea48cd922007',
+    'argus_owner_auth.py': 'c169069eee7d55c71136f5cd7a66a1ee01c0a684',
     'docs/ops/owner-server-auth.md': 'd745850b1c9bb742783be9f230261cee5b9d782f',
-    'scripts/owner_auth_backup.py': '55b2d8f41918c9ae5880c7ae23a764e5e1506e8a',
+    'scripts/owner_auth_backup.py': '115ab7ae987d97bb26c5f77629e637c8a9598379',
     'test_argus_owner_auth.py': '46048a6639688e01c8d3b89f23b98815fa91ce00',
     'web/scripts/owner-session.test.cjs': '92978aaad746d76783eb5fa01cf09efd170d7768',
     'web/src/components/OwnerAccess.css': '711268ba1b8478611e939f7cfecfd822c012ff44',
