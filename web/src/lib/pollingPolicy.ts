@@ -19,7 +19,8 @@ export const CALENDAR_VISIBLE_MS = 300_000;
  * Slow intelligence feeds: important/dashboard events, decision evidence,
  * event radar, macro analysis, sector heatmap (was 2 min); AI judgment, news
  * intelligence, market shock, supply/demand, flow attribution and the JP
- * market comparison (was 5 min).
+ * market comparison (was 5 min). The JP cached close display has a bounded
+ * faster cadence around the close; it does not trigger provider/AI work.
  */
 export const FEED_VISIBLE_MS = 600_000;
 

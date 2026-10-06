@@ -7,6 +7,14 @@ import argus_market_clock as clock
 import jp_market_level_map as levels
 
 
+def _available_by(value, now):
+    try:
+        received = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        return received.tzinfo is not None and received <= now
+    except (TypeError, ValueError):
+        return False
+
+
 def _number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
 
@@ -135,7 +143,7 @@ def snapshot(rows, eps_records, morning, candidates, *, now_iso):
     # 当日の未確定足は使わない。寄付前から見える値は前営業日終値。
     bars = sorted([r for r in rows if isinstance(r, dict) and str(r.get('date', '')) <= today_s
                    and all(_number(r.get(k)) for k in ('close', 'high', 'low'))
-                   and (r.get('availableFrom') <= now_iso if r.get('availableFrom') else r.get('date') < today_s)],
+                   and (_available_by(r.get('availableFrom'), now) if r.get('availableFrom') else r.get('date') < today_s)],
                   key=lambda r: r['date'])[-3000:]
     eps = {d: v['eps'] for d, v in eps_records.items() if isinstance(v, dict) and _number(v.get('eps'))}
     points = []

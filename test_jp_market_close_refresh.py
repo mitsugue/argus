@@ -7,7 +7,7 @@ import jp_market_level_map as levels
 
 
 def test_slots_are_bounded_holiday_aware_and_prices_do_not_wait_for_per():
-    assert policy.due('2026-10-06T06:30:59Z') is None
+    assert policy.due('2026-10-06T06:30:59Z', close_date='2026-10-05', eps_date='2026-10-05') is None
     first = policy.due('2026-10-06T06:31:00Z')
     assert first['price'] and not first['valuation']
     assert policy.due('2026-10-06T06:34:59Z', last_slot=first['slot']) is None
@@ -17,9 +17,9 @@ def test_slots_are_bounded_holiday_aware_and_prices_do_not_wait_for_per():
     assert policy.due('2026-10-06T07:35:00Z', last_slot=later['slot'], close_date='2026-10-06')['valuation']
     assert policy.due('2026-10-06T08:05:00Z', close_date='2026-10-06')['valuation']
     assert policy.due('2026-10-06T07:05:00Z', close_date='2026-10-06', eps_date='2026-10-06') is None
-    assert policy.due('2026-10-12T06:31:00Z') is None  # exchange holiday
-    assert policy.due('2026-10-10T06:31:00Z') is None
-    assert policy.due('2026-10-06T13:00:00Z') is None
+    assert policy.due('2026-10-12T06:31:00Z', close_date='2026-10-09', eps_date='2026-10-09') is None
+    assert policy.due('2026-10-10T06:31:00Z', close_date='2026-10-09', eps_date='2026-10-09') is None
+    assert policy.due('2026-10-06T13:00:00Z', close_date='2026-10-06', eps_date='2026-10-06') is None
 
 
 def test_close_projection_keeps_morning_record_and_dates_old_eps_until_ready():
@@ -136,3 +136,37 @@ def test_newer_cache_window_visible_before_slow_history_refresh(monkeypatch):
     assert len(held['data']) == 1
     scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE['^N225']['acquiredAt']='2026-10-05T07:00:00Z'
     assert scanner._nikkei_chart_rows() == held['data']
+
+
+def test_chart_survives_unavailable_analog_comparison(monkeypatch):
+    import scanner
+    monkeypatch.setattr(scanner, '_index_research_read', lambda key: None)
+    shown = {'chart': {'points': [{'date': '2026-10-06', 'close': 70000}]}}
+    monkeypatch.setattr(scanner, '_level_map_public', lambda: shown)
+    monkeypatch.setattr(scanner.requests, 'get', lambda *a, **kw: pytest.fail('cached read only'))
+    reply = scanner._jp_market_comparison_cached(5)
+    assert reply['comparison'] is None
+    assert reply['levelMap'] == shown
+
+
+def test_missing_latest_closed_session_recovers_after_night_restart_and_holiday():
+    late = policy.due('2026-10-06T13:28:00Z', close_date='2026-10-05', eps_date='2026-10-05')
+    assert late['session'] == '2026-10-06' and late['price'] and late['valuation']
+    assert policy.due('2026-10-06T13:29:00Z', last_slot=late['slot'], close_date='2026-10-05') is None
+    early = policy.due('2026-10-06T16:05:00Z', close_date='2026-10-05', eps_date='2026-10-05')
+    assert early['session'] == '2026-10-06'
+    assert policy.due('2026-10-06T16:05:00Z', close_date='2026-10-06', eps_date='2026-10-06') is None
+    holiday = policy.due('2026-10-12T01:05:00Z', close_date='2026-10-08', eps_date='2026-10-08')
+    assert holiday['session'] == '2026-10-09'
+
+
+def test_completed_bar_cutoff_compares_instants_not_timestamp_text(monkeypatch):
+    import scanner
+    row = {'date': '2026-10-06', 'close': 70000, 'high': 71000, 'low': 69000,
+           'availableFrom': '2026-10-06T15:31:00+09:00'}
+    now = '2026-10-06T06:31:01Z'
+    assert scanner._level_map_completed_bars([row], now)[-1]['date'] == '2026-10-06'
+    assert layers.snapshot([row], {}, None, [], now_iso=now)['points'][-1]['date'] == '2026-10-06'
+    assert scanner._level_map_completed_bars([row], '2026-10-06T15:30:59+09:00') == []
+    row['availableFrom'] = 'not-a-time'
+    assert scanner._level_map_completed_bars([row], now) == []

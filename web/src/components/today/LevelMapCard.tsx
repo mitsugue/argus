@@ -116,8 +116,8 @@ export function LevelMapCard() {
   const state = useJapanMarketComparison(5);
   if (!state.levelMap?.latest) return <section className="lm-card card" aria-label="日経平均の価格の目盛り">
     <header className="lm-heading"><b>日経平均の価格の目盛り</b></header>
-    <p role="status">{state.loading ? '朝の保存データを読み込んでいます' : state.error ? '朝の保存データを読み込めませんでした' : '朝の価格と利益のデータを準備しています'}</p>
-    {state.error && <button type="button" onClick={state.retry}>再取得</button>}
+    <p role="status">{state.loading ? '朝の保存データを読み込んでいます' : state.levelMapError ? '朝の保存データを読み込めませんでした' : '朝の価格と利益のデータを準備しています'}</p>
+    {state.levelMapError && <button type="button" onClick={state.retry}>再取得</button>}
   </section>;
-  return <><LevelMapView state={state.levelMap} />{state.error && <p role="status">更新できなかったため、保存済みの目盛りを表示しています。</p>}</>;
+  return <><LevelMapView state={state.levelMap} />{state.levelMapError && <p role="status">更新できなかったため、保存済みの目盛りを表示しています。</p>}</>;
 }
