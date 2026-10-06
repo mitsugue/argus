@@ -47,7 +47,7 @@ export const AssetFlowPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
               {detailRows.join(' / ')}
             </p>}
             <p style={{ margin: '2px 0 0', fontSize: 9.5, color: 'var(--text-faint)' }}>
-              信用残は公表された残高、日証金は証券会社の調達分です。現在の注文量ではありません。逆日歩は未取得です。
+              信用残は公表された残高、日証金は証券会社の調達分です。現在の注文量ではありません。逆日歩 未取得（取得経路なし）。
             </p>
           </details>
         </div>

@@ -39,6 +39,8 @@ def test_invalid_or_partial_balances_cannot_mint_direct_s_rank():
             'jsfLoan':value, 'jsfLending':value, 'changePct':2}, '2026-10-07T01:00:00Z')
         assert sig['supplyDemandRank'] == 'Unknown' and sig['directness'] != 'direct_data'
     assert sd.recent_margin_rows([{'date':'a','longVol':1},{'date':'a','longVol':2}], lambda _:True) == []
+    assert sd.recent_margin_rows([{'date':'future'}, {'date':'valid'}], lambda d:d == 'valid') == []
+    assert sd.recent_margin_rows([{'date':'valid'}, {'date':'old'}], lambda d:d == 'valid') == [{'date':'valid'}]
 
 
 def test_all_saved_owner_registrations_are_read_while_unknown_extras_remain_bounded(monkeypatch):

@@ -86,6 +86,10 @@ def _f(v) -> Optional[float]:
 
 def recent_margin_rows(rows, valid_date):
     """One valid week is enough for levels; two distinct weeks are needed for changes."""
+    # Provider cache is newest-first: never replace an invalid latest row with
+    # an older valid week and present that as the current balance.
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict) or not valid_date(rows[0].get("date")):
+        return []
     by_date, conflicts = {}, set()
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, dict) or not valid_date(row.get("date")):
@@ -94,6 +98,8 @@ def recent_margin_rows(rows, valid_date):
         if day in by_date and by_date[day] != row:
             conflicts.add(day)
         by_date[day] = row
+    if rows[0]["date"] in conflicts:
+        return []
     return [by_date[d] for d in sorted(by_date, reverse=True) if d not in conflicts][:2]
 
 
