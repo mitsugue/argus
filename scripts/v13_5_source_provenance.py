@@ -430,7 +430,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "test_ai_cost.py": "e2e1a3094c0fe315993d027592de6e1db9a5b784",
     'web/scripts/news-polling-recovery.test.mjs': 'a5675fb01973b14712491809f7eb30c5814851f0',
     "test_argus_prediction_read_latency.py": "731d0705813a323169ba286315811cac5b06e0f7",
-    "web/scripts/news-presentation.test.mjs": "aeecd7f09b16f0ad473916e6bad39ba9a8a5fc04",
+    "web/scripts/news-presentation.test.mjs": "10d0e203474e54fe196d48a811284ce272e62843",
     "web/src/domain/newsPresentation.ts": "88361ceaf9b7da66ff5b6344e118d4707a8d6dea",
     "test_argus_ai_execution_settings.py": "5f0596eb8d2444bd545351d10dff9959df5760eb",
     "argus_research_benchmark.py": "0afebef7261abeb95da017f4b5aa327da55874a1",

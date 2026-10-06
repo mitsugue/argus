@@ -19,6 +19,7 @@ const fixture = await build({
       </section></div>);`, loader:'tsx', resolveDir:web},
   bundle:true, write:false, format:'iife', platform:'browser', loader:{'.css':'empty'},
   define:{'import.meta.env.VITE_ARGUS_BACKEND_URL':JSON.stringify('https://news.test'),
+    'import.meta.env.VITE_ARGUS_OWNER_AUTH_REQUIRED':JSON.stringify('0'),
     'process.env.NODE_ENV':JSON.stringify('development')}, logLevel:'silent',
 });
 const row = (id, severity, at, extra={}) => ({id,eventId:id,severity,sourceReceivedAt:at,
