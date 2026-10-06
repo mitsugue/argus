@@ -7,7 +7,8 @@ import { Layer2BSyncCard } from '../components/guide/Layer2BSyncCard';
 import { useAssets } from '../hooks/useAssets';
 import { useWatchlistSync } from '../hooks/useWatchlistSync';
 import { useAssetIntel } from '../hooks/useAssetIntel';
-import { useDecisionEvidence, requestedDecisionEvidenceSymbols } from '../hooks/useDecisionEvidence';
+import { useDecisionEvidence, useTachibanaLiveDocument, requestedDecisionEvidenceSymbols } from '../hooks/useDecisionEvidence';
+import { tachibanaCurrentRows } from '../domain/tachibanaLive';
 import { deskCoverage, deskCoverageJa, deskCoverageDetailJa } from '../domain/deskCoverage';
 import { useLocale } from '../i18n';
 import '../components/dashboard/Dashboard.css';
@@ -41,9 +42,16 @@ export const Watchlist: React.FC<Props> = ({
   const intel = useAssetIntel({ publish: true, assets });
   // v13.5.63 (GPT review item 3): registered vs priced vs evidenced vs shown.
   const evidence = useDecisionEvidence();
+  const liveDocument = useTachibanaLiveDocument();
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const currentPrices = tachibanaCurrentRows(liveDocument, Math.max(nowMs, Date.now()));
+  const visiblePrices = new Set(intel.priceBySymbol.keys());
+  for (const asset of assets) {
+    if (asset.market === 'JP' && currentPrices.has(asset.symbol.toUpperCase())) visiblePrices.add(asset.symbol.toUpperCase());
+  }
   const coverage = deskCoverage({
     assets,
-    pricedSymbols: intel.priceBySymbol,
+    pricedSymbols: visiblePrices,
     evidenceSubjects: evidence.subjects,
     displayedSymbols: new Set((assetDetail && assetFocus?.symbol ? [assetFocus.symbol] : assets.map((a) => a.symbol))
       .map((s) => s.toUpperCase())),
@@ -52,12 +60,11 @@ export const Watchlist: React.FC<Props> = ({
   const [addOpen, setAddOpen] = useState(false);
   const [nonce, setNonce] = useState(0);            // rescan → remounts the data section
   const [updatedAt, setUpdatedAt] = useState(() => Date.now());
-  const [nowMs, setNowMs] = useState(() => Date.now());
   const [supportOpen, setSupportOpen] = useState(false);
   useEffect(() => {
-    const t = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    const t = window.setInterval(() => setNowMs(Date.now()), liveDocument?.displayApproved === true ? 5_000 : 30_000);
     return () => window.clearInterval(t);
-  }, []);
+  }, [liveDocument?.displayApproved]);
 
   function rescan() {
     setNonce((n) => n + 1);
