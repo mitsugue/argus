@@ -445,7 +445,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # v13.7.18 owner-required Today consolidation: these exact acceptance
     # assertions remove the legacy four-index selector and its duplicate
     # outlook without relaxing the underlying research/truth contracts.
-    "test_argus_v12_0_6.py": "bbe8f74ba4260c05549a9314ea8dc66b15662e5f",
+    "test_argus_v12_0_6.py": "37500e007f23849436eb4f42d26c28144efc75f0",
     "test_argus_v13_1_1.py": "0dcfbd099dd00f4e84b89df51da6a03fa96c2e4f",
     # Owner-authorized v13.7 operating-cost reduction: retire redundant
     # scheduled workflows while retaining manual recovery and product tests.
