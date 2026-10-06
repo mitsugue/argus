@@ -1864,6 +1864,7 @@ def _layer2b_publish_membership(snapshot):
                 "priority": m["priority"]} for m in members},
             "ts": time.time(), "status": "fresh"})
     _LAYER2B_STATE.update(lastHash=argus_watchlist_sync.content_hash(members), symbolCount=len(members))
+    _TD_WARM_UNIVERSE_CACHE.update(data=None, expires=0.0)
 
 
 @app.route("/api/argus/calibration/watchlist-sync", methods=["POST"])
@@ -3744,12 +3745,9 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
             universe = tuple(_sanitize_symbols(symbols, _US_SYM_RE, _US_UNIVERSE_CAP))
             if not universe:
                 return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
-            hit = _US_DYN_CACHE.get(universe)
-            if hit and now < hit["expires"]:
-                return _canonical_quote_snapshot_age(hit["data"], "stocks")
-            return (_cached_quote_snapshot(hit["data"]) if hit
-                    else _dynamic_cached_only_snapshot(
-                        universe, "US", "twelvedata"))
+            # Assemble every row from shared caches: an old partial batch must
+            # not hide a newly warmed symbol or a newer provider observation.
+            return _dynamic_cached_only_snapshot(universe, "US", "twelvedata")
         syms = tuple(_sanitize_symbols(symbols, _US_SYM_RE, _US_DYN_MAX))
         if not syms:
             return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
@@ -3866,7 +3864,7 @@ def _finnhub_quote_row(sym):
                          params={"symbol": sym, "token": FINNHUB_API_KEY}, timeout=6)
         d = r.json() if r.ok else {}
         price = d.get("c")
-        if isinstance(price, (int, float)) and price > 0:
+        if type(price) in (int, float) and math.isfinite(price) and price > 0:
             ts = d.get("t") or 0
             source_timestamp = (datetime.fromtimestamp(ts, pytz.utc)
                                 .strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -3949,15 +3947,34 @@ def _td_warm_row_ttl(session=None):
     return max(_US_CACHE_TTL, 2 * _TD_WARM_REGULAR_SEC)
 
 
+_US_WARM_HINTS = {}   # fallback interest only; never authorizes EC2 realtime
+_US_WARM_HINT_TTL = 7 * 24 * 3600
+_US_WARM_HINT_MAX = 200
+_US_WARM_HINT_LOCK = threading.Lock()
+
+
+def _note_us_warm_hints(symbols):
+    now = time.time()
+    with _US_WARM_HINT_LOCK:
+        for sym in _sanitize_symbols(symbols or [], _US_SYM_RE, _US_UNIVERSE_CAP):
+            _US_WARM_HINTS[sym] = now
+        for sym, stamp in list(_US_WARM_HINTS.items()):
+            if not 0 <= now - stamp <= _US_WARM_HINT_TTL:
+                _US_WARM_HINTS.pop(sym, None)
+        for sym in sorted(_US_WARM_HINTS, key=_US_WARM_HINTS.get)[:-_US_WARM_HINT_MAX]:
+            _US_WARM_HINTS.pop(sym, None)
+        _TD_WARM_UNIVERSE_CACHE.update(data=None, expires=0.0)
+
+
 def _td_owner_us_members():
-    """Owner-authorized US interest (Layer-2B membership, market == US).
-    Private store; symbols are used for scheduling only and never logged or
-    exposed by the budget diagnostics."""
+    """Confirmed private registration; no public query authorizes realtime."""
     try:
-        mem = _layer2b_read_latest()
-        rows = (mem.get("members") if isinstance(mem, dict) else []) or []
-        return [str(m.get("symbol") or "").upper() for m in rows
-                if isinstance(m, dict) and str(m.get("market") or "").upper() == "US"]
+        rows = _owner_overview_registered_subjects() or []
+        return _sanitize_symbols([
+            m.get("symbol") for m in rows if isinstance(m, dict)
+            and str(m.get("market") or "").upper() == "US"
+            and m.get("enabled", True) is not False and not m.get("removedAt")
+        ], _US_SYM_RE, _US_UNIVERSE_CAP)
     except Exception:
         return []
 
@@ -3967,9 +3984,13 @@ def _td_warm_universe(now=None):
     cached = _TD_WARM_UNIVERSE_CACHE
     if cached["data"] is not None and now < cached["expires"]:
         return cached["data"]
+    with _US_WARM_HINT_LOCK:
+        hints = [sym for sym, stamp in _US_WARM_HINTS.items()
+                 if 0 <= now - stamp <= _US_WARM_HINT_TTL]
     universe = argus_td_warm.build_universe(
         curated=[s["symbol"] for s in _US_WATCHLIST],
         owner_members=_td_owner_us_members(),
+        hints=hints,
         universe_cap=_US_UNIVERSE_CAP)
     universe["cadenceFit"] = _td_effective_cadence(len(universe["symbols"]))
     cached.update({"data": universe, "expires": now + _TD_WARM_UNIVERSE_TTL})
@@ -4071,9 +4092,19 @@ def _td_warm_tick(now_utc=None):
         if decision["action"] != "fetch":
             return decision
     rows, ok, rate_limited, err = _td_warm_fetch(decision["batch"])
+    # The cache-only card cannot invoke the legacy Finnhub fallback itself.
+    # Reuse that bounded adapter in the already admitted background batch.
+    have = {row.get("symbol") for row in rows}
+    fallback = []
+    if FINNHUB_API_KEY:
+        for sym in decision["batch"]:
+            if sym not in have:
+                row = _finnhub_quote_row(sym)
+                if row is not None:
+                    fallback.append(row)
     with _TD_WARM_LOCK:
-        if ok:
-            _td_warm_store(rows, now, session)
+        if ok or fallback:
+            _td_warm_store(rows + fallback, now, session)
         warm_count = sum(1 for sym in universe["symbols"] if _td_warm_row(sym, now))
         argus_td_warm.record_request(
             _TD_WARM_STATE, decision, now_utc=now_utc, ok=ok,
@@ -4082,7 +4113,8 @@ def _td_warm_tick(now_utc=None):
             # so the retry cannot land inside the same exhausted minute.
             backoff_sec=120, error_class=err)
     return {**decision, "ok": ok, "rateLimited": rate_limited,
-            "rowsStored": len(rows) if ok else 0}
+            "rowsStored": (len(rows) if ok else 0) + len(fallback),
+            "fallbackRowsStored": len(fallback)}
 
 
 def _td_warm_diagnostics():
@@ -4160,6 +4192,7 @@ def api_argus_us_watchlist():
     symbols = [s for s in raw.split(",") if s.strip()] or None
     # Public GET is cache/bridge-only; never fetch a market-data provider here.
     snapshot = get_us_watchlist_snapshot(symbols, allow_provider_fetch=False)
+    _note_us_warm_hints(symbols)
     # v13.5.54: the bound the owner can hit here is the AUTHORIZED universe cap;
     # the 8-credit batch cap governs single provider requests, not this read.
     return jsonify(_with_cap_truth(snapshot, symbols, _US_SYM_RE, _US_UNIVERSE_CAP))
@@ -5149,6 +5182,10 @@ def _quote_cached_only(sym, market):
         warm = _td_warm_row(sym, now)
         if warm is not None:
             return _canonical_cached_quote_row_age(warm, now_epoch=now)
+        cached_finnhub = _FINNHUB_QUOTE_CACHE.get(sym) or {}
+        if (isinstance(cached_finnhub.get("row"), dict) and
+                0 <= now - float(cached_finnhub.get("ts") or 0) <= _FINNHUB_QUOTE_TTL):
+            return _canonical_cached_quote_row_age(cached_finnhub["row"], now_epoch=now)
     dyn = _JP_DYN_CACHE if market == "JP" else _US_DYN_CACHE
     try:
         # The dynamic TTL describes storage lifetime, not source truth: the
@@ -5180,6 +5217,17 @@ def _quote_cached_only(sym, market):
     for s in (cur.get("stocks") or []):
         if str(s.get("symbol")).upper() == sym:
             return _canonical_cached_quote_row_age(s, now_epoch=now)
+    if market == "US":
+        last = (_US_WARM_ROWS.get(sym) or {}).get("row")
+        if not isinstance(last, dict) and q and isinstance(q.get("row"), dict):
+            last = q["row"]
+        if isinstance(last, dict):
+            stamp = last.get("sourceTimestamp") or last.get("exchangeTs")
+            if _source_time_within(stamp, 7 * 86400, now_epoch=now, allow_date_only=True):
+                retained = _canonical_cached_quote_row_age({**last, "sourceTimestamp": stamp}, now_epoch=now)
+                return {**retained, "status": "delayed", "delayClass": "UNKNOWN",
+                        "realtimeEvidence": False, "decisionUsable": False,
+                        "cacheState": "last_observation", "symbol": sym}
     return None
 
 def _visibility_guard_cached_only():
@@ -6052,6 +6100,14 @@ def api_argus_us_universe():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    if request.args.get("scope") == "registered":
+        # Reuse this admin-only route; do not expose private registration in a
+        # public diagnostic or revive the broad movers/universe sweep.
+        members = _td_owner_us_members()
+        syms = list(dict.fromkeys(list(_REGIME_ETFS) + members))
+        return jsonify({"codes": [f"US.{sym}" for sym in syms],
+                        "count": len(syms), "scope": "registered",
+                        "asOf": _ai_now_iso()})
     syms = {s.strip().upper() for s in _US_MOVER_UNIVERSE if s.strip()}
     syms |= {s["symbol"].upper() for s in _US_WATCHLIST}
     syms |= {e.upper() for e in _REGIME_ETFS}

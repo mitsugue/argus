@@ -1,7 +1,6 @@
 import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
-import { WATCHLIST_VISIBLE_MS } from '../lib/pollingPolicy';
 import type { USWatchlistSnapshot, USStockQuote } from '../types/watch';
 import {
   normalizeUSWatchSnapshot,
@@ -49,7 +48,7 @@ const RETRY_DELAYS_MS = [3_000, 6_000];
 // never poll. Silent — keeps showing the last good data on a failed refresh
 // instead of flashing back to "connecting"/mock. 2 endpoints per cycle stay far
 // inside the per-IP heavy-endpoint limit (30/min).
-const REFRESH_INTERVAL_MS = WATCHLIST_VISIBLE_MS;  // visible-page cadence (was 15s)
+const REFRESH_INTERVAL_MS = 30_000;  // cached US price read; no provider or AI call
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
@@ -226,8 +225,8 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
 }
 
 export function useUSWatchlist(symbols?: string[]): State {
-  // Dynamic mode: pass the user's actual US assets (capped at 8 server-side to
-  // stay within Twelve Data's free 8-credits/min). Empty/absent → curated.
+  // Dynamic reads cover the authorized universe. Provider batches rotate
+  // independently; an eighth-request cap never truncates this card read.
   const symKey = symbols && symbols.length ? symbols.slice().sort().join(',') : '';
   const store = usWatchlistStore(symKey);
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
