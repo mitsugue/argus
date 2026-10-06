@@ -288,7 +288,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
     'web/src/lib/presentationIntent.ts': '19e8431fe6b6063988a387584f53ea6b3c75726b',
     'web/src/components/today/ArgusEditorialSurface.tsx': '03395a12b19ca0f3df9df19bb6217ec5e99aa30f',
-    'web/src/components/today/ArgusEditorialSurface.css': '51cb798f369f70ab4d3b20f99b7ae377fca9e542',
+    'web/src/components/today/ArgusEditorialSurface.css': 'ee1fe180b9319d6db8e54cf2829b1738c9e26fa2',
     'test_argus_presentation_intent.py': 'e79beae902a1382fae9e5ea3359e09301abf9733',
     'docs/V13_6_PRESENTATION_INTENT.md': '88d35d6f5f603628e7e89bae56308e16b7c76ea6',
     'argus_presentation_intent.py': '9ac401c4ea52103cb0efeedcf5774d25b78cda7d',
