@@ -44,3 +44,9 @@ assert.ok(scenarios.includes('利益が増える')&&scenarios.includes('追加�
 assert.equal((scenarios.match(/別の条件/g)||[]).length,1);assert.ok(!scenarios.includes('次の公表を確認します'));
 const types=require(root+'types.ts');assert.equal(types.tabForDeskSection('scenarios'),'chart');assert.equal(types.tabForDeskSection('flow-supply'),'evidence');
 console.log('Expanded detail reading: dedupe, source separation, missing/saved states and navigation PASS');
+
+const usFlow=render(AssetFlowPanel,{asset:{symbol:'MU',market:'US'},genre:'us',sdg:{...d.sdg,market:'US',ownerReadableWhyJa:'実測フローの取得待ちです。'}});
+for(const text of ['信用倍率 6.00倍','日証金の貸借倍率','信用残 10/2週','日証金 10/6','信用買い残','前週差'])assert.ok(!usFlow.includes(text),text);
+assert.ok(usFlow.includes('出来高 120,000'));
+const wrongMarket=render(AssetFlowPanel,{asset:{symbol:'MU',market:'US'},genre:'us',sdg:{...d.sdg,market:'JP'}});
+assert.ok(wrongMarket.includes('実測フローは未取得')&&!wrongMarket.includes('信用残高を参照しています'));

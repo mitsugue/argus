@@ -29,11 +29,11 @@ export const AssetOutlookSummary: React.FC<{
     <span className="ad-outlook__line" data-supply-summary="true">
       <span>需給</span><strong style={{ color: RANK_TONE[supply?.supplyDemandRank ?? 'Unknown'] }}>
         {availableRank && supply ? `${staleSupply ? '保存評価 ' : ''}${supply.supplyDemandRank} · ${supply.conditionJa}` : '判定保留'}</strong>
-      {availableRank && supply && supply.supplyDemandLevel && supply.supplyDemandLevel !== 'unknown'
+      {market === 'JP' && availableRank && supply && supply.supplyDemandLevel && supply.supplyDemandLevel !== 'unknown'
         && <span>買い残 {supply.levelJa}</span>}
     </span>
-    <span className="ad-outlook__source">{market === 'US' ? '実測大口フローによる簡易評価' : supplyDates || '信用残・日証金の取得時点を確認中'}
-      {staleSupply ? ' · 更新未確認・再確認用' : !supply || supply.directness !== 'direct_data' ? ' · データ不足'
+    <span className="ad-outlook__source">{market === 'US' ? availableRank ? '実測大口フローによる簡易評価' : '実測フロー未取得' : supplyDates || '信用残・日証金の取得時点を確認中'}
+      {staleSupply ? ' · 更新未確認・再確認用' : market === 'JP' && (!supply || supply.directness !== 'direct_data') ? ' · データ不足'
         : market === 'JP' && (!dates?.weeklyMargin || !dates?.jsfDaily) ? ' · 一部未取得' : ''}</span>
   </span>;
 };

@@ -41,7 +41,7 @@ export const AssetDecisionSummary: React.FC<{
         <span className="ad-sym">{view.symbol}</span>
         <span className="ad-name">{view.name}</span>
         <span className="ad-mkt">{GENRE_TAG[d.genre]}</span>
-        <span className="ad-price">{live ? `${formatJpy(live.price)}円` : view.priceText}</span>
+        <span className="ad-price">{live ? `${formatJpy(live.price)}円` : view.priceText === '—' ? '価格未取得' : view.priceText}</span>
         <span className="ad-chg">{shownChange == null ? '—'
           : <SignedValue value={shownChange} suffix="%" arrow={false} />}</span>
         {interactive && <span className="ad-chevron" aria-hidden>{open ? '−' : '+'}</span>}
@@ -67,6 +67,7 @@ export const AssetDecisionSummary: React.FC<{
             source stamp stays reachable on long-press. */}
         <span title={quoteAsOf(view.quoteTruth)}>{quoteFreshnessJa(view.quoteTruth)}</span>
       </span>}
+      {d.genre === 'us' && view.priceText === '—' && <span className="ad-quote-meta">米国株の価格をまだ受信していません</span>}
       <AssetOutlookSummary market={d.asset.market} target={analyst.items[targetKey]}
         targetStatus={analyst.availability[targetKey]?.status} loading={analyst.loading}
         refreshFailed={analyst.refreshFailed} currentPrice={currentPrice} supply={d.sdg} />

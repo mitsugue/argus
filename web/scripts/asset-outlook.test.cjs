@@ -78,3 +78,15 @@ console.log('Initial analyst/supply facts, current quote comparison, saved/missi
     console.log('Shared target read, per-symbol failure isolation and retained snapshot PASS');
   } finally { subscriptions.forEach(stop => stop()); global.fetch = originalFetch; }
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+// US shares first-card facts; JP credit levels cannot masquerade as US evidence.
+const usTarget = {...target, market:'US', symbol:'MU', mean:150, currency:'USD'};
+const usHtml = render({market:'US', target:usTarget, currentPrice:120,
+  supply:{...supply, market:'US', supplyDemandRank:'B', conditionJa:'大口買い越し'}});
+for (const fact of ['$150', '現在値比 +25.0%', '大口買い越し', '実測大口フロー']) assert.ok(usHtml.includes(fact), fact);
+for (const fact of ['買い残', 'かなり重い', '日証金']) assert.ok(!usHtml.includes(fact), fact);
+assert.ok(render({market:'US', target:undefined, supply:undefined}).includes('実測フロー未取得'));
+const {fmtPrice} = require('../src/components/assetDesk/deskFormat.ts');
+assert.equal(fmtPrice('US', 1234.5), '$1,234.50');
+assert.equal(fmtPrice('US', Infinity), '—');
+console.log('US first-card target, price format and evidence isolation PASS');
