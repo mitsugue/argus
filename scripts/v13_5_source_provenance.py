@@ -463,7 +463,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # route is retired, its navigation position is the read-only 13M link,
     # and legacy notification hashes resolve to Today. These exact product
     # files are pinned; any later surface change requires separate review.
-    "web/scripts/lean-surface.test.mjs": "38a9ced36b2aae61e8a4c1b759d85745d007af18",
+    "web/scripts/lean-surface.test.mjs": "1bfb0d4a10e9d87c378c76f523ad4f95df8c8910",
     "web/src/components/NavRail.tsx": "f1a1fef74709852f39d488aaf370428ce2697fe2",
     "web/src/navigation.ts": "5a29e9dc8a1e1d0ed160288e6bd2e54713b6a725",
     # v13.7.44 regression assertions synchronized with the approved Alerts-to-13M surface.
