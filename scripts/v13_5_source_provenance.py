@@ -139,7 +139,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'a84fbaefc0f24546b8a5fc78c3e32a6820971d87',
+    'web/scripts/owner-today-https.mjs': '5831aad20b624dc3cd8cea978bf2a9cc49cf8a84',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -280,7 +280,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/common/TriangleStepLoader.css': '055ab6673461550f1cc0f38577da9e261a4bc647',
     'web/src/i18n/index.ts': '933221ee4ca1f3adccdb8ebf5c950419fe7ce019',
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
-    'test_prediction_ledger_workflow.py': '7e985330c0b4853aeef39e4635177ddc09f0f63f',
+    'test_prediction_ledger_workflow.py': 'ecae5b825315407022e21284123b051e9087d5aa',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
     'web/src/hooks/useAssets.ts': '6e0577a96275f2427e7edf88e7d3c6c6bacfa80b',
     'web/src/components/dialogue/OwnerOverview.tsx': '237fac885c233c84baf128924f0b4cc92aa7e334',
@@ -661,6 +661,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_persist_backup_vault.py",
+    "scripts/persist_backup_vault.py",
     "test_jp_market_close_refresh.py",
     "jp_market_close_refresh.py",
     "docs/operations/nikkei-close-refresh.md",
