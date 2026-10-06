@@ -50,11 +50,8 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
     return <section className="argus-editorial argus-editorial--live" aria-label="ARGUSの今日の見立て"
       data-argus-contract="presentation-intent-v1" data-presentation-id={plan.planId} data-context-id={plan.contextId}>
       <header className="argus-editorial__edition"><span>日経平均の見通し · 今後5営業日</span>
-        <time dateTime={at}>{new Date(at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 更新</time></header>
-      {updateState}
-      {retained && <p role="status" className="argus-editorial__retained argus-editorial__retained--update">
-        {generationStatus === 'RUNNING' ? <TriangleStepLoader label="新しい説明を作成中" />
-          : (retainedNote ?? '前回の説明を表示中です。数字とチャートは最新です。')}</p>}
+        <time dateTime={at}>{new Date(at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 更新</time>
+        {updateState ?? (retained && <span role="status">{generationStatus === 'RUNNING' ? '作成中・保存版' : '保存版'}</span>)}</header>
       <TodayDecisionStrip brief={brief} criticalNews={criticalNews} />
       <MarketPositionCard brief={brief} />
       {/* 2026-10-04: saving failed for 15 hours with no sign on the screen. */}
@@ -87,6 +84,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
             <p className="argus-editorial__text">{row.textJa}</p></details>;
         })}
         <details className="argus-editorial__evidence"><summary>説明の根拠と、今回の構成について</summary>
+          {retained && <p>{retainedNote ?? '保存した見立て・根拠・計算を同じ作成時点のまま表示しています。'}</p>}
           <p>{plan.intentJa}</p>
           {Object.entries(summary.sections).map(([key, row]) => <section key={key}><h3>{labels[key as Section]}</h3>
             <p>{row.kind === 'FACT' ? '確認した事実' : row.kind === 'INFERENCE' ? '根拠に基づく推論' : '未確認'}</p>

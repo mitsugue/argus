@@ -40,8 +40,11 @@ export function briefWaitingTitle(brief: MarketBrief): string {
 }
 
 export function retainedBriefNote(brief: MarketBrief | null, requestFailed: boolean): string {
-  if (requestFailed) return '最新の見立てを取得できません。保存済みの見立てを表示しています。';
-  return `${brief ? briefWaitingTitle(brief) : '新しい見立てを待っています。'} 保存済みの見立てを表示しています。`;
+  if (requestFailed) return '更新確認待ち・保存版';
+  if (brief?.generationWorker?.status === 'RUNNING') return '作成中・保存版';
+  if (['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief?.generationWorker?.status ?? '')
+    || ['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief?.unifiedStatus ?? '')) return '更新失敗・保存版';
+  return '保存版';
 }
 
 export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number } | null;
@@ -55,11 +58,11 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   const cutoffJa = cutoff ? new Date(cutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : null;
   const chartChip = signals ? `成立している条件 ${signals.activeCount}件${cutoffJa ? `（${cutoffJa} 時点）` : ''}`
     : market === 'US' ? '米国: 7条件は適用外（類似局面のみ）' : brief?.chips.chart;
-  const updateState = loading ? <p className="at-brief__update"><TriangleStepLoader label={brief ? "前回の見立てを表示しながら更新しています" : "見立てを読み込んでいます"} /></p> : error || retained ? <p role="status" className="at-brief__update">
-    {brief ? retainedBriefNote(responseBrief, Boolean(error)) : '見立てを取得できません。'}
-    {brief && <small> 要約作成 {new Date(brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</small>}
-    <button type="button" onClick={retry} disabled={loading}>再読込</button>
-  </p> : null;
+  const updateState = brief ? (loading || error || retained ? <span role="status" className="at-brief__update">
+    {loading ? (retained ? retainedBriefNote(responseBrief, false) : '確認中') : retainedBriefNote(responseBrief, Boolean(error))}
+    {error && <button type="button" onClick={retry} disabled={loading} aria-label="見立てを再確認">↻</button>}
+  </span> : null) : loading ? <p className="at-brief__update"><TriangleStepLoader label="見立てを読み込んでいます" /></p>
+    : error ? <p role="status" className="at-brief__update">見立てを取得できません。<button type="button" onClick={retry}>再読込</button></p> : null;
   if (!brief) return <div className="at-brief" aria-label="ARGUSの今日の見立て">
     {updateState ?? <p role="status">見立てはまだありません。</p>}<MarketAnalysisHistory key="saved-history" /></div>;
   const edition = editorial ? editorialEdition(brief) : null;
@@ -78,15 +81,16 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
       impact: '自分への影響', next: '次に確認すること', invalidation: '見方を変える条件' } as const;
     const kinds = { FACT: '確認した事実', INFERENCE: '見立て・推論', UNKNOWN: '未確認' };
     return <div className={`at-brief at-unified-brief${editorial ? ' at-brief--current' : ''}`} data-layout={editorial ? 'current-four-cards' : 'reference'} aria-label="ARGUSの今日の見立て" data-argus-contract="unified-brief-v1">
-      <small>ARGUSの今日の見立て · {brief.aiDiagnostics?.completedAt
-        ? new Date(brief.aiDiagnostics.completedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '生成時刻を確認中'}</small>
-      {updateState}
+      <header className="at-brief__edition"><span>今日の見立て</span><time dateTime={brief.aiDiagnostics?.completedAt ?? brief.generatedAt}>
+        {new Date(brief.aiDiagnostics?.completedAt ?? brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 更新</time>{updateState}</header>
       {editorial ? <><TodayDecisionStrip brief={brief} criticalNews={criticalNews} /><MarketPositionCard brief={brief} /></>
         : <p className="at-unified-brief__view">{unified.sections.view.textJa}</p>}
       <div className="at-brief__rows">{(Object.keys(labels) as Array<keyof typeof labels>).filter(key => editorial ? ['reasons', 'changes', 'invalidation'].includes(key) : key !== 'view').map(key =>
         <div key={key} data-brief-section={key}><b>{labels[key]}</b><span>{editorial ? (key === 'changes' ? marketChanges(unified.sections[key].textJa) : marketWording(unified.sections[key].textJa)) : unified.sections[key].textJa}
           {!editorial && <small className="at-unified-brief__kind">{kinds[unified.sections[key].kind]}</small>}</span></div>)}</div>
       <details><summary>根拠と説明の状態を見る</summary>
+        <p>見立ての作成日時 {new Date(brief.aiDiagnostics?.completedAt ?? brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+          {retained && '。新しい見立ての完成までは、保存した根拠と計算を一緒に表示します。'}</p>
         <p>要求モデル {brief.aiDiagnostics?.requestedModel ?? '未確認'} · 応答モデル {brief.aiDiagnostics?.returnedModel ?? '未確認'}</p>
         <p>{brief.analysisHistory?.status === 'LOCAL_DURABLE'
           ? 'この見立てと当時の計算結果をサーバーの永続領域へ保存しました。遠隔バックアップからの復旧確認は未完了です。'
