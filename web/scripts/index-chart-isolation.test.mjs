@@ -97,10 +97,9 @@ try {
   await selected('SPX');
   await waitData('SPX');
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-  const refresh = await request('SPX:daily');
-  assert.equal((await state()).data.value,100,'same-index cached values remain available during refresh');
-  await reply(refresh,'SPX','daily',101);
-  await page.waitForFunction(() => JSON.parse(document.querySelector('#state').textContent).data?.value===101);
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  assert.equal(counts.get('SPX:daily'),1,'app return keeps the matching index without reacquiring');
+  assert.equal((await state()).data.value,100);
   const wrongFrames = await page.evaluate(() => window.indexChartFrames.filter(({selected,data}) =>
     data && (data.index!==selected.index || data.timeframe!==selected.timeframe)));
   assert.deepEqual(wrongFrames,[],'no committed React render may mix selected and displayed identities');

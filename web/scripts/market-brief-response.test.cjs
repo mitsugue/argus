@@ -48,7 +48,7 @@ let shown=doc;
 const cardContext={exports:{},Date,require(name){
  if(name.endsWith('.css')) return {};
  if(name.includes('/useMarketBrief')) return {useMarketBrief:()=>({brief:shown,error:false,loading:false,retry:()=>{}})};
- if(name.includes('/presentationIntent')) return {editorialEdition:()=>null};
+ if(name.includes('/presentationIntent')) return {editorialEdition:()=>null,readableBriefEdition:v=>v};
  if(name.includes('/TodayDecisionStrip')) return {TodayDecisionStrip:()=>React.createElement('section',{'data-four-cards':'visible'})};
  if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>null};
  if(name.includes('/marketWording')) return {marketChanges:v=>v,marketWording:v=>v};
@@ -72,3 +72,18 @@ for(const patch of [{},{presentationStatus:'AWAITING_AI',presentationPlan:null},
 const referenceHtml=renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:false}));
 assert.ok(!referenceHtml.includes('data-four-cards="visible"'),'reference/archived reading is preserved');
 console.log('構成情報が欠けても有効な統合AIを最新４カードで表示 PASS');
+
+// A pending or absent worker is not evidence of a stopped generation.
+for (const worker of [undefined, {status:'NOT_RUN'}, {status:'AWAITING_AI'}, {status:'GENERATED'}]) {
+ shown={...doc, unifiedStatus:'AWAITING_AI', unifiedSummary:null, generationWorker:worker};
+ const html=renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:true}));
+ assert.ok(html.includes('新しい見立てを待っています。'));
+ assert.ok(!html.includes('止まっています'));
+}
+for (const status of ['FAILED','INVALID_RESPONSE','UNAVAILABLE']) {
+ shown={...doc, unifiedStatus:'AWAITING_AI', unifiedSummary:null, generationWorker:{status}};
+ assert.ok(renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:true}))
+  .includes('新しい見立てを作成できませんでした。'));
+}
+assert.equal(cardContext.exports.briefWaitingTitle({...doc,generationWorker:{status:'RUNNING'}}),'新しい見立てを作成しています');
+console.log('生成待ち・作成中・実際の失敗を区別する表示 PASS');

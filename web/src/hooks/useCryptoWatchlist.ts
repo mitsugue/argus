@@ -1,3 +1,4 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { cryptoQuoteDecisionUsable, scheduleLiveAuthorityExpiry } from '../domain/liveAuthority';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
@@ -110,20 +111,20 @@ function cryptoStore(key: string): SharedPollingStore<State> {
         status: 'live', asOf: retained.asOf, provider: 'coingecko',
         quotes: Object.values(retained.diagnosticById),
       });
-      const interval = window.setInterval(() => {
+      const interval = scheduleVisibleInterval(() => {
         if (!isPageVisible()) return;
         void acquire(fetchOnce);
       }, GUARD_VISIBLE_MS);
       const onVisible = () => { if (!document.hidden) void acquire(fetchOnce); };
-      document.addEventListener('visibilitychange', onVisible);
+      const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
       void acquire(fetchOnce);
       return () => {
         cancelled = true;
         cancelExpiries();
         for (const controller of controllers) controller.abort();
         controllers.clear();
-        window.clearInterval(interval);
-        document.removeEventListener('visibilitychange', onVisible);
+        interval();
+        stopInitialOnVisible();
       };
     },
   );

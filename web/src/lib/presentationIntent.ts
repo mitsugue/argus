@@ -62,9 +62,17 @@ export function editorialEdition(brief: MarketBrief | null): MarketBrief | null 
   return previous && validMarketBrief(previous) && hasEditorialIntent(previous) ? previous : null;
 }
 
+// A verified six-section edition is readable even when its optional layout
+// plan was not accepted. Keep the whole original context and calculations.
+export function readableBriefEdition(brief: MarketBrief | null): MarketBrief | null {
+  if (brief && validMarketBrief(brief) && brief.unifiedStatus === 'GENERATED') return brief;
+  const previous = brief?.retainedPresentation;
+  return previous && validMarketBrief(previous) && previous.unifiedStatus === 'GENERATED' ? previous : null;
+}
+
 export function retainEditorialEdition(current: MarketBrief, previous: MarketBrief | null): MarketBrief {
-  if (editorialEdition(current)) return current;
-  const retained = editorialEdition(previous);
+  if (readableBriefEdition(current)) return current;
+  const retained = readableBriefEdition(previous);
   return retained ? { ...current, retainedPresentation: retained } : current;
 }
 
@@ -80,14 +88,16 @@ export async function readRecentEditorialEdition(base: string, signal: AbortSign
   if (page.scope !== 'PUBLIC_MARKET' || page.actionAuthority !== false || !Array.isArray(page.rows)
     || page.rows.length > 20 || !page.rows.every((row: { recordId?: unknown }) => row && hash(row.recordId))) return null;
   for (const row of page.rows.slice(0, 3)) {
-    const value = await read(`historyId=${encodeURIComponent(row.recordId)}`);
+    let value;
+    try { value = await read(`historyId=${encodeURIComponent(row.recordId)}`); }
+    catch (error) { if (signal.aborted) throw error; continue; }
     const record = value.record;
     if (value.scope !== 'PUBLIC_MARKET' || value.readOnly !== true || record?.recordId !== row.recordId
       || !validMarketBrief(record.brief) || !record.calculations || Array.isArray(record.calculations)
       || typeof record.calculations !== 'object') continue;
     const candidate: MarketBrief = { ...record.brief, calculationSnapshots: record.calculations,
       analysisHistory: { status: 'LOCAL_DURABLE', recordId: record.recordId, remoteRecoveryVerified: false } };
-    if (hasEditorialIntent(candidate)) return candidate;
+    if (readableBriefEdition(candidate)) return candidate;
   }
   return null;
 }

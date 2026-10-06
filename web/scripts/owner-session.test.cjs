@@ -50,7 +50,11 @@ const api=mod.exports; api.installOwnerTransport(); global.fetch=window.fetch;
   api.clearOwnerSession(); stored.set('argus.owner.session.v1', JSON.stringify(saved));
   const fresh = new Module(entry, module); fresh.filename = entry; fresh.paths = module.paths; fresh._compile(code, entry);
   assert.equal(fresh.exports.hasOwnerSession(), false);
-  assert.equal(await fresh.exports.restoreOwnerSession(), true, 'restored after a fresh server echo');
+  const beforeResume = calls.length;
+  const firstResume = fresh.exports.restoreOwnerSession();
+  assert.equal(fresh.exports.restoreOwnerSession(), firstResume, 'concurrent automatic resumes share one verification');
+  assert.equal(await firstResume, true, 'restored after a fresh server echo');
+  assert.equal(calls.length, beforeResume + 1, 'StrictMode restore uses one server verification');
   assert.equal(fresh.exports.hasOwnerSession(), true);
   fresh.exports.clearOwnerSession(); // releases its expiry timer
   stored.set('argus.owner.session.v1', JSON.stringify({...saved, build: 'older-build'}));
@@ -96,6 +100,14 @@ const api=mod.exports; api.installOwnerTransport(); global.fetch=window.fetch;
   browserNavigator.onLine = true;
   await api.passwordLogin('fixture-password');
   assert.equal(listeners.offline, undefined, 'a network blip does not lock; the server still decides');
+  const beforeSwitch = calls.length;
+  for (let i = 0; i < 5; i += 1) {
+    document.hidden = true; listeners.visibilitychange?.();
+    document.hidden = false; listeners.visibilitychange?.();
+    assert.equal(await api.restoreOwnerSession(), true);
+  }
+  assert.equal(calls.length, beforeSwitch, 'app switches neither repeat authentication nor ping immediately');
+  assert.equal(api.hasOwnerSession(), true);
   // 2026-09-30: the periodic session ping locks only on a definite 401.
   await api.passwordLogin('fixture-password'); assert.equal(typeof validateTick, 'function');
   const tick = async () => { validateTick(); await new Promise(resolve => setTimeout(resolve, 20)); };
