@@ -8,12 +8,13 @@ import { useEffect, useSyncExternalStore } from 'react';
 export type FutureMapRow = { id: string; periodLabel: string; start: string; end: string; view: string;
   reason: string | null; alt: string | null; level: { low: number; high: number } | null; tag: string;
   tone: 'red' | 'amber' | 'green' | 'grey'; agree: number; emphasis: boolean; changed: boolean;
-  result: 'reached' | 'missed' | null; isNow: boolean; past: boolean };
+  result: 'reached' | 'missed' | null; scoringStatus?: string; isNow: boolean; past: boolean };
 export type FutureMapDoc = {
   schemaVersion: 'argus-future-map-public-v1'; updatedAt: string; lastChangedAt?: string | null; today: string;
   rows: FutureMapRow[];
   status: { position: string; nextAlert: { date: string; label: string }; nextBottom: { date: string; label: string } };
   record: { scored: number; reached: number }; argusValidated: false; actionAuthority: false;
+  scoring?: { resultVersion: string; status: string; lastError: string | null };
 };
 
 export function validFutureMap(value: unknown): value is FutureMapDoc {
@@ -28,7 +29,8 @@ export const FUTURE_MAP_POLL_MS = 5 * 60_000;
 /** A new table only when the server's version (updatedAt or lastChangedAt) or its day changed. */
 export function futureMapChanged(previous: FutureMapDoc | null, next: FutureMapDoc): boolean {
   return !previous || previous.updatedAt !== next.updatedAt
-    || (previous.lastChangedAt ?? null) !== (next.lastChangedAt ?? null) || previous.today !== next.today;
+    || (previous.lastChangedAt ?? null) !== (next.lastChangedAt ?? null) || previous.today !== next.today
+    || previous.scoring?.resultVersion !== next.scoring?.resultVersion;
 }
 
 let current: FutureMapDoc | null = null;

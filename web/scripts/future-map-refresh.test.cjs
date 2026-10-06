@@ -42,9 +42,14 @@ const flush = () => new Promise(r => setImmediate(r));
   // Only lastChangedAt changed (same updatedAt): still replaced.
   server = doc('2026-10-06T00:00:00+09:00', '2026-10-05T16:00:00Z', '下落局面');
   intervalFn(); await flush(); assert.equal(renders, 3);
+  // Scoring matures while the forecast document stays unchanged.
+  server = { ...server, scoring: { resultVersion: 'scored-a', status: 'AVAILABLE', lastError: null },
+    record: { scored: 1, reached: 1 } };
+  intervalFn(); await flush(); assert.equal(renders, 4);
+  intervalFn(); await flush(); assert.equal(renders, 4, 'unchanged result must not replace the table');
   // A failed read keeps the last table.
   global.fetch = async () => { reads += 1; throw new Error('offline'); };
-  intervalFn(); await flush(); assert.equal(renders, 3);
+  intervalFn(); await flush(); assert.equal(renders, 4);
   // Unsubscribing stops the timer and the front/back listener.
   stop(); assert.equal(cleared, 1); assert.equal(handlers.visibilitychange, undefined);
   // The 30-minute reuse is gone.
