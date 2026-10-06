@@ -115,6 +115,7 @@ jobs:
           test -f scripts/workflow_http.py
           install -m 0644 scripts/workflow_http.py \
             "$RUNNER_TEMP/workflow_http.py"
+          install -m 0644 scripts/workflow_http.py "$RUNTIME/scripts/workflow_http.py"
           install -m 0644 scripts/persist_backup_vault.py "$RUNTIME/scripts/persist_backup_vault.py"
           for path in \
             argus_calibration.py \
@@ -134,6 +135,7 @@ jobs:
             "$RUNTIME/argus_market_clock.py" \
             "$RUNTIME/scripts/run_prediction_ledger.py" \
             "$RUNTIME/scripts/persist_backup_vault.py" \
+            "$RUNTIME/scripts/workflow_http.py" \
             "$RUNNER_TEMP/workflow_http.py" \
             "$RUNTIME/scripts/export_event_prediction_results.py" \
             "$RUNTIME/argus_event_prediction_results.py" \
@@ -610,7 +612,7 @@ jobs:
           [ -z "$NTFY_TOPIC" ] && exit 0
           if [ "$CANONICAL_OUTCOME" = success ]; then
             TITLE="ARGUS auxiliary save FAILED"
-            MESSAGE="予測台帳の記録・採点は保存済みです。バックアップなど後続の保存処理が失敗しました。Actionsを確認してください。"
+            MESSAGE="予測台帳の記録・採点は保存済みです。バックアップ・AIなど関連処理の一部が失敗しました。Actionsを確認してください。"
           else
             TITLE="ARGUS ledger FAILED"
             MESSAGE="予測台帳の記録・採点を保存できませんでした。Actionsを確認してください。"

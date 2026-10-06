@@ -86,3 +86,23 @@ def test_late_replay_does_not_regress_latest(tmp_path):
     old['slots']['a' * 64]['blob'] = json.dumps(env)
     vault.persist_slots(vault.validated_slots(json.dumps(old)), tmp_path)
     assert latest.read_bytes() == before
+
+
+def test_staged_helper_import_survives_ledger_branch_checkout(tmp_path):
+    import os
+    from pathlib import Path
+    import shutil
+    import subprocess
+    import sys
+    runtime = tmp_path / 'runtime' / 'scripts'; runtime.mkdir(parents=True)
+    root = Path(__file__).parent
+    for name in ('persist_backup_vault.py', 'workflow_http.py'):
+        shutil.copyfile(root / 'scripts' / name, runtime / name)
+    ledger = tmp_path / 'ledger'; ledger.mkdir()
+    result = subprocess.run([sys.executable, str(runtime / 'persist_backup_vault.py'),
+        '--url', 'https://example.invalid', '--ledger-root', 'ledger/vault'],
+        cwd=ledger, env={**os.environ, 'PYTHONPATH': '', 'ARGUS_ADMIN_TOKEN': ''},
+        capture_output=True, text=True)
+    assert result.returncode == 1
+    assert 'missing_admin_token' in result.stderr
+    assert 'ModuleNotFoundError' not in result.stderr
