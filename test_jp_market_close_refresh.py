@@ -12,9 +12,11 @@ def test_slots_are_bounded_holiday_aware_and_prices_do_not_wait_for_per():
     assert first['price'] and not first['valuation']
     assert policy.due('2026-10-06T06:34:59Z', last_slot=first['slot']) is None
     assert policy.due('2026-10-06T06:35:00Z', last_slot=first['slot'])['price']
-    later = policy.due('2026-10-06T07:05:00Z', close_date='2026-10-06')
+    assert policy.due('2026-10-06T07:05:00Z', close_date='2026-10-06') is None
+    assert policy.due('2026-10-06T07:34:59Z', close_date='2026-10-06') is None
+    later = policy.due('2026-10-06T07:35:00Z', close_date='2026-10-06')
     assert later['valuation'] and not later['price']
-    assert policy.due('2026-10-06T07:35:00Z', last_slot=later['slot'], close_date='2026-10-06')['valuation']
+    assert policy.due('2026-10-06T07:35:00Z', last_slot=later['slot'], close_date='2026-10-06') is None
     assert policy.due('2026-10-06T08:05:00Z', close_date='2026-10-06')['valuation']
     assert policy.due('2026-10-06T07:05:00Z', close_date='2026-10-06', eps_date='2026-10-06') is None
     assert policy.due('2026-10-12T06:31:00Z', close_date='2026-10-09', eps_date='2026-10-09') is None
@@ -95,7 +97,7 @@ def test_worker_is_one_slot_only_current_valuation_and_no_full_collection(monkey
            'availableFrom':'2026-10-06T06:31:00Z'}]
     monkeypatch.setattr(scanner,'_NIKKEI_CLOSE_REFRESH',{'lastSlot':None})
     monkeypatch.setattr(scanner,'_LEVEL_MAP',{'eps':{}})
-    monkeypatch.setattr(scanner,'_ai_now_iso',lambda:'2026-10-06T07:05:00Z')
+    monkeypatch.setattr(scanner,'_ai_now_iso',lambda:'2026-10-06T07:35:00Z')
     monkeypatch.setattr(scanner,'_nikkei_chart_rows',lambda:rows)
     def warm(values,*,current_only):
         calls.append(current_only)
