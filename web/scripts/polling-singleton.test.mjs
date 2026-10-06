@@ -102,23 +102,23 @@ assert.match(command, /usePublicDiagnostics/);
 assert.match(diagnostics, /usePublicDiagnostics/);
 
 // Event list and status share one endpoint read. The lifecycle pauses in the
-// background and refreshes immediately when the app returns to view.
+// background and retains the screen when the app returns to view.
 assert.match(activeEvents, /\/api\/argus\/events-active/);
 assert.doesNotMatch(activeEvents, /event-backbone-status|Promise\.all/);
 assert.equal((activeEvents.match(/fetch\(/g) ?? []).length, 1);
 assert.match(activeEvents, /useSyncExternalStore/);
 assert.match(activeEvents, /createSharedPollingStore/);
 assert.match(activeEvents, /if \(cancelled \|\| document\.hidden \|\| inFlight\) return/);
-assert.match(activeEvents, /visibilitychange/);
+assert.match(activeEvents, /subscribeInitialVisibleRead/);
 
 // The visibility authority remains fail-closed, while its shared lifecycle
-// avoids background network requests and refreshes when the app returns.
+// avoids background network requests and keeps the existing polling cadence.
 assert.match(visibilityGuard, /\/api\/argus\/visibility-guard/);
 assert.match(visibilityGuard, /useSyncExternalStore/);
 assert.match(visibilityGuard, /createSharedPollingStore/);
 assert.match(visibilityGuard, /if \(document\.hidden\) return/);
 assert.match(visibilityGuard, /if \(!document\.hidden\) void acquire\(load\)/);
-assert.match(visibilityGuard, /visibilitychange/);
+assert.match(visibilityGuard, /subscribeInitialVisibleRead/);
 
 // The protected asset store has one provider-owned persistence/sync lifecycle.
 assert.match(assetsStore, /function useAssetsStore/);

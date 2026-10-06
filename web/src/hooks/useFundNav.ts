@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { calendarDateExpiresAt, dailyFundNavDecisionUsable } from '../domain/liveQuote';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
@@ -132,7 +133,7 @@ function fundNavStore(codeKey: string): SharedPollingStore<State> {
         void acquire(load);
       }, FUND_NAV_VISIBLE_MS);
       const onVisible = () => { if (!document.hidden) void acquire(load); };
-      document.addEventListener('visibilitychange', onVisible);
+      const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
       void acquire(load);
       return () => {
         alive = false;
@@ -140,7 +141,7 @@ function fundNavStore(codeKey: string): SharedPollingStore<State> {
         for (const controller of controllers) controller.abort();
         controllers.clear();
         window.clearInterval(interval);
-        document.removeEventListener('visibilitychange', onVisible);
+        stopInitialOnVisible();
       };
     },
   );

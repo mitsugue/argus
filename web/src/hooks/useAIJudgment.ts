@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { deauthorizeAIJudgment, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
@@ -164,7 +165,7 @@ const aiJudgmentStore = createSharedPollingStore<State>(
     const refreshTimer = window.setInterval(
       () => void acquire(refresh), REFRESH_INTERVAL_MS);
     const onVisible = () => { if (!document.hidden) void acquire(refresh); };
-    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
     void acquire(run);
     return () => {
       cancelled = true;
@@ -172,7 +173,7 @@ const aiJudgmentStore = createSharedPollingStore<State>(
       for (const controller of controllers) controller.abort();
       controllers.clear();
       window.clearInterval(refreshTimer);
-      document.removeEventListener('visibilitychange', onVisible);
+      stopInitialOnVisible();
     };
   },
 );

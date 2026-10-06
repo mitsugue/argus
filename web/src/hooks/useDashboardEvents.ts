@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { liveAuthorityState, scheduleLiveAuthorityExpiry } from '../domain/liveAuthority';
 import type { DashboardEventsResponse } from '../lib/dashboardEventState';
@@ -74,7 +75,7 @@ function dashboardEventsStore(pollMs: number): SharedPollingStore<State> {
         void acquire(load);
       }, pollMs);
       const onVisible = () => { if (!document.hidden) void acquire(load); };
-      document.addEventListener('visibilitychange', onVisible);
+      const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
       void acquire(load);
       return () => {
         alive = false;
@@ -82,7 +83,7 @@ function dashboardEventsStore(pollMs: number): SharedPollingStore<State> {
         for (const controller of controllers) controller.abort();
         controllers.clear();
         window.clearInterval(interval);
-        document.removeEventListener('visibilitychange', onVisible);
+        stopInitialOnVisible();
       };
     },
   );

@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useEffect, useState } from 'react';
 import type { ForecastTrackRecord, JapanMarketComparison } from '../types/japanMarketComparison';
 import { validForecastTrackRecord, validJapanMarketComparison } from '../lib/japanMarketComparison';
@@ -88,9 +89,9 @@ export function useJapanMarketComparison(horizon: number) {
     const visible = () => { if (document.visibilityState === 'visible') void refresh(); };
     void refresh();
     const timer = window.setInterval(visible, FEED_VISIBLE_MS);
-    document.addEventListener('visibilitychange', visible);
+    const stopInitialVisible = subscribeInitialVisibleRead(visible);
     return () => { cancelled = true; window.clearTimeout(retryTimer); window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', visible); };
+      stopInitialVisible(); };
   }, [base, key, horizon, retry]);
   return { ...(snapshot.key === key ? snapshot.state : { ...empty(), ...memory.get(key) }),
     retry: () => setRetry(value => value + 1) };
@@ -168,17 +169,24 @@ export function useNikkeiLive(): NikkeiLive {
       finally { active = false; }
     };
     void load();
-    const timer = window.setInterval(() => {
+    const ageQuote = () => {
       setQuote(current => {
         if (!current?.realtime) return current;
         const tradeAge = Date.now() - Date.parse(current.tradedAt);
         const receiptAge = Date.now() - Date.parse(current.receivedAt ?? '');
         return tradeAge >= 0 && tradeAge <= 15_000 && receiptAge >= 0 && receiptAge <= 15_000 ? current : null;
       });
+    };
+    const timer = window.setInterval(() => {
+      ageQuote();
       if (Date.now() - lastRead >= (liveCadence ? 10_000 : 60_000)) void load();
     }, 10_000);
-    document.addEventListener('visibilitychange', load);
-    return () => { cancelled = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', load); };
+    // Age immediately after a suspended app resumes, without a network read.
+    const onVisibleAge = () => { if (document.visibilityState === 'visible') ageQuote(); };
+    document.addEventListener('visibilitychange', onVisibleAge);
+    const stopInitialLoad = subscribeInitialVisibleRead(load);
+    return () => { cancelled = true; window.clearInterval(timer); stopInitialLoad();
+      document.removeEventListener('visibilitychange', onVisibleAge); };
   }, [base]);
   return { quote, futures };
 }

@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { exactAuthorityEpoch } from '../domain/liveAuthority';
 import {
@@ -277,9 +278,9 @@ const ratesStore = createSharedPollingStore<RatesState>(
       if (document.hidden) return;
       const current = getState();
       if (current.data) accept(current.data, current.attempt);
-      void acquire(refresh);
     };
     document.addEventListener('visibilitychange', onVisible);
+    const stopInitialRead = subscribeInitialVisibleRead(() => { void acquire(refresh); });
     void acquire(run);
     return () => {
       cancelled = true;
@@ -288,6 +289,7 @@ const ratesStore = createSharedPollingStore<RatesState>(
       controllers.clear();
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisible);
+      stopInitialRead();
     };
   },
 );

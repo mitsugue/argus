@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { deauthorizeFlowRecords, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
@@ -158,7 +159,7 @@ const flowAttributionStore = createSharedPollingStore<ListState>(
       void acquire(load);
     }, POLL_MS);
     const onVisible = () => { if (!document.hidden) void acquire(load); };
-    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
     void acquire(load);
     return () => {
       alive = false;
@@ -166,7 +167,7 @@ const flowAttributionStore = createSharedPollingStore<ListState>(
       for (const controller of controllers) controller.abort();
       controllers.clear();
       window.clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisible);
+      stopInitialOnVisible();
     };
   },
 );

@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { cryptoQuoteDecisionUsable, scheduleLiveAuthorityExpiry } from '../domain/liveAuthority';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
@@ -115,7 +116,7 @@ function cryptoStore(key: string): SharedPollingStore<State> {
         void acquire(fetchOnce);
       }, GUARD_VISIBLE_MS);
       const onVisible = () => { if (!document.hidden) void acquire(fetchOnce); };
-      document.addEventListener('visibilitychange', onVisible);
+      const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
       void acquire(fetchOnce);
       return () => {
         cancelled = true;
@@ -123,7 +124,7 @@ function cryptoStore(key: string): SharedPollingStore<State> {
         for (const controller of controllers) controller.abort();
         controllers.clear();
         window.clearInterval(interval);
-        document.removeEventListener('visibilitychange', onVisible);
+        stopInitialOnVisible();
       };
     },
   );

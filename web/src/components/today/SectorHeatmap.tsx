@@ -1,6 +1,6 @@
 import React, {useState, useSyncExternalStore} from 'react';
 import {createSharedPollingStore} from '../../lib/sharedPollingStore';
-import {FEED_VISIBLE_MS,isPageVisible} from '../../lib/pollingPolicy';
+import {FEED_VISIBLE_MS,isPageVisible,subscribeInitialVisibleRead} from '../../lib/pollingPolicy';
 import {validMarketInternals} from '../../lib/marketInternals';
 import {useAssets} from '../../hooks/useAssets';
 import {TriangleStepLoader} from '../common/TriangleStepLoader';
@@ -11,6 +11,7 @@ type Document={schemaVersion:string;targetDate:string;isToday:boolean;session:{s
 const store=createSharedPollingStore<{data:Document|null;error:boolean;loading:boolean}>({data:null,error:false,loading:true},(set)=>{
   let alive=true;let controller:AbortController|null=null;
   async function read(){
+    if(!alive||!isPageVisible()||controller)return;
     controller=new AbortController();const timeout=setTimeout(()=>controller?.abort(),12000);
     try{
       const base=import.meta.env.VITE_ARGUS_BACKEND_URL;if(!base)throw new Error('no_backend');
@@ -18,11 +19,11 @@ const store=createSharedPollingStore<{data:Document|null;error:boolean;loading:b
       if(!response.ok)throw new Error('unavailable');const data=await response.json();
       if(data.schemaVersion!=='jp-sector-heatmap-v1'||!Array.isArray(data.rows)||data.rows.length>17)throw new Error('invalid');
       if(alive)set({data,error:false,loading:false});
-    }catch{if(alive)set(old=>({...old,error:true,loading:false}));}finally{clearTimeout(timeout);}
+    }catch{if(alive)set(old=>({...old,error:true,loading:false}));}finally{clearTimeout(timeout);controller=null;}
   }
   void read();const timer=setInterval(()=>{if(isPageVisible())void read();},FEED_VISIBLE_MS);
-  const onVisible=()=>{if(isPageVisible())void read();};document.addEventListener('visibilitychange',onVisible);
-  return()=>{alive=false;controller?.abort();clearInterval(timer);document.removeEventListener('visibilitychange',onVisible);};
+  const onVisible=()=>{if(isPageVisible())void read();};const stopInitialRead=subscribeInitialVisibleRead(onVisible);
+  return()=>{alive=false;controller?.abort();clearInterval(timer);stopInitialRead();};
 });
 const pct=(value:number|null|undefined,relative=false)=>typeof value==='number'&&Number.isFinite(value)?`${value>0?'+':''}${value.toFixed(2)}${relative?'pt':'%'}`:'未取得';
 const shortStamp=(value:string|null)=>value?new Date(value).toLocaleTimeString('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit'}):'時刻不明';

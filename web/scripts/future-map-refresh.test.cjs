@@ -1,4 +1,4 @@
-// FUTURE MAP without a restart: read again when the app comes to the front,
+// FUTURE MAP without a restart: retain on ordinary app return; read again
 // when Today is shown, and every five minutes while in front (not in the
 // background); the table is replaced only when the server's version changed.
 const assert = require('node:assert/strict'), path = require('node:path'), esbuild = require('esbuild'), Module = require('node:module');
@@ -35,9 +35,12 @@ const flush = () => new Promise(r => setImmediate(r));
   // In the background: no check.
   document.visibilityState = 'hidden'; intervalFn(); await flush();
   assert.equal(reads, 2);
-  // A new table arrives while in the background; back to the front: read at once and replace.
+  // A new table arrives while in the background; return retains the table.
+  // The normal cadence then reads and replaces it without reloading the page.
   server = doc('2026-10-06T00:00:00+09:00', '2026-10-05T15:01:00Z', '下落局面');
-  document.visibilityState = 'visible'; handlers.visibilitychange(); await flush();
+  document.visibilityState = 'visible'; handlers.visibilitychange?.(); await flush();
+  assert.equal(reads, 2, 'app return must not start another read');
+  intervalFn(); await flush();
   assert.equal(reads, 3); assert.equal(renders, 2);
   // Only lastChangedAt changed (same updatedAt): still replaced.
   server = doc('2026-10-06T00:00:00+09:00', '2026-10-05T16:00:00Z', '下落局面');

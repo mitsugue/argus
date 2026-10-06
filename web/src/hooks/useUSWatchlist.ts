@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
 import { WATCHLIST_VISIBLE_MS } from '../lib/pollingPolicy';
@@ -199,15 +200,14 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
       }
     }
     const refreshTimer = window.setInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
-    // Returning to the tab after a while → refresh immediately, don't wait out
-    // the remainder of the interval.
+    // Age the retained quote on return without an extra network acquisition.
     const onVisible = () => {
       if (!document.hidden) {
         revalidateCurrent();
-        void acquire(refresh);
       }
     };
     document.addEventListener('visibilitychange', onVisible);
+    const stopInitialRead = subscribeInitialVisibleRead(() => { void acquire(refresh); });
 
     if (getState().data) revalidateCurrent();
     void acquire(run);
@@ -218,6 +218,7 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
       controllers.clear();
       window.clearInterval(refreshTimer);
       document.removeEventListener('visibilitychange', onVisible);
+      stopInitialRead();
     };
   });
   usWatchlistStores.set(symKey, store);

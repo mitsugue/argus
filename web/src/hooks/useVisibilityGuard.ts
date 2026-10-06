@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { deauthorizeVisibilityGuard, liveAuthorityState,
   scheduleLiveAuthorityExpiry } from '../domain/liveAuthority';
@@ -104,7 +105,7 @@ const visibilityGuardStore = createSharedPollingStore<State>(
     if (retained.authority === 'fresh') accept(retained.data);
     const interval = window.setInterval(() => void acquire(load), GUARD_VISIBLE_MS);
     const onVisible = () => { if (!document.hidden) void acquire(load); };
-    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
     void acquire(load);
     return () => {
       alive = false;
@@ -112,7 +113,7 @@ const visibilityGuardStore = createSharedPollingStore<State>(
       for (const controller of controllers) controller.abort();
       controllers.clear();
       window.clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisible);
+      stopInitialOnVisible();
     };
   },
 );

@@ -1,3 +1,4 @@
+import { FEED_VISIBLE_MS, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useEffect, useState } from 'react';
 import { readDrawingState, writeDrawingState } from '../lib/verifiedSnapshot';
 import {
@@ -62,6 +63,7 @@ export function useTodayHeadline(): TodayHeadlineState {
       if (!cancelled) setState(next);
     };
     const revalidate = async (cached: CacheRecord | null) => {
+      if (document.visibilityState !== 'visible') return;
       if (!inflight) {
         inflight = fetchHeadline(cached?.document.headlineSetId ?? null)
           .finally(() => { inflight = null; });
@@ -101,10 +103,12 @@ export function useTodayHeadline(): TodayHeadlineState {
     const onVisible = () => {
       if (document.visibilityState === 'visible') void revalidate(memory);
     };
-    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
+    const timer = window.setInterval(onVisible, FEED_VISIBLE_MS);
     return () => {
       cancelled = true;
-      document.removeEventListener('visibilitychange', onVisible);
+      stopInitialOnVisible();
+      window.clearInterval(timer);
     };
   }, []);
 

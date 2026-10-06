@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useEffect, useState } from 'react';
 import { FEED_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
 
@@ -88,11 +89,11 @@ export function useMarketShock(): MarketShockState {
     const timer = window.setInterval(() => { if (isPageVisible()) void load(); }, FEED_VISIBLE_MS);
     const onVisible = () => { if (!document.hidden) void load(); };
     const onOnline = () => void load();
-    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
     window.addEventListener('online', onOnline);
     return () => {
       cancelled = true; window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisible);
+      stopInitialOnVisible();
       window.removeEventListener('online', onOnline);
     };
   }, []);

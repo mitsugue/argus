@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
 import { CALENDAR_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
@@ -31,9 +32,9 @@ const store = createSharedPollingStore<State>({ data: null, loading: true, faile
       if (!isPageVisible()) return;
       set({ ...get(), checkedAt: Date.now() }); visible();
     }, CALENDAR_VISIBLE_MS);
-    document.addEventListener('visibilitychange', visible); void refresh();
+    const stopInitialVisible = subscribeInitialVisibleRead(visible); void refresh();
     return () => { stopped = true; flight?.abort(); window.clearInterval(interval);
-      document.removeEventListener('visibilitychange', visible); retry = () => {}; };
+      stopInitialVisible(); retry = () => {}; };
   });
 export function useJapanEquityCalendar() {
   return { ...useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot), retry: () => retry() };

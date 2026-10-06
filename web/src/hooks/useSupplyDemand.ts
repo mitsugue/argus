@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { deauthorizeSupplySignals, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
@@ -161,7 +162,7 @@ function supplyStore(extraSymbols: string): SharedPollingStore<State> {
         void acquire(load);
       }, POLL_MS);
       const onVisible = () => { if (!document.hidden) void acquire(load); };
-      document.addEventListener('visibilitychange', onVisible);
+      const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
       void acquire(load);
       return () => {
         alive = false;
@@ -169,7 +170,7 @@ function supplyStore(extraSymbols: string): SharedPollingStore<State> {
         for (const controller of controllers) controller.abort();
         controllers.clear();
         window.clearInterval(interval);
-        document.removeEventListener('visibilitychange', onVisible);
+        stopInitialOnVisible();
       };
     },
   );

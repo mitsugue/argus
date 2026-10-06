@@ -1,5 +1,5 @@
 // v13.5.50 — current intelligence is never painted from Cache Storage as current,
-// hooks refresh on visibility/online, and a failed refresh never relabels
+// hooks retain on app return and refresh on cadence/online, and a failed refresh never relabels
 // retained data as current. Index charts are selectable on the market chart.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -14,7 +14,7 @@ for (const hook of ['useNewsIntelligence.ts', 'useMarketShock.ts']) {
   const text = fs.readFileSync(path.join(src, 'hooks', hook), 'utf8');
   assert.ok(!text.includes("status: memory ? 'data' : 'error'"), `${hook}: failed refresh must not relabel retained data as current`);
   assert.ok(text.includes("setState({ status: 'error', view: memory })"), `${hook}: failure marks status error`);
-  assert.ok(text.includes("addEventListener('visibilitychange'"), `${hook}: refresh on visibility resume`);
+  assert.ok(text.includes('subscribeInitialVisibleRead'), `${hook}: only deferred initial reads resume on visibility`);
   assert.ok(text.includes("addEventListener('online'"), `${hook}: refresh on online transition`);
   assert.ok(text.includes('setInterval'), `${hook}: periodic refresh`);
 }

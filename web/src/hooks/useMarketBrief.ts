@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
 import { validMarketBrief, type MarketBrief } from '../lib/marketBrief';
@@ -10,7 +11,7 @@ const store = createSharedPollingStore<State>({ brief: null, error: false, loadi
   let stopped = false; let flight: AbortController | null = null; let nextPollAt = 0;
   const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '');
   const load = async () => {
-    if (stopped || flight) return;
+    if (stopped || flight || document.visibilityState !== 'visible') return;
     const controller = new AbortController(); flight = controller;
     const timeout = window.setTimeout(() => controller.abort(), 12_000);
     set({ ...get(), loading: true });
@@ -40,9 +41,9 @@ const store = createSharedPollingStore<State>({ brief: null, error: false, loadi
   retry = () => { void load(); };
   const visible = () => { if (document.visibilityState === 'visible') void load(); };
   const timer = window.setInterval(() => { if (Date.now() >= nextPollAt) visible(); }, 30_000);
-  document.addEventListener('visibilitychange', visible); void load();
+  const stopInitialVisible = subscribeInitialVisibleRead(visible); void load();
   return () => { stopped = true; flight?.abort(); window.clearInterval(timer);
-    document.removeEventListener('visibilitychange', visible); retry = () => {}; };
+    stopInitialVisible(); retry = () => {}; };
 });
 export function useMarketBrief() {
   return { ...useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot), retry: () => retry() };
