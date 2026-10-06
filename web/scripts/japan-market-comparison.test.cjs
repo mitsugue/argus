@@ -183,3 +183,34 @@ for (const mutate of [
   assert(!validForecastTrackRecord(invalid));
 }
 console.log('Issued forecast track record shape PASS');
+
+// A fresh close remains usable while the independent analog calculation is unavailable.
+const {comparisonReply, retainComparisonReply, comparisonReadInterval} = require('../src/lib/japanMarketComparisonReply.ts');
+const levelMap = {schemaVersion:'jp-market-level-map-state-v1', actionAuthority:false, latest:null,
+ missedMornings:[], chart:{schemaVersion:'jp-market-chart-layers-v1',today:'2026-10-06',start:'2026-04-05',end:'2027-01-06',
+ points:[{date:'2026-10-06',close:70000,eps:4000,epsDate:'2026-10-05'}], current:null,
+ pivots:[],pending:null,candidates:[],nearest:[],actionAuthority:false,automaticAiCalls:0}};
+const fresh = comparisonReply({status:'unavailable',comparison:null,reason:'index_research_preparing',
+ automaticAiCalls:0,actionAuthority:false,levelMap},5);
+assert.equal(fresh.document,null);
+assert.equal(fresh.levelMap.chart.points.at(-1).close,70000);
+const invalidAnalog = comparisonReply({status:'available',comparison:{...document,actual:[]},
+ automaticAiCalls:0,actionAuthority:false,levelMap},5);
+assert.equal(invalidAnalog.document,null,'不正な予測を使わない');
+assert.equal(invalidAnalog.levelMap,fresh.levelMap,'予測の形式不備で正常な終値を捨てない');
+const retained = retainComparisonReply(fresh,{document,reason:null,lastSuccessfulAcquisitionAt:null,
+ levelMap:{...levelMap,chart:{...levelMap.chart,points:[]}}});
+assert.equal(retained.document,document);
+assert.equal(retained.levelMap,fresh.levelMap,'新しい終値を端末の古い応答で上書きしない');
+assert.throws(()=>comparisonReply({status:'unavailable',comparison:null,automaticAiCalls:1,actionAuthority:false,levelMap},5));
+const malformed = comparisonReply({status:'unavailable',comparison:null,automaticAiCalls:0,actionAuthority:false,
+ levelMap:{...levelMap,chart:{...levelMap.chart,points:[{date:'2026-10-06',close:'70000'}]}}},5);
+assert.equal(malformed.levelMap,null);
+assert.equal(retainComparisonReply(malformed,fresh).levelMap,fresh.levelMap,'不正な値で保存済みの表示を壊さない');
+assert.equal(comparisonReadInterval(fresh,Date.parse('2026-10-06T06:31:00Z')),60_000);
+assert.equal(comparisonReadInterval(fresh,Date.parse('2026-10-06T07:05:00Z')),600_000);
+const pendingReply = {...fresh,levelMap:{...levelMap,chart:{...levelMap.chart,closePending:true}}};
+assert.equal(comparisonReadInterval(pendingReply,Date.parse('2026-10-06T11:00:00Z')),60_000);
+assert.equal(comparisonReadInterval(pendingReply,Date.parse('2026-10-06T16:00:00Z')),600_000);
+assert.equal(comparisonReadInterval(pendingReply,Date.parse('2026-10-10T07:00:00Z')),600_000);
+console.log('日経の新しい終値・過去比較の独立更新・引け後の読取間隔 PASS');

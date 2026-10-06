@@ -39212,10 +39212,12 @@ def _level_map_remote():
 def _level_map_completed_bars(nikkei_rows, now_iso):
     """Sessions whose close is final by now (an in-progress bar is left out)."""
     out = []
+    cutoff = jp_market_engine._instant(now_iso)
     for row in nikkei_rows or ():
         available = str(row.get("availableFrom") or "")
+        received = jp_market_engine._instant(available) if available else None
         if row.get("date") and row.get("close") and row.get("high") and row.get("low") \
-                and (not available or available <= now_iso):
+                and cutoff is not None and (not available or received is not None and received <= cutoff):
             out.append({"date": str(row["date"])[:10], "close": row["close"], "high": row["high"], "low": row["low"]})
     return sorted(out, key=lambda r: r["date"])
 
@@ -39923,7 +39925,7 @@ def _jp_market_comparison_cached(horizon):
     result = _index_research_read(f"comparison:N225:{horizon}") or {
         "status": "unavailable", "comparison": None, "automaticAiCalls": 0,
         "actionAuthority": False, "reason": "index_research_preparing", "informationCutoff": None}
-    if horizon == 5 and result.get("comparison"):
+    if horizon == 5:
         # The saved analog comparison keeps its calculation time and hash.
         # Display layers are bounded projections of current cached inputs;
         # they must not wait for another complete analog/AI calculation.

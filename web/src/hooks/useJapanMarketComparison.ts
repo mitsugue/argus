@@ -2,14 +2,14 @@ import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pol
 import { useEffect, useState } from 'react';
 import type { ForecastTrackRecord, JapanMarketComparison } from '../types/japanMarketComparison';
 import { validForecastTrackRecord, validJapanMarketComparison } from '../lib/japanMarketComparison';
-import { FEED_VISIBLE_MS } from '../lib/pollingPolicy';
 import { validLevelMap, type LevelMapState } from '../lib/levelMap';
+import { comparisonReply, retainComparisonReply, comparisonReadInterval, type ComparisonReply } from '../lib/japanMarketComparisonReply';
+import { validResearchChart } from '../lib/researchChart';
 
 type State = { document: JapanMarketComparison | null; loading: boolean; error: boolean;
-  reason: string | null; lastSuccessfulAcquisitionAt: string | null; levelMap?: LevelMapState | null };
+  reason: string | null; lastSuccessfulAcquisitionAt: string | null; levelMap?: LevelMapState | null; levelMapError?: boolean };
 // levelMap (2026-10-04): the morning map rides the five-session reply.
-type Reply = { document: JapanMarketComparison | null; reason: string | null; lastSuccessfulAcquisitionAt: string | null;
-  levelMap?: LevelMapState | null };
+type Reply = ComparisonReply;
 const memory = new Map<string, Reply>();
 const flights = new Map<string, Promise<Reply>>();
 const empty = (): State => ({ document: null, loading: true, error: false, reason: null, lastSuccessfulAcquisitionAt: null });
@@ -22,7 +22,8 @@ function previous(key: string, horizon: number): Reply | undefined {
     const raw = localStorage.getItem(storageKey(key));
     if (!raw || raw.length > MAX_SAVED_BYTES) return;
     const value = JSON.parse(raw);
-    if (!validJapanMarketComparison(value.document, horizon)) return;
+    if (!validJapanMarketComparison(value.document, horizon)
+      && !(value.document === null && validLevelMap(value.levelMap) && validResearchChart(value.levelMap.chart))) return;
     const result: Reply = { document: value.document, reason: null,
       lastSuccessfulAcquisitionAt: typeof value.lastSuccessfulAcquisitionAt === 'string'
         && Number.isFinite(Date.parse(value.lastSuccessfulAcquisitionAt)) ? value.lastSuccessfulAcquisitionAt : null,
@@ -47,13 +48,7 @@ async function load(base: string, horizon: number): Promise<Reply> {
       { cache: 'no-store', signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const body = await response.json();
-    if (body.status === 'unavailable' && body.comparison === null) return {
-      document: null, reason: typeof body.reason === 'string' ? body.reason : 'unavailable',
-      lastSuccessfulAcquisitionAt: body.lastSuccessfulAcquisitionAt ?? null };
-    if (body.status !== 'available' || body.actionAuthority !== false || body.automaticAiCalls !== 0
-      || !validJapanMarketComparison(body.comparison, horizon)) throw new Error('invalid_comparison_response');
-    return { document: body.comparison, reason: null, lastSuccessfulAcquisitionAt: body.lastSuccessfulAcquisitionAt ?? null,
-      levelMap: validLevelMap(body.levelMap) ? body.levelMap : null };
+    return comparisonReply(body, horizon);
   } finally { window.clearTimeout(timer); }
 }
 
@@ -77,18 +72,18 @@ export function useJapanMarketComparison(horizon: number) {
         if (!base) throw new Error('backend_url_missing');
         if (!flights.has(key)) flights.set(key, load(base, horizon).finally(() => flights.delete(key)));
         const result = await flights.get(key)!;
-        if (result.document) remember(key, result);
-        publish({ ...(result.document ? result : cached ?? result), reason: result.reason,
-          loading: false, error: !result.document });
+        const retained = retainComparisonReply(result, cached);
+        if (result.document || result.levelMap) remember(key, retained);
+        publish({ ...retained, loading: false, error: !result.document, levelMapError: !result.levelMap });
         if (!result.document && !cancelled) retryTimer = window.setTimeout(visible, 30_000);
       } catch {
-        publish({ ...empty(), ...memory.get(key), loading: false, error: true, reason: 'refresh_failed' });
+        publish({ ...empty(), ...memory.get(key), loading: false, error: true, levelMapError: true, reason: 'refresh_failed' });
         if (!cancelled) retryTimer = window.setTimeout(visible, 30_000);
       } finally { active = false; }
     };
     const visible = () => { if (document.visibilityState === 'visible') void refresh(); };
     void refresh();
-    const timer = scheduleVisibleInterval(visible, FEED_VISIBLE_MS);
+    const timer = scheduleVisibleInterval(visible, () => comparisonReadInterval(memory.get(key), Date.now()));
     const stopInitialVisible = subscribeInitialVisibleRead(visible);
     return () => { cancelled = true; window.clearTimeout(retryTimer); timer();
       stopInitialVisible(); };
