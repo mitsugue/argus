@@ -373,7 +373,7 @@ console.log('argus-engine.test: all checks passed');
     && panel.includes('連動ETFの実績を比較しています')
     && !panel.includes('<small className="at-index-type">{instrument.symbol}</small>'));
   check('owner priorities show the company name',
-    panel.includes("<b>{item.name?.trim() || item.symbol}</b>"));
+    fs.readFileSync(path.join(root, 'src/components/today/AssetImpactCards.tsx'), 'utf8').includes("<b>{item.name?.trim() || item.symbol}</b>"));
   const jpBlock = panel.indexOf('data-market="JP"');
   const usBlock = panel.indexOf('data-market="US"');
   const macroInUs = panel.indexOf('className="at-rows at-macro-rows"');

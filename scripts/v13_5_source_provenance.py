@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.59"
+PRODUCT_VERSION = "v13.8.60"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -139,7 +139,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'be5c8a241cd11c25b0bd47e42985d2e0bd737e63',
+    'web/scripts/owner-today-https.mjs': '3bb2c943b68e36ae8430e1d27dee816389d23565',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -294,7 +294,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_presentation_intent.py': '9ac401c4ea52103cb0efeedcf5774d25b78cda7d',
     'argus_persistent_storage.py': '4cb3737d9e865772a42ee238ca246e47158eee4f',
     'test_argus_checkpoint_stream_batches.py': 'a3e03b9cb28f6f62b88096bf651ef4eef02d451f',
-    'web/src/components/today/ReadingHierarchy.css': '79b546d6c1eb0dfaafaad8b289960d0fb8222785',
+    'web/src/components/today/ReadingHierarchy.css': 'a583f3ae076992339e520de0ff67796a1ea7d681',
     'web/src/components/AppShell.tsx': 'fa34bd3703246744c9eeec4411783b6234777a77',
     'web/src/routes/BackupPage.tsx': '7d082a20c08964bb00dc4de227827f7bcfc19abb',
     'web/src/navigation.ts': '7bbea49bee28dd07ead0273ea84f1092255a3ca3',
@@ -318,7 +318,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-vault-auto-save.test.cjs': '7181233ba2be7d1cd5111b8c11386b545e511c29',
     'web/scripts/owner-restore-guard.test.cjs': 'a6711358fc81ad10afaab52af2b118f79133d7ce',
     'web/scripts/owner-protection-consistency.test.cjs': 'f6365d9edfda291084bc17ee05e8d2499bc2774b',
-    'web/scripts/lean-surface.test.mjs': '117dc9b3576f59665d81bea626fcb35ec973243c',
+    'web/scripts/lean-surface.test.mjs': '1bfb0d4a10e9d87c378c76f523ad4f95df8c8910',
     'web/scripts/ai-usage-view.test.cjs': '558e8ef36130e5a59e26f8973176ee2ce741db8a',
     'web/public/push-worker.js': '3934f69c999ae680856bf3e6b23a3ba8f97e514d',
     'test_argus_web_push.py': '69118b280db79fae69bcd3d76db20521714056a2',
@@ -359,7 +359,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/assetDesk/AssetMarketContext.tsx': '4a4c82e59357536a41ee5487c9afe5667832798a',
     'web/src/components/dialogue/OwnerDialogue.css': '99f542e0fc1391a58a1cb60ac1c5bec249fe9a28',
     'web/src/components/dialogue/OwnerDialogue.tsx': '5e8f6f1e4f9ae850f804d55069dcdd3b412199e6',
-    'web/src/components/today/MarketBriefCard.tsx': 'ef661e5cbfad4968fd107e6065497f4acc86c53e',
+    'web/src/components/today/MarketBriefCard.tsx': 'a1aed3c7e8b38f66b0f148564623a8f12eb3aef2',
     'web/src/components/today/MarketInternalsCard.tsx': '54dac07c628b97e697fcf39c77de08361ee1250d',
     'web/src/components/today/SharedMarketContext.tsx': '80fa6f564ecc7c812057075f618614510e6acb05',
     'web/src/lib/marketInternals.ts': 'cf96a5b15512e7f20ef9bcf211d6295307ccec9a',
@@ -405,7 +405,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/japan-sq-calendar.test.cjs': '41fc84761bab22b8218bb5c1347767521472a2c6',
     'web/scripts/macro-result-details.test.cjs': 'b2bcdb290db61a0ef8d8ffcd090a55e5020e10a1',
     'web/scripts/margin-dynamics.test.cjs': 'd969a73de0e7b669ecaed83da07f9481ab16cc8c',
-    'web/scripts/market-brief-response.test.cjs': 'a0b9296048de2038a4f4e647c1583af010d1c3e5',
+    'web/scripts/market-brief-response.test.cjs': 'a3924e3e01e84749518e3a0bfb373e6f892274fd',
     'web/src/components/chart/JapanMarketComparisonChart.css': '5f1bc41ac381d67191cf3fa82ede9cc6f13c06ca',
     'web/src/components/chart/JapanMarketComparisonChart.tsx': '4fc1b15423dd7619ad97b15390ea3d14f295af9e',
     'web/src/components/chart/JapanMarketComparisonPanel.tsx': 'a210ce56e1826916e66313a0e098c359294b691c',
@@ -463,7 +463,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # route is retired, its navigation position is the read-only 13M link,
     # and legacy notification hashes resolve to Today. These exact product
     # files are pinned; any later surface change requires separate review.
-    "web/scripts/lean-surface.test.mjs": "38a9ced36b2aae61e8a4c1b759d85745d007af18",
+    "web/scripts/lean-surface.test.mjs": "1bfb0d4a10e9d87c378c76f523ad4f95df8c8910",
     "web/src/components/NavRail.tsx": "f1a1fef74709852f39d488aaf370428ce2697fe2",
     "web/src/navigation.ts": "5a29e9dc8a1e1d0ed160288e6bd2e54713b6a725",
     # v13.7.44 regression assertions synchronized with the approved Alerts-to-13M surface.
@@ -661,6 +661,9 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/components/today/AssetImpactCards.tsx",
+    "web/src/components/today/AssetImpactCards.css",
+    "web/src/components/common/AssetReadingCard.css",
     "test_tachibana_readonly_return.py",
     "scripts/tachibana_price_measure.py",
     "docs/operations/tachibana-readonly-return.md",

@@ -14,6 +14,7 @@ import { AssetEvidenceSummary } from './AssetEvidenceSummary';
 import '../dashboard/UnifiedAssetCard.css';
 import '../dashboard/Dashboard.css';
 import './AssetDesk.css';
+import '../common/AssetReadingCard.css';
 
 interface Props {
   d: DeskCardData;
@@ -75,7 +76,7 @@ export const AssetDecisionCard: React.FC<Props> = ({
   };
 
   return (
-    <article className={`uac ad-card uac--${open ? 'open' : 'compact'}${d.decisionFirst.held ? ' uac--held' : ''}`}
+    <article className={`uac ad-card asset-reading-card uac--${open ? 'open' : 'compact'}${d.decisionFirst.held ? ' uac--held' : ''}`}
          id={sectionAnchorId(sym)} style={{ ['--uac-sig' as string]: sigColor }}>
       {dragHandle}
       <AssetDecisionSummary d={d} open={open} onToggle={onToggle} interactive={collapsible} />

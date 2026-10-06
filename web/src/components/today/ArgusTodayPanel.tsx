@@ -1,3 +1,4 @@
+import { AssetImpactCards } from './AssetImpactCards';
 import { WarningConditionsDetails } from './WarningConditionsDetails';
 import { revealNewsArticle } from '../../lib/revealNewsArticle';
 import { OwnerOverview } from '../dialogue/OwnerOverview';
@@ -929,26 +930,11 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 
 
 
-    {view.holdingsReview.length > 0 && <section className="at-priorities card" aria-label="OWNER PRIORITIES">
+    {view.holdingsReview.length > 0 && <section className="at-priorities card" aria-label="自分の銘柄への影響" data-section="OWNER PRIORITIES">
       <div className="at-head"><b>自分の銘柄への影響</b>
         <span>{view.holdingsReview.some((item) => /最優先|今日の優先/.test(item.statusJa ?? ''))
-          ? '優先して確認' : '注意配分の上位（急ぎではない）'}</span></div>
-      {view.holdingsReview.map((item) => {
-        const content = <>
-          <span className="at-priority-title">
-            <b>{item.name?.trim() || item.symbol}</b><em>{item.isHeld ? '保有' : 'WATCH'}</em>
-            {item.statusJa && <em className="at-priority-rank">{item.statusJa}</em>}
-            <mark className={`is-${(item.impact ?? 'Neutral').toLowerCase()}`}>{item.impact ?? 'Neutral'}</mark>
-            <strong>{item.actionJa ?? item.statusJa}</strong>
-          </span>
-          <span className="at-priority-impact">{item.reasonJa}</span>
-          <small>次に確認: {item.checkNextJa || '証拠更新待ち'}
-            {item.whatWouldChangeJa ? ` · 判断更新: ${item.whatWouldChangeJa}` : ''}</small>
-        </>;
-        return onNavigateToAsset ? <button type="button" key={item.symbol}
-          onClick={() => onNavigateToAsset(item.symbol)}>{content}</button>
-          : <div key={item.symbol}>{content}</div>;
-      })}
+          ? '優先して確認' : '確認したい銘柄'}</span></div>
+      <AssetImpactCards items={view.holdingsReview} onNavigateToAsset={onNavigateToAsset} />
     </section>}
 
     <section id="today-material-news" className="at-event card at-news-top" aria-label="重大ニュース・市場リスク"

@@ -110,7 +110,8 @@ assert.doesNotMatch(backupPage, /if \(initiallyOpen\) setActionsOpen/);
 assert.match(command, /holdings: ownerPriorities/);
 assert.match(command, /onNavigateToAsset=\{onNavigateToAsset\}/);
 assert.match(todayPanel, /OWNER PRIORITIES/);
-assert.match(todayPanel, /onNavigateToAsset\(item\.symbol\)/);
+assert.match(todayPanel, /<AssetImpactCards items=\{view\.holdingsReview\} onNavigateToAsset=\{onNavigateToAsset\}/);
+assert.match(read('src/components/today/AssetImpactCards.tsx'), /onNavigateToAsset\(item\.symbol\)/);
 
 // Public controls are cached reads or device-local actions, never mutation
 // affordances that are guaranteed to fail without operator authentication.

@@ -118,17 +118,7 @@
 .at-event>button { display:flex; align-items:baseline; gap:9px; width:100%; margin-top:4px; padding:0; border:0; background:transparent; color:var(--text-main); cursor:pointer; text-align:left; }
 .at-event strong { font-size:19px; }.at-event time { font-size:13px; font-variant-numeric:tabular-nums; }.at-event small { margin-left:auto; color:var(--text-sub); }
 .at-priorities { padding:9px 12px; }
-.at-priorities>button,.at-priorities>div:not(.at-head) { display:grid; grid-template-columns:minmax(0,1fr); gap:2px; width:100%; padding:7px 0; border:0; border-top:1px solid var(--line); background:transparent; color:var(--text-main); text-align:left; }
-.at-priorities>button { cursor:pointer; }
-.at-priority-title { display:flex; align-items:center; gap:7px; min-width:0; }
-.at-priority-title b { font-family:var(--font-mono); }
-.at-priority-title em { color:var(--text-faint); font-size:10px; font-style:normal; }
-.at-priority-title mark { border-radius:999px; padding:1px 5px; background:var(--surface-soft); color:var(--text-sub); font-size:9px; }
-.at-priority-title mark.is-good { color:var(--value-positive); }
-.at-priority-title mark.is-bad { color:var(--value-negative); }
-.at-priority-title strong { margin-left:auto; color:var(--accent); font-size:11px; }
-.at-priority-impact { color:var(--text-sub); font-size:11px; }
-.at-priorities small { color:var(--text-faint); font-size:10px; }
+
 .at-coming { display:flex; align-items:baseline; gap:5px 8px; margin-top:8px; flex-wrap:wrap; font-size:9.5px; color:var(--text-sub); }  /* v13.5.60: the coming month wraps, never clips */
 .at-coming b { flex-basis:100%; color:var(--text-muted); letter-spacing:.08em; }
 .at-coming button{display:inline-flex;align-items:baseline;gap:5px;min-height:32px;padding:5px 8px;border:1px solid var(--line);border-radius:999px;background:color-mix(in srgb,var(--surface) 94%,var(--accent));color:var(--text-sub);font:inherit;text-align:left;cursor:pointer}
@@ -402,7 +392,6 @@
 .at-context__title { font-size:10px; letter-spacing:.12em; color:var(--text-muted); }
 .at-context .at-macro > small { display:block; margin-bottom:4px; font-size:10px; letter-spacing:.1em; color:var(--text-muted); }
 .at-buy-conditions { color:var(--text-faint); }
-.at-priority-title b { max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 /* v13.5.62 — GPT review: WAIT kind, confidence basis, method detail on tap */
 .at-wait-kind { margin:-4px 0 6px; font-size:11px; color:var(--text-sub); }
