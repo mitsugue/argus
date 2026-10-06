@@ -1,9 +1,12 @@
+import { currentLevelMap, type LevelMapState, type LevelMapRecord } from './levelMap';
 import type { FutureMapDoc } from '../hooks/useFutureMap';
 
 export type ResearchChart = {
   schemaVersion: 'jp-market-chart-layers-v1'; today: string; start: string; end: string;
   points: Array<{ date: string; close: number; eps: number | null; epsDate: string | null }>;
   current: { morningOf: string; eps: number; epsDate: string; previousClose: number; previousSession: string; atr14: number } | null;
+  closePending?: boolean;
+  displayMap?: LevelMapRecord & { displayOnly: true; asOf: string; valuationPending: boolean };
   pivots: Array<{ date: string; price: number; kind: 'TOP' | 'BOTTOM'; confirmedOn: string }>;
   pending: { date: string; price: number; kind: 'TOP' | 'BOTTOM'; confirmPrice: number } | null;
   candidates: Array<{ id: string; label: string; start: string; end: string; target: number; stop: number; movingTarget?: boolean }>;
@@ -76,4 +79,14 @@ export function perSegments(chart: ResearchChart, multiple: number) {
   }
   if (segment.length) segments.push(segment);
   return segments;
+}
+
+export function displayedChartValuation(chart: ResearchChart) {
+  const map = chart.displayMap;
+  if (map && currentLevelMap({ schemaVersion: 'jp-market-level-map-state-v1', status: 'AVAILABLE',
+    latest: null, chart: { displayMap: map }, morningCount: 0, missedMornings: [],
+    score: null, retrospective: null, actionAuthority: false } as LevelMapState) === map
+    && map.asOf <= chart.today && map.asOf === chart.points.at(-1)?.date)
+    return { eps: map.eps, epsDate: map.epsDate, at: map.asOf };
+  return chart.current ? { eps: chart.current.eps, epsDate: chart.current.epsDate, at: chart.current.morningOf } : null;
 }

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useJapanMarketComparison } from '../../hooks/useJapanMarketComparison';
 import { useFutureMap, type FutureMapDoc } from '../../hooks/useFutureMap';
-import { researchViewport, zoomResearchViewport, dayNumber, externalPoints, perSegments, validResearchChart, type ResearchChart } from '../../lib/researchChart';
+import { displayedChartValuation, researchViewport, zoomResearchViewport, dayNumber, externalPoints, perSegments, validResearchChart, type ResearchChart } from '../../lib/researchChart';
 import './NikkeiResearchChart.css';
 
 const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
@@ -25,6 +25,7 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
   }, []);
   const external = externalPoints(future, chart);
   const last = chart.points.at(-1);
+  const valuation = displayedChartValuation(chart);
   const window = researchViewport(chart, (viewport.end - viewport.start) / 86400_000, (viewport.start + viewport.end) / 2);
   const recent = window.end - window.start < 100 * 86400_000;
   const inWindow = (date: string) => dayNumber(date) >= window.start && dayNumber(date) <= window.end;
@@ -34,9 +35,9 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
   if (last) prices.push(last.close);
   const segments = multiples.map(multiple => ({ multiple, segments: perSegments(chart, multiple) }));
   if (layers.per && !recent) segments.forEach(line => line.segments.forEach(s => s.forEach(p => prices.push(p.value))));
-  if (layers.per && recent && chart.current) {
-    const ratio = chart.current.previousClose / chart.current.eps;
-    prices.push(chart.current.eps * Math.floor(ratio), chart.current.eps * Math.ceil(ratio));
+  if (layers.per && recent && valuation && last) {
+    const ratio = last.close / valuation.eps;
+    prices.push(valuation.eps * Math.floor(ratio), valuation.eps * Math.ceil(ratio));
   }
   if (layers.external) visibleExternal.forEach(p => prices.push(p.low, p.high));
   if (layers.candidates) chart.candidates.forEach(p => prices.push(p.target, p.stop));
@@ -46,11 +47,12 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
   const x = (at: number) => left + (at - window.start) / (window.end - window.start) * (right - left);
   const y = (price: number) => bottom - (price - low) / (high - low) * (bottom - top);
   const path = (points: Array<{ date: string; value: number }>) => points.map((p, i) => `${i ? 'L' : 'M'}${x(dayNumber(p.date)).toFixed(2)},${y(p.value).toFixed(2)}`).join(' ');
-  const ratio = chart.current ? chart.current.previousClose / chart.current.eps : null;
+  const ratio = valuation && last ? last.close / valuation.eps : null;
   const strong = ratio === null ? [] : [...multiples.filter(m => m < ratio).slice(-2), ...multiples.filter(m => m > ratio).slice(0, 2), ...multiples.filter(m => m === ratio)];
   const selectedPoint = visibleExternal.find(p => p.id === selected) ?? visibleExternal[0];
-  const close = chart.current?.previousClose ?? last?.close;
-  const position = (value: number) => close ? `${value >= close ? '前日終値より上' : '前日終値より下'} ${value >= close ? '+' : ''}${((value / close - 1) * 100).toFixed(1)}%` : '';
+  const close = last?.close;
+  const closeLabel = last?.date === chart.today ? '当日終値' : '前日終値';
+  const position = (value: number) => close ? `${value >= close ? `${closeLabel}より上` : `${closeLabel}より下`} ${value >= close ? '+' : ''}${((value / close - 1) * 100).toFixed(1)}%` : '';
   const dateAt = (at: number) => md(new Date(at).toISOString().slice(0, 10));
   const pointLabels = new Map<string, { x: number; y: number }>();
   for (const point of visibleExternal) {
@@ -107,7 +109,7 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
       <p>{position(selectedPoint.value)}{selectedPoint.high > selectedPoint.low && '（価格の幅の中央）'}</p>
       <small>この期間の中央に点を置いています。特定の日の到達予想ではありません。予測の成績は未検証です。</small>
     </div>}
-    {last && last.date < chart.today && <p className="nr-asof">青線は{md(last.date)}までの終値です。今日{md(chart.today)}の現在値は、この図には含まれていません。</p>}
+    {last && last.date < chart.today && <p className="nr-asof">{chart.closePending ? `${md(chart.today)}の終値の更新待ちです。取得済みの${md(last.date)}終値を表示しています。` : `青線は${md(last.date)}までの終値です。今日${md(chart.today)}の現在値は、この図には含まれていません。`}</p>}
     <div className="nr-plot-wrap">
     <svg viewBox={`0 0 ${width} ${bottom + 30}`} role="group" aria-label="日経平均の終値と参考予測。左右にドラッグ、2本指で拡大縮小できます。"
       onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerEnd} onPointerCancel={pointerEnd}>
@@ -117,7 +119,7 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
       {inWindow(chart.today) && <><line className="nr-today" x1={x(dayNumber(chart.today))} x2={x(dayNumber(chart.today))} y1={top} y2={bottom} />
         <text className="nr-today-label" x={x(dayNumber(chart.today))} y={17} textAnchor="middle">今日 {md(chart.today)}</text></>}
       {close && <><line className="nr-close" x1={left} x2={right} y1={y(close)} y2={y(close)} />
-        <text className="nr-close-label" x={left + 3} y={y(close) - 6}>前日終値 {yen(close)}円</text></>}
+        <text className="nr-close-label" x={left + 3} y={y(close) - 6}>{closeLabel} {yen(close)}円</text></>}
       <g clipPath="url(#nr-plot)">
         {layers.per && segments.map(line => <g key={line.multiple} className={`nr-per${strong.includes(line.multiple) ? ' is-near' : ''}`}>
           {line.segments.map((s, i) => <path key={i} d={path(s)} />)}</g>)}
@@ -143,9 +145,9 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
           <title>{`${md(p.date)} ${p.kind === 'TOP' ? '山' : '谷'}・${md(p.confirmedOn)}に確定`}</title></circle>)}
         {layers.pivots && chart.pending && <circle className="nr-pending" cx={x(dayNumber(chart.pending.date))} cy={y(chart.pending.price)} r={5} />}
       </g>
-      {layers.per && chart.current && multiples.filter(m => chart.current!.eps * m >= low && chart.current!.eps * m <= high).map(m => <g key={m} className={`nr-per-label${strong.includes(m) ? ' is-near' : ''}`}>
-        <line x1={Math.max(left, Math.min(right, x(dayNumber(chart.current!.morningOf))))} x2={right + 5} y1={y(chart.current!.eps * m)} y2={y(chart.current!.eps * m)} />
-        <text x={right + 8} y={y(chart.current!.eps * m) + 3}>PER{m} {yen(chart.current!.eps * m)}円</text></g>)}
+      {layers.per && valuation && multiples.filter(m => valuation.eps * m >= low && valuation.eps * m <= high).map(m => <g key={m} className={`nr-per-label${strong.includes(m) ? ' is-near' : ''}`}>
+        <line x1={Math.max(left, Math.min(right, x(dayNumber(valuation!.at))))} x2={right + 5} y1={y(valuation!.eps * m)} y2={y(valuation!.eps * m)} />
+        <text x={right + 8} y={y(valuation!.eps * m) + 3}>PER{m} {yen(valuation!.eps * m)}円</text></g>)}
       {[window.start, (window.start + window.end) / 2, window.end].map((at, i) => <text className="nr-axis" key={at} x={x(at)} y={bottom + 22}
         textAnchor={i === 0 ? 'start' : i === 2 ? 'end' : 'middle'}>{dateAt(at)}</text>)}
     </svg>
@@ -180,7 +182,8 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
     {layers.pivots && chart.pending && <p className="nr-notes">{md(chart.pending.date)}の{chart.pending.kind === 'TOP' ? '山' : '谷'}は未確定。
       終値が{chart.pending.confirmPrice.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円{chart.pending.kind === 'TOP' ? '以下' : '以上'}で確定します。</p>}
     {layers.per && chart.points.some(p => p.eps === null) && <p className="nr-note">EPSがない日はPER線を途切れさせています。</p>}
-    {chart.current && chart.current.morningOf !== chart.today && <p className="nr-note">PERの右端と頻度は{md(chart.current.morningOf)}朝の保存値です。</p>}
+    {valuation && <p className="nr-note">PERの右端は{md(valuation.epsDate)}の推計EPSから計算。{last && valuation.epsDate < last.date ? '当日分のPER入力は更新待ちです。' : ''}</p>}
+    {chart.current && !chart.displayMap && chart.current.morningOf !== chart.today && <p className="nr-note">PERの右端と頻度は{md(chart.current.morningOf)}朝の保存値です。</p>}
   </div>;
 }
 

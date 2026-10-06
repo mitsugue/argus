@@ -56,3 +56,16 @@ for (const invalid of [{...history,basis:'INDEX_WEIGHTED'},{...history,lastDate:
  {...history,atOrAboveUpper:601},{...history,sufficient:false}]) {
  assert.ok(!renderHistory(invalid).includes('210 / 600営業日'));
 }
+
+const closing = {...latest,displayOnly:true,asOf:'2026-10-05',morningOf:'2026-10-06',
+ previousSession:'2026-10-05',previousClose:70000,epsDate:'2026-10-02',valuationPending:true,per:17.8,
+ rows:latest.rows.map(r=>({...r,distancePct:(r.price/70000-1)*100}))};
+const closingHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:closing}}}));
+assert.ok(closingHtml.includes('最新終値')&&closingHtml.includes('70,000'));
+assert.ok(closingHtml.includes('当日分の入力待ち'));
+assert.ok(closingHtml.includes('2026-10-05 朝')&&closingHtml.includes('68,309'));
+assert.deepEqual(state.latest,latest);
+const freshHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:{...closing,epsDate:'2026-10-05',valuationPending:false}}}}));
+assert.ok(freshHtml.includes('当日分のPER・価格の目盛りを再計算済み'));
+const invalidHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:{...closing,epsDate:'2026-10-06'}}}}));
+assert.ok(!invalidHtml.includes('最新終値'));

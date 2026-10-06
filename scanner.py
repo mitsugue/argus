@@ -147,6 +147,8 @@ import jp_market_dynamics
 import argus_macro_frequency
 import jp_market_level_map
 import jp_market_chart_layers
+import jp_market_close_refresh
+import math
 import argus_future_map
 import jp_market_candidates
 import argus_analyst_targets
@@ -38624,6 +38626,18 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
             else:
                 available = (date.isoformat()
                              + f"T{int(available_hour_utc):02d}:00:00Z")
+            if yahoo_symbol == "^N225" and date == datetime.now(TZ_JST).date():
+                final_at = argus_market_clock._local_close(argus_market_clock.JP_EQUITY, date,
+                                                           datetime.now(pytz.utc))
+                reported = meta.get("regularMarketTime")
+                final_price = meta.get("regularMarketPrice")
+                if (isinstance(reported, (int, float)) and not isinstance(reported, bool)
+                        and final_at.timestamp() <= reported <= now and now >= final_at.timestamp()
+                        and isinstance(final_price, (int, float)) and not isinstance(final_price, bool)
+                        and math.isfinite(final_price) and abs(values["close"] - final_price) < 0.01):
+                    available = _ai_now_iso()
+                elif isinstance(reported, (int, float)) or datetime.now(pytz.utc) < final_at + timedelta(minutes=30):
+                    continue
             by_date[date.isoformat()] = {
                 "instrumentId": instrument_id, "date": date.isoformat(),
                 **{key: float(values[key]) for key in
@@ -39215,7 +39229,7 @@ def _level_map_next_session(after_day):
     return None
 
 
-def _level_map_warm(nikkei_rows):
+def _level_map_warm(nikkei_rows, *, current_only=False):
     if not _LEVEL_MAP_LOCK.acquire(blocking=False):
         return
     try:
@@ -39254,17 +39268,18 @@ def _level_map_warm(nikkei_rows):
         as_of = _JP_INDEX_PROXY.get("weightsAsOf")
         if constituents and _JQUANTS_API_KEY:
             wanted = [sessions[-1]]
-            for pivot in jp_market_level_map.zigzag(bars)[-4:]:
+            for pivot in ([] if current_only else jp_market_level_map.zigzag(bars)[-4:]):
                 before = [day for day in sessions if day < pivot["date"]]
                 if before:
                     wanted.append(before[-1])
-            wanted += [day for day in reversed(estimate_sessions) if day >= _LEVEL_MAP_EPS_SINCE]
+            if not current_only:
+                wanted += [day for day in reversed(estimate_sessions) if day >= _LEVEL_MAP_EPS_SINCE]
             pending, seen = [], set()
             for day in wanted:
                 if day not in seen and day not in _LEVEL_MAP["eps"]:
                     seen.add(day); pending.append(day)
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            for day in pending[:_LEVEL_MAP_EPS_PER_WARM]:
+            for day in pending[:1 if current_only else _LEVEL_MAP_EPS_PER_WARM]:
                 values = _jq_valuation_for_date(day, headers)
                 if not values:
                     continue
@@ -39704,9 +39719,7 @@ def _level_map_current_valuation(cutoff, *, nikkei_rows=None):
     Missing current estimates remain missing even when a legacy proxy exists.
     """
     limit = jp_market_engine._instant(cutoff)
-    rows = nikkei_rows if nikkei_rows is not None else (
-        _N225_ANALOG_HISTORY.get("data") or
-        (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}).get("data") or [])
+    rows = nikkei_rows if nikkei_rows is not None else _nikkei_chart_rows()
     visible = []
     for bar in rows:
         known = jp_market_engine._instant(bar.get("availableFrom"))
@@ -39728,13 +39741,25 @@ def _level_map_current_valuation(cutoff, *, nikkei_rows=None):
     return current if scale["status"] == "AVAILABLE" else {}
 
 
+def _nikkei_chart_rows():
+    """Cache-only: join the retained history with a newer received window."""
+    history = _N225_ANALOG_HISTORY
+    cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
+    rows = history.get("data") or []
+    current = cached.get("data") or []
+    known = jp_market_engine._instant(cached.get("acquiredAt"))
+    held = jp_market_engine._instant(history.get("currentSourceAcquiredAt"))
+    if current and (not rows or (known is not None and (held is None or known >= held))):
+        return argus_index_history.merge_bars(rows, current)
+    return rows or current
+
+
 def _level_map_public():
     """The latest stored morning map and the estimate lane's state (no per-member values)."""
     eps = _LEVEL_MAP.get("eps") or {}
     latest_eps = eps[max(eps)] if eps else None
     mornings = _LEVEL_MAP.get("mornings") or []
-    chart_rows = (_N225_ANALOG_HISTORY.get("data") or
-                  (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}).get("data") or [])
+    chart_rows = _nikkei_chart_rows()
     chart, chart_error = None, None
     try:
         chart_now = _ai_now_iso()
@@ -39890,9 +39915,15 @@ def _index_research_read(key):
 
 
 def _jp_market_comparison_cached(horizon):
-    return _index_research_read(f"comparison:N225:{horizon}") or {
+    result = _index_research_read(f"comparison:N225:{horizon}") or {
         "status": "unavailable", "comparison": None, "automaticAiCalls": 0,
         "actionAuthority": False, "reason": "index_research_preparing", "informationCutoff": None}
+    if horizon == 5 and result.get("comparison"):
+        # The saved analog comparison keeps its calculation time and hash.
+        # Display layers are bounded projections of current cached inputs;
+        # they must not wait for another complete analog/AI calculation.
+        result["levelMap"] = _level_map_public()
+    return result
 
 
 def _index_research_warm():
@@ -40022,7 +40053,7 @@ def _jp_market_comparison_calculate(horizon):
     """Bounded cached-only chart calculation; no fetch, AI or persistence."""
     cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
     stored_history = _N225_ANALOG_HISTORY
-    rows = stored_history.get("data") or cached.get("data") or []
+    rows = _nikkei_chart_rows()
     cutoff = datetime.now(pytz.utc).isoformat()
     failure = {"status": "unavailable", "comparison": None, "automaticAiCalls": 0,
                "actionAuthority": False, "informationCutoff": cutoff,
@@ -49496,10 +49527,49 @@ def _jp_owner_quote_warm_tick(*, now_monotonic=None):
         return {"status": "failed", "errorClass": type(exc).__name__}
 
 
+_NIKKEI_CLOSE_REFRESH = {"lastSlot": None, "status": "NOT_RUN"}
+
+
+def _nikkei_close_refresh_tick():
+    now = _ai_now_iso()
+    completed = _level_map_completed_bars(_nikkei_chart_rows(), now)
+    close_day = completed[-1]["date"] if completed else None
+    eps = _LEVEL_MAP.get("eps") or {}
+    plan = jp_market_close_refresh.due(now, last_slot=_NIKKEI_CLOSE_REFRESH.get("lastSlot"),
+        close_date=close_day, eps_date=close_day if close_day in eps else None)
+    if plan is None:
+        return {"status": "not_due"}
+    _NIKKEI_CLOSE_REFRESH.update(lastSlot=plan["slot"], lastAttemptAt=now, status="RUNNING")
+    try:
+        if plan["price"]:
+            cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225")
+            if cached:
+                cached["expires"] = 0
+            _yahoo_index_ohlcv("^N225", "NIKKEI_225_INDEX", fetch=True, available_hour_utc=7)
+        rows = _nikkei_chart_rows()
+        completed = _level_map_completed_bars(rows, _ai_now_iso())
+        close_day = completed[-1]["date"] if completed else None
+        # Price publication is independent of the later valuation input.
+        # One current date only: no ten-year backfill in this resident slot.
+        if plan["valuation"] and close_day == plan["session"]:
+            _level_map_warm(rows, current_only=True)
+        eps_ready = plan["session"] in (_LEVEL_MAP.get("eps") or {})
+        _NIKKEI_CLOSE_REFRESH.update(status="AVAILABLE" if close_day == plan["session"] and eps_ready
+            else "WAITING_FOR_VALUATION" if close_day == plan["session"] else "WAITING_FOR_CLOSE",
+            priceDate=close_day, epsDate=plan["session"] if eps_ready else None,
+            completedAt=_ai_now_iso())
+        return {"status": _NIKKEI_CLOSE_REFRESH["status"]}
+    except Exception as exc:
+        _NIKKEI_CLOSE_REFRESH.update(status="FAILED", errorClass=type(exc).__name__)
+        return {"status": "failed", "errorClass": type(exc).__name__}
+
+
 def run_scheduler():
     add_log("⏰ Scheduler started", echo=True)
     while True:
         now = datetime.now(TZ_JST)
+        threading.Thread(target=_heavy_tick, daemon=True, name="nikkei-close-refresh",
+                         args=("nikkei_close_refresh", _nikkei_close_refresh_tick)).start()
         # Resident AI + intel tick (v10.191) — replaces the unreliable GitHub */15
         # cron. Spawn on 5-min boundaries; the tick self-throttles (intel ≤10min,
         # AI via the run gate's 14-min interval), so a double spawn is harmless.
