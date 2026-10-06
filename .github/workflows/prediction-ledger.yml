@@ -115,6 +115,7 @@ jobs:
           test -f scripts/workflow_http.py
           install -m 0644 scripts/workflow_http.py \
             "$RUNNER_TEMP/workflow_http.py"
+          install -m 0644 scripts/persist_backup_vault.py "$RUNTIME/scripts/persist_backup_vault.py"
           for path in \
             argus_calibration.py \
             argus_decision_ledger.py \
@@ -132,6 +133,8 @@ jobs:
             "$RUNTIME/argus_market_data_truth.py" \
             "$RUNTIME/argus_market_clock.py" \
             "$RUNTIME/scripts/run_prediction_ledger.py" \
+            "$RUNTIME/scripts/persist_backup_vault.py" \
+            "$RUNNER_TEMP/workflow_http.py" \
             "$RUNTIME/scripts/export_event_prediction_results.py" \
             "$RUNTIME/argus_event_prediction_results.py" \
             > "$RUNTIME/SHA256SUMS"
@@ -208,40 +211,22 @@ jobs:
           fi
 
       - name: Persist backup vault (client-side-encrypted envelopes)
+        id: backup_vault
         if: github.event.inputs.mode != 'ai-only'
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
-          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then echo '{}' > vault.json; else
-            curl -s --max-time 60 -X POST -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "$BE/api/argus/vault-pull" -o vault.json || echo '{}' > vault.json
-          fi
-          python3 - <<'PY'
-          import json, os, glob, datetime
-          slots = (json.load(open('vault.json')) or {}).get('slots') or {}
-          for vid, slot in slots.items():
-              if not (isinstance(vid, str) and len(vid) == 64 and all(c in '0123456789abcdef' for c in vid)):
-                  continue
-              d = f'ledger/vault/{vid}'
-              os.makedirs(d, exist_ok=True)
-              stamp = datetime.datetime.utcfromtimestamp(slot.get('ts', 0)).strftime('%Y-%m-%dT%H%M%SZ')
-              open(f'{d}/{stamp}.json', 'w').write(slot['blob'])
-              open(f'{d}/latest.json', 'w').write(slot['blob'])
-              # Old backups are disposable (user-approved): keep the newest 8.
-              hist = sorted(p for p in glob.glob(f'{d}/*.json') if not p.endswith('latest.json'))
-              for old in hist[:-8]:
-                  os.remove(old)
-              print('vault saved:', vid[:12], stamp)
-          if not slots:
-              print('no pending vault envelopes')
-          PY
+          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
+          sha256sum -c "$RUNTIME/SHA256SUMS"
+          python3 "$RUNTIME/scripts/persist_backup_vault.py" \
+            --url "https://argus-backend-3j2m.onrender.com/api/argus/vault-pull" \
+            --ledger-root ledger/vault
 
       # ai-persist-v1: the public GET payload (no secrets) is committed to the
       # ledger branch so a restarted Render dyno can restore the latest real AI
       # view instead of showing "not run yet" all day.
       - name: Persist AI judgment for dyno-restart restore
-        if: github.event.inputs.mode != 'ai-only'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
@@ -267,7 +252,7 @@ jobs:
       # only, no PDFs/full text/portfolio) so redeploys can't erase it. Day file is
       # append-only (never overwritten); latest.json updates every run.
       - name: Persist official event lifecycle records
-        if: github.event.inputs.mode != 'ai-only'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
@@ -298,7 +283,7 @@ jobs:
       # only per date; calm days (no incidents) are skipped. Outcome scoring is a
       # later layer — this is the durable record it will read.
       - name: Persist downside incidents (replay history)
-        if: github.event.inputs.mode != 'ai-only'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
@@ -336,7 +321,7 @@ jobs:
       # ("where did money leave?") can be shown later. Append-only per date; only
       # when the regime read is live/partial (a mock/empty read is skipped).
       - name: Persist capital-rotation reading (history)
-        if: github.event.inputs.mode != 'ai-only'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
@@ -372,7 +357,7 @@ jobs:
       # stack for each active incident, so a later run can compare attribution to
       # the realized 1/3/5D outcome. Append-only per date; only when incidents exist.
       - name: Persist cause attributions (ledger)
-        if: github.event.inputs.mode != 'ai-only'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
@@ -403,7 +388,7 @@ jobs:
       # committed so the ARGUS-side HARD budget stop survives a dyno restart. The
       # server restores max(persisted, in-memory) on boot. Admin-token gated.
       - name: Persist AI cost ledger (monthly hard-stop baseline)
-        if: github.event.inputs.mode != 'ai-only'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
@@ -437,7 +422,7 @@ jobs:
       # diagnostic. Its approximate latest-price evaluation cannot enter the
       # canonical Prediction Ledger or forward-live calibration.
       - name: SHADOW DERIVED — record + evaluate entry-scout compatibility artifacts
-        if: github.event.inputs.mode != 'ai-only'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
@@ -520,7 +505,7 @@ jobs:
           PY
 
       - name: Commit to ledger branch
-        if: github.event.inputs.mode != 'ai-only'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
         run: |
           git config user.name "argus-ledger[bot]"
           git config user.email "argus-ledger@users.noreply.github.com"
@@ -541,7 +526,7 @@ jobs:
       # steps now run after the canonical commit. They still hard-fail the run
       # (loud, notified) — only the ordering changed, not the assertions.
       - name: Layer 2B daily run (owner watchlist — private store)
-        if: github.event.inputs.mode != 'ai-only'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
@@ -577,7 +562,7 @@ jobs:
           exit "$RC"
 
       - name: Decision Value shadow run (Phase 1 — private store, NO orders)
-        if: github.event.inputs.mode != 'ai-only'
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
@@ -620,10 +605,18 @@ jobs:
         if: ${{ !cancelled() && (failure() || needs.ai-judgment.result != 'success') }}
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          CANONICAL_OUTCOME: ${{ steps.canonical_commit.outcome }}
         run: |
           [ -z "$NTFY_TOPIC" ] && exit 0
+          if [ "$CANONICAL_OUTCOME" = success ]; then
+            TITLE="ARGUS auxiliary save FAILED"
+            MESSAGE="予測台帳の記録・採点は保存済みです。バックアップなど後続の保存処理が失敗しました。Actionsを確認してください。"
+          else
+            TITLE="ARGUS ledger FAILED"
+            MESSAGE="予測台帳の記録・採点を保存できませんでした。Actionsを確認してください。"
+          fi
           curl -s --max-time 30 \
-            -H "Title: ARGUS ledger FAILED" -H "Priority: high" -H "Tags: warning" \
-            -H "Click: https://github.com/mitsugue/argus/actions/workflows/prediction-ledger.yml" \
-            -d "予測台帳の記録/採点ワークフローが失敗しました。Actionsを確認してください。" \
+            -H "Title: $TITLE" -H "Priority: high" -H "Tags: warning" \
+            -H "Click: https://github.com/mitsugue/argus/actions/runs/${{ github.run_id }}" \
+            -d "$MESSAGE" \
             "https://ntfy.sh/$NTFY_TOPIC" > /dev/null || true
