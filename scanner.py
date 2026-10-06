@@ -39494,8 +39494,17 @@ def api_argus_analyst_targets():
     """Cached-only: persisted targets are readable even before collection warms."""
     _analyst_targets_load_saved()
     rows = dict(_ANALYST_TARGETS.get("items") or {})
-    items = {key: row for key, row in rows.items()
-             if isinstance(row, dict) and not row.get("unavailable")}
+    items = {}
+    for key, row in rows.items():
+        if not isinstance(row, dict) or row.get("unavailable"):
+            continue
+        projected = dict(row)
+        # Older stores used financial reporting currency for a listing price.
+        # Project only the known Yahoo listing unit; never convert the amount
+        # or rewrite the original observation and its acquisition timestamps.
+        if row.get("source") == argus_analyst_targets.SOURCE_LABEL and row.get("market") in ("JP", "US"):
+            projected["currency"] = "JPY" if row["market"] == "JP" else "USD"
+        items[key] = projected
     availability = {key: {"status": row.get("acquisitionStatus", "AVAILABLE" if not row.get("unavailable") else "UNAVAILABLE"),
                           "lastAttemptAt": row.get("lastAttemptAt")}
                     for key, row in rows.items() if isinstance(row, dict)}

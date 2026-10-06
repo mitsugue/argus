@@ -84,8 +84,10 @@ def test_invalid_analyst_counts_and_nonpositive_current_price():
 
 def test_restart_reads_saved_targets_without_waiting_for_collector(monkeypatch, tmp_path):
     path = tmp_path / 'targets.json'
-    saved = {**t.parse_financial_data('1001', PAYLOAD, fetched_at='2026-10-05T03:00:00Z'), 'market': 'JP'}
-    path.write_text(json.dumps({'schemaVersion': t.SCHEMA, 'items': {'JP:1001': saved}}))
+    saved = {**t.parse_financial_data('1001', PAYLOAD, fetched_at='2026-10-05T03:00:00Z'), 'market': 'JP', 'currency':'USD'}
+    adr = {**saved, 'market':'US', 'symbol':'TM', 'currency':'JPY'}
+    path.write_text(json.dumps({'schemaVersion': t.SCHEMA, 'items': {'JP:1001': saved, 'US:TM':adr}}))
+    original_bytes = path.read_bytes()
     monkeypatch.setattr(scanner, '_analyst_targets_path', lambda: str(path))
     monkeypatch.setattr(scanner, '_ANALYST_TARGETS', {'loaded': False, 'items': {}, 'lastAttemptAt': None, 'lastError': None})
     class NoNetwork:
@@ -98,6 +100,10 @@ def test_restart_reads_saved_targets_without_waiting_for_collector(monkeypatch, 
     finally:
         scanner._ANALYST_TARGETS_LOCK.release()
     assert result['items']['JP:1001']['fetchedAt'] == saved['fetchedAt']
+    assert result['items']['JP:1001']['currency'] == 'JPY'
+    assert result['items']['US:TM']['currency'] == 'USD'
+    assert result['items']['US:TM']['mean'] == adr['mean']
+    assert path.read_bytes() == original_bytes
     assert result['actionAuthority'] is False
 
 
