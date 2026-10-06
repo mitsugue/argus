@@ -39,6 +39,11 @@ export function briefWaitingTitle(brief: MarketBrief): string {
   return '新しい見立てを待っています。';
 }
 
+export function retainedBriefNote(brief: MarketBrief | null, requestFailed: boolean): string {
+  if (requestFailed) return '最新の見立てを取得できません。保存済みの見立てを表示しています。';
+  return `${brief ? briefWaitingTitle(brief) : '新しい見立てを待っています。'} 保存済みの見立てを表示しています。`;
+}
+
 export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number } | null;
   cutoff?: string | null; market?: string; editorial?: boolean; criticalNews?: CriticalTodayNews[] }> = ({ signals, cutoff, market, editorial = false, criticalNews }) => {
   const { brief: responseBrief, error, loading, retry } = useMarketBrief();
@@ -51,7 +56,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   const chartChip = signals ? `成立している条件 ${signals.activeCount}件${cutoffJa ? `（${cutoffJa} 時点）` : ''}`
     : market === 'US' ? '米国: 7条件は適用外（類似局面のみ）' : brief?.chips.chart;
   const updateState = loading ? <p className="at-brief__update"><TriangleStepLoader label={brief ? "前回の見立てを表示しながら更新しています" : "見立てを読み込んでいます"} /></p> : error || retained ? <p role="status" className="at-brief__update">
-    {brief ? '見立てを更新できません。最後に取得した説明を表示しています。' : '見立てを取得できません。'}
+    {brief ? retainedBriefNote(responseBrief, Boolean(error)) : '見立てを取得できません。'}
     {brief && <small> 要約作成 {new Date(brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</small>}
     <button type="button" onClick={retry} disabled={loading}>再読込</button>
   </p> : null;

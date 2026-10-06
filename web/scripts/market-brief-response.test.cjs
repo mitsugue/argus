@@ -44,11 +44,11 @@ for (const errorCode of [{}, [], 'unreviewed-provider-text']) {
 
 // A valid AI summary must keep the current layout when the separate plan is missing or invalid.
 const React=require('react'), {renderToStaticMarkup}=require('react-dom/server');
-let shown=doc;
+let shown=doc, recovered=null, requestFailed=false;
 const cardContext={exports:{},Date,require(name){
  if(name.endsWith('.css')) return {};
- if(name.includes('/useMarketBrief')) return {useMarketBrief:()=>({brief:shown,error:false,loading:false,retry:()=>{}})};
- if(name.includes('/presentationIntent')) return {editorialEdition:()=>null,readableBriefEdition:v=>v};
+ if(name.includes('/useMarketBrief')) return {useMarketBrief:()=>({brief:shown,error:requestFailed,loading:false,retry:()=>{}})};
+ if(name.includes('/presentationIntent')) return {editorialEdition:()=>null,readableBriefEdition:v=>recovered??v};
  if(name.includes('/TodayDecisionStrip')) return {TodayDecisionStrip:()=>React.createElement('section',{'data-four-cards':'visible'})};
  if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>null};
  if(name.includes('/marketWording')) return {marketChanges:v=>v,marketWording:v=>v};
@@ -86,4 +86,15 @@ for (const status of ['FAILED','INVALID_RESPONSE','UNAVAILABLE']) {
   .includes('新しい見立てを作成できませんでした。'));
 }
 assert.equal(cardContext.exports.briefWaitingTitle({...doc,generationWorker:{status:'RUNNING'}}),'新しい見立てを作成しています');
+recovered=doc;
+for (const [status, expected] of [['AWAITING_AI','待っています'],['RUNNING','作成しています'],['FAILED','作成できませんでした']]) {
+ shown={...doc,unifiedStatus:'AWAITING_AI',unifiedSummary:null,generationWorker:{status}};
+ const html=renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:true}));
+ assert.ok(html.includes(expected) && html.includes('保存済みの見立てを表示しています'));
+ assert.ok(html.includes('data-four-cards="visible"'));
+ assert.ok(!html.includes('最新の見立てを取得できません'));
+}
+requestFailed=true;
+assert.ok(renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:true}))
+ .includes('最新の見立てを取得できません。保存済みの見立てを表示しています。'));
 console.log('生成待ち・作成中・実際の失敗を区別する表示 PASS');
