@@ -14,6 +14,8 @@ def test_slots_are_bounded_holiday_aware_and_prices_do_not_wait_for_per():
     assert policy.due('2026-10-06T06:35:00Z', last_slot=first['slot'])['price']
     later = policy.due('2026-10-06T07:05:00Z', close_date='2026-10-06')
     assert later['valuation'] and not later['price']
+    assert policy.due('2026-10-06T07:35:00Z', last_slot=later['slot'], close_date='2026-10-06')['valuation']
+    assert policy.due('2026-10-06T08:05:00Z', close_date='2026-10-06')['valuation']
     assert policy.due('2026-10-06T07:05:00Z', close_date='2026-10-06', eps_date='2026-10-06') is None
     assert policy.due('2026-10-12T06:31:00Z') is None  # exchange holiday
     assert policy.due('2026-10-10T06:31:00Z') is None

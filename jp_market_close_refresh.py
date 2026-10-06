@@ -3,7 +3,8 @@ from datetime import datetime, timezone, timedelta
 import argus_market_clock as clock
 
 JST = timezone(timedelta(hours=9))
-SLOTS = ((15, 31), (15, 35), (15, 45), (16, 5), (18, 5), (19, 5), (20, 5), (21, 5))
+SLOTS = ((15, 31), (15, 35), (15, 45), (16, 5), (16, 35), (17, 5),
+         (18, 5), (19, 5), (20, 5), (21, 5))
 
 
 def due(now_iso, *, last_slot=None, close_date=None, eps_date=None):
