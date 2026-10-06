@@ -39060,6 +39060,7 @@ def _jp_dividend_warm(member_codes):
             store["requestsLastWarm"] += 1
             continue
         latest = argus_ex_dividend.latest_disclosures(rows).get(code)
+        _jp_earnings_history_retain(rows, member_codes=member_codes)
         store["fetchedAt"][code] = now
         if latest:
             store["rows"][code] = {k: latest.get(k) for k in _JP_DIVIDEND_KEEP if latest.get(k) not in (None,)}
@@ -40511,15 +40512,48 @@ def _jp_market_engine_margin_1570_rows(*, fetch=False):
         short_row = sides.get("margin.standardized.short_balance")
         if not long_row or not short_row or short_row["value"] <= 0:
             continue
+        # Both balances must have been available; a later short-side receipt
+        # cannot be used at the earlier long-side timestamp.
+        times = [jp_market_engine._knowledge_time(r) for r in (long_row, short_row)]
+        if any(stamp is None for stamp in times):
+            continue
+        available = max(times).isoformat()
         rows.append({"instrumentId": "1570", "field": "margin_ratio", "date": period,
                      "value": round(long_row["value"] / short_row["value"], 6),
                      "ratioBasis": "STANDARDIZED_MARGIN", "periodEnd": period,
-                     "availableFrom": long_row["availableFrom"],
-                     "observedAt": long_row["observedAt"], "publishedAt": None,
+                     "availableFrom": available,
+                     "observedAt": available, "publishedAt": None,
                      "sourceRef": long_row["sourceRef"],
                      "sourceResponseSha256": long_row["sourceResponseSha256"],
                      "historicalVintageVerified": False})
     return rows
+
+
+def _jp_market_engine_relative_strength_direct():
+    """Direct cash indexes from the existing caches, bounded by availability."""
+    from math import isfinite
+    cutoff = _ai_now_iso()
+    jp, _ = jp_market_engine.point_in_time_rows(
+        (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}).get("data") or [], cutoff)
+    us, _ = jp_market_engine.point_in_time_rows(
+        (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^GSPC") or {}).get("data") or [], cutoff)
+    def positive(rows):
+        return sorted((r for r in rows if type(r.get("close")) in (int, float)
+                       and isfinite(r["close"]) and r["close"] > 0), key=lambda r: r.get("date", ""))
+    jp = positive(jp)
+    if len(jp) < 21:
+        return None
+    day = jp[-1]["date"]
+    # Never pair today's Tokyo close with a later same-date US close.
+    us = positive([r for r in us if r.get("date", "") < day])
+    if len(us) < 21:
+        return None
+    used = [jp[-1], jp[-21], us[-1], us[-21]]
+    known = max(jp_market_engine._knowledge_time(r) for r in used).isoformat()
+    return {"instrumentId": "NIKKEI_225_INDEX", "seriesId": "relative_strength_20d",
+            "date": day, "value": jp[-1]["close"] / jp[-21]["close"] - us[-1]["close"] / us[-21]["close"],
+            "availableFrom": known, "sourceRef": "derived:direct-index-relative-strength-20d",
+            "indexRatio": jp[-1]["close"] / us[-1]["close"], "comparisonDate": us[-1]["date"]}
 
 
 def _jp_market_engine_relative_strength_proxy():
@@ -40572,7 +40606,8 @@ def _jp_market_engine_foreign_flow_rows():
             if (len(period) == 10 and available
                     and isinstance(value, (int, float))
                     and not isinstance(value, bool)):
-                rows.append({"seriesId": "flow.foreign", "periodEnd": period,
+                rows.append({**{key: row[key] for key in ("knownAt", "observedAt", "publishedAt", "unit", "sourceRef") if key in row},
+                             "seriesId": "flow.foreign", "periodEnd": period,
                              "availableFrom": available,
                              "value": float(value)})
     except Exception:
@@ -40618,6 +40653,32 @@ _JP_MARKET_ENGINE_STATEMENTS_CACHE = {"rows": [], "fetchedAt": None, "expires": 
                          "source": "cold", "schemaSample": None}
 _JP_MARKET_ENGINE_STATEMENTS_TTL_SEC = 6 * 3600
 _JP_MARKET_ENGINE_STATEMENTS_WINDOW_DAYS = 14
+_JP_EARNINGS_HISTORY_STATUS = {"status": "NOT_ACQUIRED", "goodEarningsRuleDefined": False}
+
+
+def _jp_earnings_history_retain(rows, *, member_codes=None, query_date=None):
+    """Keep already-fetched forecasts, without a second provider call or store."""
+    import argus_earnings_history
+    import sqlite3
+    if not _cost_policy_durable_enabled():
+        _JP_EARNINGS_HISTORY_STATUS.update(status="PERSISTENCE_UNAVAILABLE")
+        return
+    members = set(member_codes or ((_JP_INDEX_PROXY.get("factors") or {}).get("factors") or {}))
+    changes = _nikkei225_constituent_changes() or {}
+    for change in changes.get("rows") or []:
+        members.update(change.get("removed") or [])
+        members.update(change.get("added") or [])
+    if not members:
+        _JP_EARNINGS_HISTORY_STATUS.update(status="MEMBER_SCOPE_UNAVAILABLE")
+        return
+    try:
+        result = argus_earnings_history.retain(
+            os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3"),
+            rows, received_at=_ai_now_iso(), member_codes=sorted(members), query_date=query_date)
+        _JP_EARNINGS_HISTORY_STATUS.clear()
+        _JP_EARNINGS_HISTORY_STATUS.update(result)
+    except (ValueError, TypeError, OSError, sqlite3.Error) as exc:
+        _JP_EARNINGS_HISTORY_STATUS.update(status="PERSIST_FAILED", errorClass=type(exc).__name__)
 
 
 def _stmt_field(row, *names):
@@ -40651,6 +40712,7 @@ def _jp_market_engine_statements_rows(*, warm=False):
                 rows = _jquants_paginated("/fins/summary", {"date": day})
             except RuntimeError:
                 continue
+            _jp_earnings_history_retain(rows, query_date=day)
             for row in rows or []:
                 if not isinstance(row, dict):
                     continue
@@ -41079,6 +41141,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     if warm:
         _jq_margin_history_backfill()
     rs_proxy = _jp_market_engine_relative_strength_proxy()
+    rs_direct = _jp_market_engine_relative_strength_direct()
     flow_rows = _jp_market_engine_foreign_flow_rows()
     _jp_market_engine_statements_rows(warm=warm)
     earnings_event, earnings_source = _jp_market_engine_earnings_event()
@@ -41091,13 +41154,13 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         _jp_market_feature_history_warm()
     data = {
         "creditRows": credit_rows, "margin1570Rows": margin_rows,
-        "rsProxy": rs_proxy, "flowRows": flow_rows,
+        "rsProxy": rs_proxy, "rsDirect": rs_direct, "flowRows": flow_rows,
         "vixRows": vix_rows, "nikkeiRows": nikkei_rows,
         "earningsEvent": earnings_event, "earningsBars": earnings_bars,
         "sourceStatus": {
             "credit": "csv_ledger" if credit_rows else "missing",
             "margin1570": "jquants_weekly" if margin_rows else "cold_cache",
-            "relativeStrength": "etf_proxy_20d" if rs_proxy else "cold_cache",
+            "relativeStrength": "direct_index_20d" if rs_direct else "etf_proxy_20d" if rs_proxy else "cold_cache",
             "foreignFlow": "market_ledger" if flow_rows else "missing",
             "vix": vix_source,
             "nikkei": "yahoo_ohlcv" if nikkei_rows else "cold_cache",
@@ -41108,6 +41171,37 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     if warm:
         _index_research_warm()
     return data
+
+
+def _jp_warning_performance(inputs, cutoff):
+    """Current four defined warning rules; cached inputs and no legacy grades."""
+    try:
+        from datetime import date as calendar_date
+        from argus_warning_history import warning_event_study
+        rows = _N225_ANALOG_HISTORY.get("data") or inputs.get("nikkeiRows") or []
+        if not rows:
+            return None
+        # Preserve the price source's explicit availability at the read cutoff.
+        visible, _ = jp_market_engine.point_in_time_rows(rows, cutoff)
+        closes = {str(r.get("date") or r.get("periodEnd")): r.get("close") for r in visible}
+        days = sorted(closes)
+        if not days:
+            return None
+        sessions, unknown = _jp_exchange_sessions(calendar_date.fromisoformat(days[0]),
+            calendar_date.fromisoformat(days[-1]), _N225_ANALOG_HISTORY.get("calendar", []))
+        if unknown:
+            return None
+        return warning_event_study(credit_rows=inputs.get("creditRows") or [],
+            # The display adapter is ratio-only. The event study requires
+            # both original standardized balances, not the old total ratio.
+            margin_rows=((_JQ_MARGIN_CACHE.get("1570") or {}).get("sourceSnapshot") or {}).get("rows") or [],
+            foreign_rows=inputs.get("flowRows") or [],
+            vix_features=[r for r in _JP_MARKET_FEATURE_HISTORY.get("features", [])
+                          if r.get("seriesId") == "vix.macd_histogram"],
+            closes=closes, session_dates=sessions, cutoff=cutoff)
+    except (ValueError, TypeError, KeyError, OverflowError):
+        # Missing/admission-failed studies remain UNVALIDATED with zero count.
+        return None
 
 
 def _jp_market_engine_market_view():
@@ -41130,6 +41224,7 @@ def _jp_market_engine_market_view():
             nikkei_current_estimate=_level_map_current_valuation(cutoff, nikkei_rows=inputs["nikkeiRows"]),
             margin_1570_rows=inputs["margin1570Rows"],
             relative_strength_proxy=inputs["rsProxy"],
+            relative_strength_direct=inputs.get("rsDirect"),
             foreign_flow_rows=inputs["flowRows"],
             vix_rows=inputs["vixRows"],
             earnings_event=inputs.get("earningsEvent"),
@@ -41140,7 +41235,8 @@ def _jp_market_engine_market_view():
             downside_background="MIXED",
             nikkei_rows=inputs["nikkeiRows"], vix_rows=inputs["vixRows"])
         projection = jp_market_engine.project_today_sda_safe(
-            cutoff=cutoff, evidence=evidence, reversal=reversal)
+            cutoff=cutoff, evidence=evidence, reversal=reversal,
+            warning_performance=_jp_warning_performance(inputs, cutoff))
         view = {
             "schemaVersion": "argus-jp-market-engine-market-view-v1",
             "informationCutoff": cutoff,
@@ -41151,6 +41247,7 @@ def _jp_market_engine_market_view():
             "internals": _jp_market_internals_cached(),
             "marketFeatures": _JP_MARKET_FEATURE_HISTORY.get("latest"),
             "marketFeatureStatus": _JP_MARKET_FEATURE_HISTORY.get("status"),
+            "earningsInputStatus": dict(_JP_EARNINGS_HISTORY_STATUS),
             "actionAuthority": False,
             "automaticAiCalls": 0,
         }

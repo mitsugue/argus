@@ -73,6 +73,17 @@ def test_public_reads_do_not_fetch_or_mutate(feed):
     assert len(feed[1]) == calls
 
 
+def test_ratio_waits_for_both_standardized_balance_receipts(feed):
+    scanner._jq_weekly_margin('1570')
+    snapshot = scanner._JQ_MARGIN_CACHE['1570']['sourceSnapshot']
+    for row in snapshot['rows']:
+        if row['seriesId'] == 'margin.standardized.short_balance':
+            row['availableFrom'] = '2026-09-13T01:12:11Z'
+    result = scanner._jp_market_engine_margin_1570_rows()
+    assert all(r['availableFrom'] == '2026-09-13T01:12:11+00:00' for r in result)
+    assert scanner.jp_market_engine.point_in_time_rows(result, AT)[0] == []
+
+
 @pytest.mark.parametrize("failure", [403, 503, "empty", "malformed"])
 def test_failed_acquisition_retains_last_good_with_failure_status(feed, failure):
     scanner._jq_weekly_margin("1570")
