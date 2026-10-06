@@ -1,3 +1,7 @@
+> 2026-10-05の決定により読み取り専用の価格接続を復帰する。現行の入口と停止制御は
+> [復帰設計](tachibana-readonly-return.md)を優先する。下記の旧再認証・EVENT再接続と
+> 13.5当時のenabled=trueは履歴であり、現在の起動指示ではない。
+
 # Tachibana live shadow production plane
 
 ## Isolation contract

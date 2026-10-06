@@ -448,9 +448,15 @@ class TachibanaReadOnlyClient:
         )
 
     def market_price(
-        self, symbols: tuple[str, ...], columns: tuple[str, ...]
+        self, symbols: tuple[str, ...], columns: tuple[str, ...], *, allow_nikkei: bool = False
     ) -> Mapping[str, Any]:
-        symbols = _security_codes(symbols, self.session.config.max_symbols)
+        if allow_nikkei and isinstance(symbols, tuple) and "101" in symbols:
+            if not 1 <= len(symbols) <= self.session.config.max_symbols or len(set(symbols)) != len(symbols):
+                raise TachibanaError(ErrorClass.CONFIGURATION)
+            for symbol in symbols:
+                if symbol != "101": _security_code(symbol)
+        else:
+            symbols = _security_codes(symbols, self.session.config.max_symbols)
         if (
             not isinstance(columns, tuple)
             or not 1 <= len(columns) <= len(_MARKET_PRICE_COLUMNS)

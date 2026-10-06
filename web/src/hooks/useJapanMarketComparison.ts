@@ -130,13 +130,13 @@ export function useForecastTrackRecord(): ForecastTrackRecord | null {
 
 // Delayed intraday Nikkei quote (owner request 2026-10-02). Display only.
 export interface NikkeiLiveQuote { price: number; previousClose: number | null; changePct: number | null;
-  tradedAt: string; delaySeconds: number; sessionOpen: boolean; realtime: false }
+  tradedAt: string; receivedAt?: string; delaySeconds: number; sessionOpen: boolean; realtime: boolean }
 const liveValid = (q: unknown): q is NikkeiLiveQuote => {
   const v = q as NikkeiLiveQuote;
   return !!v && typeof v.price === 'number' && Number.isFinite(v.price) && v.price > 0
     && typeof v.tradedAt === 'string' && Number.isFinite(Date.parse(v.tradedAt))
     && typeof v.delaySeconds === 'number' && v.delaySeconds >= 0 && typeof v.sessionOpen === 'boolean'
-    && v.realtime === false && (v.changePct === null || Number.isFinite(v.changePct));
+    && (v.realtime === false || v.realtime === true && (q as { source?: unknown }).source === '立花証券' && v.delaySeconds <= 15 && typeof v.receivedAt === 'string' && Number.isFinite(Date.parse(v.receivedAt))) && (v.changePct === null || Number.isFinite(v.changePct));
 };
 export interface NikkeiLive { quote: NikkeiLiveQuote | null; futures: NikkeiLiveQuote | null }
 // The CME future read outside the Tokyo session (owner check 2026-10-03).
@@ -149,19 +149,34 @@ export function useNikkeiLive(): NikkeiLive {
   useEffect(() => {
     if (!base) return;
     let cancelled = false;
+    let liveCadence = false;
+    let lastRead = 0;
+    let active = false;
     const load = async () => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible' || active) return;
+      active = true;
+      lastRead = Date.now();
       try {
         const response = await fetch(`${base}/api/argus/index-chart?index=N225&live=1`, { cache: 'no-store' });
         if (!response.ok) return;
         const body = await response.json();
         if (cancelled || body?.actionAuthority !== false) return;
+        liveCadence = liveValid(body?.quote) && body.quote.realtime && body.quote.sessionOpen;
         if (liveValid(body?.quote)) setQuote(body.quote);
         if (futuresValid(body?.overnightFutures)) setFutures(body.overnightFutures);
-      } catch { /* keep the last value; the close remains the fallback */ }
+      } catch { liveCadence = false; /* keep the last value; the close remains the fallback */ }
+      finally { active = false; }
     };
     void load();
-    const timer = window.setInterval(load, 60_000);
+    const timer = window.setInterval(() => {
+      setQuote(current => {
+        if (!current?.realtime) return current;
+        const tradeAge = Date.now() - Date.parse(current.tradedAt);
+        const receiptAge = Date.now() - Date.parse(current.receivedAt ?? '');
+        return tradeAge >= 0 && tradeAge <= 15_000 && receiptAge >= 0 && receiptAge <= 15_000 ? current : null;
+      });
+      if (Date.now() - lastRead >= (liveCadence ? 10_000 : 60_000)) void load();
+    }, 10_000);
     document.addEventListener('visibilitychange', load);
     return () => { cancelled = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', load); };
   }, [base]);

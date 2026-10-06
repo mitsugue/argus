@@ -24,7 +24,7 @@ for (const label of orderedGenreLabels) {
 }
 assert.doesNotMatch(list, /sortMode|AssetPortfolioCommand|DESK_RANK_JA/);
 assert.match(list, /activationConstraint:\s*\{ delay:\s*450, tolerance:\s*8 \}/);
-assert.match(list, /長押しで並べ替え・自動保存/);
+assert.match(list, /⠿ を長押しして移動/);
 assert.doesNotMatch(summary, /ad-prio|Calibration pending|\/7/);
 assert.match(summary, /ownerActionJa|entryActionJa|currentActionJa/);
 assert.match(details, /理由|次に確認すること|判断が変わる条件/);

@@ -136,6 +136,7 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
     let cancelled = false;
     let fetchedRevision = -1;
     let inFlight = false;
+    let lastCycleAt = 0;
     const controllers = new Set<AbortController>();
 
     async function fetchOnce(): Promise<void> {
@@ -144,6 +145,7 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
       // a cycle already running is never duplicated.
       if (inFlight) return;
       inFlight = true;
+      lastCycleAt = Date.now();
       const ctrl = new AbortController();
       controllers.add(ctrl);
       const timeout = window.setTimeout(() => ctrl.abort(), 12_000 * Math.max(1, decisionEvidenceBatches(desiredSymbols).length));
@@ -214,7 +216,9 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
     }, REFRESH_INTERVAL_MS);
     const onVisible = () => { if (!document.hidden) void fetchOnce(); };
     const revisionTimer = window.setInterval(() => {
-      if (desiredRevision !== fetchedRevision) void fetchOnce();
+      const live = getTachibanaLiveDocument();
+      const visibleLive = live?.displayApproved === true && (live.status === 'LIVE' || live.status === 'DEGRADED');
+      if (desiredRevision !== fetchedRevision || visibleLive && Date.now() - lastCycleAt >= 10_000) void fetchOnce();
     }, 5_000);
     document.addEventListener('visibilitychange', onVisible);
     return () => {

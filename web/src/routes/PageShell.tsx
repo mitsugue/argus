@@ -16,7 +16,7 @@ export const PageShell: React.FC<Props> = ({ crumb, title, subtitle, className, 
       <h1 className="page__title">{title}</h1>
       {subtitle && <span className="page__subtitle">{subtitle}</span>}
       {title !== 'Settings' && <a className="page__guide-link"
-        href="#settings/help">Help / Settings</a>}
+        href="#settings/help">{title === '登録銘柄' || title === '銘柄の見通し' ? '使い方・設定' : 'Help / Settings'}</a>}
     </header>
     {children}
   </section>

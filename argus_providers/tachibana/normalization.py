@@ -169,6 +169,7 @@ def normalize_market_price(
     degrade_noncritical: bool = False,
     fresh_for_seconds: int = 15,
     endpoint_category: str = "PRICE",
+    allow_nikkei: bool = False,
 ) -> TachibanaObservation:
     if not isinstance(row, Mapping):
         raise TachibanaError(ErrorClass.NORMALIZATION)
@@ -177,7 +178,7 @@ def normalize_market_price(
     symbol = row.get("sIssueCode")
     if (
         not isinstance(symbol, str)
-        or not _SYMBOL.fullmatch(symbol)
+        or not (_SYMBOL.fullmatch(symbol) or allow_nikkei is True and endpoint_category == "PRICE" and symbol == "101")
         or not any(character.isdigit() for character in symbol)
     ):
         raise TachibanaError(ErrorClass.NORMALIZATION)
@@ -286,6 +287,7 @@ def normalize_market_price(
     bids = _book(row, "bid", issues)
     return TachibanaObservation(
         provider="TACHIBANA",
+        instrument_type="INDEX" if allow_nikkei and symbol == "101" else "STOCK",
         endpoint_category=endpoint_category,
         symbol=symbol,
         source_timestamp=source,

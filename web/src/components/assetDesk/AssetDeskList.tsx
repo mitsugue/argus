@@ -53,14 +53,17 @@ interface Props {
 
 // 手動順モードの行(DnDハンドル+カード)
 const SortableCardRow: React.FC<{
-  id: string; children: (handle: React.ReactNode) => React.ReactNode;
-}> = ({ id, children }) => {
+  id: string; label: string; children: (handle: React.ReactNode) => React.ReactNode;
+}> = ({ id, label, children }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const style: React.CSSProperties = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 };
   return (
-    <div ref={setNodeRef} style={style}>
+    <div ref={setNodeRef} style={style} className={`ad-sortable${isDragging ? ' is-dragging' : ''}`}>
       {children(
-        <button className="ad-handle" aria-label={`${id}を長押しして並べ替え`} {...attributes} {...listeners}>長押し</button>,
+        <button type="button" className="ad-handle" {...attributes} {...listeners}
+          aria-label={`${label}を長押しして並べ替え`} title="長押しして移動。キーボードではスペースで選択し矢印で移動">
+          <span aria-hidden>⠿</span>
+        </button>,
       )}
     </div>
   );
@@ -304,7 +307,7 @@ export const AssetDeskList: React.FC<Props> = ({
   }
 
   if (assets.length === 0) {
-    return <div className="card asset-list"><div className="asset-empty">資産がありません。「+ Add Asset」で追加できます。</div></div>;
+    return <div className="card asset-list"><div className="asset-empty">登録銘柄がありません。「+ 銘柄を追加」で追加できます。</div></div>;
   }
 
   const connecting = intel.jpQuotes.phase === 'connecting' && intel.usQuotes.phase === 'connecting';
@@ -343,7 +346,7 @@ export const AssetDeskList: React.FC<Props> = ({
       </div>
     ) : (
       <div className="card asset-list">
-        <div className="asset-empty">{detailSymbol} はHoldings / Watchlistに登録されていません。</div>
+        <div className="asset-empty">{detailSymbol} は登録されていません。</div>
       </div>
     );
   }
@@ -379,12 +382,12 @@ export const AssetDeskList: React.FC<Props> = ({
         const ids = g.items.map((r) => r.d.asset.id);
         return (
           <section className="asset-group" key={g.key}>
-            <div className="asset-group__title">{g.title}<span className="asset-group__count">{shown.length}</span><span className="asset-group__hint">長押しで並べ替え・自動保存</span></div>
+            <div className="asset-group__title">{g.title}<span className="asset-group__count">{shown.length}</span><span className="asset-group__hint">⠿ を長押しして移動</span></div>
             <div className="card asset-list ad-list">
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd(ids)}>
                 <SortableContext items={ids} strategy={verticalListSortingStrategy}>
                   {shown.map((r) => (
-                    <SortableCardRow key={r.d.asset.id} id={r.d.asset.id}>
+                    <SortableCardRow key={r.d.asset.id} id={r.d.asset.id} label={r.d.asset.displayNameJa || r.d.asset.displayName}>
                       {(handle) => renderCard(r, filter === 'all' ? handle : undefined)}
                     </SortableCardRow>
                   ))}

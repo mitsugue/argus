@@ -9,14 +9,14 @@ import { useWatchlistSync } from '../hooks/useWatchlistSync';
 import { useAssetIntel } from '../hooks/useAssetIntel';
 import { useDecisionEvidence, requestedDecisionEvidenceSymbols } from '../hooks/useDecisionEvidence';
 import { deskCoverage, deskCoverageJa, deskCoverageDetailJa } from '../domain/deskCoverage';
-import { useLocale, t } from '../i18n';
+import { useLocale } from '../i18n';
 import '../components/dashboard/Dashboard.css';
 
 // Registration and shared market intelligence; archived portfolios stay in recovery.
 
 function ageLabel(ts: number, nowMs: number): string {
   const m = Math.max(0, Math.round((nowMs - ts) / 60000));
-  return m < 1 ? 'just now' : `${m}m ago`;
+  return m < 1 ? 'たった今' : `${m}分前`;
 }
 
 interface Props {
@@ -67,13 +67,14 @@ export const Watchlist: React.FC<Props> = ({
 
   return (
     <PageShell
-      title={assetDetail ? 'ASSET DETAIL' : 'WATCHLIST'}
+      className="watchlist-page"
+      title={assetDetail ? '銘柄の見通し' : '登録銘柄'}
       subtitle={assetDetail
         ? `${assetFocus?.symbol ?? '銘柄'} · 判断 / 見通し / 根拠`
-        : '日本株・米国株・投資信託・仮想通貨ごとに整理します。区分内は長押しで並べ替えられます。'}
+        : '価格と変化を確認し、銘柄をタップして見通しへ。'}
     >
       {assetDetail && <button type="button" className="asset-btn" onClick={onBackToHoldings}>
-        ← Watchlist
+        ← 登録銘柄
       </button>}
       {!assetDetail && syncState.message && <p role="status" className="card"
         style={{ padding: '12px 16px', color: syncState.kind === 'error' || syncState.kind === 'auth_required' ? 'var(--amber)' : 'var(--muted)' }}>
@@ -95,18 +96,18 @@ export const Watchlist: React.FC<Props> = ({
               <summary>{deskCoverageJa(coverage, { loading: evidence.loading, generatedAt: evidence.generatedAt })}{coverage.complete ? '' : ' · 不足あり'}</summary>
               <ul>{deskCoverageDetailJa(coverage).map((row) => <li key={row}>{row}</li>)}</ul>
             </details>
-            <span className="asset-toolbar__age">{t('wl.updated')} {ageLabel(updatedAt, nowMs)}</span>
+            <span className="asset-toolbar__age">画面の読み込み {ageLabel(updatedAt, nowMs)}</span>
             <button className="asset-btn" onClick={rescan}
-              aria-label="Rescan (rule-based refresh, no AI run)">{t('wl.rescan')}</button>
+              aria-label="銘柄の価格とデータを再読み込み">再読み込み</button>
             <button className="asset-btn asset-btn--primary" onClick={() => setAddOpen(true)}
-              aria-label="Add asset">{t('wl.addAsset')}</button>
+              aria-label="銘柄を追加">+ 銘柄を追加</button>
           </div>
         )}
       />
 
       {!assetDetail && <details className="card ad-support" open={supportOpen}
         onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
-        <summary>Supporting tools</summary>
+        <summary>銘柄の設定・連携</summary>
         {supportOpen && <div className="ad-support__body">
           <Layer2BSyncCard assets={assets} />
           <EntityProfileEditor assets={assets} />

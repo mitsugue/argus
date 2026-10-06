@@ -34,6 +34,8 @@ export interface TachibanaLiveDocument {
   authority?: string;
   status?: string;
   enabled?: boolean;
+  displayApproved?: boolean;
+  mode?: string;
   shadowOnly?: boolean;
   authoritative?: boolean;
   providerHealth?: string | null;
@@ -213,12 +215,15 @@ export function tachibanaCurrentRows(
   doc: TachibanaLiveDocument | null | undefined, nowMs = Date.now(),
 ): Map<string, TachibanaLiveRow> {
   const out = new Map<string, TachibanaLiveRow>();
+  if (doc?.displayApproved !== true || doc.mode === "SHADOW") return out;
   const view = tachibanaLiveView(doc);
   if (view.status !== 'LIVE' && view.status !== 'DEGRADED') return out;
   for (const row of view.rows) {
     if (row.price === null || row.freshness !== 'FRESH' || !row.sourceTimestamp) continue;
     const age = (nowMs - Date.parse(row.sourceTimestamp)) / 1000;
-    if (!Number.isFinite(age) || age < -5 || age > 60) continue;
+    if (!Number.isFinite(age) || age < 0 || age > 15) continue;
+    const receivedAge = row.receivedAt ? (nowMs - Date.parse(row.receivedAt)) / 1000 : NaN;
+    if (!Number.isFinite(receivedAge) || receivedAge < 0 || receivedAge > 15 || row.marketStatus !== 'OPEN') continue;
     out.set(row.symbol.toUpperCase(), row);
   }
   return out;
@@ -233,6 +238,7 @@ export function tachibanaCurrentRows(
 /** Symbols with a priced CLOSED-session baseline (auth/date/price proven, market closed). */
 export function tachibanaClosedRows(doc: TachibanaLiveDocument | null | undefined): Map<string, TachibanaLiveRow> {
   const out = new Map<string, TachibanaLiveRow>();
+  if (doc?.displayApproved !== true || doc.mode === "SHADOW") return out;
   const view = tachibanaLiveView(doc);
   if (view.status !== 'CLOSED') return out;
   for (const row of view.rows) if (row.price !== null) out.set(row.symbol.toUpperCase(), row);
