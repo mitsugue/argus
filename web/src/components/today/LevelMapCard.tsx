@@ -1,6 +1,6 @@
 import React from 'react';
 import { useJapanMarketComparison } from '../../hooks/useJapanMarketComparison';
-import { currentLevelMap, evidenceJa, rowLabelJa, validValuationHistory, type LevelMapRow, type LevelMapScore, type LevelMapState } from '../../lib/levelMap';
+import { currentLevelMap, evidenceJa, nearestPerRows, rowLabelJa, validValuationHistory, type LevelMapRow, type LevelMapScore, type LevelMapState } from '../../lib/levelMap';
 import './LevelMapCard.css';
 
 // Nikkei morning level map (2026-10-04). The map is fixed before the open and
@@ -49,6 +49,7 @@ function Calculations({ map, current }: { map: NonNullable<LevelMapState['latest
         {map.rows.filter(r => r.side === 'DOWN').sort((a,b) => b.price-a.price).map((row, i) => <Row key={`d${i}`} row={row} />)}
       </tbody>
     </table></div>
+    {map.rows.some(row => row.kinds.length > 1) && <p className="lm-small">近い水準は詳細表でまとめています。上のPER価格はEPS×整数倍率の値です。</p>}
     <p className="lm-guides">距離の目安 上 +1/+2/+3ATR: {map.atrGuides.UP.map(yen).join(' / ')}　下 −1/−2/−3ATR: {map.atrGuides.DOWN.map(yen).join(' / ')}</p>
     <p className="lm-small">「過去の頻度」は、その距離にある水準について、次の4%の転換点がその±1%に来た過去の頻度の帯です（2割前後・1〜2割・1割未満）。</p>
     <ul className="lm-fixed">{map.fixedNotesJa.map((note, i) => <li key={i}>{note}</li>)}</ul>
@@ -61,7 +62,7 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
   if (!state || !map || !state.latest) return null;
   const history = validValuationHistory(state.chart?.valuationHistory)
     && state.chart.valuationHistory.lastDate <= map.epsDate ? state.chart.valuationHistory : null;
-  const perRows = map.rows.filter(r => r.kinds.includes('PER_LINE'));
+  const perRows = nearestPerRows(map, state.chart?.nearest);
   const above = perRows.filter(r => r.side === 'UP').sort((a, b) => a.price - b.price)[0];
   const below = perRows.filter(r => r.side === 'DOWN').sort((a, b) => b.price - a.price)[0];
   const examples = [above && `${yen(above.price)}円まで上がると${above.multiple}倍`,

@@ -190,7 +190,9 @@ def snapshot(rows, eps_records, morning, candidates, *, now_iso):
             price = shown['eps'] * multiple
             # 表示中の終値・EPS・ATRから、同じ距離の表を選ぶ。線の種類による予測力とはしない。
             stats = levels.reach(side, abs(price - shown['previousClose']) / shown['atr14'])
-            nearest.append({'side': side, 'multiple': multiple, 'price': round(price, 2), **stats})
+            nearest.append({'side': side, 'multiple': multiple, 'price': round(price, 2),
+                            'distancePct': round((price / shown['previousClose'] - 1) * 100, 3),
+                            'distanceAtr': round((price - shown['previousClose']) / shown['atr14'], 3), **stats})
     local = now.astimezone(timezone(timedelta(hours=9)))
     close_pending = (clock.is_trading_day(clock.JP_EQUITY, today) and (local.hour, local.minute) >= (15, 30)
                      and (not bars or bars[-1]['date'] < today_s))

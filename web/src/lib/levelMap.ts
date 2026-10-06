@@ -3,7 +3,7 @@
 // frequencies, never probabilities, never a trading signal.
 export type LevelMapRow = {
   side: 'UP' | 'DOWN'; kinds: string[]; price: number; distancePct: number; distanceAtr: number;
-  multiple?: number | null; tier: string; bandJa?: string; pastFrequencyPct?: number;
+  multiple?: number | null; mergedMultiples?: number[]; tier: string; bandJa?: string; pastFrequencyPct?: number;
   reachedWithin10SessionsPct?: number; sessionsMedian?: number; sessions25?: number; sessions75?: number;
 };
 export type LevelMapRecord = {
@@ -36,7 +36,7 @@ export function validValuationHistory(value: unknown): value is ValuationHistory
 }
 export type LevelMapState = {
   schemaVersion: 'jp-market-level-map-state-v1'; status: string; latest: LevelMapRecord | null;
-  chart?: { today?: string; closePending?: boolean; valuationHistory?: unknown; displayMap?: LevelMapRecord & { displayOnly: true; asOf: string; valuationPending: boolean } };
+  chart?: { nearest?: unknown; today?: string; closePending?: boolean; valuationHistory?: unknown; displayMap?: LevelMapRecord & { displayOnly: true; asOf: string; valuationPending: boolean } };
   morningCount: number; missedMornings: string[]; score: LevelMapScore | null; retrospective: LevelMapScore | null;
   actionAuthority: false;
 };
@@ -60,8 +60,11 @@ const multipleText = (m?: number | null) => m == null ? '' : Number.isInteger(m)
 
 /** What a row is, in the product's words (never "止まる", never a probability). */
 export function rowLabelJa(row: LevelMapRow): string {
-  return row.kinds.map(kind => kind === 'PER_LINE' ? `PER${multipleText(row.multiple)}倍線（EPS更新で動く）`
-    : kind === 'SAME_MULTIPLE' ? `直前の${row.side === 'UP' ? '天井' : '底'}と同じ倍率 ${multipleText(row.multiple)}倍`
+  const multiples = Array.isArray(row.mergedMultiples) ? row.mergedMultiples.filter(num) : [row.multiple];
+  const per = multiples.find(m => Number.isInteger(m)) ?? row.multiple;
+  const same = multiples.find(m => m != null && !Number.isInteger(m)) ?? row.multiple;
+  return row.kinds.map(kind => kind === 'PER_LINE' ? `${row.kinds.length > 1 ? '近接する' : ''}PER${multipleText(per)}倍線（EPS更新で動く）`
+    : kind === 'SAME_MULTIPLE' ? `直前の${row.side === 'UP' ? '天井' : '底'}と同じ倍率 ${multipleText(same)}倍`
     : kind === 'PIVOT_PRICE' ? `直前の${row.side === 'UP' ? '天井' : '底'}の価格（参考）` : '距離の目安').join(' / ');
 }
 
@@ -81,4 +84,30 @@ export function currentLevelMap(state: LevelMapState): LevelMapRecord | null {
     && [shown.previousClose, shown.eps, shown.atr14, shown.per].every(n => num(n) && n > 0)
     && validLevelMap({ ...state, latest: shown });
   return valid ? shown : state.latest;
+}
+
+/** Integer PER prices stay exact even when the detailed map merges nearby pivots.
+ * Stats are admitted only for this price and distance, never from a nearby row.
+ * Older replies without nearest distances can use a matching unmerged map row.
+ */
+export function nearestPerRows(map: LevelMapRecord, nearest: unknown): LevelMapRow[] {
+  if (![map.eps, map.previousClose, map.atr14].every(v => num(v) && v > 0)) return [];
+  const ratio = map.previousClose / map.eps;
+  return (['UP', 'DOWN'] as const).map(side => {
+    const multiple = side === 'UP' ? Math.floor(ratio) + 1 : Math.ceil(ratio) - 1;
+    const price = Math.round(map.eps * multiple * 100) / 100;
+    const distancePct = (price / map.previousClose - 1) * 100;
+    const distanceAtr = (price - map.previousClose) / map.atr14;
+    const matches = (value: unknown): value is LevelMapRow => {
+      const r = value as LevelMapRow | null;
+      return !!r && r.side === side && r.multiple === multiple && num(r.price) && Math.abs(r.price - price) <= .5
+        && num(r.distancePct) && Math.abs(r.distancePct - distancePct) <= .002
+        && num(r.distanceAtr) && Math.abs(r.distanceAtr - distanceAtr) <= .002
+        && num(r.reachedWithin10SessionsPct) && r.reachedWithin10SessionsPct >= 0 && r.reachedWithin10SessionsPct <= 100
+        && num(r.sessionsMedian) && r.sessionsMedian >= 0;
+    };
+    const stats = (Array.isArray(nearest) ? nearest.find(matches) : undefined)
+      ?? map.rows.find(r => r.kinds.includes('PER_LINE') && matches(r));
+    return { ...stats, side, multiple, price, distancePct, distanceAtr, kinds: ['PER_LINE'], tier: 'MAP' };
+  }).filter(row => row.multiple > 0);
 }

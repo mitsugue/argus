@@ -126,6 +126,8 @@ def test_close_reprices_nearest_distance_stats_without_rewriting_morning_or_cand
     expected = levels.reach('UP', abs(72000 - 71500) / shown['atr14'])
     assert up['reachedWithin10SessionsPct'] == expected['reachedWithin10SessionsPct']
     assert up['sessionsMedian'] == expected['sessionsMedian']
+    assert up['distancePct'] == pytest.approx((72000/71500-1)*100, abs=.001)
+    assert up['distanceAtr'] == pytest.approx(500/shown['atr14'], abs=.001)
     eps['2026-10-06'] = {'date': '2026-10-06', 'basis': levels.EPS_BASIS,
                           'eps': 4200, 'per': 71500/4200, 'recordedAt': '2026-10-06T07:35:00Z'}
     refreshed = chart.snapshot(rows, eps, morning, [candidate], now_iso='2026-10-06T07:36:00Z')
