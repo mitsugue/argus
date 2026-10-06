@@ -171,5 +171,15 @@ const sync = (d, s) => d.api.syncAccountRegistrations('https://example.invalid',
       'crash between remote application and baseline save must never re-upload remote edits');
     assert.equal(local(a).length, 2);
   }
+  {
+    const s = server(), a = device([item('jp-1234', { memo: '保存済み' })]); await sync(a, s);
+    const before = a.store.getItem(assetsKey);
+    s.mutate(st => ({ ...st, initialized: false, revision: 0, assets: [], deleted: [] }));
+    await assert.rejects(sync(a, s), /server_state_reset/);
+    assert.equal(a.store.getItem(assetsKey), before, 'lost server storage must not clear an already joined device');
+    edit(a, [...local(a), item('jp-5678')]);
+    await assert.rejects(sync(device([], a.store), s), /server_state_reset/);
+    assert.equal(queue(a.store).length, 1, 'pending edits survive account storage reset');
+  }
   console.log('ログイン共有・並び順・同時編集・通信断・再起動・削除・復元の検査に合格');
 })().catch(e => { console.error(e); process.exitCode = 1; });

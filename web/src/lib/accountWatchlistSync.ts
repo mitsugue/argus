@@ -127,6 +127,8 @@ async function requestState(url: string, body?: object, fetcher: typeof fetch = 
     if (response.status === 409) throw Error('revision_conflict');
     if (!response.ok) throw Error('server_unavailable');
     const received = state(await response.json());
+    // A previously shared account disappearing is a storage failure, not an intentional empty list.
+    if (localStorage.getItem(BASELINE) && !received.initialized) throw Error('server_state_reset');
     if (!hasOwnerSession()) throw Error('owner_session_changed');
     return received;
   } finally { clearTimeout(timeout); }
