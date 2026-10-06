@@ -341,3 +341,69 @@ def test_bridge_status_no_forbidden_keys(monkeypatch):
     for bad in ('"prompt":', '"apikey":', '"api_key":', '"token":', '"secret":',
                 '"holdings":', '"pnl":'):
         assert bad not in blob, bad
+
+
+# Shared ETF polling and health receipts use different clocks. These cases
+# exercise the real system-health projection, without provider/network calls.
+def _us_receipt_lamp(monkeypatch, *, receipt_age, interval=300, us_status="ok", opened=True):
+    now = time.time()
+    monkeypatch.setattr(scanner, "_us_market_open", lambda: opened)
+    monkeypatch.setattr(scanner, "get_integrations_snapshot", lambda **kw: {"providers": []})
+    monkeypatch.setitem(scanner._BRIDGE_HB, "data", {
+        "bridgeMode": "us_only", "openDStatus": "connected", "intervalSec": interval,
+        "usRealtimeStatus": us_status, "jpRealtimeStatus": "disabled"})
+    monkeypatch.setitem(scanner._BRIDGE_HB, "receivedAt", now-48)
+    quotes = {} if receipt_age is None else {
+        sym: {"ts": now-receipt_age, "row": {"price": 100, "exchangeTs": None}}
+        for sym in scanner._REGIME_ETFS}
+    monkeypatch.setitem(scanner._PUSHED_QUOTES, "US", quotes)
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    return next(l for l in scanner._system_health(allow_provider_fetch=False)["lamps"]
+                if l["key"] == "us_realtime")
+
+
+def test_us_poll_gap_does_not_claim_no_push(monkeypatch):
+    lamp = _us_receipt_lamp(monkeypatch, receipt_age=150)
+    assert lamp["status"] == "warning"  # retain the existing warning threshold
+    assert "受信済み(150秒前)" in lamp["detailJa"]
+    assert "5分間隔" in lamp["detailJa"]
+    assert "push無し" not in lamp["detailJa"]
+
+
+def test_us_old_receipt_is_delayed_not_absent(monkeypatch):
+    lamp = _us_receipt_lamp(monkeypatch, receipt_age=601)
+    assert lamp["status"] == "warning"
+    assert "更新に遅れ" in lamp["detailJa"] and "601秒前" in lamp["detailJa"]
+
+
+def test_us_heartbeat_alone_never_proves_price_delivery(monkeypatch):
+    lamp = _us_receipt_lamp(monkeypatch, receipt_age=None)
+    assert lamp["status"] == "warning" and "受信記録なし" in lamp["detailJa"]
+
+
+def test_us_receipt_does_not_prove_realtime_source(monkeypatch):
+    lamp = _us_receipt_lamp(monkeypatch, receipt_age=30)
+    assert "価格を受信(30秒前)" in lamp["detailJa"]
+    assert "価格時刻は別途確認" in lamp["detailJa"]
+    assert "LIVE" not in lamp["detailJa"]
+
+
+def test_us_future_receipt_never_proves_delivery(monkeypatch):
+    lamp = _us_receipt_lamp(monkeypatch, receipt_age=-30)
+    assert lamp["status"] == "warning" and "受信記録なし" in lamp["detailJa"]
+
+
+def test_us_poll_error_is_not_hidden_by_previous_receipt(monkeypatch):
+    lamp = _us_receipt_lamp(monkeypatch, receipt_age=150, us_status="degraded")
+    assert lamp["status"] == "warning" and "degraded" in lamp["detailJa"]
+
+
+def test_us_closed_session_remains_waiting(monkeypatch):
+    lamp = _us_receipt_lamp(monkeypatch, receipt_age=150, opened=False)
+    assert lamp["status"] == "off" and "市場時間外" in lamp["detailJa"]
+
+
+def test_us_invalid_reported_interval_is_bounded(monkeypatch):
+    for interval in (None, True, -1, 1000000, "300"):
+        lamp = _us_receipt_lamp(monkeypatch, receipt_age=601, interval=interval)
+        assert "更新に遅れ" in lamp["detailJa"]
