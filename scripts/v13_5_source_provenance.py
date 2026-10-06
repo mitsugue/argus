@@ -35,7 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    'web/src/components/today/WarningConditionsDetails.tsx': '484e530cdaf0036b5b16ef1808d1042aded1b946',
+    'web/src/components/today/WarningConditionsDetails.tsx': 'c7d049d3f744fa7d3a56d195083d496fd2639b2a',
     'test_argus_warning_conditions.py': 'cd94c4e14df6d03605e6eaad3da08c435d098707',
     'argus_warning_conditions.py': '83a05a166e6875c478d74d48414181086db69a6b',
     'test_argus_jgb_auction.py': '4a3e3565b99b6b3e87d21024a4706a65a7ca89cf',
@@ -661,6 +661,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/domain/dataShortfalls.ts",
     "web/scripts/app-resume-policy.test.mjs",
     "web/scripts/app-resume-browser.test.mjs",
     "web/src/components/today/AssetImpactCards.tsx",
