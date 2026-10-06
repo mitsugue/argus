@@ -57,7 +57,13 @@ const store = createSharedPollingStore<State>({ brief: null, error: false, loadi
     finally {
       controller.signal.removeEventListener('abort', cancelCurrent);
       window.clearTimeout(timeout); flight = null;
-      nextPollAt = Date.now() + (get().error || !readableBriefEdition(get().brief) ? 30_000 : 5 * 60_000);
+      // A saved edition keeps the page readable, but does not mean the new
+      // edition has finished. Recheck the cache while that response is pending;
+      // neither this GET nor history recovery starts AI generation.
+      const current = get();
+      nextPollAt = Date.now() + (current.error || !readableBriefEdition(current.brief)
+        || current.brief?.unifiedStatus !== 'GENERATED'
+        || current.brief?.generationWorker?.status === 'RUNNING' ? 30_000 : 5 * 60_000);
     }
   };
   retry = () => { void load(); };

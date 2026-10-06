@@ -13,6 +13,8 @@ const saved = { schemaVersion: 'argus-market-brief-v1', generatedAt: '2026-10-05
 const response = (value, status = 200) => ({ ok: status === 200, status, json: async () => structuredClone(value) });
 function setup(first, historyValid = true) {
   let subscriber, interval; const calls = [], timers = new Map(), modules = new Map();
+  let now = Date.parse('2026-10-06T13:00:00Z');
+  class ClockDate extends Date { static now() { return now; } }
   const fetch = async (url, options) => {
     calls.push(url);
     if (url.endsWith('/market-brief')) return first(options);
@@ -23,7 +25,7 @@ function setup(first, historyValid = true) {
   function module(path) {
     if (modules.has(path)) return modules.get(path);
     const exports = {}; modules.set(path, exports);
-    const sandbox = { exports, Date, Set, URL, AbortController, fetch, document: { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} },
+    const sandbox = { exports, Date: ClockDate, Set, URL, AbortController, fetch, document: { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} },
       window: { setTimeout(fn) { const id = timers.size + 1; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); },
         setInterval(fn) { interval = fn; return 1; }, clearInterval() {} },
       require(name) {
@@ -38,7 +40,7 @@ function setup(first, historyValid = true) {
   }
   const hook = module(require('node:path').resolve('src/hooks/useMarketBrief.ts'));
   hook.useMarketBrief(); const stop = subscriber(() => {});
-  return { hook, calls, timers, stop, get: () => hook.useMarketBrief(), interval };
+  return { hook, calls, timers, stop, get: () => hook.useMarketBrief(), interval, advance(ms) { now += ms; interval(); } };
 }
 const settle = async () => { for (let n = 0; n < 20; n++) await Promise.resolve(); };
 (async () => {
@@ -61,7 +63,21 @@ const settle = async () => { for (let n = 0; n < 20; n++) await Promise.resolve(
   const forbidden = setup(() => response({}, 401)); await settle();
   assert.equal(forbidden.calls.length, 1, 'no history retry after authentication rejection'); forbidden.stop();
   const current = setup(() => response(saved)); await settle();
-  assert.equal(current.calls.length, 1, 'readable current text needs no layout-history round trip'); current.stop();
+  assert.equal(current.calls.length, 1, 'readable current text needs no layout-history round trip');
+  current.advance(30_000); await settle(); assert.equal(current.calls.length, 1, 'completed edition keeps the five-minute cadence');
+  current.advance(270_000); await settle(); assert.equal(current.calls.length, 2); current.stop();
+  for (const generationWorker of [{status:'RUNNING'}, {status:'AWAITING_AI'}, {status:'GENERATED'}]) {
+    let reads = 0;
+    const pending = setup(() => response(++reads === 1 ? {...saved, unifiedStatus:'AWAITING_AI', unifiedSummary:null, generationWorker} : saved));
+    await settle();
+    assert.equal(pending.calls.length, 3); assert.ok(pending.get().brief.retainedPresentation, 'saved view is readable before the worker finishes');
+    pending.advance(29_999); await settle(); assert.equal(pending.calls.length, 3);
+    pending.advance(1); await settle(); assert.equal(pending.calls.length, 4, 'a saved edition must not postpone the completed current view for five minutes');
+    assert.equal(pending.get().brief.generatedAt, saved.generatedAt); assert.equal(pending.get().brief.retainedPresentation, undefined);
+    pending.advance(30_000); await settle(); assert.equal(pending.calls.length, 4, 'return to normal polling after completion');
+    assert.equal(pending.calls.filter(url => url.includes('history')).length, 2, 'pending polls reuse memory rather than re-reading history');
+    pending.stop();
+  }
   const stopped = setup(({ signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('stopped')))));
   stopped.stop(); await settle(); assert.equal(stopped.calls.length, 1);
   console.log('統合AI: 取得失敗・時間切れ・生成待ちの保存復元、根拠一体保持、認証拒否・停止後の取得抑止 PASS');

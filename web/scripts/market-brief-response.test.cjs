@@ -87,14 +87,17 @@ for (const status of ['FAILED','INVALID_RESPONSE','UNAVAILABLE']) {
 }
 assert.equal(cardContext.exports.briefWaitingTitle({...doc,generationWorker:{status:'RUNNING'}}),'新しい見立てを作成しています');
 recovered=doc;
-for (const [status, expected] of [['AWAITING_AI','待っています'],['RUNNING','作成しています'],['FAILED','作成できませんでした']]) {
+for (const [status, expected] of [['AWAITING_AI','保存版'],['RUNNING','作成中・保存版'],['FAILED','更新失敗・保存版']]) {
  shown={...doc,unifiedStatus:'AWAITING_AI',unifiedSummary:null,generationWorker:{status}};
  const html=renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:true}));
- assert.ok(html.includes(expected) && html.includes('保存済みの見立てを表示しています'));
+ assert.ok(html.includes(expected));
  assert.ok(html.includes('data-four-cards="visible"'));
+ const aboveCards=html.split('data-four-cards="visible"')[0];
+ assert.ok(!aboveCards.includes('新しい見立てを待っています') && !aboveCards.includes('要約作成'));
  assert.ok(!html.includes('最新の見立てを取得できません'));
+ assert.ok(html.includes('見立ての作成日時'), 'full timestamp remains in the evidence drawer');
 }
 requestFailed=true;
 assert.ok(renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:true}))
- .includes('最新の見立てを取得できません。保存済みの見立てを表示しています。'));
+ .includes('更新確認待ち・保存版'));
 console.log('生成待ち・作成中・実際の失敗を区別する表示 PASS');
