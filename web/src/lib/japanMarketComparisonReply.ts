@@ -33,8 +33,12 @@ export function retainComparisonReply(fresh: ComparisonReply, cached?: Compariso
 export function comparisonReadInterval(reply: ComparisonReply | undefined, nowMillis: number): number {
   const jst = new Date(nowMillis + 9 * 60 * 60_000);
   const minute = jst.getUTCHours() * 60 + jst.getUTCMinutes();
-  if (jst.getUTCDay() === 0 || jst.getUTCDay() === 6 || minute < 15 * 60 + 30 || minute >= 22 * 60)
-    return 600_000;
+  if (jst.getUTCDay() === 0 || jst.getUTCDay() === 6 || minute >= 22 * 60) return 600_000;
+  // A ten-minute timer started before the close must end at the boundary.
+  if (minute < 15 * 60 + 30) {
+    const close = Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate(), 15, 30);
+    return Math.min(600_000, close - jst.getTime());
+  }
   const chart = reply?.levelMap?.chart as { closePending?: boolean; displayMap?: { valuationPending?: boolean } } | undefined;
   return minute < 15 * 60 + 46 || chart?.closePending || chart?.displayMap?.valuationPending ? 60_000 : 600_000;
 }

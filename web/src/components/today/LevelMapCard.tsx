@@ -32,11 +32,33 @@ function Tally({ score, title }: { score: LevelMapScore; title: string }) {
   </div>;
 }
 
+function Calculations({ map, current }: { map: NonNullable<LevelMapState['latest']>; current: boolean }) {
+  const cov = map.epsCoverage;
+  return <>
+    <p className="lm-note">{current ? `${map.previousSession} 終値の表示用計算` : `${map.morningOf} 朝 · 寄付前に固定保存`}（{jst(map.createdAt)}）</p>
+    <p className="lm-note">{current ? '最新終値' : '前日終値'} {yen(map.previousClose)}（{map.previousSession}）· ATR14 {yen(map.atr14)} ·
+      EPS {map.eps.toFixed(1)}（{map.epsDate}）· PER {map.per.toFixed(2)}倍</p>
+    <p className="lm-note lm-eps">{map.epsLabelJa}{cov ? `。予想が無く実績で補った社 ${cov.filledFromTrailing ?? 0}・赤字予想 ${cov.negativeForecast ?? 0}` : ''}
+      {map.constituentsAsOf ? `。構成銘柄は ${map.constituentsAsOf} 時点` : ''}</p>
+    {map.epsJumped && <p className="lm-note lm-jump">EPSが前の推計から3%以上動きました（線が飛んでいます）。</p>}
+    <div className="lm-scroll"><table className="lm-table">
+      <thead><tr><th>価格（円）</th><th>{current ? '最新終値との差' : '前日終値との差'}</th><th>この価格の意味</th><th>山・谷ができた頻度</th><th>10営業日以内に届いた</th><th>到達までの日数</th></tr></thead>
+      <tbody>
+        {map.rows.filter(r => r.side === 'UP').sort((a,b) => b.price-a.price).map((row, i) => <Row key={`u${i}`} row={row} />)}
+        <tr className="lm-now"><td>{yen(map.previousClose)}</td><td colSpan={5}>{current ? '最新終値' : '前日終値'}</td></tr>
+        {map.rows.filter(r => r.side === 'DOWN').sort((a,b) => b.price-a.price).map((row, i) => <Row key={`d${i}`} row={row} />)}
+      </tbody>
+    </table></div>
+    <p className="lm-guides">距離の目安 上 +1/+2/+3ATR: {map.atrGuides.UP.map(yen).join(' / ')}　下 −1/−2/−3ATR: {map.atrGuides.DOWN.map(yen).join(' / ')}</p>
+    <p className="lm-small">「過去の頻度」は、その距離にある水準について、次の4%の転換点がその±1%に来た過去の頻度の帯です（2割前後・1〜2割・1割未満）。</p>
+    <ul className="lm-fixed">{map.fixedNotesJa.map((note, i) => <li key={i}>{note}</li>)}</ul>
+  </>;
+}
+
 export function LevelMapView({ state }: { state: LevelMapState | null | undefined }) {
   const map = state ? currentLevelMap(state) : null;
   const current = !!state?.chart?.displayMap && map === state.chart.displayMap;
   if (!state || !map || !state.latest) return null;
-  const cov = state.latest?.epsCoverage;
   const history = validValuationHistory(state.chart?.valuationHistory)
     && state.chart.valuationHistory.lastDate <= map.epsDate ? state.chart.valuationHistory : null;
   const perRows = map.rows.filter(r => r.kinds.includes('PER_LINE'));
@@ -52,6 +74,7 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
     <div className="lm-reading">
       <p>この表は、<strong>企業の利益に対して、日経平均が何倍の値段になっているか</strong>を示す目盛りです。</p>
     </div>
+    {state.chart?.closePending === true && /^\d{4}-\d{2}-\d{2}$/.test(state.chart.today ?? '') && state.chart.today! > map.previousSession && <p role="status" className="lm-note">{state.chart.today!.slice(5).replace('-', '/')}の終値は取得待ち。{map.previousSession.slice(5).replace('-', '/')}の終値を表示しています。</p>}
     <div className="lm-price-ladder" aria-label="価格と利益の倍率">
       {above && <article data-side="UP"><span>{above.multiple}倍まで上がると</span><b>{yen(above.price)}<small>円</small></b><strong>{signed(above.distancePct)}%</strong></article>}
       <article data-side="NOW"><span>{current ? '最新終値' : '前日終値'} · {map.per.toFixed(2)}倍</span><b>{yen(map.previousClose)}<small>円</small></b><small>{map.previousSession.slice(5).replace('-', '/')}の終値</small></article>
@@ -80,26 +103,11 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
       {distances.length > 0 && <p>{current ? '最新終値' : '前日終値'} {yen(map.previousClose)}円から、{distances.join('、')}です。</p>}
       <small>株価が動いた時の位置を確かめる表です。ここで反転するかは未確認のため、売買時期の判断には使えません。</small>
     </details>
-    <details className="lm-all-levels"><summary>すべての価格・計算の根拠</summary>
-    <p className="lm-note">{state.latest!.morningOf} 朝 · 寄付前に固定保存（{jst(state.latest!.createdAt)}）</p>
-    <p className="lm-note">前日終値 {yen(state.latest!.previousClose)}（{state.latest!.previousSession}）· ATR14 {yen(state.latest!.atr14)} ·
-      EPS {state.latest!.eps.toFixed(1)}（{state.latest!.epsDate}）· PER {state.latest!.per.toFixed(2)}倍</p>
-    <p className="lm-note lm-eps">{state.latest!.epsLabelJa}{cov ? `。予想が無く実績で補った社 ${cov.filledFromTrailing ?? 0}・赤字予想 ${cov.negativeForecast ?? 0}` : ''}
-      {state.latest!.constituentsAsOf ? `。構成銘柄は ${state.latest!.constituentsAsOf} 時点` : ''}</p>
-    {state.latest!.epsJumped && <p className="lm-note lm-jump">この朝はEPSが前日から3%以上動きました（線が飛んでいます）。</p>}
-    <div className="lm-scroll"><table className="lm-table">
-      <thead><tr><th>価格（円）</th><th>前日終値との差</th><th>この価格の意味</th><th>山・谷ができた頻度</th><th>10営業日以内に届いた</th><th>到達までの日数</th></tr></thead>
-      <tbody>
-        {state.latest.rows.filter(r => r.side === 'UP').sort((a,b) => b.price-a.price).map((row, i) => <Row key={`u${i}`} row={row} />)}
-        <tr className="lm-now"><td>{yen(state.latest!.previousClose)}</td><td colSpan={5}>前日終値</td></tr>
-        {state.latest.rows.filter(r => r.side === 'DOWN').sort((a,b) => b.price-a.price).map((row, i) => <Row key={`d${i}`} row={row} />)}
-      </tbody>
-    </table></div>
-    <p className="lm-guides">距離の目安 上 +1/+2/+3ATR: {state.latest!.atrGuides.UP.map(yen).join(' / ')}　下 −1/−2/−3ATR: {state.latest!.atrGuides.DOWN.map(yen).join(' / ')}</p>
-    <p className="lm-small">「過去の頻度」は、その距離にある水準について、次の4%の転換点がその±1%に来た過去の頻度の帯です（2割前後・1〜2割・1割未満）。</p>
-    <ul className="lm-fixed">{state.latest!.fixedNotesJa.map((note, i) => <li key={i}>{note}</li>)}</ul>
+    <details className="lm-all-levels"><summary>価格一覧・計算の根拠</summary>
+    <Calculations map={map} current={current} />
     </details>
     <details className="lm-records"><summary>PER線の答え合わせ・過去の記録</summary>
+    {current && <details className="lm-morning"><summary>朝の固定記録を見る</summary><Calculations map={state.latest} current={false} /></details>}
     {state.missedMornings.length > 0 && <p className="lm-small">寄付前に作れなかった朝: {state.missedMornings.join('、')}（後から作り直していません）</p>}
     {state.score && <Tally score={state.score} title={`答え合わせ（${state.score.firstMorning ?? ''}からの事前記録）`} />}
     {state.score && state.score.mornings < 60 && <p className="lm-small">件数が少ないうちは、成績として判断に使いません。精度の評価は数か月単位です。</p>}

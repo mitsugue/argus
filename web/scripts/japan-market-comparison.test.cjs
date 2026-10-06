@@ -214,3 +214,7 @@ assert.equal(comparisonReadInterval(pendingReply,Date.parse('2026-10-06T11:00:00
 assert.equal(comparisonReadInterval(pendingReply,Date.parse('2026-10-06T16:00:00Z')),600_000);
 assert.equal(comparisonReadInterval(pendingReply,Date.parse('2026-10-10T07:00:00Z')),600_000);
 console.log('日経の新しい終値・過去比較の独立更新・引け後の読取間隔 PASS');
+
+assert.equal(comparisonReadInterval(fresh,Date.parse('2026-10-06T06:25:00Z')),300_000,'15:30へ切り替わる境界を10分間隔で通り過ぎない');
+assert.equal(comparisonReadInterval(fresh,Date.parse('2026-10-06T06:29:59Z')),1_000);
+assert.equal(comparisonReadInterval(fresh,Date.parse('2026-10-10T06:25:00Z')),600_000);

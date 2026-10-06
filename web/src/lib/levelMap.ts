@@ -36,7 +36,7 @@ export function validValuationHistory(value: unknown): value is ValuationHistory
 }
 export type LevelMapState = {
   schemaVersion: 'jp-market-level-map-state-v1'; status: string; latest: LevelMapRecord | null;
-  chart?: { valuationHistory?: unknown; displayMap?: LevelMapRecord & { displayOnly: true; asOf: string; valuationPending: boolean } };
+  chart?: { today?: string; closePending?: boolean; valuationHistory?: unknown; displayMap?: LevelMapRecord & { displayOnly: true; asOf: string; valuationPending: boolean } };
   morningCount: number; missedMornings: string[]; score: LevelMapScore | null; retrospective: LevelMapScore | null;
   actionAuthority: false;
 };
@@ -60,7 +60,7 @@ const multipleText = (m?: number | null) => m == null ? '' : Number.isInteger(m)
 
 /** What a row is, in the product's words (never "止まる", never a probability). */
 export function rowLabelJa(row: LevelMapRow): string {
-  return row.kinds.map(kind => kind === 'PER_LINE' ? `PER${multipleText(row.multiple)}倍線（毎朝動く）`
+  return row.kinds.map(kind => kind === 'PER_LINE' ? `PER${multipleText(row.multiple)}倍線（EPS更新で動く）`
     : kind === 'SAME_MULTIPLE' ? `直前の${row.side === 'UP' ? '天井' : '底'}と同じ倍率 ${multipleText(row.multiple)}倍`
     : kind === 'PIVOT_PRICE' ? `直前の${row.side === 'UP' ? '天井' : '底'}の価格（参考）` : '距離の目安').join(' / ');
 }

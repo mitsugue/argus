@@ -30,7 +30,7 @@ const html = renderToStaticMarkup(React.createElement(LevelMapView, { state }));
 assert.ok(html.includes('日経平均の価格の目盛り') && html.includes('2026-10-05 朝') && html.includes('寄付前に固定保存'));
 assert.ok(html.includes('企業の利益に対して、日経平均が何倍の値段になっているか'));
 assert.ok(html.includes('約17.37倍') && html.includes('70,787円まで上がると18倍、66,854円まで下がると17倍'));
-assert.ok(html.includes('PER18倍線（毎朝動く）') && html.includes('直前の天井と同じ倍率 17.884倍'));
+assert.ok(html.includes('PER18倍線（EPS更新で動く）') && html.includes('直前の天井と同じ倍率 17.884倍'));
 const table = html.split('<tbody>')[1];
 assert.ok(table.indexOf('70,787') < table.indexOf('前日終値</td>') && table.indexOf('前日終値</td>') < table.indexOf('66,854'),
   'upper rows above the close, lower rows below');
@@ -69,3 +69,15 @@ const freshHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{..
 assert.ok(freshHtml.includes('当日分のPER・価格の目盛りを再計算済み'));
 const invalidHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:{...closing,epsDate:'2026-10-06'}}}}));
 assert.ok(!invalidHtml.includes('最新終値'));
+
+// The visible prices and expanded calculation table must share the close.
+const enriched = {...closing, epsCoverage:{filledFromTrailing:3,negativeForecast:2}, constituentsAsOf:'2026-09-30',
+ rows:closing.rows.map(r=>({...r,reachedWithin10SessionsPct: r.side==='UP'?82:45,sessionsMedian:2}))};
+const scaleHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:enriched}}}));
+const calculations=scaleHtml.split('<details class="lm-all-levels">')[1].split('</details>')[0];
+assert.ok(calculations.includes('70,000')&&!calculations.includes('68,309'),'expanded table uses latest close');
+assert.ok(calculations.includes('+1.1%')&&!calculations.includes('+3.6%'),'expanded distances use latest close');
+assert.ok(calculations.includes('82%')&&calculations.includes('実績で補った社 3'),'fresh stats and EPS coverage');
+assert.ok(scaleHtml.includes('朝の固定記録を見る')&&scaleHtml.includes('68,309'),'fixed record remains separate');
+const pendingHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{today:'2026-10-06',closePending:true}}}));
+assert.ok(pendingHtml.includes('10/06の終値は取得待ち')&&pendingHtml.includes('10/02の終値を表示'),'missing close is visibly dated');

@@ -181,21 +181,22 @@ def snapshot(rows, eps_records, morning, candidates, *, now_iso):
         open_records.append({'id': record.get('recordId'), 'label': record.get('candidate'),
                              'start': entry, 'end': deadline, 'target': target, 'stop': stop,
                              'movingTarget': moving})
-    nearest = []
-    if current and _number(current.get('atr14')) and _number(current.get('previousClose')):
-        ratio = current['previousClose'] / current['eps']
-        for side, multiple in (('UP', math.floor(ratio) + 1), ('DOWN', math.ceil(ratio) - 1)):
-            price = current['eps'] * multiple
-            # 朝の地図と同じ距離の表を使う。線の種類による予測力とはしない。
-            stats = levels.reach(side, abs(price - current['previousClose']) / current['atr14'])
-            nearest.append({'side': side, 'multiple': multiple, 'price': round(price, 2), **stats})
     display = closing_map(bars, eps_records, morning, now_iso=now_iso)
+    shown = display or current
+    nearest = []
+    if shown and _number(shown.get('atr14')) and _number(shown.get('previousClose')):
+        ratio = shown['previousClose'] / shown['eps']
+        for side, multiple in (('UP', math.floor(ratio) + 1), ('DOWN', math.ceil(ratio) - 1)):
+            price = shown['eps'] * multiple
+            # 表示中の終値・EPS・ATRから、同じ距離の表を選ぶ。線の種類による予測力とはしない。
+            stats = levels.reach(side, abs(price - shown['previousClose']) / shown['atr14'])
+            nearest.append({'side': side, 'multiple': multiple, 'price': round(price, 2), **stats})
     local = now.astimezone(timezone(timedelta(hours=9)))
     close_pending = (clock.is_trading_day(clock.JP_EQUITY, today) and (local.hour, local.minute) >= (15, 30)
                      and (not bars or bars[-1]['date'] < today_s))
     return {'schemaVersion': 'jp-market-chart-layers-v1', 'today': today_s, 'start': start, 'end': end,
             'points': points, 'current': current, 'displayMap': display, 'closePending': close_pending,
             'pivots': turns, 'pending': pending,
-            'valuationHistory': valuation_history(eps_records, display or morning, bars) if current else None,
+            'valuationHistory': valuation_history(eps_records, shown, bars) if shown else None,
             'candidates': open_records[-30:], 'nearest': nearest, 'epsBasis': levels.EPS_BASIS,
             'actionAuthority': False, 'automaticAiCalls': 0}

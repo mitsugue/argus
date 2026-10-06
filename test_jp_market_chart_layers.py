@@ -105,3 +105,45 @@ def test_valuation_history_reports_gaps_and_never_claims_sparse_history_complete
     assert summary['count'] >= 60 and summary['missingSessions'] > summary['count']
     assert summary['sufficient'] is False
     assert chart.valuation_history(records, None, []) is None
+
+
+def test_close_reprices_nearest_distance_stats_without_rewriting_morning_or_candidate():
+    from copy import deepcopy
+    rows = [bar((date(2026, 8, 24) + timedelta(days=i)).isoformat(), 68000 + i * 10)
+            for i in range(43) if (date(2026, 8, 24) + timedelta(days=i)).weekday() < 5]
+    eps = {'2026-10-05': {'date': '2026-10-05', 'basis': levels.EPS_BASIS,
+                          'eps': 4000, 'per': 17.08, 'recordedAt': '2026-10-05T08:00:00Z'}}
+    morning = levels.morning_map('2026-10-06', rows, {'2026-10-05': 4000}, eps_records=eps, created_at='2026-10-05T10:00:00Z')
+    saved = deepcopy(morning)
+    candidate = {'recordId': 'c1', 'candidate': 'S3', 'entryDate': '2026-10-06',
+                 'target': {'kind': 'PER_LINE', 'multiple': 18, 'nikkei': 72000},
+                 'stop': {'nikkei': 64000}, 'result': {'outcome': 'open'}}
+    rows.append({**bar('2026-10-06', 71500), 'availableFrom': '2026-10-06T06:31:00Z'})
+    result = chart.snapshot(rows, eps, morning, [candidate], now_iso='2026-10-06T06:32:00Z')
+    shown = result['displayMap']
+    assert shown['previousClose'] == 71500 and shown['valuationPending']
+    up = next(r for r in result['nearest'] if r['side'] == 'UP')
+    expected = levels.reach('UP', abs(72000 - 71500) / shown['atr14'])
+    assert up['reachedWithin10SessionsPct'] == expected['reachedWithin10SessionsPct']
+    assert up['sessionsMedian'] == expected['sessionsMedian']
+    eps['2026-10-06'] = {'date': '2026-10-06', 'basis': levels.EPS_BASIS,
+                          'eps': 4200, 'per': 71500/4200, 'recordedAt': '2026-10-06T07:35:00Z'}
+    refreshed = chart.snapshot(rows, eps, morning, [candidate], now_iso='2026-10-06T07:36:00Z')
+    assert refreshed['displayMap']['eps'] == 4200 and not refreshed['displayMap']['valuationPending']
+    assert next(r for r in refreshed['nearest'] if r['side'] == 'UP')['price'] == 75600
+    assert refreshed['candidates'][0]['target'] == 72000
+    assert morning == saved and candidate['target']['nikkei'] == 72000
+
+
+def test_evening_display_history_remains_available_with_next_morning_record():
+    rows = [bar((date(2026, 8, 24) + timedelta(days=i)).isoformat(), 68000 + i * 10)
+            for i in range(43) if (date(2026, 8, 24) + timedelta(days=i)).weekday() < 5]
+    rows.append({**bar('2026-10-06', 70000), 'availableFrom': '2026-10-06T06:31:00Z'})
+    eps = {'2026-10-06': {'date': '2026-10-06', 'basis': levels.EPS_BASIS,
+                          'eps': 4000, 'per': 17.5, 'recordedAt': '2026-10-06T07:35:00Z'}}
+    tomorrow = levels.morning_map('2026-10-07', rows, {'2026-10-06': 4000}, eps_records=eps, created_at='2026-10-06T08:00:00Z')
+    result = chart.snapshot(rows, eps, tomorrow, [], now_iso='2026-10-06T09:00:00Z')
+    assert result['current'] is None
+    assert result['displayMap']['asOf'] == '2026-10-06'
+    assert result['valuationHistory']['lastDate'] == '2026-10-06'
+    assert result['valuationHistory']['count'] == 1
