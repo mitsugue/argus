@@ -366,7 +366,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/lib/pwaRecovery.ts': '038fe1dc3e55433a0f72e8a06ca1701176155438',
     'web/src/components/today/MarketAnalysisHistory.tsx': '7a986421fdd00c28c53e563a09287dbbc314694e',
     'test_argus_analysis_history.py': 'e60a14420055c58ec921126fc5a923bcf3e9dacd',
-    'argus_analysis_history.py': '6b2ca15dbd974b00ca3342299359b9fa9794c64e',
+    'argus_analysis_history.py': 'ce071d9b5d2c4891ece5bef26494e78054247158',
     'argus_market_ledger.py': 'e497d1c6020adead5e823303e7a144ef6b1e7911',
     'jp_market_positioning.py': '265c103ffdbc995123cdbfbfbf86db00d264c9f0',
     'test_jp_market_positioning.py': '25652d6b817191b47053d3c9bef22f56e15d7a37',
@@ -661,6 +661,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_future_map_scoring.py",
+    "argus_future_map_scoring.py",
     "web/src/components/today/AssetImpactCards.tsx",
     "web/src/components/today/AssetImpactCards.css",
     "web/src/components/common/AssetReadingCard.css",
