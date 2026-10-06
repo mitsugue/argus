@@ -1,9 +1,9 @@
-// Polling cadence policy (owner-approved 2026-09-28).
+// Polling cadence policy (owner request 2026-10-06).
 //
-// The app is opened a few times a day. Every polling hook therefore refreshes
-// once when the page becomes visible and then keeps only a relaxed cadence
-// while it stays visible. Interval ticks skip all work while the document is
-// hidden, so idle or background tabs never consume backend or provider quota.
+// An app switch preserves the mounted screen and does not start a new read.
+// Initial acquisition and the existing visible-page cadence still run; a
+// manual full reload starts all acquisitions again. Hidden interval ticks
+// skip work. Initial mounts in a hidden document resume once when visible.
 // Constants are milliseconds; the "was" values document the pre-policy cadence.
 
 /** Watchlist quotes, top-page action labels and the active-event feed (was 15s). */
@@ -38,3 +38,45 @@ export const MARKET_NEWS_CLOSED_INTERVAL_MS = 120 * 60_000;
 /** True only when a document exists and is currently visible to the user. */
 export const isPageVisible = (): boolean =>
   typeof document !== 'undefined' && document.visibilityState === 'visible';
+
+/** Resume only an initial acquisition deferred by a hidden document.
+ * Ordinary app switches never trigger all readers together. Existing interval
+ * schedulers and local freshness/expiry checks remain independent.
+ */
+export function subscribeInitialVisibleRead(read: () => void): () => void {
+  if (typeof document === 'undefined' || isPageVisible()) return () => {};
+  const visible = () => {
+    if (!isPageVisible()) return;
+    document.removeEventListener('visibilitychange', visible);
+    read();
+  };
+  document.addEventListener('visibilitychange', visible);
+  return () => document.removeEventListener('visibilitychange', visible);
+}
+
+/** Pause periodic acquisition in the background; start a full interval on return.
+ * This also prevents suspended, overdue timers from forming a resume burst.
+ */
+export function scheduleVisibleInterval(read: () => void, intervalMs: number | (() => number)): () => void {
+  let timer: number | null = null;
+  let generation = 0;
+  let stopped = false;
+  const pause = () => {
+    generation += 1;
+    if (timer !== null) window.clearInterval(timer);
+    timer = null;
+  };
+  const visible = () => {
+    pause();
+    if (stopped || !isPageVisible()) return;
+    const startedGeneration = generation;
+    timer = window.setInterval(() => {
+      if (stopped || generation !== startedGeneration || !isPageVisible()) return;
+      read();
+      if (typeof intervalMs === 'function') visible();
+    }, typeof intervalMs === 'function' ? intervalMs() : intervalMs);
+  };
+  visible();
+  document.addEventListener('visibilitychange', visible);
+  return () => { stopped = true; pause(); document.removeEventListener('visibilitychange', visible); };
+}

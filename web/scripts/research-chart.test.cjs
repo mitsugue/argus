@@ -49,7 +49,8 @@ const components=load('src/components/chart/NikkeiResearchChart.tsx',name=>name.
 const html=renderToStaticMarkup(React.createElement(components.NikkeiResearchChartView,{chart,future}));
 assert.ok(html.includes('PER18 70,787円'));
 assert.ok(html.includes('参考予測（未検証）'));
-assert.ok(html.includes('ARGUS推計（公式値ではない）'));
+assert.ok(html.includes('決算データから計算したARGUS推計'));
+assert.ok(html.includes('公式は日経の予想利益') && html.includes('公式PERから引いた線ではありません'));
 assert.ok(html.includes('1 谷')&&html.includes('2 底'));
 assert.ok(html.includes('EPSがない日はPER線を途切れさせています'));
 assert.ok(html.includes('aria-label="拡大"')&&html.includes('今日へ戻る'));

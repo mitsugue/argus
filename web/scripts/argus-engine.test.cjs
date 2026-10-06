@@ -207,15 +207,16 @@ check('Today never claims an empty calendar it could not read',
     calendar: { JP: state('JP', 'MORNING_SESSION'), US: state('US', 'CLOSED') },
     canonicalDecision: canonical('WAIT', 'EVALUATED', null) };
   const partial = buildArgusTodayView({ ...base, dataQuality: 'PARTIAL',
-    dataQualityReasonCodes: ['fx_authority_missing', 'visibility_limited'] });
+    dataQualityReasonCodes: ['fx_authority_missing', 'visibility_limited'],
+    dataQualityDetailLinesJa:['TEST：価格時刻が未確認'] });
   check('a partial data status carries the reasons it is partial',
     partial.dataStatus.label === '一部不足'
     && partial.dataQualityReasonCodes.join(',')
-      === 'fx_authority_missing,visibility_limited');
+      === 'fx_authority_missing,visibility_limited' && partial.dataQualityDetailLinesJa[0] === 'TEST：価格時刻が未確認');
   const live = buildArgusTodayView({ ...base, dataQuality: 'LIVE',
-    dataQualityReasonCodes: ['fx_authority_missing'] });
+    dataQualityReasonCodes: ['fx_authority_missing'],dataQualityDetailLinesJa:['old'] });
   check('a LIVE status never carries a shortfall reason',
-    live.dataStatus.label === '正常' && live.dataQualityReasonCodes.length === 0);
+    live.dataStatus.label === '正常' && live.dataQualityReasonCodes.length === 0 && live.dataQualityDetailLinesJa.length === 0);
   check('every partial reason has Japanese the owner can act on',
     ['watchlist_polling_partial', 'important_events_unread', 'downside_unread',
       'flow_authority_stale', 'supply_demand_authority_stale',
@@ -530,3 +531,11 @@ console.log('argus-engine.test: all checks passed');
 }
 
 if (failed) process.exit(1);
+
+const {partialFeedReasonCodes} = require(path.join(root,'src/domain/dataShortfalls.ts'));
+const feedOk={actionLabels:'live',marketRegime:'live',eventRadar:'live',jpQuotes:'live',usQuotes:'live',hasJpAssets:true,hasUsAssets:true};
+check('market analysis partial is not attributed to prices',partialFeedReasonCodes({...feedOk,marketRegime:'partial'}).join(',')==='market_regime_partial');
+check('registered quote shortfall names the price reader',partialFeedReasonCodes({...feedOk,jpQuotes:'partial'}).join(',')==='watchlist_polling_partial');
+check('unused curated feed does not blame owner watchlist',partialFeedReasonCodes({...feedOk,jpQuotes:'partial',hasJpAssets:false}).length===0);
+check('all partial readers remain independently visible',partialFeedReasonCodes({...feedOk,actionLabels:'partial',marketRegime:'partial',eventRadar:'partial',usQuotes:'partial'}).length===4);
+if(failed) process.exit(1);

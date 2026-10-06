@@ -1,3 +1,4 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useEffect, useState } from 'react';
 import { FEED_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
 
@@ -47,12 +48,12 @@ export function useMacroEventAnalysis(): Record<string, MacroAnalysis> {
     load();
     // Visible-page cadence (was 2 min); hidden ticks do nothing and the view
     // refreshes once when the app returns to the foreground.
-    const iv = setInterval(() => { if (isPageVisible()) load(); }, FEED_VISIBLE_MS);
+    const iv = scheduleVisibleInterval(() => { if (isPageVisible()) load(); }, FEED_VISIBLE_MS);
     const onVisible = () => { if (isPageVisible()) load(); };
-    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
     return () => {
-      alive = false; clearInterval(iv);
-      document.removeEventListener('visibilitychange', onVisible);
+      alive = false; iv();
+      stopInitialOnVisible();
     };
   }, []);
   return byKey;

@@ -194,7 +194,8 @@ export function installOwnerTransport() {
     finally { validating = false; }
   };
   window.setInterval(() => { void validate(); }, 30_000);
-  document.addEventListener('visibilitychange', () => { void validate(); });
+  // App switches keep the verified in-memory session. The existing periodic
+  // check and authenticated reads still enforce revocation and expiry.
   // A reload or an app switch keeps the session (sessionStorage ends with the
   // app); a definite 401, logout, revoke or expiry still locks immediately.
 }
@@ -217,7 +218,15 @@ const RESTORE_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 8000, 10000, 10000, 100
 const RESTORE_DEADLINE_MS = 60_000;
 
 /** Resume this app session's login after a reload or an app update, only after a fresh server echo. */
-export async function restoreOwnerSession(): Promise<boolean> {
+let restoreFlight: Promise<boolean> | null = null;
+export function restoreOwnerSession(): Promise<boolean> {
+  if (!OWNER_AUTH_REQUIRED || hasOwnerSession()) return Promise.resolve(hasOwnerSession());
+  if (restoreFlight) return restoreFlight;
+  restoreFlight = resumeSavedSession().finally(() => { restoreFlight = null; });
+  return restoreFlight;
+}
+
+async function resumeSavedSession(): Promise<boolean> {
   if (!OWNER_AUTH_REQUIRED || hasOwnerSession()) return hasOwnerSession();
   const saved = savedSession();
   // 2026-10-02: an app update no longer ends the login; frequent releases

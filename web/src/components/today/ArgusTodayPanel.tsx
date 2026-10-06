@@ -125,14 +125,17 @@ const MARKET_STANCE = {
 // them says the owner failed to supply anything. Naming them is the whole
 // point; an unmapped code still shows its raw form rather than disappearing.
 const DATA_PARTIAL_REASON_JA: Record<string, string> = {
-  watchlist_polling_partial: '一部の銘柄の価格が未取得です',
+  watchlist_polling_partial: '登録銘柄の価格取得が一部完了していません',
+  action_labels_partial: '銘柄別の判断材料が一部未取得です',
+  market_regime_partial: '市場の地合いの更新を確認できません',
+  event_radar_partial: 'イベントの取得が一部完了していません',
   important_events_unread: '重要イベントの情報が未取得です',
   downside_unread: '急落警戒の情報が未取得です',
   flow_authority_stale: '資金の動きのデータが古くなっています',
   supply_demand_authority_stale: '売買の偏りを測るデータが古くなっています',
   fx_authority_missing: '判断に使う為替データが未取得です',
   session_authority_missing: '市場の開場・閉場を確認できていません',
-  quote_authority_missing: '判断に使う最新の価格が未取得です',
+  quote_authority_missing: '登録銘柄の価格・時刻を確認できません',
   visibility_limited: '確認できる情報が限られています',
 };
 const DATA_NOTE_JA: Record<string, string> = {
@@ -807,6 +810,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
             {view.dataQualityReasonCodes
               .map((code) => DATA_PARTIAL_REASON_JA[code] ?? `未定義の不足理由（コード: ${code}）`)
               .join(' · ')}（いずれもARGUS側の取得・鮮度の状態です）</span>}
+          {view.dataQualityDetailLinesJa.length > 0 && <ul className="at-data-why" aria-label="不足している取得元の詳細">
+            {view.dataQualityDetailLinesJa.map((line, index) => <li key={index}>{line}</li>)}
+          </ul>}
           {view.dataQualityNotes.length > 0 && <span className="at-data-why at-data-note">
             {view.dataQualityNotes.map((code) => DATA_NOTE_JA[code] ?? code).join(' · ')}</span>}
           {/* v13.5.62 (GPT review item 1): what the percentage is. */}

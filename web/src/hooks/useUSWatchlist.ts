@@ -1,3 +1,4 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
 import { WATCHLIST_VISIBLE_MS } from '../lib/pollingPolicy';
@@ -43,8 +44,8 @@ const MAX_ATTEMPTS = 3;
 const ATTEMPT_TIMEOUT_MS = 8_000;
 const RETRY_DELAYS_MS = [3_000, 6_000];
 
-// Auto-refresh: refetch once when the tab becomes visible, then on the relaxed
-// visible-page cadence (pollingPolicy, owner-approved 2026-09-28); hidden tabs
+// Auto-refresh: read initially, then on the relaxed
+// visible-page cadence (pollingPolicy); hidden tabs
 // never poll. Silent — keeps showing the last good data on a failed refresh
 // instead of flashing back to "connecting"/mock. 2 endpoints per cycle stay far
 // inside the per-IP heavy-endpoint limit (30/min).
@@ -198,16 +199,15 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
         });
       }
     }
-    const refreshTimer = window.setInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
-    // Returning to the tab after a while → refresh immediately, don't wait out
-    // the remainder of the interval.
+    const refreshTimer = scheduleVisibleInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
+    // Age the retained quote on return without an extra network acquisition.
     const onVisible = () => {
       if (!document.hidden) {
         revalidateCurrent();
-        void acquire(refresh);
       }
     };
     document.addEventListener('visibilitychange', onVisible);
+    const stopInitialRead = subscribeInitialVisibleRead(() => { void acquire(refresh); });
 
     if (getState().data) revalidateCurrent();
     void acquire(run);
@@ -216,8 +216,9 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
       cancelExpiry();
       for (const controller of controllers) controller.abort();
       controllers.clear();
-      window.clearInterval(refreshTimer);
+      refreshTimer();
       document.removeEventListener('visibilitychange', onVisible);
+      stopInitialRead();
     };
   });
   usWatchlistStores.set(symKey, store);

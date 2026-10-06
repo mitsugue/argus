@@ -70,7 +70,7 @@ export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?
   const { position, nextAlert, nextBottom } = doc.status;
   return <section className="fm-card card" aria-label="FUTURE MAP" data-argus-contract="future-map-v1">
     <div className="fm-head"><b>FUTURE MAP</b>
-      <span>外部の見立て ・ {updateDate}更新 ・ ARGUS未検証</span>
+      <span>外部の見立て ・ {updateDate}更新 ・ 予測が当たるかは未検証</span>
       <span className={`fm-age${age.warning ? ' is-warning' : ''}`} role={age.warning ? 'status' : undefined}>{age.label}</span></div>
     <div className="fm-boxes">
       <div className="fm-box tone-red"><small>いまの位置</small><b>{position}</b></div>
@@ -84,7 +84,11 @@ export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?
     {hidden > 0 && <button type="button" className="fm-more" aria-expanded={open} onClick={() => setOpen(v => !v)}>
       {open ? '閉じる' : `すべて表示（残り${hidden}件${goal ? `・${goal.periodLabel} ${goal.view.split('。')[0]}まで` : ''}）`}</button>}
     <p className="fm-foot">●の数 = 同じことを言っている見立ての数 ・ {doc.record.scored > 0
-      ? `見立ての成績: ${doc.record.scored}件中${doc.record.reached}件到達` : '見立ての成績: 10/5から採点'}</p>
+      ? `答え合わせ: ${doc.record.scored}件中${doc.record.reached}件到達${doc.record.scored < 10 ? '（件数不足）' : ''}`
+      : '答え合わせ: 0件（まだ成績なし）'}</p>
+    <details><summary>何を確認しているか</summary>
+      <p>表の形式は点検済みです。予測が当たるかは別に答え合わせが必要です。価格に到達しただけで、天井・底や売り時・買い場の正しさが確認できたとは扱いません。</p>
+    </details>
   </section>;
 }
 

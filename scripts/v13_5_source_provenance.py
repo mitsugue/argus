@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.60"
+PRODUCT_VERSION = "v13.8.62"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,7 +35,15 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    'web/src/components/today/WarningConditionsDetails.tsx': '484e530cdaf0036b5b16ef1808d1042aded1b946',
+    'web/scripts/round3-product-final.test.mjs': '335c6b5900886eaad74873ce7b2e04cf049777dc',
+    'web/scripts/runtime-version-truth.test.mjs': '890c1afb61294078877998e4d7fcc89709c84ef5',
+    'web/scripts/full-release-simulation.mjs': '26a7042c3a251f20b710e937cd79f8e6a67682b3',
+    'web/src/types/assetItem.ts': '5c0e3ddc92203798069de0654ba96a5d1f7865aa',
+    'web/src/routes/Watchlist.tsx': '5280e31ba8231fff4f2f3fc36bf71bb852c38072',
+    'web/src/hooks/useWatchlistSync.ts': '7907d7ffcce7ea632c4be350be2a8c3b1d3b1515',
+    'web/scripts/account-watchlist-sync.test.cjs': '7de5b30088573c9039ed5e2ab958d07db3b7d631',
+    'web/src/lib/accountWatchlistSync.ts': '679d2d68521eca0711e5e8ea1e3324bb8be597ab',
+    'web/src/components/today/WarningConditionsDetails.tsx': 'c7d049d3f744fa7d3a56d195083d496fd2639b2a',
     'test_argus_warning_conditions.py': 'cd94c4e14df6d03605e6eaad3da08c435d098707',
     'argus_warning_conditions.py': '83a05a166e6875c478d74d48414181086db69a6b',
     'test_argus_jgb_auction.py': '4a3e3565b99b6b3e87d21024a4706a65a7ca89cf',
@@ -113,20 +121,20 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_watch_quote_decision_authority.py': '2835f4173027dd48495d17e17bdba077f56eb83a',
     # Visible-page polling policy (owner 2026-09-28): exact reviewed hook
     # contents; cadence constants live in web/src/lib/pollingPolicy.ts.
-    'web/src/hooks/useAIJudgment.ts': 'bd297858e9fcb34d219ff60ae1be04c1b5c004c4',
-    'web/src/hooks/useActionLabels.ts': 'c1a3178fa419591537606ca925c3c14bfa8dddda',
-    'web/src/hooks/useCryptoWatchlist.ts': '1b28c5199185fc6bdf3d793453936c9232b4aff4',
-    'web/src/hooks/useDownsideIncidents.ts': '300b52618c607eaac49fcbc4a081b209029eaba9',
-    'web/src/hooks/useEventRadar.ts': '1ddf8bc4c35cbb6ae65b5081202b46f11d2da6bd',
-    'web/src/hooks/useFlowAttribution.ts': '70955dada9d4b2b120dab5f8fc1061ef877ce62d',
-    'web/src/hooks/useFundNav.ts': 'b8a8689aba391a181fcb4817932f22e2fdfd8382',
+    'web/src/hooks/useAIJudgment.ts': 'caeddb01dfb89832a26e628fced7d7c49fea0396',
+    'web/src/hooks/useActionLabels.ts': '9db3b9c72d2357a84ea314eea385bcbe4873e62b',
+    'web/src/hooks/useCryptoWatchlist.ts': '666cf8f60ca9b482b2d714616acb2acd3e1e41dc',
+    'web/src/hooks/useDownsideIncidents.ts': '96b14d1816603db7e978abba6178599a7e0b8df5',
+    'web/src/hooks/useEventRadar.ts': '48857482a399f20fff704a2eaf4c0c24d9a2c769',
+    'web/src/hooks/useFlowAttribution.ts': 'b751448153d40813c83541525bc31d7ca400bada',
+    'web/src/hooks/useFundNav.ts': '58fb3629159e70b7d3d30bc5e963a146d318306c',
     'web/src/hooks/useMarketLedger.ts': 'bd0baadcca10044cd47a12008cd435ce24da9613',
-    'web/src/hooks/useMarketRegime.ts': '47c5492217c4fa5ecec27ec5ff72b226a538eec0',
+    'web/src/hooks/useMarketRegime.ts': '42a4f72842c87a381c189caed504a5b60394177a',
     'web/src/hooks/useProductionBackendIdentity.ts': '738c79e701c8da1e6b823a7d330003513bda9c7f',
-    'web/src/hooks/useRatesSnapshot.ts': '15e79944d93b2bb2e7447785c821ba2f1f115338',
-    'web/src/hooks/useSupplyDemand.ts': '06e81f4d672321106abe4cc1bbc6ce3b4ee42c10',
-    'web/src/hooks/useUSWatchlist.ts': '58714ef64cea5b6168584a5f6bd30784422bc486',
-    'web/src/lib/pollingPolicy.ts': '40bfa352aaf060fde8d54ec57125ce8ca4096b53',
+    'web/src/hooks/useRatesSnapshot.ts': '1a71c315a00cbbc0cf755517e2fb183a095210a5',
+    'web/src/hooks/useSupplyDemand.ts': '66e6530aa20d338109a091b7ee72ea407f588747',
+    'web/src/hooks/useUSWatchlist.ts': '197b3f2a40a8779316c6e3d762fb28fca831f94b',
+    'web/src/lib/pollingPolicy.ts': 'b675f07a1387d59dd41ce3e8be7bb74c15ce46e4',
     'docs/RECOVERY_MATERIALIZATION.md': 'af222d7a64b801dce147daa9a3b6ddc75def0572',
     'test_argus_recovery_materialization.py': '87fc8de5a051024375af5fcde0b50867aaf2dddb',
     'test_argus_recovery_measurement_storage.py': 'ed5e5b9a8ab0e4bc42c396b99e5bd239b58965f2',
@@ -139,7 +147,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '3bb2c943b68e36ae8430e1d27dee816389d23565',
+    'web/scripts/owner-today-https.mjs': 'c6c6b7df30a60721d0a3c5beae81f2ed14dc80ec',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -166,10 +174,10 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/ops/owner-server-auth.md': 'd745850b1c9bb742783be9f230261cee5b9d782f',
     'scripts/owner_auth_backup.py': '55b2d8f41918c9ae5880c7ae23a764e5e1506e8a',
     'test_argus_owner_auth.py': '46048a6639688e01c8d3b89f23b98815fa91ce00',
-    'web/scripts/owner-session.test.cjs': '92978aaad746d76783eb5fa01cf09efd170d7768',
+    'web/scripts/owner-session.test.cjs': '41807096eb60b2258739bd998afb151657a3c109',
     'web/src/components/OwnerAccess.css': '711268ba1b8478611e939f7cfecfd822c012ff44',
     'web/src/components/OwnerAccess.tsx': '9b9d1892cd66e86ce7f0d64f67ab00223e750402',
-    'web/src/lib/ownerSession.ts': 'b8fa493eca881f332e8b5a55bf39942e2067e0a3',
+    'web/src/lib/ownerSession.ts': '68e70f110f350fc475c0416e285789998723a067',
     'docs/MACRO_RESULT_RECEIPT_MIGRATION.md': '131e4784bd6be96daf0c9dda4b318735840cdcba',
     'test_argus_macro_receipt_boundary.py': '4fa5e23ee6392489497483a65ca90e1786b92d1d',
 
@@ -193,7 +201,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_acquisition.py': '44b2f89a36024d7f7f514a790d1245464098d24e',
     'ops/imports/README.md': '0c3a8010eebfa90f6c20be3d46e0d59fd3039404',
     'web/src/components/today/SectorHeatmap.css': 'df03c8879cd667ad4e580a9b4044222ab4940e2e',
-    'web/src/components/today/SectorHeatmap.tsx': 'e2bfe0c05e4830ed89cd71805d98ba22f0518996',
+    'web/src/components/today/SectorHeatmap.tsx': '81c6aefc768f8593373c954026b0b07cfe908deb',
     'test_jp_sector_heatmap_api.py': '4b93b1bd5fa1eed37baff43912b3a86cbd9f00e9',
     'test_jp_sector_heatmap_runtime.py': '3bb33a56d1305e1f5daac3e804f62ddb93099de7',
     'test_jp_sector_heatmap.py': 'f8a0773084f02f1629f89a2d5b97284c3eb8e674',
@@ -210,10 +218,10 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_overview_policy.py': '15a4a5cea4eb079ca2589484bd94c4cf54c102ca',
     'test_jp_market_feature_delta.py': '5cf423e0f9514fa1a87841277adc4b50ea0ad035',
     'web/src/domain/watchlistProjection.ts': '36b5e0c3eba3a67ce9fec128f422ce3af89498cc',
-    'web/scripts/watchlist-retirement.test.cjs': '77874ff308076b1ab969369b437a23ad87b5e62d',
+    'web/scripts/watchlist-retirement.test.cjs': '6718c86f516c1162a62d49b008abdc93403c0dee',
     'web/scripts/positions-risk.test.cjs': '602f5d856f2e12f4088df04ced74de4ae35f2b32',
     'web/src/lib/tradeJournal.ts': '149dec98cbf3d17e9860e235c91c28248aa6c2d1',
-    'web/scripts/polling-singleton.test.mjs': 'd06ffc82f0267da3884629d80a0bc5be0ec20468',
+    'web/scripts/polling-singleton.test.mjs': 'f82386d4d1c9dff02968de0ee316e5e523bf5b26',
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
     'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '2671df4f78c2e1b7c7a2538e81d8df21926ba17d',
     'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '81eb94257d88974c18828cb6bc8e635108f41785',
@@ -282,11 +290,11 @@ REVIEWED_EXTENSION_BLOBS = {
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
     'test_prediction_ledger_workflow.py': '7e985330c0b4853aeef39e4635177ddc09f0f63f',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
-    'web/src/hooks/useAssets.ts': '6e0577a96275f2427e7edf88e7d3c6c6bacfa80b',
+    'web/src/hooks/useAssets.ts': '0a82da6958f58aaba4c3bd7659c2af2032b4e93f',
     'web/src/components/dialogue/OwnerOverview.tsx': '237fac885c233c84baf128924f0b4cc92aa7e334',
     'web/src/components/dialogue/OwnerOverview.css': 'e608b1f63bbbf8596454a9e0100cea6ee8a41a0f',
     'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
-    'web/src/lib/presentationIntent.ts': '77c0c79423a2291fc3e28a58e1b0397b11a83828',
+    'web/src/lib/presentationIntent.ts': '19e8431fe6b6063988a387584f53ea6b3c75726b',
     'web/src/components/today/ArgusEditorialSurface.tsx': '42e83e7fcea28b0dd89dc7ed885f0e24e3368355',
     'web/src/components/today/ArgusEditorialSurface.css': '51cb798f369f70ab4d3b20f99b7ae377fca9e542',
     'test_argus_presentation_intent.py': 'e79beae902a1382fae9e5ea3359e09301abf9733',
@@ -359,7 +367,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/assetDesk/AssetMarketContext.tsx': '4a4c82e59357536a41ee5487c9afe5667832798a',
     'web/src/components/dialogue/OwnerDialogue.css': '99f542e0fc1391a58a1cb60ac1c5bec249fe9a28',
     'web/src/components/dialogue/OwnerDialogue.tsx': '5e8f6f1e4f9ae850f804d55069dcdd3b412199e6',
-    'web/src/components/today/MarketBriefCard.tsx': 'a1aed3c7e8b38f66b0f148564623a8f12eb3aef2',
+    'web/src/components/today/MarketBriefCard.tsx': 'a0b08e47e088f672349d12afd09c36969628de5a',
     'web/src/components/today/MarketInternalsCard.tsx': '54dac07c628b97e697fcf39c77de08361ee1250d',
     'web/src/components/today/SharedMarketContext.tsx': '80fa6f564ecc7c812057075f618614510e6acb05',
     'web/src/lib/marketInternals.ts': 'cf96a5b15512e7f20ef9bcf211d6295307ccec9a',
@@ -405,7 +413,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/japan-sq-calendar.test.cjs': '41fc84761bab22b8218bb5c1347767521472a2c6',
     'web/scripts/macro-result-details.test.cjs': 'b2bcdb290db61a0ef8d8ffcd090a55e5020e10a1',
     'web/scripts/margin-dynamics.test.cjs': 'd969a73de0e7b669ecaed83da07f9481ab16cc8c',
-    'web/scripts/market-brief-response.test.cjs': 'a3924e3e01e84749518e3a0bfb373e6f892274fd',
+    'web/scripts/market-brief-response.test.cjs': 'a95e9445a92ec64478937ab95ea96dddfd69ce3e',
     'web/src/components/chart/JapanMarketComparisonChart.css': '5f1bc41ac381d67191cf3fa82ede9cc6f13c06ca',
     'web/src/components/chart/JapanMarketComparisonChart.tsx': '4fc1b15423dd7619ad97b15390ea3d14f295af9e',
     'web/src/components/chart/JapanMarketComparisonPanel.tsx': 'a210ce56e1826916e66313a0e098c359294b691c',
@@ -413,8 +421,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '421e18ed7bfcf3a3c6729c62a3c56b7d4d436ccc',
     'web/src/components/dashboard/MacroResultDetails.tsx': '1ae4f62354c917002f6b60b1b8e72de1a126a3f6',
     'web/src/components/today/MarginDynamicsCard.tsx': 'ad2e582df6452f1eb5a5505f1146ff2a87cbf771',
-    'web/src/hooks/useJapanMarketComparison.ts': 'e9783d672c34d2ae9fa82efc606e1c50fd49c6de',
-    'web/src/hooks/useJapanSqCalendar.ts': '24751f5205496b8263c9712ae71103a42b4ba8c8',
+    'web/src/hooks/useJapanMarketComparison.ts': '715681948954373c5e6f93aae2673502eec9eb25',
+    'web/src/hooks/useJapanSqCalendar.ts': '3bdc973f70015fbe1da32d17fd0dec897c60e09b',
     'web/src/lib/japanMarketComparison.ts': 'db624bbac584fc2344589940d4f87a7381c1494c',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',
     'web/src/lib/marketBrief.ts': 'b92a5777d9694905dd21b9e175b24bd323ed5e9f',
@@ -422,7 +430,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "test_ai_cost.py": "e2e1a3094c0fe315993d027592de6e1db9a5b784",
     'web/scripts/news-polling-recovery.test.mjs': 'a5675fb01973b14712491809f7eb30c5814851f0',
     "test_argus_prediction_read_latency.py": "731d0705813a323169ba286315811cac5b06e0f7",
-    "web/scripts/news-presentation.test.mjs": "aeecd7f09b16f0ad473916e6bad39ba9a8a5fc04",
+    "web/scripts/news-presentation.test.mjs": "10d0e203474e54fe196d48a811284ce272e62843",
     "web/src/domain/newsPresentation.ts": "88361ceaf9b7da66ff5b6344e118d4707a8d6dea",
     "test_argus_ai_execution_settings.py": "5f0596eb8d2444bd545351d10dff9959df5760eb",
     "argus_research_benchmark.py": "0afebef7261abeb95da017f4b5aa327da55874a1",
@@ -435,7 +443,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "web/scripts/news-history.test.mjs": "766b69d112dc01d32631025446007b506d7e55f6",
     "web/scripts/public-market-acceptance.mjs": "f3e54f6b82d50db054519637e63bd1e4dcb62f1c",
     "web/scripts/canonical-snapshot-selection.mjs": "97b7e601e60a0c8f1e06e249d714e7e12ad76c5b",
-    "web/scripts/index-chart-isolation.test.mjs": "470dcf9598714a89b9ebba9dd53cfc2f6315092f",
+    "web/scripts/index-chart-isolation.test.mjs": "70672a0958765b555da39f2df553672dd154933b",
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",
     "test_argus_v12_1_1.py": "fcb2a56c79822f5177ae776dfdaf07972da0a49e",
     "test_argus_v12_1_3.py": "ec334f206cc43a94f3e2dc8c7ea5015b341a0957",
@@ -472,12 +480,12 @@ REVIEWED_EXTENSION_BLOBS = {
     # Owner-authorized cost reduction: the active-event reader shares one
     # lifecycle and pauses while the page is not visible. These pins bind the
     # later product PR to the reviewed, read-only transport semantics.
-    "web/src/hooks/useEventsActive.ts": "fba000a3eb23ab625df6eb155c2be5874aa460a4",
-    "web/scripts/polling-singleton.test.mjs": "3833a92b51421fc67b08c14ce1b675f13a771b09",
+    "web/src/hooks/useEventsActive.ts": "f41889e9c9dedd003690b4eba2c2774c0c43cf81",
+    "web/scripts/polling-singleton.test.mjs": "f82386d4d1c9dff02968de0ee316e5e523bf5b26",
     # Owner-authorized cost reduction: the fail-closed visibility authority
     # has one visible-page lifecycle and does not poll while hidden.
-    "web/src/hooks/useVisibilityGuard.ts": "c849fc6e33d6c1e6ab8f258d5000fb852e398af4",
-    "web/scripts/polling-singleton.test.mjs": "d06ffc82f0267da3884629d80a0bc5be0ec20468",
+    "web/src/hooks/useVisibilityGuard.ts": "adabb8a4b58e04361a97c930ea82aee2f5c500e7",
+    "web/scripts/polling-singleton.test.mjs": "f82386d4d1c9dff02968de0ee316e5e523bf5b26",
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
@@ -661,6 +669,10 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/scripts/market-brief-recovery.test.cjs",
+    "web/src/domain/dataShortfalls.ts",
+    "web/scripts/app-resume-policy.test.mjs",
+    "web/scripts/app-resume-browser.test.mjs",
     "web/src/components/today/AssetImpactCards.tsx",
     "web/src/components/today/AssetImpactCards.css",
     "web/src/components/common/AssetReadingCard.css",
