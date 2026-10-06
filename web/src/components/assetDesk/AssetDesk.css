@@ -254,3 +254,47 @@
 .ad-outlook__line>span:first-child{color:var(--text-sub)}
 .ad-outlook__line strong{font-size:13px;color:var(--text-main);font-variant-numeric:tabular-nums}
 .ad-outlook__source{color:var(--text-sub);font-size:10px;line-height:1.4;overflow-wrap:anywhere}
+
+/* 展開後は短い行で読み、カード先頭の数字を再掲しない。 */
+.ad-expanded .ad-tabs button{min-height:44px;font-size:13px}
+.ad-expanded .ad-tab-section h4{font-size:13px;letter-spacing:0;margin:0 0 8px}
+.ad-expanded .ad-overview__facts{grid-template-columns:1fr;gap:0}
+.ad-expanded .ad-overview__facts>div{display:grid;grid-template-columns:112px minmax(0,1fr);gap:10px;padding:10px 0;border:none;border-bottom:1px solid var(--line);border-radius:0;background:none}
+.ad-expanded .ad-overview__facts dt{font-size:12px;letter-spacing:0}
+.ad-expanded .ad-overview__facts dd{margin:0;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.ad-expanded .ad-overview__warning{font-size:12px;line-height:1.5}
+.ad-target-details{display:grid;gap:16px}
+.ad-detail-facts{margin:0;display:grid;gap:6px}
+.ad-detail-facts>div{display:grid;grid-template-columns:100px minmax(0,1fr);gap:10px}
+.ad-detail-facts dt{font-size:12px;color:var(--text-faint)}
+.ad-detail-facts dd{margin:0;font-size:14px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.ad-detail-note,.ad-expanded .ad-chart-retired{font-size:12px;line-height:1.5;color:var(--text-faint);margin:8px 0;overflow-wrap:anywhere}
+.ad-expanded .ad-evidence-summary header{flex-wrap:wrap}
+.ad-expanded .ad-evidence-summary header>span{font-size:12px;letter-spacing:0}
+.ad-expanded .ad-evidence-summary header>time{font-size:11px}
+.ad-expanded .ad-evidence-summary p,.ad-expanded .ad-evidence-sources{grid-template-columns:105px minmax(0,1fr);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.ad-expanded .ad-evidence-sources>b{grid-row:1/span 10}
+.ad-expanded .ad-evidence-details>summary,.ad-expanded .ad-research-drawer>summary{display:flex;align-items:center;min-height:44px;font-size:13px;color:var(--text-sub)}
+.ad-expanded .ad-evidence-details>summary::before,.ad-expanded .ad-research-drawer>summary::before{content:'▸';margin-right:7px}
+.ad-expanded details[open].ad-evidence-details>summary::before,.ad-expanded details[open].ad-research-drawer>summary::before{content:'▾'}
+.ad-flow-facts{padding-left:18px;margin:8px 0;font-size:13px;line-height:1.7;color:var(--text-sub)}
+.ad-expanded .uac-next{font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.ad-expanded .ad-scenario-conditions p{grid-template-columns:minmax(0,1fr);gap:3px}
+.ad-expanded .ad-scenario-conditions p>b,.ad-expanded .ad-scenario-conditions p>small{font-size:13px}
+.ad-expanded .ad-scenario-conditions p>span{justify-self:start;font-size:12px}
+.ad-expanded .ad-scenario-conditions{gap:12px}
+@media(max-width:430px){.ad-expanded .ad-overview__facts>div{grid-template-columns:1fr;gap:3px}
+  .ad-expanded .ad-evidence-summary p,.ad-expanded .ad-evidence-sources{grid-template-columns:1fr;gap:2px}
+  .ad-expanded .ad-evidence-sources>b{grid-row:auto}}
+.ad-expanded .ad-market-context{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.ad-expanded .ad-market-context>label{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-faint)}
+.ad-expanded .ad-market-context select{min-height:44px;background:var(--surface);color:var(--text-main);border:1px solid var(--line);border-radius:7px;padding:4px 8px}
+.ad-expanded .ad-market-context__brief>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-size:13px;color:var(--text-sub)}
+.ad-expanded .ad-market-context__brief>summary::before{content:'▸';margin-right:7px}
+.ad-expanded .ad-market-context__brief[open]>summary::before{content:'▾'}
+.ad-expanded .ad-missing-details{font-size:12px;color:var(--text-sub);line-height:1.6}
+.ad-expanded .ad-missing-details>summary{min-height:44px;cursor:pointer;padding:10px 0}
+.ad-expanded .owner-overview{margin:12px 0;padding:12px;border-radius:10px}
+.ad-expanded .owner-overview>h3{margin:0 0 6px;font-size:16px}
+.ad-expanded .owner-overview p{font-size:13px;line-height:1.6}
+.ad-expanded .uac-next>button{min-height:44px;font-size:12px!important;padding:5px 8px!important}

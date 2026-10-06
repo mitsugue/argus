@@ -223,7 +223,11 @@ def test_fe_unified_stance_chip_everywhere():
     # Round 2: Asset DeskはSDA v2正本をdecision-first viewへ正規化して表示する。
     # 旧Primary Stanceは選択権を持たず、互換表示もSDA結果からのみ派生する。
     details = _read("components", "assetDesk", "AssetDecisionDetails.tsx")
-    assert "d.decisionFirst" in details and "view.currentActionJa" in details
+    summary = _read("components", "assetDesk", "AssetDecisionSummary.tsx")
+    # 最終判断は最初のカードに一度だけ表示し、詳細は同じ正本の根拠を読む。
+    assert "d.decisionFirst" in details and "view.whyJa" in details
+    assert "d.decisionFirst" in summary and "view.currentActionJa" in summary
+    assert "view.currentActionJa" not in details
     intel = _read("hooks", "useAssetIntel.ts")
     assert "evaluateSingleDecisionAuthority" in intel and "sdaBySymbol" in intel
     assert "resolvePrimaryStance" not in intel

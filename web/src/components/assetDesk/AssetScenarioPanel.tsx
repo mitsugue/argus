@@ -1,5 +1,6 @@
 import React from 'react';
 import type { DeskCardData } from './types';
+import { uniqueDetailText } from './detailReading';
 import { probabilityDisplay } from '../../domain/decisionView';
 
 // V12.2.12 — SCENARIOS(§7-8)。旧Todayの条件付き分岐(scenario engine・帯のみ)
@@ -7,6 +8,9 @@ import { probabilityDisplay } from '../../domain/decisionView';
 
 export const AssetScenarioPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
   const scn = d.scn;
+  const shown = [d.decisionFirst.whyJa, d.decisionFirst.nextJa, d.decisionFirst.whatChangesJa];
+  const invalidation = uniqueDetailText(scn?.invalidationJa ?? [], shown);
+  const nextChecks = uniqueDetailText(scn?.nextChecksJa ?? [], [...shown, ...invalidation]);
   return (
     <div data-scenario-role="decision-conditions">
       {scn && (
@@ -18,8 +22,8 @@ export const AssetScenarioPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
               <small>{cs.conditionsJa.slice(0, 2).join(' / ')}</small>
             </p>
           ))}
-          <p className="uac-next"><b>無効化</b><small>{scn.invalidationJa.slice(0, 2).join(' / ')}</small></p>
-          <p className="uac-next"><b>次の確認</b><small>{scn.nextChecksJa.slice(0, 2).join(' / ')}</small></p>
+          {invalidation.length > 0 && <p className="uac-next"><b>見方を変える条件</b><small>{invalidation.join(' / ')}</small></p>}
+          {nextChecks.length > 0 && <p className="uac-next"><b>追加で確認すること</b><small>{nextChecks.join(' / ')}</small></p>}
         </div>
       )}
       {!scn && d.strat.scenarios.length > 0 && (
