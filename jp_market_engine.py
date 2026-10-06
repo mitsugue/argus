@@ -773,6 +773,9 @@ def fact_note_ja(family: str, row: Mapping[str, Any]) -> Optional[str]:
             return None
         kind = ("最新の時価総額加重推計" if row.get("lineage") == "ARGUS_CURRENT_ESTIMATE" else
                 "旧方式のARGUS代理値" if row.get("propositionId") == "ARGUS-D04-PROXY-CONSTITUENT-EPS" else "指数ベース")
+        eps = _finite(row.get("eps")) if row.get("lineage") == "ARGUS_CURRENT_ESTIMATE" else None
+        if eps is not None and eps > 0:
+            return f"推計EPS {eps:,.2f}円・PER {value:.2f}倍（{kind}）"
         return f"日経平均のPER {value:.2f}倍（{kind}）"
     if family == "D06":
         level = _finite(row.get("level"))
