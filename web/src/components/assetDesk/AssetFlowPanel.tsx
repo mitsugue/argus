@@ -8,7 +8,8 @@ import { ExpandableReason } from '../common/CollapsibleSection';
 // 旧Watchlistの大口取引の集計行を統合。逆日歩は常に「未取得」正直表示(不変)。
 
 export const AssetFlowPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
-  const sdg = d.sdg;
+  const isUS = d.asset.market === 'US';
+  const sdg = isUS && d.sdg?.market !== 'US' ? undefined : d.sdg;
   const flow = d.strat.bigFlowRatio;
   const ev = sdg?.evidence ?? {};
   const balanceChange = ev.marginBalanceChange as { buyPct?: number | null; sellPct?: number | null } | null;
@@ -16,6 +17,7 @@ export const AssetFlowPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
     ? sdg.confidence >= 0.7 ? 'データの確かさ 高' : sdg.confidence >= 0.4 ? 'データの確かさ 中' : 'データの確かさ 低'
     : '';
   const detailRows = sdg ? [
+    ...(!isUS ? [
     ev.marginBuyingBalance != null ? `信用買い残 ${Number(ev.marginBuyingBalance).toLocaleString()}` : null,
     ev.marginSellingBalance != null ? `信用売り残 ${Number(ev.marginSellingBalance).toLocaleString()}` : null,
     sdg.ratios?.margin != null ? `信用倍率 ${sdg.ratios.margin.toFixed(2)}倍` : null,
@@ -23,6 +25,7 @@ export const AssetFlowPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
     !sdg.ratios && ev.lendingBorrowingRatio != null ? `倍率（旧保存値・参照元未確認） ${Number(ev.lendingBorrowingRatio).toFixed(2)}` : null,
     balanceChange?.buyPct != null || balanceChange?.sellPct != null
       ? `前週差 買${balanceChange?.buyPct == null ? '未取得' : `${balanceChange.buyPct > 0 ? '+' : ''}${balanceChange.buyPct.toFixed(1)}%`} / 売${balanceChange?.sellPct == null ? '未取得' : `${balanceChange.sellPct > 0 ? '+' : ''}${balanceChange.sellPct.toFixed(1)}%`}` : null,
+    ] : []),
     d.strat.volume != null && d.strat.volume > 0 ? `出来高 ${d.strat.volume.toLocaleString()}` : null,
     typeof ev.volumeTrend === 'string' ? ev.volumeTrend : null,
     typeof ev.closeLocation === 'number' ? `終値位置 ${(ev.closeLocation * 100).toFixed(0)}%` : null,
@@ -36,8 +39,8 @@ export const AssetFlowPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
           <p className="ad-detail-note">{sdg.directnessJa} · {confidenceJa}</p>
           <ul className="ad-flow-facts">{detailRows.map((row, i) => <li key={i}>{row}</li>)}</ul>
           <p className="ad-detail-note">
-            {sdg.sourceDates?.weeklyMargin && `信用残 ${outlookDay(sdg.sourceDates.weeklyMargin)}週`}
-            {sdg.sourceDates?.jsfDaily && ` · 日証金 ${outlookDay(sdg.sourceDates.jsfDaily)}`}
+            {!isUS && sdg.sourceDates?.weeklyMargin && `信用残 ${outlookDay(sdg.sourceDates.weeklyMargin)}週`}
+            {!isUS && sdg.sourceDates?.jsfDaily && ` · 日証金 ${outlookDay(sdg.sourceDates.jsfDaily)}`}
           </p>
           <p className="ad-detail-note">
             {d.asset.market === 'US'
