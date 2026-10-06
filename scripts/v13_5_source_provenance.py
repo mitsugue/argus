@@ -113,20 +113,20 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_watch_quote_decision_authority.py': '2835f4173027dd48495d17e17bdba077f56eb83a',
     # Visible-page polling policy (owner 2026-09-28): exact reviewed hook
     # contents; cadence constants live in web/src/lib/pollingPolicy.ts.
-    'web/src/hooks/useAIJudgment.ts': 'ce3be61f5ec52bd99ac2fcd7a0f32778e258f444',
-    'web/src/hooks/useActionLabels.ts': '0e8a9b9c6991611318a3292c54a647a5fa3d3222',
-    'web/src/hooks/useCryptoWatchlist.ts': '62bf31418ea3c2bff5826cf1ea80a372e57fb0a1',
-    'web/src/hooks/useDownsideIncidents.ts': 'e8f471fad43e493adf04a0cbff539006cec06bde',
-    'web/src/hooks/useEventRadar.ts': 'a334a02639bb212261b17909734f6b9154ccc80c',
-    'web/src/hooks/useFlowAttribution.ts': '8aea21dc0d06d5258eb206a7cee19eb3512e17d9',
-    'web/src/hooks/useFundNav.ts': '242d862a7cdd94c82ceff5d70a27dfbcd9e3f8c3',
+    'web/src/hooks/useAIJudgment.ts': 'caeddb01dfb89832a26e628fced7d7c49fea0396',
+    'web/src/hooks/useActionLabels.ts': '9db3b9c72d2357a84ea314eea385bcbe4873e62b',
+    'web/src/hooks/useCryptoWatchlist.ts': '666cf8f60ca9b482b2d714616acb2acd3e1e41dc',
+    'web/src/hooks/useDownsideIncidents.ts': '96b14d1816603db7e978abba6178599a7e0b8df5',
+    'web/src/hooks/useEventRadar.ts': '48857482a399f20fff704a2eaf4c0c24d9a2c769',
+    'web/src/hooks/useFlowAttribution.ts': 'b751448153d40813c83541525bc31d7ca400bada',
+    'web/src/hooks/useFundNav.ts': '58fb3629159e70b7d3d30bc5e963a146d318306c',
     'web/src/hooks/useMarketLedger.ts': 'bd0baadcca10044cd47a12008cd435ce24da9613',
-    'web/src/hooks/useMarketRegime.ts': '3521a1f7b7dd405aeaa319e4816ebb34d080bbf0',
+    'web/src/hooks/useMarketRegime.ts': '42a4f72842c87a381c189caed504a5b60394177a',
     'web/src/hooks/useProductionBackendIdentity.ts': '738c79e701c8da1e6b823a7d330003513bda9c7f',
-    'web/src/hooks/useRatesSnapshot.ts': 'df67961046005a91b27d34142d15de331e27c303',
-    'web/src/hooks/useSupplyDemand.ts': '617d78967ce335fbff5ac75d1e5f114f0350fb97',
-    'web/src/hooks/useUSWatchlist.ts': 'bfaf23cc4ac70dea0ac8713c7f4b7d68e60d1059',
-    'web/src/lib/pollingPolicy.ts': '8393a87ecbaf2c0685c217014cec531bda49074d',
+    'web/src/hooks/useRatesSnapshot.ts': '1a71c315a00cbbc0cf755517e2fb183a095210a5',
+    'web/src/hooks/useSupplyDemand.ts': '66e6530aa20d338109a091b7ee72ea407f588747',
+    'web/src/hooks/useUSWatchlist.ts': '197b3f2a40a8779316c6e3d762fb28fca831f94b',
+    'web/src/lib/pollingPolicy.ts': 'b675f07a1387d59dd41ce3e8be7bb74c15ce46e4',
     'docs/RECOVERY_MATERIALIZATION.md': 'af222d7a64b801dce147daa9a3b6ddc75def0572',
     'test_argus_recovery_materialization.py': '87fc8de5a051024375af5fcde0b50867aaf2dddb',
     'test_argus_recovery_measurement_storage.py': 'ed5e5b9a8ab0e4bc42c396b99e5bd239b58965f2',
@@ -193,7 +193,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_acquisition.py': '44b2f89a36024d7f7f514a790d1245464098d24e',
     'ops/imports/README.md': '0c3a8010eebfa90f6c20be3d46e0d59fd3039404',
     'web/src/components/today/SectorHeatmap.css': 'df03c8879cd667ad4e580a9b4044222ab4940e2e',
-    'web/src/components/today/SectorHeatmap.tsx': '836d5902b3b5208778c6896bd182c4b5f828fbea',
+    'web/src/components/today/SectorHeatmap.tsx': '81c6aefc768f8593373c954026b0b07cfe908deb',
     'test_jp_sector_heatmap_api.py': '4b93b1bd5fa1eed37baff43912b3a86cbd9f00e9',
     'test_jp_sector_heatmap_runtime.py': '3bb33a56d1305e1f5daac3e804f62ddb93099de7',
     'test_jp_sector_heatmap.py': 'f8a0773084f02f1629f89a2d5b97284c3eb8e674',
@@ -413,8 +413,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '421e18ed7bfcf3a3c6729c62a3c56b7d4d436ccc',
     'web/src/components/dashboard/MacroResultDetails.tsx': '1ae4f62354c917002f6b60b1b8e72de1a126a3f6',
     'web/src/components/today/MarginDynamicsCard.tsx': 'ad2e582df6452f1eb5a5505f1146ff2a87cbf771',
-    'web/src/hooks/useJapanMarketComparison.ts': '066eca8e4e3671dfce7ab8bb4014dad07aee8435',
-    'web/src/hooks/useJapanSqCalendar.ts': '6b9c91dad02bc5e76bef07272252f422de81be6f',
+    'web/src/hooks/useJapanMarketComparison.ts': '715681948954373c5e6f93aae2673502eec9eb25',
+    'web/src/hooks/useJapanSqCalendar.ts': '3bdc973f70015fbe1da32d17fd0dec897c60e09b',
     'web/src/lib/japanMarketComparison.ts': 'db624bbac584fc2344589940d4f87a7381c1494c',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',
     'web/src/lib/marketBrief.ts': 'b92a5777d9694905dd21b9e175b24bd323ed5e9f',
@@ -472,11 +472,11 @@ REVIEWED_EXTENSION_BLOBS = {
     # Owner-authorized cost reduction: the active-event reader shares one
     # lifecycle and pauses while the page is not visible. These pins bind the
     # later product PR to the reviewed, read-only transport semantics.
-    "web/src/hooks/useEventsActive.ts": "77b1267e12da414ad2ce23d091ddb22dbf072612",
+    "web/src/hooks/useEventsActive.ts": "f41889e9c9dedd003690b4eba2c2774c0c43cf81",
     "web/scripts/polling-singleton.test.mjs": "f82386d4d1c9dff02968de0ee316e5e523bf5b26",
     # Owner-authorized cost reduction: the fail-closed visibility authority
     # has one visible-page lifecycle and does not poll while hidden.
-    "web/src/hooks/useVisibilityGuard.ts": "e727b747b0882274df05f98c095f7da27c9c3daf",
+    "web/src/hooks/useVisibilityGuard.ts": "adabb8a4b58e04361a97c930ea82aee2f5c500e7",
     "web/scripts/polling-singleton.test.mjs": "f82386d4d1c9dff02968de0ee316e5e523bf5b26",
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { partialFeedReasonCodes } from '../domain/dataShortfalls';
 import { useAIJudgment } from './useAIJudgment';
 import { useActionLabels } from './useActionLabels';
 import { useCryptoWatchlist } from './useCryptoWatchlist';
@@ -125,6 +126,7 @@ export interface AssetIntel {
    * only — never a claim that the owner failed to supply something.
    */
   partialReasonCodes: string[];
+  dataQualityDetailLinesJa: string[];
   /** v13.5.60: informational notes that are NOT shortfalls (closed-session previous values). */
   dataQualityNotes: string[];
   /**
@@ -604,7 +606,8 @@ export function useAssetIntel(opts: {
     supplyPreviousValue ? 'supply_previous_value_closed_session' : null,
   ].filter((code): code is string => code !== null);
   const partialReasonCodes = [
-    phase === 'partial' ? 'watchlist_polling_partial' : null,
+    ...partialFeedReasonCodes({ actionLabels: al.phase, marketRegime: regime.phase, eventRadar: ev.phase,
+      jpQuotes: peJp.phase, usQuotes: peUs.phase, hasJpAssets: jpSyms.length > 0, hasUsAssets: usSyms.length > 0 }),
     importantEventsUnknown ? 'important_events_unread' : null,
     downsideUnknown ? 'downside_unread' : null,
     flowState.authority !== 'fresh' && !flowPreviousValue && !flowEmptyFresh ? 'flow_authority_stale' : null,
@@ -622,6 +625,20 @@ export function useAssetIntel(opts: {
     .filter((v): v is number => typeof v === 'number');
   const cappedConf = capCandidates.length ? Math.min(...capCandidates) : baseConf;
   const visLimited = !!guard && guard.visibilityLevel !== 'full';
+  const missingQuotes = assets.filter(asset => (asset.market === 'JP' || asset.market === 'US')
+    && !priceBySymbol.has(asset.symbol.toUpperCase()));
+  const timeJa = (value: string | null | undefined) => {
+    const at = value ? Date.parse(value) : NaN;
+    return Number.isFinite(at) ? new Date(at).toLocaleString('ja-JP', {timeZone:'Asia/Tokyo'}) : '未確認';
+  };
+  const dataQualityDetailLinesJa = [
+    ...missingQuotes.map(asset => {
+      const rows = asset.market === 'JP' ? peJp.data?.stocks : peUs.data?.stocks;
+      const quote = rows?.find(row => row.symbol.toUpperCase() === asset.symbol.toUpperCase())?.quoteTruth;
+      return `${asset.symbol}：判断に使える価格が未確認（価格時刻 ${timeJa(quote?.sourceTimestamp)}・受信 ${timeJa(quote?.receivedAt)}）`;
+    }),
+    ...(visLimited ? guard.warnings.map(warning => warning.messageJa) : []),
+  ];
 
   // Watchlist alerts do not depend on an archived quantity or cost basis.
   const positionRisk = useMemo(() => {
@@ -871,7 +888,7 @@ export function useAssetIntel(opts: {
     cardGroups, cardBySym, ownerCritical,
     apItems, sessionBrief, scenarioSets,
     positionPlans,
-    phase, judgment, overlay, isPartial, partialReasonCodes, dataQualityNotes, visLimited, cappedConf,
+    phase, judgment, overlay, isPartial, partialReasonCodes, dataQualityDetailLinesJa, dataQualityNotes, visLimited, cappedConf,
     importantEventsUnknown,
     positionRisk,
     aiMeta, decisionBySym, sdaBySymbol, sdaLedgerBindingBySymbol,
