@@ -37,6 +37,8 @@ const evidence=render(AssetEvidenceSummary);
 assert.ok(!evidence.includes('EVIDENCE STATE')&&evidence.includes('根拠の確認状況'));
 assert.equal((evidence.match(/週次残高は未取得/g)||[]).length,1);
 assert.ok(!evidence.includes('次の公表を確認します'),'overview already contains this check');
+const missing=render(AssetEvidenceSummary,{strat:{...d.strat,dataLimitations:['一つ目','二つ目','三つ目','四つ目','五つ目']}});
+assert.ok(missing.includes('四つ目')&&missing.includes('五つ目')&&missing.includes('ほかの不足項目'));
 const scenarios=render(AssetScenarioPanel,{scn:{cases:[{label:'up',titleJa:'上向く場合',bandJa:'参考値',conditionsJa:['利益が増える']}],invalidationJa:['次の公表を確認します。','別の条件'],nextChecksJa:['別の条件','追加の確認']}});
 assert.ok(scenarios.includes('利益が増える')&&scenarios.includes('追加の確認'));
 assert.equal((scenarios.match(/別の条件/g)||[]).length,1);assert.ok(!scenarios.includes('次の公表を確認します'));

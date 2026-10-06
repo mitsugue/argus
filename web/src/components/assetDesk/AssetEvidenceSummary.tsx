@@ -29,6 +29,7 @@ function evidenceStateOf(d: DeskCardData): EvidenceState {
 }
 
 export const AssetEvidenceSummary: React.FC<{ d: DeskCardData }> = ({ d }) => {
+  const missing = uniqueDetailText([...(d.incident?.missingData ?? []), ...d.strat.dataLimitations]);
   const causeRefresh = d.incident?.moverCause?.freshness?.lastEvidenceRefreshAt;
   const causeSource = d.incident?.moverCause?.topCandidates
     ?.find((candidate) => candidate.source)?.source ?? null;
@@ -41,10 +42,7 @@ export const AssetEvidenceSummary: React.FC<{ d: DeskCardData }> = ({ d }) => {
     asOf: confirmedCause ? causeRefresh ?? null : d.decisionFirst.asOf,
     // 価格・出来高・需給の数値は、それぞれの専用欄に一度だけ表示する。
     confirmed: [],
-    missing: [
-      ...(d.incident?.missingData ?? []),
-      ...d.strat.dataLimitations,
-    ].slice(0, 3),
+    missing,
     nextInvestigation: d.decisionFirst.nextCheck,
     hypothesis: d.incident?.moverCause?.bestLeadJa ?? null,
     contradicting: state === 'CONFLICT'
@@ -88,9 +86,13 @@ export const AssetEvidenceSummary: React.FC<{ d: DeskCardData }> = ({ d }) => {
       {truth.confirmed.length > 0 && (
         <p><b>確認した数値</b><span>{truth.confirmed.join(' / ')}</span></p>
       )}
-      {truth.missing.length > 0 && (
-        <p><b>不足している情報</b><span>{uniqueDetailText(truth.missing).join(' / ')}</span></p>
+      {missing.length > 0 && (
+        <p><b>不足している情報</b><span>{missing.slice(0, 3).join(' / ')}</span></p>
       )}
+      {missing.length > 3 && <details className="ad-missing-details">
+        <summary>ほかの不足項目（{missing.length - 3}件）</summary>
+        <ul>{missing.slice(3).map(item => <li key={item}>{item}</li>)}</ul>
+      </details>}
       {view.contradicting.length > 0 && (
         <p><b>食い違う情報</b><span>{view.contradicting.join(' / ')}</span></p>
       )}

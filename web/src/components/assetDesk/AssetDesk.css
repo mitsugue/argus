@@ -292,3 +292,5 @@
 .ad-expanded .ad-market-context__brief>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-size:13px;color:var(--text-sub)}
 .ad-expanded .ad-market-context__brief>summary::before{content:'▸';margin-right:7px}
 .ad-expanded .ad-market-context__brief[open]>summary::before{content:'▾'}
+.ad-expanded .ad-missing-details{font-size:12px;color:var(--text-sub);line-height:1.6}
+.ad-expanded .ad-missing-details>summary{min-height:44px;cursor:pointer;padding:10px 0}
