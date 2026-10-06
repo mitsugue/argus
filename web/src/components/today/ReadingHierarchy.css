@@ -111,3 +111,10 @@
 .at-primary-hero [data-argus-contract="warning-conditions-v2"] .at-seven-distance {font-size:15px;color:var(--amber)}
 
 .at-primary-hero [data-argus-contract="warning-conditions-v2"] i[data-signal-state="ACTIVE"] {border-color:color-mix(in srgb,var(--amber) 50%,var(--line));background:color-mix(in srgb,var(--amber) 6%,var(--surface))}
+
+/* The current summary stays readable even while its optional presentation plan is unavailable. */
+.at-view-hero .at-brief--current .at-brief__rows {display:grid;gap:12px;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+.at-view-hero .at-brief--current .at-brief__rows > div {padding:0;border:0;min-width:0}
+.at-view-hero .at-brief--current .at-brief__rows b {font-size:12px;color:var(--cyan);margin-bottom:4px}
+.at-view-hero .at-brief--current .at-brief__rows span {font-size:14px;line-height:1.7}
+.at-view-hero .at-brief--current > details {border:1px solid var(--line);border-radius:14px;padding:8px 14px}

@@ -41,3 +41,34 @@ for (const errorCode of [null, 'credit_balance_exhausted', 'organization_spend_l
 for (const errorCode of [{}, [], 'unreviewed-provider-text']) {
  assert.equal(valid({...doc, aiDiagnostics:{errorCode}}), false);
 }
+
+// A valid AI summary must keep the current layout when the separate plan is missing or invalid.
+const React=require('react'), {renderToStaticMarkup}=require('react-dom/server');
+let shown=doc;
+const cardContext={exports:{},Date,require(name){
+ if(name.endsWith('.css')) return {};
+ if(name.includes('/useMarketBrief')) return {useMarketBrief:()=>({brief:shown,error:false,loading:false,retry:()=>{}})};
+ if(name.includes('/presentationIntent')) return {editorialEdition:()=>null};
+ if(name.includes('/TodayDecisionStrip')) return {TodayDecisionStrip:()=>React.createElement('section',{'data-four-cards':'visible'})};
+ if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>null};
+ if(name.includes('/marketWording')) return {marketChanges:v=>v,marketWording:v=>v};
+ if(name.includes('/NumericalResearchDetails')) return {NumericalResearchDetails:()=>null};
+ if(name.includes('/FiscalEnvironmentDetails')) return {FiscalEnvironmentDetails:()=>null};
+ if(name.includes('/MarketAnalysisHistory')) return {MarketAnalysisHistory:()=>null};
+ if(name.includes('/TriangleStepLoader')) return {TriangleStepLoader:()=>null};
+ if(name.includes('/ArgusEditorialSurface')) return {ArgusEditorialSurface:()=>null};
+ return require(name);
+}};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/today/MarketBriefCard.tsx','utf8'),
+ {compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,cardContext);
+for(const patch of [{},{presentationStatus:'AWAITING_AI',presentationPlan:null},{presentationStatus:'GENERATED',presentationPlan:{schemaVersion:'invalid'}}]){
+ shown={...doc,...patch};assert.equal(valid(shown),true);
+ const html=renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:true}));
+ assert.ok(html.includes('data-four-cards="visible"')&&html.includes('data-layout="current-four-cards"'));
+ assert.ok(!html.includes('at-unified-brief__view'),'current headline comes from the strip');
+ assert.equal((html.split('<details>')[0].match(/data-brief-section=/g)||[]).length,3);
+ assert.ok(html.includes('自分への影響の根拠'),'all original sections remain in the evidence drawer');
+}
+const referenceHtml=renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:false}));
+assert.ok(!referenceHtml.includes('data-four-cards="visible"'),'reference/archived reading is preserved');
+console.log('構成情報が欠けても有効な統合AIを最新４カードで表示 PASS');

@@ -116,3 +116,11 @@ assert.equal(d.friendlyEventText('US CPI (Consumer Price Index) 10/14 21:30', at
 assert.equal(s.rows.find(r=>r.id==='sq').lean,'neutral');
 assert.ok(s.rows.find(r=>r.id==='sq').meaning.includes('上下へ大きく振れることがあります'));
 assert.ok(s.rows.find(r=>r.id==='sq').soWhat.includes('寄付後も続くかを確認'));
+
+const unavailableStrip=renderToStaticMarkup(React.createElement(stripContext.exports.TodayDecisionStrip,
+ {brief:{chips:{nextEvent:''}}}));
+assert.equal((unavailableStrip.split('today-strip__tiles')[1].split('</div>')[0].match(/<button /g)||[]).length,4,
+ 'missing inputs keep all four positions visible');
+assert.ok(unavailableStrip.includes('確認中'));
+assert.ok(!unavailableStrip.includes('過去の同じ段階で'),'missing data never gets a calculated alert');
+console.log('欠測中も４カードを維持し数字を捏造しない PASS');

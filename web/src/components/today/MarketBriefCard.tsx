@@ -8,7 +8,9 @@ import './ArgusToday.css';
 import { editorialEdition } from '../../lib/presentationIntent';
 import type { MarketBrief } from '../../lib/marketBrief';
 import { ArgusEditorialSurface } from './ArgusEditorialSurface';
-import type { CriticalTodayNews } from './TodayDecisionStrip';
+import { TodayDecisionStrip, type CriticalTodayNews } from './TodayDecisionStrip';
+import { MarketPositionCard } from './MarketPositionCard';
+import { marketChanges, marketWording } from '../../lib/marketWording';
 
 // v13.5.36 MARKET SITUATION BRIEF (owner 2026-08-26): NOW/WHY/NEXT — the
 // deterministic composer selects verified facts; AI only compresses them
@@ -58,14 +60,15 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
     const labels = { view: '今の見立て', reasons: '重要な理由', changes: '前回からの変化',
       impact: '自分への影響', next: '次に確認すること', invalidation: '見方を変える条件' } as const;
     const kinds = { FACT: '確認した事実', INFERENCE: '見立て・推論', UNKNOWN: '未確認' };
-    return <div className="at-brief at-unified-brief" aria-label="ARGUSの今日の見立て" data-argus-contract="unified-brief-v1">
+    return <div className={`at-brief at-unified-brief${editorial ? ' at-brief--current' : ''}`} data-layout={editorial ? 'current-four-cards' : 'reference'} aria-label="ARGUSの今日の見立て" data-argus-contract="unified-brief-v1">
       <small>ARGUSの今日の見立て · {brief.aiDiagnostics?.completedAt
         ? new Date(brief.aiDiagnostics.completedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : '生成時刻を確認中'}</small>
       {updateState}
-      <p className="at-unified-brief__view">{unified.sections.view.textJa}</p>
-      <div className="at-brief__rows">{(Object.keys(labels) as Array<keyof typeof labels>).filter(key => key !== 'view').map(key =>
-        <div key={key} data-brief-section={key}><b>{labels[key]}</b><span>{unified.sections[key].textJa}
-          <small className="at-unified-brief__kind">{kinds[unified.sections[key].kind]}</small></span></div>)}</div>
+      {editorial ? <><TodayDecisionStrip brief={brief} criticalNews={criticalNews} /><MarketPositionCard brief={brief} /></>
+        : <p className="at-unified-brief__view">{unified.sections.view.textJa}</p>}
+      <div className="at-brief__rows">{(Object.keys(labels) as Array<keyof typeof labels>).filter(key => editorial ? ['reasons', 'changes', 'invalidation'].includes(key) : key !== 'view').map(key =>
+        <div key={key} data-brief-section={key}><b>{labels[key]}</b><span>{editorial ? (key === 'changes' ? marketChanges(unified.sections[key].textJa) : marketWording(unified.sections[key].textJa)) : unified.sections[key].textJa}
+          {!editorial && <small className="at-unified-brief__kind">{kinds[unified.sections[key].kind]}</small>}</span></div>)}</div>
       <details><summary>根拠と説明の状態を見る</summary>
         <p>要求モデル {brief.aiDiagnostics?.requestedModel ?? '未確認'} · 応答モデル {brief.aiDiagnostics?.returnedModel ?? '未確認'}</p>
         <p>{brief.analysisHistory?.status === 'LOCAL_DURABLE'
@@ -73,6 +76,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
           : 'この見立ての永続保存は未完了です。画面に表示できても保存成功とは限りません。'}</p>
         {(Object.keys(labels) as Array<keyof typeof labels>).map(key => <div key={key}>
           <b>{labels[key]}の根拠</b>
+          {editorial && <p>{unified.sections[key].textJa}<small className="at-unified-brief__kind">{kinds[unified.sections[key].kind]}</small></p>}
           {unified.sections[key].evidenceIds.length === 0 ? <p>根拠未取得</p> : unified.sections[key].evidenceIds.map(id => {
             const current = Array.isArray(brief.unifiedContext?.facts) ? brief.unifiedContext.facts : [];
             const prior = Array.isArray(brief.unifiedContext?.previousFacts) ? brief.unifiedContext.previousFacts : [];
@@ -87,10 +91,9 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
             </div>;
           })}
         </div>)}
+        {editorial && <><NumericalResearchDetails brief={brief} /><FiscalEnvironmentDetails brief={brief} /><MarketAnalysisHistory key="saved-history" /></>}
       </details>
-      <NumericalResearchDetails brief={brief} />
-      <FiscalEnvironmentDetails brief={brief} />
-      <MarketAnalysisHistory key="saved-history" />
+      {!editorial && <><NumericalResearchDetails brief={brief} /><FiscalEnvironmentDetails brief={brief} /><MarketAnalysisHistory key="saved-history" /></>}
     </div>;
   }
   const now = brief.aiText?.nowJa ?? brief.now;

@@ -139,7 +139,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'be5c8a241cd11c25b0bd47e42985d2e0bd737e63',
+    'web/scripts/owner-today-https.mjs': '3bb2c943b68e36ae8430e1d27dee816389d23565',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -661,6 +661,9 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/components/today/AssetImpactCards.tsx",
+    "web/src/components/today/AssetImpactCards.css",
+    "web/src/components/common/AssetReadingCard.css",
     "test_tachibana_readonly_return.py",
     "scripts/tachibana_price_measure.py",
     "docs/operations/tachibana-readonly-return.md",
