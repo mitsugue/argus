@@ -11,13 +11,16 @@ export function comparisonReply(value: unknown, horizon: number): ComparisonRepl
   const body = value as Record<string, unknown> | null;
   if (!body || body.actionAuthority !== false || body.automaticAiCalls !== 0) throw new Error('invalid_comparison_response');
   const unavailable = body.status === 'unavailable' && body.comparison === null;
-  if (!unavailable && (body.status !== 'available' || !validJapanMarketComparison(body.comparison, horizon)))
-    throw new Error('invalid_comparison_response');
-  return { document: unavailable ? null : body.comparison as JapanMarketComparison,
-    reason: unavailable ? typeof body.reason === 'string' ? body.reason : 'unavailable' : null,
+  if (!unavailable && body.status !== 'available') throw new Error('invalid_comparison_response');
+  const document = !unavailable && validJapanMarketComparison(body.comparison, horizon) ? body.comparison : null;
+  const levelMap = validLevelMap(body.levelMap) && validResearchChart(body.levelMap.chart) ? body.levelMap : null;
+  if (!unavailable && !document && !levelMap) throw new Error('invalid_comparison_response');
+  return { document,
+    reason: unavailable ? typeof body.reason === 'string' ? body.reason : 'unavailable'
+      : document ? null : 'invalid_comparison_response',
     lastSuccessfulAcquisitionAt: typeof body.lastSuccessfulAcquisitionAt === 'string'
       && Number.isFinite(Date.parse(body.lastSuccessfulAcquisitionAt)) ? body.lastSuccessfulAcquisitionAt : null,
-    levelMap: validLevelMap(body.levelMap) && validResearchChart(body.levelMap.chart) ? body.levelMap : null };
+    levelMap };
 }
 
 export function retainComparisonReply(fresh: ComparisonReply, cached?: ComparisonReply): ComparisonReply {

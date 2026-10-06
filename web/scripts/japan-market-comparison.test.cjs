@@ -194,6 +194,10 @@ const fresh = comparisonReply({status:'unavailable',comparison:null,reason:'inde
  automaticAiCalls:0,actionAuthority:false,levelMap},5);
 assert.equal(fresh.document,null);
 assert.equal(fresh.levelMap.chart.points.at(-1).close,70000);
+const invalidAnalog = comparisonReply({status:'available',comparison:{...document,actual:[]},
+ automaticAiCalls:0,actionAuthority:false,levelMap},5);
+assert.equal(invalidAnalog.document,null,'不正な予測を使わない');
+assert.equal(invalidAnalog.levelMap,fresh.levelMap,'予測の形式不備で正常な終値を捨てない');
 const retained = retainComparisonReply(fresh,{document,reason:null,lastSuccessfulAcquisitionAt:null,
  levelMap:{...levelMap,chart:{...levelMap.chart,points:[]}}});
 assert.equal(retained.document,document);
