@@ -144,3 +144,20 @@ def test_zero_acceptance_never_claims_price_push_success(monkeypatch):
     monkeypatch.setattr(m, '_push_quotes', lambda rows: Response())
     monkeypatch.setattr(m, 'record_push_result', lambda *a: (_ for _ in ()).throw(AssertionError('not received')))
     assert m.shared_quote_cycle(object()) == 0
+
+
+def test_invalid_snapshot_row_never_discards_other_registered_prices(monkeypatch):
+    m = load(monkeypatch)
+    class Frame:
+        def iterrows(self):
+            return enumerate([
+                {'code': 'US.AAPL', 'last_price': 120, 'prev_close_price': 119, 'volume': 1000},
+                {'code': 'US.TEST', 'last_price': float('nan'), 'volume': float('nan')},
+                {'code': 'US.MU', 'last_price': 110, 'prev_close_price': float('nan'), 'volume': float('nan')},
+                {'code': 'US.BAD', 'last_price': float('inf'), 'volume': 1000}])
+    rows = m.rows_from_snapshot(Frame())
+    assert [r['symbol'] for r in rows] == ['AAPL', 'MU']
+    assert rows[0]['volume'] == 1000 and rows[0]['changeAbs'] == 1
+    assert rows[1]['volume'] == 0 and rows[1]['changePct'] == 0
+    import json
+    json.dumps(rows, allow_nan=False)

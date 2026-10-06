@@ -17,6 +17,7 @@ Logs: journalctl -u argus-bridge -f
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
 import shutil
@@ -384,8 +385,15 @@ def rows_from_snapshot(df):
             prev = float(r.get("prev_close_price") or 0)
         except (TypeError, ValueError):
             continue
-        if not sym or last <= 0:
+        if not sym or not math.isfinite(last) or last <= 0:
             continue
+        if not math.isfinite(prev) or prev <= 0:
+            prev = 0
+        try:
+            raw_volume = float(r.get("volume") or 0)
+            volume = int(raw_volume) if math.isfinite(raw_volume) and raw_volume >= 0 else 0
+        except (TypeError, ValueError, OverflowError):
+            volume = 0
         exchange_ts = exchange_timestamp(first_present(
             r.get("update_timestamp"), r.get("updateTimestamp"),
             r.get("update_time"), r.get("updateTime")), market.upper())
@@ -398,7 +406,7 @@ def rows_from_snapshot(df):
             "price": last,
             "changeAbs": round(last - prev, 4) if prev else 0.0,
             "changePct": round((last - prev) / prev * 100, 4) if prev else 0.0,
-            "volume": int(r.get("volume") or 0),
+            "volume": volume,
             "exchangeTs": exchange_ts,
             # Snapshot success does not itself identify the contracted quote
             # right. Runtime timestamp distribution proves freshness separately.
