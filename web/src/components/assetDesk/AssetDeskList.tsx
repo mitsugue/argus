@@ -164,7 +164,7 @@ export const AssetDeskList: React.FC<Props> = ({
   // ── カードデータ束の組み立て(表示専用・判断は生成しない) ──
   const rows = useMemo(() => {
     const aiBySym = new Map((intel.aiJ.data?.labels ?? []).map((l) => [l.symbol.toUpperCase(), l]));
-    const sdBySym = new Map(intel.sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
+    const sdBySym = new Map(intel.sdSignals.map((s) => [`${s.market.toUpperCase()}:${s.symbol.toUpperCase()}`, s]));
     const apBySym = new Map(intel.apItems.map((it) => [it.symbol, it]));
     const scBySym = new Map(intel.scenarioSets.map((s) => [s.symbol, s]));
     const plBySym = new Map(intel.positionPlans.map((p) => [p.symbol, p]));
@@ -233,7 +233,7 @@ export const AssetDeskList: React.FC<Props> = ({
         card, decision, strat, quote,
         liveName: quote?.name ?? null,
         incident,
-        sdg: sdBySym.get(sym),
+        sdg: sdBySym.get(`${a.market}:${sym}`),
         apx,
         scn: scBySym.get(sym),
         ppl: plBySym.get(sym),

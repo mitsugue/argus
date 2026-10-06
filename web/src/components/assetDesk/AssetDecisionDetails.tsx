@@ -1,12 +1,11 @@
 import React from 'react';
 import type { DeskCardData } from './types';
 import { useAnalystTargets, type AnalystTarget } from '../../hooks/useAnalystTargets';
+import { outlookMoney } from '../../domain/assetOutlook';
 
 const ACTION_TONE = { BUY: 'var(--value-positive)', HOLD: 'var(--accent)',
   WAIT: 'var(--amber, #fbbf24)', REDUCE: 'var(--event-high)', EXIT: 'var(--value-negative)' };
 
-const money = (v: number, currency: string | null) => currency === 'USD'
-  ? `$${v.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : `${Math.round(v).toLocaleString('ja-JP')}円`;
 const fetchedDay = (iso: string) => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' });
@@ -14,10 +13,10 @@ const fetchedDay = (iso: string) => {
 
 /** Consensus of analysts' target prices: the mean and the spread, with a small source note (2026-10-04). */
 function TargetRow({ target }: { target: AnalystTarget }) {
-  const c = target.currency;
-  return <div data-analyst-target={target.symbol}><dt>アナリスト目標株価</dt><dd>
-    平均 {money(target.mean, c)}{target.gapPct != null && `（${target.gapPct > 0 ? '+' : ''}${target.gapPct.toFixed(1)}%）`}
-    {target.low != null && target.high != null && ` ・ 予想の幅 ${money(target.low, c)}〜${money(target.high, c)}`}
+  return <div data-analyst-target={target.symbol}><dt>目標株価の内訳</dt><dd>
+    {target.low != null && target.high != null && target.low > 0 && target.high >= target.low
+      ? `予想の幅 ${outlookMoney(target.low, target.market)}〜${outlookMoney(target.high, target.market)}` : '予想の幅は未取得'}
+    {target.median != null && target.median > 0 && ` · 中央値 ${outlookMoney(target.median, target.market)}`}
     <small className="ad-overview__source">{target.source} · {fetchedDay(target.fetchedAt)}取得 · {target.analysts}人</small>
   </dd></div>;
 }
