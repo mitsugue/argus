@@ -39750,7 +39750,12 @@ def _nikkei_chart_rows():
     known = jp_market_engine._instant(cached.get("acquiredAt"))
     held = jp_market_engine._instant(history.get("currentSourceAcquiredAt"))
     if current and (not rows or (known is not None and (held is None or known >= held))):
-        return argus_index_history.merge_bars(rows, current)
+        # The read cache also admits legacy close-only rows. Do not force a
+        # persistent OHLC envelope on that read path or invent missing fields.
+        # Each received row replaces the whole prior row of the same date.
+        by_day = {row["date"]: row for row in rows}
+        by_day.update({row["date"]: row for row in current})
+        return [by_day[day] for day in sorted(by_day)]
     return rows or current
 
 
