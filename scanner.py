@@ -39186,6 +39186,23 @@ def _jp_dividend_persist():
         maximum_bytes=2 * 1024 * 1024, file_mode=0o600)
 
 
+def _jp_asset_earnings_registered_codes():
+    """Read only confirmed JP membership; never persist account metadata here."""
+    try:
+        latest = _layer2b_read_latest()
+        members = (latest.get("members") if isinstance(latest, dict) else []) or []
+        codes = set()
+        for member in members:
+            if not isinstance(member, dict) or member.get("market") != "JP":
+                continue
+            match = re.fullmatch(r"([0-9A-Z]{4})(?:\.T)?", str(member.get("symbol") or "").upper())
+            if match:
+                codes.add(match.group(1))
+        return codes
+    except Exception:
+        return set()  # Keep the existing index acquisition on a membership-read failure.
+
+
 def _jp_dividend_warm(member_codes):
     """A bounded batch of per-company /fins/summary reads; newest disclosure kept."""
     current_members = set(member_codes)
@@ -39196,6 +39213,11 @@ def _jp_dividend_warm(member_codes):
         from argus_earnings_history import acquisition_members
         member_codes = acquisition_members(current_members,
             _nikkei225_constituent_changes(), through=datetime.now(TZ_JST).date().isoformat())
+    registered = _jp_asset_earnings_registered_codes() if _cost_policy_durable_enabled() else set()
+    member_codes = sorted(set(member_codes) | registered)
+    if len(member_codes) > 400:
+        _JP_EARNINGS_HISTORY_STATUS.update(status="PERSIST_FAILED", errorClass="financial_member_scope_required")
+        return
     store = _JP_DIVIDEND_STORE
     if not store["restoreAttempted"]:
         _jp_dividend_restore()
@@ -39218,7 +39240,7 @@ def _jp_dividend_warm(member_codes):
                   if (now - store["fetchedAt"].get(code, 0.0) >= _JP_DIVIDEND_REFRESH_SECONDS
                       or code not in completed)
                   and now - _JP_EARNINGS_BACKFILL_ATTEMPTS.get(code, 0.0) >= 300),
-                 key=lambda code: (code in completed, code not in current_members,
+                 key=lambda code: (code in completed, code not in registered, code not in current_members,
                                    store["fetchedAt"].get(code, 0.0)))[:_JP_DIVIDEND_PER_WARM]
     deadline = time.monotonic() + 150
     for old_code in set(_JP_EARNINGS_BACKFILL_ATTEMPTS) - set(member_codes):
@@ -41161,6 +41183,7 @@ def _jp_earnings_history_retain(rows, *, member_codes=None, query_date=None, que
         _JP_EARNINGS_HISTORY_STATUS.update(status="PERSISTENCE_UNAVAILABLE")
         return
     members = set(member_codes or ((_JP_INDEX_PROXY.get("factors") or {}).get("factors") or {}))
+    members.update(_jp_asset_earnings_registered_codes())
     changes = _nikkei225_constituent_changes() or {}
     for change in changes.get("rows") or []:
         members.update(change.get("removed") or [])

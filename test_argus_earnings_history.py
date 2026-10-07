@@ -193,3 +193,65 @@ def test_missing_original_backfill_stops_at_existing_collection_budget(monkeypat
     assert fetch.call_count==1
     assert '1001' not in scanner._JP_EARNINGS_BACKFILL_ATTEMPTS
     assert '9999' not in scanner._JP_EARNINGS_BACKFILL_ATTEMPTS
+
+
+def test_registered_non_index_companies_use_existing_bounded_lane_and_original_store(monkeypatch, tmp_path):
+    import scanner
+    registered = [str(9000+i) for i in range(25)]
+    monkeypatch.setattr(scanner, '_layer2b_read_latest', lambda: {'members':
+        [{'market': 'JP', 'symbol': code+'.T', 'name': 'must-not-retain'} for code in registered]
+        + [{'market': 'US', 'symbol': 'TEST'}, {'market': 'JP', 'symbol': '../invalid'}]})
+    monkeypatch.setattr(scanner, '_JP_EARNINGS_BACKFILL_ATTEMPTS', {})
+    monkeypatch.setattr(scanner, '_JP_DIVIDEND_STORE', dict(rows={}, fetchedAt={}, closes=None,
+        restoreAttempted=True, lastError=None, requestsLastWarm=0))
+    monkeypatch.setattr(scanner, '_JP_EARNINGS_HISTORY_STATUS', {})
+    monkeypatch.setattr(scanner, '_cost_policy_durable_enabled', lambda: True)
+    monkeypatch.setattr(scanner, '_DURABILITY_PATHS', {'root': str(tmp_path)})
+    monkeypatch.setattr(scanner, '_nikkei225_constituent_changes', lambda: {'rows': []})
+    monkeypatch.setattr(scanner, '_JQUANTS_API_KEY', 'test')
+    monkeypatch.setattr(scanner, '_ai_now_iso', lambda: AT)
+    calls = []
+    def fetch(route, params, **bounds):
+        assert route == '/fins/summary' and bounds == {'max_pages': 3, 'request_timeout': 15}
+        calls.append(params['code'])
+        return [{**row(), 'Code': params['code']+'0', 'DocType': '1QFinancialStatements', 'OP': '100'}]
+    monkeypatch.setattr(scanner, '_jquants_paginated', fetch)
+    scanner._jp_dividend_warm(['1000'])
+    assert calls == registered[:20]
+    scanner._jp_dividend_warm(['1000'])
+    assert calls == registered + ['1000']
+    scanner._jp_dividend_warm(['1000'])
+    assert len(calls) == 26
+    path = tmp_path/'jp_market_source_history.sqlite3'
+    assert history.completed_codes(path, cutoff=AT, member_codes=registered) == set(registered)
+    stored = history.read(path, cutoff=AT, member_codes=['9000'])
+    assert stored[0]['summary']['OP'] == '100' and 'name' not in stored[0]['summary']
+    assert history.read_coverage(path, cutoff=AT) == {}  # Company fetch is not a dated 225-member proof.
+
+
+def test_daily_disclosures_retain_registered_company_without_extra_fetch(monkeypatch, tmp_path):
+    import scanner
+    monkeypatch.setattr(scanner, '_layer2b_read_latest', lambda: {'members': [{'market': 'JP', 'symbol': '9000.T'}]})
+    monkeypatch.setattr(scanner, '_cost_policy_durable_enabled', lambda: True)
+    monkeypatch.setattr(scanner, '_DURABILITY_PATHS', {'root': str(tmp_path)})
+    monkeypatch.setattr(scanner, '_JP_INDEX_PROXY', {'factors': {'factors': {'1000': 1}}})
+    monkeypatch.setattr(scanner, '_nikkei225_constituent_changes', lambda: {'rows': []})
+    monkeypatch.setattr(scanner, '_ai_now_iso', lambda: AT)
+    scanner._jp_earnings_history_retain([{**row(), 'Code': '90000'}], query_date='2026-10-06')
+    path = tmp_path/'jp_market_source_history.sqlite3'
+    assert len(history.read(path, cutoff=AT, member_codes=['9000'])) == 1
+    assert not history.read_coverage(path, cutoff=AT)['2026-10-06']['complete']
+
+
+def test_membership_failure_keeps_index_and_oversized_union_does_not_fetch(monkeypatch, tmp_path):
+    import scanner
+    from unittest.mock import Mock
+    monkeypatch.setattr(scanner, '_layer2b_read_latest', Mock(side_effect=OSError('synthetic')))
+    assert scanner._jp_asset_earnings_registered_codes() == set()
+    monkeypatch.setattr(scanner, '_layer2b_read_latest', lambda: {'members':
+        [{'market': 'JP', 'symbol': str(9000+i)} for i in range(401)]})
+    monkeypatch.setattr(scanner, '_cost_policy_durable_enabled', lambda: True)
+    monkeypatch.setattr(scanner, '_JP_EARNINGS_HISTORY_STATUS', {})
+    fetch = Mock(); monkeypatch.setattr(scanner, '_jquants_paginated', fetch)
+    scanner._jp_dividend_warm(['1000'])
+    assert fetch.call_count == 0 and scanner._JP_EARNINGS_HISTORY_STATUS['status'] == 'PERSIST_FAILED'
