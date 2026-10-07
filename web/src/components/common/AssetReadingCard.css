@@ -7,3 +7,11 @@
   overflow:hidden;
 }
 .asset-reading-card:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
+
+/* 決算日は閉じたカードの1行。詳細は実績・比較点・市場予想を分ける。 */
+.ad-earnings-date { display: block; margin-top: .3rem; font-size: .8rem; color: var(--accent); }
+.ad-earnings-date small { color: var(--text-muted); font-size: inherit; }
+.ad-earnings-details { border-top: 1px solid var(--border); margin-top: .75rem; padding-top: .25rem; }
+.ad-earnings-details h4 { margin: .7rem 0 .25rem; }
+.ad-earnings-details p { margin: .25rem 0; line-height: 1.6; overflow-wrap: anywhere; }
+.ad-earnings-details small { color: var(--text-muted); }

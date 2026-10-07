@@ -152,6 +152,7 @@ import math
 import argus_future_map
 import jp_market_candidates
 import argus_analyst_targets
+import argus_asset_earnings
 import argus_level_map_backup
 import jp_market_features
 import jp_market_acquisition
@@ -39583,7 +39584,8 @@ def _analyst_targets_warm():
         _ANALYST_TARGETS.update(lastAttemptAt=now, fetchedLastWarm=0)
         _analyst_targets_load_saved()
         pending = [(market, symbol) for market, symbol in _analyst_targets_symbols()
-                   if argus_analyst_targets.due(_ANALYST_TARGETS["items"].get(f"{market}:{symbol}"), today)]
+                   if argus_analyst_targets.due(_ANALYST_TARGETS["items"].get(f"{market}:{symbol}"), today)
+                   or "earningsStatus" not in (_ANALYST_TARGETS["items"].get(f"{market}:{symbol}") or {})]
         if not pending:
             return
         session = requests.Session()
@@ -39599,12 +39601,18 @@ def _analyst_targets_warm():
             key = f"{market}:{symbol}"
             if not ticker:
                 continue
-            row, status = None, "FETCH_FAILED"
+            row, earnings, status = None, None, "FETCH_FAILED"
             try:
                 response = session.get(f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}",
-                                       params={"modules": "financialData", "crumb": crumb}, timeout=10)
+                                       params={"modules": "financialData,calendarEvents,earningsHistory,earningsTrend", "crumb": crumb}, timeout=10)
                 if response.status_code == 200:
-                    row = argus_analyst_targets.parse_financial_data(symbol, response.json(), fetched_at=_ai_now_iso())
+                    payload = response.json()
+                    modules = (payload.get("quoteSummary") or {}).get("result") if isinstance(payload, dict) else None
+                    if not isinstance(modules, list) or not modules or not isinstance(modules[0], dict):
+                        raise ValueError("summary_modules_unavailable")
+                    row = argus_analyst_targets.parse_financial_data(symbol, payload, fetched_at=_ai_now_iso())
+                    earnings = argus_asset_earnings.parse(symbol, market, payload, fetched_at=_ai_now_iso(),
+                        today=argus_asset_earnings.market_today(at=_ai_now_iso(), market=market))
                     status = "AVAILABLE" if row else "NO_TARGET"
                     if row:
                         # Targets are listing prices; financialCurrency is the company's reporting currency.
@@ -39614,9 +39622,30 @@ def _analyst_targets_warm():
             except Exception:
                 status = "FETCH_FAILED"
             at = _ai_now_iso()
-            _ANALYST_TARGETS["items"][key] = argus_analyst_targets.attempt_result(
-                _ANALYST_TARGETS["items"].get(key), row, market=market, symbol=symbol,
+            previous = _ANALYST_TARGETS["items"].get(key)
+            company = None
+            # Existing selected financial originals only; opening a card never acquires data.
+            if market == "JP" and _cost_policy_durable_enabled():
+                try:
+                    financial = argus_earnings_history.read(
+                        os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3"),
+                        cutoff=at, member_codes=[symbol[:4]])
+                    company = argus_asset_earnings.company_summary(financial, today=today)
+                except Exception:
+                    company = None
+            result = argus_analyst_targets.attempt_result(previous, row, market=market, symbol=symbol,
                 today=today, at=at, status=status)
+            result = argus_asset_earnings.attach(previous, result,
+                earnings=earnings, success=status in ("AVAILABLE", "NO_TARGET"))
+            if company:
+                saved_earnings = dict(result.get("earnings") or {"symbol": symbol, "market": market,
+                    "source": "J-Quants 決算短信", "fetchedAt": at, "currency": "JPY",
+                    "next": None, "previous": None, "estimate": None, "actionAuthority": False})
+                saved_earnings["company"] = company
+                result["earnings"] = saved_earnings
+                if status in ("AVAILABLE", "NO_TARGET"):
+                    result["earningsStatus"] = "AVAILABLE"
+            _ANALYST_TARGETS["items"][key] = result
             failed = failed or status not in ("AVAILABLE", "NO_TARGET")
             _ANALYST_TARGETS["fetchedLastWarm"] += 1
         path = _analyst_targets_path()
@@ -39642,10 +39671,12 @@ def api_argus_analyst_targets():
     _analyst_targets_load_saved()
     rows = dict(_ANALYST_TARGETS.get("items") or {})
     items = {}
+    earnings_items = {key: {**row["earnings"], "acquisitionStatus": row.get("earningsStatus", "AVAILABLE")}
+                      for key, row in rows.items() if isinstance(row, dict) and isinstance(row.get("earnings"), dict)}
     for key, row in rows.items():
         if not isinstance(row, dict) or row.get("unavailable"):
             continue
-        projected = dict(row)
+        projected = {name: value for name, value in row.items() if name not in ("earnings", "earningsStatus")}
         # Older stores used financial reporting currency for a listing price.
         # Project only the known Yahoo listing unit; never convert the amount
         # or rewrite the original observation and its acquisition timestamps.
@@ -39656,7 +39687,7 @@ def api_argus_analyst_targets():
                           "lastAttemptAt": row.get("lastAttemptAt")}
                     for key, row in rows.items() if isinstance(row, dict)}
     return jsonify({"schemaVersion": argus_analyst_targets.SCHEMA, "items": items,
-                    "availability": availability,
+                    "availability": availability, "earningsItems": earnings_items,
                     "sourceLabel": argus_analyst_targets.SOURCE_LABEL, "asOf": _ANALYST_TARGETS.get("lastAttemptAt"),
                     "lastError": _ANALYST_TARGETS.get("lastError"), "actionAuthority": False})
 

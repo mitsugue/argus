@@ -5,6 +5,7 @@ import type { DeskCardData } from './types';
 import { SignedValue } from '../common/SignedValue';
 import { quoteAsOf, quoteFreshnessJa } from '../../domain/liveQuote';
 import { useAnalystTargetState } from '../../hooks/useAnalystTargets';
+import { AssetEarningsDate } from './AssetEarnings';
 import { AssetOutlookSummary } from './AssetOutlookSummary';
 
 // V12.2.12 — 閉じたカード(§6): 開かなくても「何をどうするか」が分かる1枚。
@@ -68,6 +69,7 @@ export const AssetDecisionSummary: React.FC<{
         <span title={quoteAsOf(view.quoteTruth)}>{quoteFreshnessJa(view.quoteTruth)}</span>
       </span>}
       {d.genre === 'us' && view.priceText === '—' && <span className="ad-quote-meta">米国株の価格をまだ受信していません</span>}
+      <AssetEarningsDate market={d.asset.market} row={analyst.earnings?.[targetKey]} loading={analyst.loading} refreshFailed={analyst.refreshFailed} />
       <AssetOutlookSummary market={d.asset.market} target={analyst.items[targetKey]}
         targetStatus={analyst.availability[targetKey]?.status} loading={analyst.loading}
         refreshFailed={analyst.refreshFailed} currentPrice={currentPrice} supply={d.sdg} />
