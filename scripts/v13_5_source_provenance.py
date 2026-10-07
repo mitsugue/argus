@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.84"
+PRODUCT_VERSION = "v13.8.85"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -39,7 +39,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_warning_conditions.py': 'f5e93fb949d11721829e0f00930d9c72aa0da84a',
     'argus_warning_conditions.py': '18ef85b018b329895d25a66673e3f77057db817d',
     'test_argus_jgb_auction.py': '4a3e3565b99b6b3e87d21024a4706a65a7ca89cf',
-    'argus_jgb_auction.py': '5a8315b5e9553c3a8796867dacdeae6bc0f8a072',
+    'argus_jgb_auction.py': '7e3294784048977e0b8c1ace5a7bc6d5c5202fe5',
     "docs/ops/recovery-phase-a-measurement-core.md": "e9ce722983325daf71a9ec1c0c106ec178cd25ba",
     # Bound local forecast read receipts; no new remote storage or authority.
     'argus_future_map_cache.py': '6320d47d3b49d384f3f57522c364ddc2a77e784a',
@@ -139,7 +139,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'ff227808b760653ecb7ef6ba38371e2a551b9ab2',
+    'web/scripts/owner-today-https.mjs': 'fef9201df387bc1e08abb1ceb41ef33c3c45c7f5',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -224,7 +224,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_breadth_freshness_workflow.py': 'e8ed1942175b75416caec8711363cfc771b90e3d',
     'argus_tick_durability.py': 'fd2f2a97652cf1f3bb18084fd1aa5f54a19247da',
     'argus_jp_fiscal_monitor.py': '3584e845b3c66c2ebdbb41aae6e8b3bfd9866117',
-    'argus_jp_fiscal_runtime.py': 'cb2a6a333fa9bbe09c9d0ae7180d18086b3f2acb',
+    'argus_jp_fiscal_runtime.py': 'e5e3c5c1c14b3dec8a58281fa457710f26fbb883',
     'argus_jp_fiscal_sources.py': '275738feebfefbc7cef3be1442f00d1e3d264bde',
     'docs/V13_7_JP_FISCAL_MONITOR.md': '58498e9819208825f203c37acff3d5c33c473dff',
     'ops/fiscal/cao_20260730.json': '72b7f9ded706ebf1aa9ae92ebb4396b8bf055ae6',
@@ -661,6 +661,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_jgb_archive.py",
     "test_argus_future_map_scoring.py",
     "argus_future_map_scoring.py",
     "web/src/domain/cryptoPriceDisplay.ts",
