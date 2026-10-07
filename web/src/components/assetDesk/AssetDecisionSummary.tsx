@@ -33,7 +33,7 @@ export const AssetDecisionSummary: React.FC<{
   const shownChange = live?.changePct ?? view.changePct;
   const targetKey = `${d.asset.market}:${view.symbol.toUpperCase()}`;
   const currentPrice = live?.price ?? (d.strat.status === 'mock' ? null : d.strat.price ?? d.card?.price ?? null);
-  const shownAction = ({ WAIT: '確認待ち', HOLD: '維持', REDUCE: '縮小を検討', EXIT: '売却を検討', BUY: '買い候補' } as Record<string, string>)[view.currentActionJa] ?? view.currentActionJa;
+  const shownAction = ({ WAIT: '分析情報', HOLD: '維持', REDUCE: '縮小を検討', EXIT: '売却を検討', BUY: '買い候補' } as Record<string, string>)[view.currentActionJa] ?? view.currentActionJa;
   const sigColor = ACTION_TONE[view.canonicalPrimaryAction ?? 'WAIT'];
 
   const content = <>
@@ -49,7 +49,7 @@ export const AssetDecisionSummary: React.FC<{
       </span>
       <span className="ad-l2">
         <span className="ad-cmd" style={{ color: sigColor }}>{shownAction}</span>
-        {view.canonicalDecisionStatus && <span className="ad-data">
+        {view.canonicalDecisionStatus && view.canonicalPrimaryAction !== 'WAIT' && <span className="ad-data">
           {view.canonicalDecisionStatus === 'DATA_GATED' ? '判断に必要な条件を確認中' : '判断条件を評価済み'}
         </span>}
         <span className="ad-owner-state">
@@ -74,7 +74,7 @@ export const AssetDecisionSummary: React.FC<{
         targetStatus={analyst.availability[targetKey]?.status} loading={analyst.loading}
         refreshFailed={analyst.refreshFailed} currentPrice={currentPrice} supply={d.sdg} />
     </>;
-  const label = `${view.symbol} ${view.name}, ${view.currentActionJa}`;
+  const label = `${view.symbol} ${view.name}, ${shownAction}`;
   return interactive ? (
     <button className="ad-head" onClick={onToggle} aria-expanded={open} aria-label={label}>
       {content}

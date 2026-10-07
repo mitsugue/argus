@@ -17,9 +17,9 @@ export const AssetDecisionDetails: React.FC<{ d: DeskCardData }> = ({ d }) => {
   });
   return (
     <div className="ad-overview" data-decision-overview={view.symbol}>
-      <dl className="ad-overview__facts">
+      <details className="ad-legacy-conditions"><summary>参考条件・見直しの根拠</summary><dl className="ad-overview__facts">
         {rows.map(([label, text]) => <div key={label}><dt>{label}</dt><dd>{text}</dd></div>)}
-      </dl>
+      </dl><p className="ad-detail-note">登録銘柄の分析であり、売買の指示ではありません。</p></details>
       {view.dataStatus !== 'LIVE' && view.dataStatus !== 'live' && (
         <p className="ad-overview__warning">{view.dataStatus} · データの不足・古さは「記録・データ」で確認できます。</p>
       )}

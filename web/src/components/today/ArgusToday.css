@@ -464,3 +464,5 @@
 .ad-market-context__brief { margin-top: 16px; border-top: 1px solid #2c3b46; padding-top: 12px; }
 .ad-market-context__brief > summary { min-height: 44px; padding: 10px 0; cursor: pointer; font-size: 15px; }
 .ad-market-context__brief > p { color: #96aab7; font-size: 14px; line-height: 1.7; }
+
+.at-news-row .at-news-row__why { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }

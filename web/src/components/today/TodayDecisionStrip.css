@@ -62,3 +62,6 @@
 .today-strip__detail { padding: 0 12px 10px; color: var(--text-sub); font-size: 12px; line-height: 1.6; }
 .today-strip__source { display: block; margin: 0 12px 12px; color: var(--cyan); font-size: 12px; }
 .today-strip__row > summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+/* A preview cannot enlarge one tile beyond all neighbouring tiles. Full text remains in news detail. */
+.today-strip__tile .today-strip__news-preview { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; line-height:1.6; }

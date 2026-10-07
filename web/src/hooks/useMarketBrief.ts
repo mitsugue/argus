@@ -1,5 +1,6 @@
 import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
+import { readSessionBrief, saveSessionBrief, clearSessionBrief } from '../lib/marketBriefCache';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
 import { validMarketBrief, type MarketBrief } from '../lib/marketBrief';
 import { readableBriefEdition, readRecentEditorialEdition, retainEditorialEdition } from '../lib/presentationIntent';
@@ -7,7 +8,7 @@ export type { MarketBrief, MarketBriefFact } from '../lib/marketBrief';
 
 type State = { brief: MarketBrief | null; error: boolean; loading: boolean };
 let retry = () => {};
-const store = createSharedPollingStore<State>({ brief: null, error: false, loading: true }, (set, get) => {
+const store = createSharedPollingStore<State>({ brief: readSessionBrief(), error: false, loading: true }, (set, get) => {
   let stopped = false; let flight: AbortController | null = null; let nextPollAt = 0;
   const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '');
   const load = async () => {
@@ -25,20 +26,20 @@ const store = createSharedPollingStore<State>({ brief: null, error: false, loadi
       if (!base) throw new Error('backend_missing');
       const response = await fetch(base + '/api/argus/market-brief',
         { cache: 'no-store', signal: currentRequest.signal, headers: { Accept: 'application/json' } });
-      if (response.status === 401 || response.status === 403) historyAllowed = false;
+      if (response.status === 401 || response.status === 403) { historyAllowed = false; clearSessionBrief(); set({ brief: null, error: true, loading: false }); }
       if (!response.ok) throw new Error('brief_fetch_failed');
       const brief: unknown = await response.json();
       if (!validMarketBrief(brief)) throw new Error('brief_invalid');
       let readable = retainEditorialEdition(brief, get().brief);
       const restoringHistory = !readableBriefEdition(readable);
-      if (!stopped) set({ brief: readable, error: false, loading: restoringHistory });
+      if (!stopped) { saveSessionBrief(readable); set({ brief: readable, error: false, loading: restoringHistory }); }
       if (restoringHistory) {
         window.clearTimeout(timeout);
         const historyTimeout = window.setTimeout(() => controller.abort(), 12_000);
         try {
           const saved = await readRecentEditorialEdition(base, controller.signal);
           readable = retainEditorialEdition(readable, saved);
-          if (!stopped) set({ brief: readable, error: false, loading: false });
+          if (!stopped) { saveSessionBrief(readable); set({ brief: readable, error: false, loading: false }); }
         } catch { if (!stopped) set({ ...get(), error: true, loading: false }); }
         finally { window.clearTimeout(historyTimeout); }
       }
@@ -48,7 +49,7 @@ const store = createSharedPollingStore<State>({ brief: null, error: false, loadi
         const historyTimeout = window.setTimeout(() => controller.abort(), 12_000);
         try {
           const saved = await readRecentEditorialEdition(base!, controller.signal);
-          if (!stopped && saved) set({ brief: saved, error: true, loading: false });
+          if (!stopped && saved) { saveSessionBrief(saved); set({ brief: saved, error: true, loading: false }); }
         } catch { /* The visible failure remains; never invent a view. */ }
         finally { window.clearTimeout(historyTimeout); }
       }
