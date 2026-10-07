@@ -1632,17 +1632,22 @@ def _layer2b_persist_private(snapshot, expected_version, store=None, **kwargs):
     return (store or _layer2b_private_store()).save(snapshot, expected_version, **kwargs)
 
 def _layer2b_read_latest():
-    """Read the latest membership snapshot from the private repo (owner-gated)."""
-    if not _layer2b_store_configured():
-        return None
-    import json as _json
-    content, _ = _gh_private_get("membership/latest.json")
-    if not content:
-        return None
-    try:
-        return _json.loads(content)
-    except Exception:
-        return None
+    """Current account registrations, retaining legacy non-monetary settings.
+
+    Until the account first joins, the existing private membership stays the
+    source. Historical daily records are unchanged; only future reads use the
+    account registration source, including an explicitly empty account.
+    """
+    legacy = None
+    if _layer2b_store_configured():
+        content, _ = _gh_private_get("membership/latest.json")
+        if content:
+            try:
+                legacy = json.loads(content)
+            except (ValueError, TypeError):
+                pass
+    from argus_account_watchlist import membership_snapshot
+    return membership_snapshot(app.extensions.get('argus_owner_auth'), legacy)
 
 
 def _layer2b_read_diagnostic():
@@ -1862,7 +1867,7 @@ def _layer2b_publish_membership(snapshot):
             "syms": {str(m["symbol"]).upper(): {
                 "ownerState": m["ownerState"], "downsideStrictness": m["downsideStrictness"],
                 "priority": m["priority"]} for m in members},
-            "ts": time.time(), "status": "fresh"})
+            "ts": time.time(), "status": "fresh", "accountRevision": None})
     _LAYER2B_STATE.update(lastHash=argus_watchlist_sync.content_hash(members), symbolCount=len(members))
     _TD_WARM_UNIVERSE_CACHE.update(data=None, expires=0.0)
 
@@ -17583,12 +17588,18 @@ _OWNER_OVERVIEW_MEMBERSHIP_LOCK = threading.Lock()
 
 
 def _owner_overview_registered_subjects():
-    # Reuse private durable membership; avoid a remote read every scheduler tick.
+    # Account revision invalidates the legacy five-minute cache without an
+    # external request. Preserve the old path until normal login first joins.
+    from argus_account_watchlist import account_state
+    account = account_state(app.extensions.get('argus_owner_auth'))
+    revision = account['revision'] if account else None
     with _OWNER_OVERVIEW_MEMBERSHIP_LOCK:
         now_mono = time.monotonic()
-        if not _OWNER_OVERVIEW_MEMBERSHIP["checkedAt"] or now_mono - _OWNER_OVERVIEW_MEMBERSHIP["checkedAt"] >= 300:
+        if (_OWNER_OVERVIEW_MEMBERSHIP.get("accountRevision") != revision
+                or not _OWNER_OVERVIEW_MEMBERSHIP["checkedAt"]
+                or now_mono - _OWNER_OVERVIEW_MEMBERSHIP["checkedAt"] >= 300):
             snap = _layer2b_read_latest()
-            _OWNER_OVERVIEW_MEMBERSHIP.update(checkedAt=now_mono,
+            _OWNER_OVERVIEW_MEMBERSHIP.update(checkedAt=now_mono, accountRevision=revision,
                 members=(snap.get("members") if isinstance(snap, dict) else None))
         return _OWNER_OVERVIEW_MEMBERSHIP["members"]
 
@@ -20149,6 +20160,16 @@ def _owner_symbols_cached():
     NOTE: returns a dict, so `sym in owner` still works (checks keys)."""
     now = time.time()
     age = now - float(_OWNER_SYMS_CACHE.get("ts") or 0.0)
+    from argus_account_watchlist import account_state
+    try:
+        account = account_state(app.extensions.get('argus_owner_auth'))
+        account_revision = account['revision'] if account else None
+    except Exception:
+        _OWNER_SYMS_CACHE.update({"syms": None, "ts": now, "status": "unavailable"})
+        return {}
+    if _OWNER_SYMS_CACHE.get("accountRevision") != account_revision:
+        _OWNER_SYMS_CACHE.update({"syms": None, "ts": 0.0, "status": "unknown"})
+        age = _OWNER_SYMS_TTL
     if _OWNER_SYMS_CACHE["syms"] is not None and age < _OWNER_SYMS_TTL:
         return _OWNER_SYMS_CACHE["syms"]
     if _OWNER_SYMS_CACHE.get("status") == "unavailable" and age < _OWNER_SYMS_TTL:
@@ -20174,6 +20195,7 @@ def _owner_symbols_cached():
         # read again.  Never log member symbols or exception text here.
         _OWNER_SYMS_CACHE.update({"syms": None, "ts": now, "status": "unavailable"})
         return {}
+    _OWNER_SYMS_CACHE["accountRevision"] = account_revision
     _OWNER_SYMS_CACHE["syms"] = flags
     _OWNER_SYMS_CACHE["ts"] = now
     _OWNER_SYMS_CACHE["status"] = "fresh"

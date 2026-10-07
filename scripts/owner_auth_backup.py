@@ -26,7 +26,8 @@ def copy_database(source, destination, *, restore=False):
                 raise ValueError('database_integrity')
             expected = {'owner_sessions', 'owner_challenges', 'owner_passkeys', 'owner_rate'}
             tables = {r[0] for r in dst.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if tables != expected:
+            registration_tables = {'owner_watchlist', 'owner_watchlist_receipts'}
+            if not expected <= tables or tables - expected not in (set(), registration_tables):
                 raise ValueError('database_schema')
             if restore:
                 with dst:
