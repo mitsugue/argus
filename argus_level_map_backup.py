@@ -31,7 +31,7 @@ def _encode(value: Any) -> bytes:
 
 
 def _key(kind: str, day: str) -> str:
-    if kind not in ("eps", "eps_corrections", "mornings", "morning_corrections", "candidates") or len(day) < 10:
+    if kind not in ("eps", "eps_corrections", "mornings", "morning_corrections", "candidates", "future_versions", "future_outcomes") or len(day) < 10:
         raise ValueError("level_map_backup_key_invalid")
     return f"{kind}/{day}"
 
@@ -56,7 +56,15 @@ def _local_items(path) -> Dict[str, Any]:
     # Pre-registered candidate records ride the same copy (2026-10-04).
     items.update({_key("candidates", f"{record['signalDate']}-{record['candidate']}"): record
                   for record in history.read_candidate_records(path)})
+    future = history.read_future_map_state(path)
+    items.update({_key("future_versions", record['recordId']):record for record in future['versions']})
+    items.update({_key("future_outcomes", record['outcomeId']):record for record in future['outcomes']})
     return items
+
+
+def _restore_order(item):
+    key = item[0]
+    return ('_corrections/' in key, key.startswith('future_outcomes/'), key)
 
 
 def synchronize(path, remote) -> Dict[str, Any]:
@@ -67,7 +75,10 @@ def synchronize(path, remote) -> Dict[str, Any]:
     if not local and entries:
         return {"status": "RESTORE_REQUIRED", "remoteCount": len(entries), "written": 0}
     written = 0
-    for key in sorted(local):
+    # Newly received external forecasts must not wait behind a long EPS
+    # backfill. Preserve the same shared 40-object budget and immutable copy.
+    for key in sorted(local, key=lambda k:(0 if k.startswith('future_versions/') else
+                                          1 if k.startswith('future_outcomes/') else 2, k)):
         if key in entries:
             continue
         if written >= MAX_WRITES_PER_SYNC:
@@ -100,12 +111,19 @@ def restore(path, remote) -> Dict[str, Any]:
     manifest, _ = _manifest(remote)
     restored = 0
     # Original eps/mornings must precede their separately dated corrections.
-    for key, digest in sorted(manifest["entries"].items(),key=lambda item:('_corrections/' in item[0],item[0])):
+    for key, digest in sorted(manifest["entries"].items(),key=_restore_order):
         raw, _ = remote.get(f"{PREFIX}/{key}.json")
         if raw is None or hashlib.sha256(raw).hexdigest() != digest:
             raise ValueError("level_map_backup_object_invalid")
         record = json.loads(raw)
         kind = key.split("/", 1)[0]
+        if kind in ('future_versions','future_outcomes'):
+            identifier = record.get('recordId') if kind=='future_versions' else record.get('outcomeId')
+            if key != _key(kind, str(identifier)):
+                raise ValueError('level_map_backup_future_identity')
+            result = (history.append_future_map_version(path, record) if kind=='future_versions'
+                      else history.append_future_map_outcome(path, record))
+            restored += int(result['inserted']);continue
         if kind in ('eps_corrections','morning_corrections'):
             original_day = record['date']
             originals,_ = history.read_level_map_eps_originals(path,morning=kind=='morning_corrections')

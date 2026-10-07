@@ -124,3 +124,52 @@ def test_product_scoring_is_cached_only_on_page_read_and_recovers_after_restart(
     assert history.read_future_map_state(path) == before
     scanner._future_map_register(public, END)
     assert scanner._future_map_scored_display(public)["record"]["scored"] == 1
+
+
+def test_future_versions_and_scored_corrections_ride_existing_backup_and_restore(tmp_path):
+    import argus_level_map_backup as backup
+    from test_jp_market_level_map import _FakeRemote
+    path=tmp_path/'shared.sqlite3';history.initialize(path)
+    version=scoring.registration(ROW,received_at=AT)
+    changed=scoring.registration({**ROW,'level':{'low':120,'high':120}},received_at=AT)
+    history.append_future_map_version(path,version);history.append_future_map_version(path,changed)
+    miss=scoring.score(version,prices(),now_iso=END)
+    revised=scoring.score(version,prices(price=100),now_iso=END)
+    history.append_future_map_outcome(path,miss);history.append_future_map_outcome(path,revised)
+    remote=_FakeRemote()
+    assert backup.synchronize(path,remote)['status']=='VERIFIED'
+    restored=tmp_path/'restored.sqlite3';history.initialize(restored)
+    assert backup.restore(restored,remote)['restored']==4
+    assert history.read_future_map_state(restored)==history.read_future_map_state(path)
+    assert backup.synchronize(restored,remote)['written']==0
+    assert backup.restore(restored,remote)['status']=='LOCAL_NOT_EMPTY'
+
+
+def test_future_backup_identity_and_corruption_are_not_silently_restored(tmp_path):
+    import json,hashlib
+    import argus_level_map_backup as backup
+    from test_jp_market_level_map import _FakeRemote
+    path=tmp_path/'shared.sqlite3';history.initialize(path)
+    version=scoring.registration(ROW,received_at=AT);history.append_future_map_version(path,version)
+    remote=_FakeRemote();backup.synchronize(path,remote)
+    key=backup.PREFIX+'/future_versions/'+version['recordId']+'.json'
+    raw,revision=remote.get(key);body=json.loads(raw);body['recordedAt']='2020-01-01T00:00:00+09:00'
+    # An altered but parseable registration must fail the manifest digest.
+    remote.put(key,backup._encode(body),expected_version=revision)
+    restored=tmp_path/'broken.sqlite3';history.initialize(restored)
+    with pytest.raises(ValueError,match='object_invalid'):backup.restore(restored,remote)
+    assert history.read_future_map_state(restored)=={'versions':[],'outcomes':[]}
+
+
+def test_new_future_versions_are_copied_before_old_eps_backfill_with_same_budget(tmp_path,monkeypatch):
+    import argus_level_map_backup as backup
+    from test_jp_market_level_map import _FakeRemote
+    path=tmp_path/'shared.sqlite3';history.initialize(path)
+    version=scoring.registration(ROW,received_at=AT);history.append_future_map_version(path,version)
+    original=backup._local_items(path)
+    items={**{'eps/'+str(n):{'synthetic':n} for n in range(60)},**original}
+    monkeypatch.setattr(backup,'_local_items',lambda p:items)
+    remote=_FakeRemote();result=backup.synchronize(path,remote)
+    assert result['written']==backup.MAX_WRITES_PER_SYNC==40
+    assert result['pending']==21
+    assert remote.get(backup.PREFIX+'/future_versions/'+version['recordId']+'.json')[0] is not None
