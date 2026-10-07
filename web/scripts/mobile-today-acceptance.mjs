@@ -1,3 +1,4 @@
+import { installBrowserRateLimitProof } from './browser-rate-limit-proof.mjs';
 import { createBrowserOwner, isOwnerCeremony, verifiedStoreFingerprint } from './owner-browser-acceptance.mjs';
 import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
@@ -168,16 +169,32 @@ function observe(page, evidence) {
       if (response.status() === 429) {
         let body = null;
         let bodyRead = 'JSON';
+        let browserProof = null;
+        let bodyReadError = 'NONE';
         try { body = await response.json(); } catch (error) {
           bodyRead = error instanceof SyntaxError ? 'INVALID_JSON' : 'BODY_READ_FAILED';
+          const detail = String(error?.message || '');
+          bodyReadError = /No data found|No resource with given identifier/i.test(detail) ? 'CDP_RESOURCE_UNAVAILABLE'
+            : /Target.*closed|has been closed/i.test(detail) ? 'TARGET_CLOSED' : 'OTHER';
+          // A body retrieval failure must still prove the SAME real response.
+          // This isolated reader receives no fixture body/expected values.
+          if (bodyRead === 'BODY_READ_FAILED') {
+            await page.waitForFunction((url) => window.__argusAcceptanceRateLimitReads?.has(url),
+              response.url(), { timeout: 2_000 }).catch(() => {});
+            browserProof = await page.evaluate(async (url) =>
+              await window.__argusAcceptanceRateLimitReads?.get(url) ?? null,
+            response.url()).catch(() => null);
+          }
         }
-        const contractValid = body?.error === 'rate_limited'
-          && typeof body?.message === 'string';
+        const contractValid = (body?.error === 'rate_limited' && typeof body?.message === 'string')
+          || (bodyRead === 'BODY_READ_FAILED' && browserProof?.status === 429
+            && browserProof?.bodyRead === 'JSON' && browserProof?.errorField === 'RATE_LIMITED'
+            && browserProof?.messageIsString === true);
         evidence.rateLimits.push({
           url: response.url(), status: response.status(),
           retryAfter: response.headers()['retry-after'] ?? null,
           contractValid,
-          bodyRead,
+          bodyRead, bodyReadError, browserProof,
           method: ['GET', 'OPTIONS'].includes(response.request().method())
             ? response.request().method() : 'OTHER',
           contentType: String(response.headers()['content-type'] || '').startsWith('application/json')
@@ -884,6 +901,7 @@ async function run() {
   await isolateChartReads(rateLimitContext, evidence);
   await rateLimitContext.route('**/api/argus/chart-intelligence?*',
     (route) => fulfillCapturedSnapshot(route, evidence, 0));
+  await rateLimitContext.addInitScript(installBrowserRateLimitProof);
   const rateLimitPage = await rateLimitContext.newPage();
   observe(rateLimitPage, evidence);
   await rateLimitPage.goto(TODAY_URL, {
@@ -1118,7 +1136,8 @@ async function run() {
   // nonce, credential, registered instrument or owner's saved snapshot.
   for (const row of evidence.rateLimits.filter((item) => !item.contractValid).slice(0, 10)) {
     console.error(`mobile-today-acceptance rate-limit-invalid: ${JSON.stringify({
-      method: row.method, bodyRead: row.bodyRead, contentType: row.contentType,
+      method: row.method, bodyRead: row.bodyRead, bodyReadError: row.bodyReadError,
+      browserProof: row.browserProof, contentType: row.contentType,
       errorField: row.errorField, messageIsString: row.messageIsString,
     })}`);
   }
