@@ -1,3 +1,5 @@
+import { CreditConditionsDetails } from '../components/today/CreditConditionsDetails';
+import { useMarketBrief } from '../hooks/useMarketBrief';
 import { TriangleStepLoader } from '../components/common/TriangleStepLoader';
 import { CandidateBoard } from '../components/today/CandidateBoard';
 import React from 'react';
@@ -23,6 +25,7 @@ const FRESHNESS_JA: Record<PublicDiagnostics['freshness']['overall'], string> = 
 
 export const PublicDiagnosticsPanel: React.FC = () => {
   const { diagnostics, loading, failed, refresh } = usePublicDiagnostics();
+  const { brief } = useMarketBrief();
   const versions = diagnostics ? runtimeVersionTruth({
     productVersion: __PRODUCT_VERSION__,
     frontendVersion: __APP_VERSION__,
@@ -46,6 +49,7 @@ export const PublicDiagnosticsPanel: React.FC = () => {
 
   return (
     <section id="settings-status" aria-label="Data quality status">
+      {brief && <CreditConditionsDetails brief={{ ...brief, creditConditions: brief.creditConditions && typeof brief.creditConditions === "object" ? { ...brief.creditConditions, showToday: false } : null }} />}
       {loading && <p className="cmd-alloc__note"><TriangleStepLoader label="接続状況を読み込んでいます" /></p>}
       {failed && !loading && (
         <div className="card cmd-alloc">

@@ -7,6 +7,8 @@ import React from 'react';
 // 「翻訳待ち」+原文折りたたみ)、英語見出しは自動で翻訳キューへ。古い記事(>14日)は
 // サーバー側で除外済み。
 
+interface CreditImpact { kind: string; textJa: string; actionAuthority: boolean; sources: Array<{ sourceUrl: string; publisher: string; dataAsOf: string; retrievedAt: string }> }
+
 interface IntelItem {
   title: string; titleJa?: string | null; institutionId?: string | null; publishedAt?: string | null;
   accessClass: string; canonicalUrl?: string | null; stance?: string;
@@ -43,7 +45,9 @@ const INST_NAME: Record<string, string> = {
 
 export const InstitutionalView: React.FC<{ symbol: string }> = ({ symbol }) => {
   const [items, setItems] = React.useState<IntelItem[] | null>(null);
+  const [credit, setCredit] = React.useState<CreditImpact | null>(null);
   React.useEffect(() => {
+    setCredit(null); setItems(null);
     const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
     if (!backend) return;
     let alive = true;
@@ -52,15 +56,22 @@ export const InstitutionalView: React.FC<{ symbol: string }> = ({ symbol }) => {
         if (!alive) return;
         const its: IntelItem[] = j.items || [];
         setItems(its);
+        setCredit(j.creditImpact?.kind === "ARGUS_HYPOTHESIS" && j.creditImpact?.actionAuthority === false ? j.creditImpact : null);
       }).catch(() => {});
     return () => { alive = false; };
   }, [symbol]);
 
-  if (!items || items.length === 0) return null;
+  if ((!items || items.length === 0) && !credit) return null;
   return (
     <div className="uac-sec">
-      <div className="uac-sec-t">機関の公開見解・アナリストの変更</div>
-      {items.slice(0, 3).map((it, i) => (
+      {credit && <div className="iv-row"><div className="uac-sec-t">金利・信用環境</div>
+        <p>{credit.textJa}</p><small>ARGUSの条件付きの見方 · 株価への影響は未検証</small>
+        {(Array.isArray(credit.sources) ? credit.sources : []).slice(0, 2).map((row, index) => <p className="iv-meta" key={index}>
+          対象 {row.dataAsOf} · 受領 {row.retrievedAt} · <a href={row.sourceUrl} target="_blank" rel="noopener noreferrer">{row.publisher}の根拠</a>
+        </p>)}
+      </div>}
+      {!!items?.length && <div className="uac-sec-t">機関の公開見解・アナリストの変更</div>}
+      {(items ?? []).slice(0, 3).map((it, i) => (
         <div className="iv-row" key={i}>
           <div className="iv-l1">
             <span className="iv-inst">{it.institutionId ? (INST_NAME[it.institutionId] ?? it.institutionId) : '—'}</span>

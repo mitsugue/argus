@@ -1,3 +1,4 @@
+import { CreditConditionsDetails } from './CreditConditionsDetails';
 import { NumericalResearchDetails } from './NumericalResearchDetails';
 import { FiscalEnvironmentDetails } from './FiscalEnvironmentDetails';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
@@ -92,7 +93,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
           <p>応答モデル {brief.aiDiagnostics?.returnedModel ?? '未確認'} · 保存 {brief.analysisHistory?.status === 'LOCAL_DURABLE' ? 'サーバー保存済み' : '確認中'}</p>
         </details>
         <NumericalResearchDetails brief={brief} />
-        <FiscalEnvironmentDetails brief={brief} />
+        <FiscalEnvironmentDetails brief={brief} /><CreditConditionsDetails brief={brief} />
         <MarketAnalysisHistory key="saved-history" />
       </details>
     </section>;
@@ -167,7 +168,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
       <p>応答モデル {brief.aiDiagnostics?.returnedModel ?? '未確認'} · 保存 {brief.analysisHistory?.status === 'LOCAL_DURABLE' ? 'サーバー保存済み' : '確認中'}</p>
     </details>
     <NumericalResearchDetails brief={brief} />
-    <FiscalEnvironmentDetails brief={brief} />
+    <FiscalEnvironmentDetails brief={brief} /><CreditConditionsDetails brief={brief} />
     {!archived && <MarketAnalysisHistory key="saved-history" />}
   </section>;
 }

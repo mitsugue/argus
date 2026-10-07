@@ -27,6 +27,7 @@ export interface MarketPosition {
   actionAuthority: false; automaticAiCalls: 0; persistence?: Record<string, unknown>;
 }
 export interface MarketBrief {
+  creditConditions?: unknown;
   retainedPresentation?: MarketBrief;
   /** 13.8 §3-1: the market's position memory (themes, pricing, last reading, next check). */
   marketPosition?: MarketPosition | { status: string; errorClass?: string };
@@ -46,6 +47,7 @@ export interface MarketBrief {
   } | null;
   unifiedContext?: { contextId: string; facts: Array<MarketBriefFact & { evidenceId: string }>;
     fiscalEnvironment?: unknown;
+    creditConditions?: unknown;
     previousFacts: Array<MarketBriefFact & { evidenceId: string }>; previousAt: string | null;
     researchPackages?: Array<{ packageId: string; packageVersion: string; labelJa: string;
       coverage: { historyStart: string | null; historyEnd: string | null; historyCount: number };

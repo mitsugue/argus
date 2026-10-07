@@ -53,6 +53,7 @@ const cardContext={exports:{},Date,require(name){
  if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>null};
  if(name.includes('/marketWording')) return {marketChanges:v=>v,marketWording:v=>v};
  if(name.includes('/NumericalResearchDetails')) return {NumericalResearchDetails:()=>null};
+ if(name.includes('/CreditConditionsDetails')) return {CreditConditionsDetails:()=>null};
  if(name.includes('/FiscalEnvironmentDetails')) return {FiscalEnvironmentDetails:()=>null};
  if(name.includes('/MarketAnalysisHistory')) return {MarketAnalysisHistory:()=>null};
  if(name.includes('/TriangleStepLoader')) return {TriangleStepLoader:()=>null};

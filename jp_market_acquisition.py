@@ -190,10 +190,14 @@ def history_rows(db, source_id):
 
 
 def verify_raw(db):
+    import argus_credit_conditions as credit
     for raw_id, url, digest, received_at, raw in db.execute('SELECT * FROM raw_sources'):
-        if (len(raw) > MAX_BYTES or hashlib.sha256(raw).hexdigest() != digest
+        bound = credit.MAX_BYTES if credit.approved_url(url) else MAX_BYTES
+        if (len(raw) > bound or hashlib.sha256(raw).hexdigest() != digest
                 or hashlib.sha256((url + ':' + digest).encode()).hexdigest() != raw_id):
             raise ValueError('source_raw_integrity')
+        if credit.approved_url(url):
+            credit.validate_original(url, raw)
         # The durable SQLite file is shared by bounded acquisition adapters.
         # Verify every raw record's generic content identity, but only parse and
         # normalize the MOF/Cboe records owned by this adapter.  Treating a valid
