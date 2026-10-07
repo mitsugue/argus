@@ -206,3 +206,13 @@ def test_check_clock_alone_reuses_ai_but_changed_credit_input_does_not(monkeypat
     assert brief['creditConditions']['futureMapResearch']['knowledgeCutoff']==AT
     changed['creditConditions']['dimensions']['borrowingCost']['value']=3
     assert scanner._market_brief_generation_input_digest(changed,{})!=before
+
+
+def test_published_december_tankan_is_a_period_not_a_future_observed_day():
+    raw=json.loads(api('stance'))
+    for item in raw['RESULTSET']:item['VALUES']['SURVEY_DATES']=['202603','202604']
+    raw=json.dumps(raw).encode()
+    rows=credit.parse_api(raw,group='stance',source_url=credit.api_url('stance',AT),received_at='2026-12-16T10:00:00Z')
+    assert rows[-1]['observationPeriod']=='202604' and rows[-1]['dataAsOfBasis']=='QUARTER_END_LABEL'
+    assert rows[-1]['knownAt']=='2026-12-16T10:00:00Z' and rows[-1]['publicationAt'] is None
+    with pytest.raises(ValueError):credit.parse_api(raw,group='stance',source_url=credit.api_url('stance',AT),received_at=AT)

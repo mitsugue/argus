@@ -16,6 +16,8 @@ const time = (value: unknown) => {
   if (typeof value !== 'string' || !value.includes('T') || !Number.isFinite(Date.parse(value))) return '未確認';
   return new Date(value).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
+const period = (row: Row) => row.dataAsOfBasis === 'QUARTER_END_LABEL' && /^\d{4}0[1-4]$/.test(text(row.observationPeriod, ''))
+  ? `${text(row.observationPeriod).slice(0, 4)}年第${text(row.observationPeriod).slice(-1)}四半期` : text(row.dataAsOf);
 const source = (value: unknown) => {
   try { const url = new URL(text(value, '')); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; }
   catch { return null; }
@@ -30,12 +32,12 @@ export function CreditConditionsDetails({ brief }: { brief: MarketBrief }) {
       <p>月次・四半期・半期の統計です。個社の借入金利や、毎日の売買タイミングを示すものではありません。</p>
       <dl>{Object.entries(labels).map(([key, label]) => {
         const row = object(dimensions[key]) ? dimensions[key] : {};
-        return <React.Fragment key={key}><dt>{label}</dt><dd>{row.status === 'OBSERVED' ? `${directions[text(row.direction)]} · ${typeof row.value === 'number' ? row.value.toLocaleString('ja-JP') : '未確認'}${units[text(row.unit)] ?? ''} · 対象 ${text(row.dataAsOf)}` : row.reason === 'STALE' ? `古い観測のため現状判定は保留 · 対象 ${text(row.dataAsOf)}` : key === 'creditQuality' ? '比較できる数値が不足' : '更新・比較に必要な入力が不足'}</dd></React.Fragment>;
+        return <React.Fragment key={key}><dt>{label}</dt><dd>{row.status === 'OBSERVED' ? `${directions[text(row.direction)]} · ${typeof row.value === 'number' ? row.value.toLocaleString('ja-JP') : '未確認'}${units[text(row.unit)] ?? ''} · 対象 ${period(row)}` : row.reason === 'STALE' ? `古い観測のため現状判定は保留 · 対象 ${period(row)}` : key === 'creditQuality' ? '比較できる数値が不足' : '更新・比較に必要な入力が不足'}</dd></React.Fragment>;
       })}</dl>
       <p>日銀の政策伝達：貸出金利と態度の観測を使います。利上げとの因果関係や伝達の強弱は未分類です。</p>
       <details><summary>数値と公式資料</summary>{rows(doc.evidence).slice(0, 12).map((row, index) => <div key={text(row.observationId, String(index))}>
         <p>{text(row.statementJa, metrics[text(row.metric)] ?? text(row.title))}{typeof row.value === 'number' ? `：${row.value.toLocaleString('ja-JP')}${units[text(row.unit)] ?? ''}` : ''}</p>
-        <small>対象 {text(row.dataAsOf)} · 公表日 {text(row.publicationDate)} · 公表時刻 {time(row.publicationAt)}<br/>受領 {time(row.retrievedAt)} · {states[text(row.validationStatus)] ?? '未確認'} · 改訂 {typeof row.revision === 'number' ? row.revision : '未確認'}<br/>{text(row.tablePageFigureRef)}</small>
+        <small>対象 {period(row)} · 公表日 {text(row.publicationDate)} · 公表時刻 {time(row.publicationAt)}<br/>受領 {time(row.retrievedAt)} · {states[text(row.validationStatus)] ?? '未確認'} · 改訂 {typeof row.revision === 'number' ? row.revision : '未確認'}<br/>{text(row.tablePageFigureRef)}</small>
         {source(row.sourceUrl) && <a href={source(row.sourceUrl)!} target="_blank" rel="noopener noreferrer">{text(row.publisher, '公式')}の原資料</a>}
       </div>)}</details>
       <details><summary>配信元の状態</summary>{rows(doc.sourceHealth).map((row, index) => <p key={text(row.sourceId, String(index))}>

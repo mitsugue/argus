@@ -163,13 +163,18 @@ def parse_api(raw, *, group, source_url, received_at):
             if text in seen or (previous and text<=previous):raise ValueError('credit_period_order')
             seen.add(text);previous=text
             if value is None:continue
-            if end>receipt.date():raise ValueError('credit_future_period')
+            # Tankan can publish its December survey before quarter end. The
+            # API quarter is a period label, not an observed day or knowledge
+            # timestamp. Require its survey month to have started instead.
+            eligible_period=date(year,month,1) if group=='stance' else end
+            if eligible_period>receipt.date():raise ValueError('credit_future_period')
             if type(value) not in (int,float) or not math.isfinite(value):raise ValueError('credit_number')
             bounds=(0,10**9) if metric=='loan_balance' else (-100,100) if group=='stance' else (-30,30)
             if not bounds[0]<=value<=bounds[1]:raise ValueError('credit_value_range')
             result.append({'sourceId':'boj_credit_'+group,'sourceUrl':source_url,'publisher':'日本銀行',
                 'title':item.get('NAME_OF_TIME_SERIES'),'publicationAt':None,'publicationDate':None,
-                'observationPeriod':text,'dataAsOf':end.isoformat(),'retrievedAt':received_at,
+                'observationPeriod':text,'dataAsOf':end.isoformat(),
+                'dataAsOfBasis':'QUARTER_END_LABEL' if group=='stance' else 'MONTH_END_LABEL','retrievedAt':received_at,
                 'knownAt':received_at,'metric':metric,'value':value,'unit':normalized_unit,
                 'segment':segment,'geography':'JP','tablePageFigureRef':f'RESULTSET/{code}/VALUES/{position}',
                 'providerLastUpdate':item.get('LAST_UPDATE'),'seriesCode':code,'definitionUrl':meta['definition'],
@@ -353,6 +358,7 @@ def document(db, *, cutoff):
             'reason':'STALE' if source.get('stale') else None,
             'direction':labels[0] if change>0 else labels[1] if change==0 else labels[2],
             'value':row['value'],'change':change,'unit':row['unit'],'dataAsOf':row['dataAsOf'],
+            'dataAsOfBasis':row.get('dataAsOfBasis'),'observationPeriod':row['observationPeriod'],
             'basis':'PUBLISHED_YEAR_ON_YEAR' if growth else 'PREVIOUS_PUBLISHED_PERIOD_CHANGE',
             'evidenceIds':[r['observationId'] for r in (row,previous) if r],
             'predictiveValidation':'UNVALIDATED'}
@@ -489,7 +495,8 @@ def explanation_facts(doc):
     for row in doc['evidence']:
         if row['observationId'] not in ids and not row.get('statementJa'):continue
         stale=any(h['sourceId']==row['sourceId'] and h['stale'] for h in doc['sourceHealth'])
-        text=row.get('statementJa') or f"{'古い観測・現在の状態には使用不可。' if stale else ''}{row['title']}：{row['value']} {row['unit']}、対象 {row['dataAsOf']}。公表日 {row.get('publicationDate') or '未確認'}、公表時刻未確認、受領 {row['retrievedAt']}。"
+        period=f"{row['observationPeriod'][:4]}年第{row['observationPeriod'][-1]}四半期（期末区分 {row['dataAsOf']}、実際の調査日は不明）" if row.get('dataAsOfBasis')=='QUARTER_END_LABEL' else row['dataAsOf']
+        text=row.get('statementJa') or f"{'古い観測・現在の状態には使用不可。' if stale else ''}{row['title']}：{row['value']} {row['unit']}、対象 {period}。公表日 {row.get('publicationDate') or '未確認'}、公表時刻未確認、受領 {row['retrievedAt']}。"
         selected.append({'text':text[:500],'source':'credit_conditions','priority':'P2' if row.get('statementJa') else 'P1',
             'verification':'VERIFIED','provenance':{'scope':'published_metadata_snapshot',
                 'eventId':row['observationId'],'revision':row['revision'],'sourceLabel':row['publisher'],
