@@ -127,7 +127,7 @@ def test_missing_or_mismatched_eps_units_never_use_reporting_currency_or_compare
 
 
 def test_company_schedule_corrections_withdrawals_future_publications_and_conflicts():
-    base = {'Code': '10010', 'FYE': '2027-03-31', 'FQName': '2Q', 'PubDate': '2026-10-01', 'SchDate': '2026-11-01'}
+    base = {'Code': '10010', 'FYE': '0331', 'FQName': '2Q', 'PubDate': '2026-10-01', 'SchDate': '2026-11-01'}
     project = lambda rows: earnings.scheduled_date('1001', rows, today=TODAY, fetched_at=AT)
     corrected = {**base, 'PubDate': TODAY, 'SchDate': '2026-11-03'}
     row, status = project([corrected, base, {**base, 'PubDate': '2027-01-01', 'SchDate': '2027-02-01'}])
@@ -156,7 +156,7 @@ def test_saved_company_and_official_schedule_survive_yahoo_bootstrap_failure_and
     calls = []
     def official(endpoint, params, **kwargs):
         calls.append((endpoint, params, kwargs))
-        return [{'Code': '10010', 'FYE': '2027-03-31', 'FQName': '2Q', 'PubDate': today, 'SchDate': future}]
+        return [{'Code': '10010', 'FYE': '0331', 'FQName': '2Q', 'PubDate': today, 'SchDate': future}]
     monkeypatch.setattr(scanner, '_jquants_paginated', official)
     class BrokenSession:
         headers = {}

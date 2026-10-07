@@ -157,9 +157,16 @@ def scheduled_date(symbol, rows, *, today, fetched_at):
         if not isinstance(row, Mapping) or str(row.get('Code') or '') not in (symbol, symbol + '0'):
             continue
         published = day(row.get('PubDate'), 'JP')
-        year_end = day(row.get('FYE'), 'JP')
+        # Official FYE is MMDD (e.g. 0331), not a fiscal-year date.
+        year_end = row.get('FYE')
+        valid_year_end = isinstance(year_end, str) and len(year_end) == 4 and year_end.isdigit()
+        try:
+            if valid_year_end:
+                date(2000, int(year_end[:2]), int(year_end[2:]))
+        except ValueError:
+            valid_year_end = False
         quarter = row.get('FQName')
-        if not published or published > today or not year_end or not isinstance(quarter, str) or not quarter:
+        if not published or published > today or not valid_year_end or not isinstance(quarter, str) or not quarter:
             continue
         scheduled = day(row.get('SchDate'), 'JP')
         if row.get('SchDate') not in (None, '', '-') and scheduled is None:
