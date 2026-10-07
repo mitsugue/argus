@@ -51,10 +51,11 @@ export const AssetDecisionSummary: React.FC<{
               : `${view.pnlPct >= 0 ? '+' : ''}${view.pnlPct.toFixed(1)}%`}`
             : ''}
         </span>
-        <span className="ad-data">{crypto ? d.cryptoRefreshFailed ? '更新失敗・保存価格' : crypto.label : view.dataStatus}</span>
+        {!crypto && <span className="ad-data">{view.dataStatus}</span>}
       </span>
       {live && <span className="ad-quote-meta"><mark data-delay="LIVE">リアルタイム</mark><span>立花証券 · {new Date(live.sourceTimestamp!).toLocaleTimeString('ja-JP')}</span></span>}
       {crypto && <span className="ad-quote-meta" data-instrument-type="CRYPTO">
+        <mark data-delay={crypto.delay}>{d.cryptoRefreshFailed ? '更新失敗・保存価格' : crypto.label}</mark>
         <span title={crypto.title}>{crypto.detail}</span>
       </span>}
       {!live && !crypto && view.quoteTruth && <span className="ad-quote-meta" data-instrument-type={view.quoteTruth.instrumentType}>
