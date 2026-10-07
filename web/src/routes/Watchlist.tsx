@@ -4,6 +4,7 @@ import { AssetDeskList, type AssetFocusIntent } from '../components/assetDesk/As
 import { EntityProfileEditor } from '../components/dashboard/EntityProfileEditor';
 import { AddAssetModal } from '../components/dashboard/AddAssetModal';
 import { Layer2BSyncCard } from '../components/guide/Layer2BSyncCard';
+import { OWNER_AUTH_REQUIRED } from '../lib/ownerSession';
 import { useAssets } from '../hooks/useAssets';
 import { useWatchlistSync } from '../hooks/useWatchlistSync';
 import { useAssetIntel } from '../hooks/useAssetIntel';
@@ -116,7 +117,9 @@ export const Watchlist: React.FC<Props> = ({
         onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
         <summary>銘柄の設定・連携</summary>
         {supportOpen && <div className="ad-support__body">
-          <Layer2BSyncCard assets={assets} />
+          {OWNER_AUTH_REQUIRED
+            ? <p className="muted">登録銘柄・並び順はログインした端末で自動共有します。通信できない間の変更は、この端末に保持して再接続後に保存します。</p>
+            : <Layer2BSyncCard assets={assets} />}
           <EntityProfileEditor assets={assets} />
         </div>}
       </details>}

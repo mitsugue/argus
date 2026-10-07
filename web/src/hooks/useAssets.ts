@@ -8,6 +8,9 @@ import { watchlistProjection } from '../domain/watchlistProjection';
 import { recordTombstone } from '../lib/assetMerge';
 import { stageRegistrationChanges, commitRegistrationChanges, cancelStagedRegistration, setWatchlistSyncState } from '../lib/watchlistAutoSync';
 
+import { OWNER_AUTH_REQUIRED } from '../lib/ownerSession';
+import { stageAccountRegistrations, commitAccountRegistrations, cancelAccountRegistrations } from '../lib/accountWatchlistSync';
+
 const STORAGE_KEY = 'argus.assets.v1';
 const MAX_ASSETS = 50;
 
@@ -120,10 +123,13 @@ function useAssetsStore(): UseAssets {
     }
     if (assets === lastPersisted.current) return;
     let pendingKey: string | null = null;
+    let accountKey: string | null = null;
     try {
-      if (registrationEdit.current) pendingKey = stageRegistrationChanges(lastPersisted.current, assets, restoredKeys.current);
+      accountKey = stageAccountRegistrations(lastPersisted.current, assets);
+      if (registrationEdit.current && !OWNER_AUTH_REQUIRED) pendingKey = stageRegistrationChanges(lastPersisted.current, assets, restoredKeys.current);
       if (!persist(assets, lastPersisted.current)) {
         cancelStagedRegistration(pendingKey);
+        cancelAccountRegistrations(accountKey);
         throw Error('local_save_failed');
       }
       lastPersisted.current = assets;
@@ -131,6 +137,7 @@ function useAssetsStore(): UseAssets {
       restoredKeys.current.clear();
       markLocalEdit();
       commitRegistrationChanges(pendingKey);
+      commitAccountRegistrations(accountKey);
     } catch {
       setWatchlistSyncState({ kind: 'error', message: '端末への保存を確認できません。他の画面の変更や空き容量を確認し、再読み込みしてください' });
     }
