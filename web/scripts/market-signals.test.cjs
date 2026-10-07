@@ -203,3 +203,5 @@ assert.match(html,/時間がたつだけで検証済みにはなりません/);
 assert.match(html,/測定できる条件 4件/);
 assert.match(html,/成績：まだ採点できる記録がありません/);
 assert.match(html,/3・4・7番は判定基準の確定待ち/);
+
+assert.equal(reading.warningDistanceJa({...view.signals[6],state:'CLEAR',distance:{signedFromBoundary:-1,unit:'CASES',operator:'>=',atBoundary:false,boundaryCounts:true}}),'最低件数まであと1件（5件以上で株価反応を判定）');

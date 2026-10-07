@@ -25,11 +25,14 @@ def inputs():
 def test_original_replay_keeps_missing_cohort_and_next_reaction_gated():
     data = inputs(); before = deepcopy(data)
     result = study(**data)
-    # The last two closes can observe the five revisions' next-session bars.
-    assert result['condition']['inputDays'] == 2
-    assert result['condition']['inputStart'] == data['sessions'][-2]
+    # Seventeen complete windows have no qualifying revisions and are CLEAR.
+    # Initial forecasts without prior originals stay gated for ten windows;
+    # the revision day waits for its reaction. The last two are ACTIVE.
+    assert result['condition']['inputDays'] == 19
+    assert result['condition']['inputEnd'] == data['sessions'][-1]
+    assert result['condition']['inputStart'] == data['sessions'][10]
     assert result['condition']['evaluated'] == 0
-    assert result['condition']['gatedDays'] == 28
+    assert result['condition']['gatedDays'] == 11
     assert result['availabilityBasis'] == 'ACTUAL_RETAINED_RECEIPTS_AT_DAILY_18JST'
     assert result['validationStatus'] == 'UNVALIDATED'
     assert not result['tenYearOriginalCoverageComplete']
@@ -39,20 +42,28 @@ def test_original_replay_keeps_missing_cohort_and_next_reaction_gated():
 
 def test_later_downloads_and_incomplete_scope_never_become_past_observations():
     data = inputs()
-    for row in data['financial_rows']:
+    for row in [*data['financial_rows'], *data['coverage_by_day'].values()]:
         row['receivedAt'] = data['cutoff']
+    # The later complete cohort receipt, including its originals, cannot
+    # certify older windows as empty or turn them into clear conditions.
     assert study(**data)['condition']['inputDays'] == 0
     data = inputs()
     data['coverage_by_day'][data['sessions'][-1]]['memberCodes'] = ['1000']
     result = study(**data)
-    assert result['condition']['inputDays'] == 1
+    assert result['condition']['inputDays'] == 18
+    assert result['condition']['inputEnd'] == data['sessions'][-2]
     assert result['condition']['evaluated'] == 0
 
 
 def test_missing_adjusted_price_cannot_create_a_market_clear_state():
     data = inputs()
     data['stock_bars']['1000'][-2]['priceBasis'] = 'UNADJUSTED'
-    assert study(**data)['condition']['inputDays'] == 0
+    result=study(**data)
+    # The complete low-count windows remain clear, but none of the five-case
+    # revision windows is admitted without the reaction price.
+    assert result['condition']['inputDays'] == 17
+    assert result['condition']['inputEnd'] == data['sessions'][-4]
+    assert result['condition']['gatedDays'] == 13
 
 
 def test_explicit_reconstruction_is_separate_from_real_vintage_and_preserves_originals():
@@ -67,14 +78,19 @@ def test_explicit_reconstruction_is_separate_from_real_vintage_and_preserves_ori
     before = deepcopy(data)
     assert study(**data)['condition']['inputDays'] == 0
     report = study(**data,reconstruct=True)
-    assert report['condition']['inputDays'] == 2
+    assert report['condition']['inputDays'] == 19
     assert report['availabilityBasis'] == 'RECONSTRUCTED_PUBLICATION_18JST_NOT_ARCHIVED_VINTAGE'
     assert report['historicalVintageVerified'] is False and report['validationStatus'] == 'UNVALIDATED'
     assert not report['tenYearOriginalCoverageComplete']
     assert data == before
     for row in data['financial_rows']:
         row['receivedAt'] = '2030-01-01T00:00:00Z'
-    assert study(**data,reconstruct=True)['condition']['inputDays'] == 0
+    # Future financial originals are rejected. Complete reconstructed empty
+    # cohort windows do not create active events or evaluated outcomes.
+    future=study(**data,reconstruct=True)
+    assert future['condition']['evaluated'] == 0
+    assert future['condition']['horizons'] == {}
+    assert future['legacySupportResultsReused'] is False
 
 
 def test_conflicting_same_receipt_originals_are_not_first_row_wins():

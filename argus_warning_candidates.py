@@ -164,6 +164,7 @@ def earnings_rule(*, sessions, financial_rows, membership_by_day, stock_bars, to
     if len(days) < 11 or len(financial_rows) > 30000:
         return out
     window = set(days[-10:]); prior_by_code_fy = {}; events = {}; missed = 0; missing_comparisons = 0
+    comparison_known = []
     accepted = []
     for row in financial_rows:
         if not isinstance(row, Mapping) or not isinstance(row.get('summary'), Mapping):
@@ -199,6 +200,8 @@ def earnings_rule(*, sessions, financial_rows, membership_by_day, stock_bars, to
                 revised=True; used_known=max(used_known,prior[1])
             if prior and prior[2]<published: compared=True
             prior_by_code_fy[key]=(value,known,published)
+        if day in window and has_forecast and compared and code in (membership_by_day.get(day) or ()):
+            comparison_known.append(used_known)
         if day in window and has_forecast and not compared and code in (membership_by_day.get(day) or ()):
             missing_comparisons+=1
         if day not in window or not revised: continue
@@ -225,7 +228,14 @@ def earnings_rule(*, sessions, financial_rows, membership_by_day, stock_bars, to
                 or _row_time(cov) is None or _row_time(cov)>limit:
             return out
     if len(events)<5:
-        return {**out,'goodEarningsCount':len(events),'reasonJa':'好決算の対象件数が5件未満'}
+        # With the entire dated cohort and prior forecasts admitted, the
+        # adopted minimum of five is not met. This is not missing data, and
+        # next-session reaction prices cannot change the failed minimum.
+        known = [_row_time(coverage_by_day[d]) for d in window] + comparison_known
+        return {**_measured(out,value=len(events),threshold=5,operator='>=',unit='CASES',
+                           known=max(known),day=days[-1]),
+                'goodEarningsCount':len(events),'underperformedCount':None,
+                'factNoteJa':f'上方修正 {len(events)}件・成立には5件以上が必要'}
     topix=_closes(topix_rows,'TOPIX_INDEX',limit); measured=[]
     known=[_row_time(coverage_by_day[d]) for d in window]
     for (code,day,disc), stamps in events.items():
@@ -287,11 +297,17 @@ def admitted_results(artifact, cutoff):
                 or row.get('movingAverage')!=boundary or threshold.get('unit')!='INDEX_RATIO'):return None
         if family=='D04' and (row.get('valuationBasis')!=EPS_BASIS or value<=0 or boundary<=0
                 or row.get('comparisonEps')!=boundary or threshold.get('unit')!='JPY_EPS'):return None
-        if family=='D07' and (type(row.get('goodEarningsCount')) is not int
-                or row['goodEarningsCount']<5 or not 0<=value<=1 or boundary!=.5
-                or type(row.get('underperformedCount')) is not int
-                or row['underperformedCount']/row['goodEarningsCount']!=value
-                or threshold.get('unit')!='FRACTION'):return None
+        if family=='D07':
+            count=row.get('goodEarningsCount')
+            if type(count) is not int or count<0:return None
+            if count<5:
+                if (value!=count or boundary!=5 or met is not False
+                        or row.get('underperformedCount') is not None
+                        or threshold.get('unit')!='CASES'):return None
+            elif (not 0<=value<=1 or boundary!=.5
+                    or type(row.get('underperformedCount')) is not int
+                    or row['underperformedCount']/count!=value
+                    or threshold.get('unit')!='FRACTION'):return None
     return rows
 
 

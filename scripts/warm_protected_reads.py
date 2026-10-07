@@ -25,6 +25,31 @@ CHART_PATHS = tuple(
 )
 
 
+class WarmReadFailure(ValueError):
+    """Only allowlisted diagnostics; never carry exception text or documents."""
+    def __init__(self, index, *, kind, phase, elapsed_ms, status):
+        super().__init__('warm_read_failed:' + str(index))
+        self.diagnostic = {'index': index, 'kind': kind, 'phase': phase,
+                           'elapsedMs': elapsed_ms}
+        if type(status) is int and 100 <= status <= 599:
+            self.diagnostic['httpStatus'] = status
+
+
+def _failure_kind(error, phase, status):
+    if isinstance(error, urllib.error.HTTPError):
+        return 'HTTP_ERROR'
+    if isinstance(error, TimeoutError) or (isinstance(error, urllib.error.URLError)
+            and isinstance(error.reason, TimeoutError)):
+        return 'TIMEOUT'
+    if isinstance(error, urllib.error.URLError):
+        return 'URL_ERROR'
+    if phase == 'VALIDATE_RESPONSE':
+        return 'HTTP_ERROR' if status != 200 else 'UNEXPECTED_RESPONSE_URL'
+    if isinstance(error, OSError):
+        return 'TRANSPORT_ERROR'
+    return 'INTERNAL_ERROR'
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -38,23 +63,31 @@ def warm(group, token, *, open_request=None, now=time.monotonic):
     results = []
     for index, path in enumerate(paths):
         started = now()
+        phase, status = 'OPEN', None
         try:
             request = urllib.request.Request(BACKEND + path, method='GET', headers={
                 'X-ARGUS-ADMIN-TOKEN': token, 'Accept': 'application/json',
                 'Cache-Control': 'no-store',
             })
             with open_request(request, timeout=120) as response:
+                phase = 'VALIDATE_RESPONSE'
                 status = int(response.status)
                 if status != 200 or response.geturl() != BACKEND + path:
                     raise ValueError('warm_response')
+                phase = 'DRAIN_BODY'
                 # Drain without retaining large market documents in memory.
                 while response.read(65536):
                     pass
             results.append({'index': index, 'status': status,
                             'elapsedMs': round((now() - started) * 1000)})
-        except Exception:
-            # urllib errors may include request/header/body values.
-            raise ValueError('warm_read_failed:' + str(index)) from None
+        except Exception as error:
+            # urllib errors may include request/header/body values. Classify
+            # types and numeric status only, never str(error), headers or URLs.
+            kind = _failure_kind(error, phase, status)
+            if isinstance(error, urllib.error.HTTPError):
+                status = error.code
+            raise WarmReadFailure(index, kind=kind, phase=phase,
+                elapsed_ms=max(0, round((now() - started) * 1000)), status=status) from None
     return results
 
 
@@ -65,7 +98,10 @@ def main():
     try:
         results = warm(args.group, os.environ.get('ARGUS_ADMIN_TOKEN', ''))
     except ValueError as error:
-        print(json.dumps({'status': 'failed', 'code': str(error)}))
+        result = {'status': 'failed', 'code': str(error)}
+        if isinstance(error, WarmReadFailure):
+            result['diagnostic'] = error.diagnostic
+        print(json.dumps(result))
         return 1
     print(json.dumps({'status': 'completed', 'reads': results}))
     return 0
