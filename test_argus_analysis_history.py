@@ -138,9 +138,10 @@ def test_recovered_history_invalidates_startup_cache_without_ai_or_data_fetch(tm
     monkeypatch.setattr(scanner,'_compose_market_brief',lambda:composer.compose_brief(now_iso='2026-09-14T00:00:00Z'))
     with scanner.app.test_request_context('/api/argus/market-brief'):
         received=scanner.api_argus_market_brief().get_json()
-    assert received['calculationSnapshots']['5']['epsInput']==3000
+    assert received['retainedPresentation']['calculationSnapshots']['5']['epsInput']==3000
+    assert received['calculationSnapshots']=={}, 'saved prose must not borrow pending calculations'
     assert received['lastSuccessfulAiAt']==saved['aiDiagnostics']['completedAt']
-    assert state['composedAt']>0 and state['data'] is not cached
+    assert state['composedAt']==0 and state['data'] is cached, 'reading does not recompose the cache'
     assert history.read_record(path,saved['analysisHistory']['recordId'])['calculations']['5']['epsInput']==3000
 
 

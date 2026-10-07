@@ -1115,6 +1115,10 @@ def test_every_catalogued_public_route_rejects_private_domain_sentinels(
         "/api/argus/chart-intelligence": "?symbol=SENTINELSYM&market=JP",
         "/api/argus/price-history": "?symbol=SENTINELSYM&market=JP",
     }
+    # Supply the background composition, including the hostile internal inputs.
+    # The cached-only endpoint must not acquire or rebuild merely for a read.
+    monkeypatch.setattr(scanner, "_MARKET_BRIEF", {
+        "data":scanner._compose_market_brief(), "composedAt":0.0, "historyRestoreAttempted":True})
     visited = []
     client = scanner.app.test_client()
     for row in catalog.ROUTE_CATALOG:

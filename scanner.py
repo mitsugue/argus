@@ -17680,14 +17680,19 @@ def api_argus_market_brief():
         except Exception as exc:
             return jsonify({"status": "UNAVAILABLE", "reason": type(exc).__name__}), 503
     try:
-        if _MARKET_BRIEF['data'] is None:
-            _market_brief_history_restore()
+        _market_brief_history_restore()
         cached = (_MARKET_BRIEF['data'] or _MARKET_BRIEF.get('lastSuccessful')
                   or _MARKET_BRIEF.get('lastPresentation'))
         if cached is None:
             return jsonify({'schemaVersion': argus_market_brief.BRIEF_SCHEMA,
                 'status': 'unavailable', 'reason': 'edition_not_yet_available',
                 'sdaAuthority': False, 'automaticAiCalls': 0}), 503
+        retained = _MARKET_BRIEF.get('lastPresentation') or _MARKET_BRIEF.get('lastSuccessful')
+        if retained and not cached.get('unifiedSummary'):
+            # Keep the new worker state, while returning the complete original edition.
+            # Its prose and calculations stay together, never on the pending inputs.
+            cached = {**cached, 'retainedPresentation': cached.get('retainedPresentation') or retained,
+                'lastSuccessfulAiAt': (retained.get('aiDiagnostics') or {}).get('completedAt')}
         return jsonify({**cached, "generationWorker": {
             key: value for key, value in _MARKET_BRIEF_WORKER.items()
             if key != "lastAttemptMonotonic"},
