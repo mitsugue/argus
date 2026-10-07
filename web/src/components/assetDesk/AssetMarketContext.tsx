@@ -11,10 +11,10 @@ export function AssetMarketContext({symbol,market,asset}:{symbol:string;market:s
   const [briefOpen,setBriefOpen]=useState(false);
   if(market!=='JP'&&market!=='US')return null;
   return <section className="ad-market-context" aria-label={`${symbol}と市場の関係`}>
-    <details className="ad-market-context__brief"><summary>市場と比べる期間を変更</summary><label>期間 <select value={horizon} onChange={event=>setHorizon(Number(event.target.value))}>
+    {market==='JP'&&<details className="ad-market-context__brief"><summary>市場と比べる期間を変更</summary><label>比較期間 <select value={horizon} onChange={event=>setHorizon(Number(event.target.value))}>
       {[1,5,10,20].map(days=><option key={days} value={days}>{days}営業日</option>)}
-    </select></label></details>
-    <OwnerOverview key={`${market}:${symbol}:${horizon}`} symbol={symbol} market={market} horizon={horizon} asset={asset}/>
+    </select></label></details>}
+    <OwnerOverview key={`${market}:${symbol}`} symbol={symbol} market={market} horizon={5} asset={asset}/>
     {market==='JP'&&<details className="ad-market-context__brief" open={comparisonOpen} onToggle={event=>setComparisonOpen(event.currentTarget.open)}><summary>指数・業種とこの銘柄の比較</summary>
       {comparisonOpen&&<SharedMarketContext horizon={horizon} focusSymbol={symbol}/>}</details>}
     {<details className="ad-market-context__brief" open={briefOpen} onToggle={event=>setBriefOpen(event.currentTarget.open)}><summary>市場全体の見立て（Today）</summary>
