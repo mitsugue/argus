@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.87"
+PRODUCT_VERSION = "v13.8.88"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -37,7 +37,7 @@ HISTORICAL_REPLACED_BLOBS = {
 REVIEWED_EXTENSION_BLOBS = {
     # 信用環境の公式入力・保存・表示を確認した正確な内容。
     'argus_credit_conditions.py': 'a17c75bfb12cbff2a94957b30e17d0a9ae959371',
-    'docs/operations/credit-conditions.md': '7b63f2377989813eb0ffa9785717d798ee856cbe',
+    'docs/operations/credit-conditions.md': 'ec1e668a48e29187d03bae960a73b3e440f5466a',
     'test_argus_credit_conditions.py': 'fff378f26b24550884cd56c3f8f3fda84692fccd',
     'web/scripts/credit-conditions.test.cjs': '023a835dcd3e05a90da9046ac772088d96a0b310',
     'web/src/components/today/CreditConditionsDetails.css': 'cd4c4e8e641c1dc909b5d834370919174c4a88f7',
@@ -146,7 +146,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'abe66d313f42087f5d8059ed4e0c50e53f034e9d',
+    'web/scripts/owner-today-https.mjs': '51d34bacd0948d1033a4649f3b9379dd1391ca9e',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
