@@ -9,6 +9,95 @@ from urllib.parse import urljoin
 
 ROOT = 'https://www.mof.go.jp/jgbs/auction/calendar/'
 TENORS = (10, 20, 30, 40)
+ARCHIVE_URL = 'https://www.mof.go.jp/jgbs/reference/appendix/jgb_historical_data.xls'
+
+
+def parse_archive(raw, *, acquired_at):
+    """Official selected fields, received now; not a historical publication vintage.
+
+    Monthly calendars cover the most recent two months. The archive only fills
+    older sessions, so rounded archive amounts cannot revise native results.
+    Other debt types and noncompetitive accepted amounts are not substituted.
+    """
+    import math
+    import xlrd
+    from zoneinfo import ZoneInfo
+    from argus_jp_fiscal_monitor import instant, digest
+    today = instant(acquired_at).astimezone(ZoneInfo('Asia/Tokyo')).date()
+    prior_month = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
+    try:
+        first = today.replace(year=today.year-10)
+    except ValueError:
+        first = today.replace(year=today.year-10,day=28)
+    if not isinstance(raw, bytes) or not 1 <= len(raw) <= 1_000_000:
+        raise ValueError('auction_archive_size')
+    book = xlrd.open_workbook(file_contents=raw, on_demand=True)
+    rows = []
+    try:
+        for tenor in TENORS:
+            sheet = book.sheet_by_name(f'{tenor}年債')
+            if not 6 <= sheet.nrows <= 1000 or not 10 <= sheet.ncols <= 20:
+                raise ValueError('auction_archive_dimensions')
+            headings = sheet.row_values(2)
+            def column(label):
+                found = [i for i, value in enumerate(headings) if _norm(str(value)) == label]
+                if len(found) != 1: raise ValueError('auction_archive_header')
+                return found[0]
+            fields = {label:column(label) for label in
+                ('回号','入札日','応募額','落札・割当額','最高利回')}
+            if tenor != 40: fields['平均利回'] = column('平均利回')
+            for label in ('応募額','落札・割当額'):
+                if _norm(str(sheet.cell_value(4,fields[label]))) != '(億円)(100millionyen)':
+                    raise ValueError('auction_archive_amount_unit')
+            for label in ('最高利回','平均利回'):
+                if label in fields and _norm(str(sheet.cell_value(4,fields[label]))) != '(%)':
+                    raise ValueError('auction_archive_yield_unit')
+            seen = set(); previous = None
+            def number(r, label):
+                value = sheet.cell_value(r, fields[label])
+                if isinstance(value, bool) or not isinstance(value, (float,int)) or not math.isfinite(value):
+                    raise ValueError('auction_archive_number')
+                return Decimal(str(value))
+            for r in range(5,sheet.nrows):
+                serial = number(r,'入札日')
+                if serial != serial.to_integral(): raise ValueError('auction_archive_session')
+                session = xlrd.xldate_as_datetime(float(serial), book.datemode).date()
+                if session > today or session in seen or (previous is not None and session <= previous):
+                    raise ValueError('auction_archive_date_order')
+                previous = session; seen.add(session)
+                if not first <= session < prior_month: continue
+                issue = number(r,'回号')
+                bids = number(r,'応募額') * 10**8
+                accepted = number(r,'落札・割当額') * 10**8
+                high = number(r,'最高利回')
+                average = number(r,'平均利回') if tenor != 40 else None
+                if issue != issue.to_integral() or not 0 < issue < 10000:
+                    raise ValueError('auction_archive_issue')
+                if bids != bids.to_integral() or accepted != accepted.to_integral() or not 0 < accepted <= bids <= 10**15:
+                    raise ValueError('auction_archive_amount')
+                if not -5 < high < 30 or (average is not None and not -5 < average <= high):
+                    raise ValueError('auction_archive_yield')
+                row = {'schemaVersion':'jp-jgb-auction-observation-v1',
+                    'sessionDate':session.isoformat(),'tenorYears':tenor,'issueNumber':int(issue),
+                    'auctionMethod':'PRICE_COMPETITIVE' if tenor != 40 else 'UNIFORM_YIELD',
+                    'competitiveBidAmountJpy':int(bids),'competitiveAcceptedAmountJpy':int(accepted),
+                    'bidToCover':float(bids/accepted),'highestAcceptedYieldPct':float(high),
+                    'averageAcceptedYieldPct':float(average) if average is not None else None,
+                    'yieldTailBp':float((high-average)*100) if average is not None else None,
+                    'publishedDate':None,'publishedAt':None,'knownAt':acquired_at,'acquiredAt':acquired_at,
+                    'sourceUrl':ARCHIVE_URL,'sourceHash':sha256(raw).hexdigest(),
+                    'sourceSheet':sheet.name,'sourceRow':r+1,'amountUnit':'100_MILLION_JPY',
+                    'sourceKind':'OFFICIAL_HISTORICAL_COMPILATION',
+                    'availabilityBasis':'ACTUAL_RECEIPT','historicalVintageVerified':False,
+                    'acquisitionStatus':'AVAILABLE','actionAuthority':False,'predictivePerformance':'UNVALIDATED'}
+                row['id']='jgb-auction-'+digest({k:v for k,v in row.items()
+                    if k not in ('knownAt','acquiredAt','sourceHash','sourceRow')})
+                rows.append(row)
+            if not any(row['tenorYears']==tenor for row in rows):
+                raise ValueError('auction_archive_tenor_empty')
+    finally:
+        book.release_resources()
+    return sorted(rows,key=lambda row:(row['sessionDate'],row['tenorYears']))
 
 
 def _norm(text):
@@ -247,10 +336,12 @@ def projection(state, *, as_of, expected=(), acquisition='NOT_RUN'):
     return body
 
 
-def collect(state, *, as_of, read):
+def collect(state, *, as_of, read, max_requests=6):
     """At most two calendars and one result per tenor; read returns completion time."""
     from argus_jp_fiscal_monitor import instant
     from zoneinfo import ZoneInfo
+    if isinstance(max_requests,bool) or max_requests not in (5,6):
+        raise ValueError('auction_request_budget')
     today = instant(as_of).astimezone(ZoneInfo('Asia/Tokyo')).date()
     expected = {}; errors = {}; requests = 0; rows = []; finished = instant(as_of)
     for url in calendar_urls(today):
@@ -270,9 +361,14 @@ def collect(state, *, as_of, read):
             errors[url.rsplit('/', 1)[-1]] = 'CALENDAR_ACQUISITION_FAILED'
     # Partial calendar coverage cannot determine the latest auction safely.
     if not errors:
-        for tenor in TENORS:
+        existing = _eligible(state, as_of=as_of)
+        # A reserved archive read must not starve the same missing tenor.
+        order = sorted(TENORS,key=lambda tenor:(
+            (f'jp.market.jgb.auction.{tenor}y',(expected.get(tenor) or {}).get('sessionDate')) in existing, tenor))
+        for tenor in order:
             target = expected.get(tenor)
             if not target or not target.get('sourceUrl'): continue
+            if requests >= max_requests: break
             try:
                 requests += 1
                 raw, acquired_at = read(target['sourceUrl'], 256_000)

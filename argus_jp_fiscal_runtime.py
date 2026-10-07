@@ -147,10 +147,39 @@ def refresh(state, *, now_iso, calendar, get, fx_rows=(), clock=None):
         raw, _ = _read(get, url, limit)
         completed_at = clock() if clock is not None else datetime.now(timezone.utc).isoformat()
         return raw, completed_at
-    auction_result = auctions.collect(state, as_of=now_iso, read=read_auction)
+    # Same background cycle and ledger. Give the first cycle to current data,
+    # then reserve one of the ten reads; current failures do not block history.
+    archive_due = (bool(previous.get('auctionLastCheckedAt')) and
+        (not previous.get('auctionArchiveSuccessAt') or
+         instant(previous['auctionArchiveSuccessAt']).astimezone(JST).strftime('%Y-%m') != now.astimezone(JST).strftime('%Y-%m')) and
+        (not previous.get('auctionArchiveAttemptAt') or
+         (now-instant(previous['auctionArchiveAttemptAt'])).total_seconds() >= 86400))
+    native_budget = 6; archive_completed = None
+    if archive_due:
+        native_budget = 5
+        control['auctionArchiveAttemptAt']=now_iso
+        try:
+            raw, received = read_auction(auctions.ARCHIVE_URL,1_000_000)
+            if instant(received) < now: raise ValueError('archive_receipt_precedes_request')
+            archived = auctions.parse_archive(raw,acquired_at=received)
+            archive_completed = received
+            # Native originals already saved for a session keep precedence.
+            saved = {(row['tenorYears'],row['sessionDate']):row for row in auctions.saved_rows(state,as_of=received)}
+            archived = [row for row in archived if not saved.get((row['tenorYears'],row['sessionDate'])) or
+                saved[(row['tenorYears'],row['sessionDate'])].get('sourceKind')=='OFFICIAL_HISTORICAL_COMPILATION']
+            candidates += auctions.missing_candidates(state,auctions.ledger_candidates(archived))
+            control.update(auctionArchiveStatus='AVAILABLE',auctionArchiveSuccessAt=received,
+                auctionArchiveSourceHash=sha256(raw).hexdigest(),auctionArchiveImportedCandidateCount=len(archived),
+                auctionArchiveHistoricalVintageVerified=False)
+        except Exception:
+            # No body, credential or exception message is retained here.
+            control['auctionArchiveStatus']='ARCHIVE_ACQUISITION_FAILED'
+    auction_result = auctions.collect(state, as_of=now_iso, read=read_auction,max_requests=native_budget)
     candidates += auction_result['candidates']
     finished_at = clock() if clock is not None else datetime.now(timezone.utc).isoformat()
     if instant(finished_at) < instant(auction_result['completedAt']):
+        raise ValueError('fiscal_completion_clock_precedes_receipt')
+    if archive_completed is not None and instant(finished_at) < instant(archive_completed):
         raise ValueError('fiscal_completion_clock_precedes_receipt')
     control.update(auctionAcquisitionStatus=auction_result['acquisitionStatus'],
         auctionExpected=auction_result['expected'], auctionErrors=auction_result['errors'],
@@ -163,6 +192,17 @@ def refresh(state, *, now_iso, calendar, get, fx_rows=(), clock=None):
         updated=result['state']
     control['auctionReport'] = auctions.projection(updated, as_of=finished_at,
         expected=auction_result['expected'], acquisition=auction_result['acquisitionStatus'])
+    history = [row for row in auctions.saved_rows(updated,as_of=finished_at)
+               if row.get('sourceKind')=='OFFICIAL_HISTORICAL_COMPILATION']
+    control['auctionArchiveReport']={'status':control.get('auctionArchiveStatus','NOT_RUN'),
+        'lastSuccessAt':control.get('auctionArchiveSuccessAt'),'sourceUrl':auctions.ARCHIVE_URL,
+        'sourceHash':control.get('auctionArchiveSourceHash'),'historicalVintageVerified':False,
+        'actionAuthority':False,'predictivePerformance':'UNVALIDATED',
+        'series':{str(tenor):{'rowCount':len(selected),
+            'firstSessionDate':min((r['sessionDate'] for r in selected),default=None),
+            'lastSessionDate':max((r['sessionDate'] for r in selected),default=None)}
+            for tenor in auctions.TENORS
+            for selected in [[r for r in history if r['tenorYears']==tenor]]}}
     control.update(fiscalAcquisitionStatus=fiscal_status,marketAcquisitionStatus=market_status,
         fxAcquisitionStatus=fx_status,
         acquisitionStatus='AVAILABLE' if fiscal_status==market_status==fx_status=='AVAILABLE' and session else 'INCOMPLETE',
@@ -226,6 +266,8 @@ def public_document(state):
     if isinstance(auction_report, dict):
         document['auctions'] = deepcopy(auction_report)
         document['auctionAcquisitionStatus'] = stored.get('auctionAcquisitionStatus', 'NOT_RUN')
+    if isinstance(stored.get('auctionArchiveReport'),dict):
+        document['auctionHistory']=deepcopy(stored['auctionArchiveReport'])
     return document
 
 
@@ -307,6 +349,9 @@ def context_reference(document):
     if isinstance(document.get('auctions'), dict):
         reference['auctions'] = deepcopy(document['auctions'])
         reference['auctionAcquisitionStatus'] = document.get('auctionAcquisitionStatus', 'NOT_RUN')
+    if isinstance(document.get('auctionHistory'),dict):
+        reference['auctionHistory']={key:deepcopy(document['auctionHistory'].get(key)) for key in
+            ('status','sourceUrl','sourceHash','historicalVintageVerified','actionAuthority','predictivePerformance','series')}
     market = document.get('market') or {}
     reference['market'] = {key:deepcopy(market.get(key)) for key in (
         'id','status','warningLevel','adverseGroups','groups','auctionStatus','rule','causalityConfirmed')}
