@@ -433,6 +433,14 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                         raise ValueError('subject_invalid')
                     if type(horizon) is not int or horizon not in dialogue.HORIZONS:
                         raise ValueError('horizon_invalid')
+                    if session_read and (market, symbol) != ('JP', 'N225'):
+                        members = registered_subjects()
+                        allowed = isinstance(members, list) and any(
+                            isinstance(item, dict) and item.get('market') == market
+                            and item.get('symbol') == symbol and item.get('enabled', True)
+                            for item in members)
+                        if not allowed:
+                            return response({'error':'subject_not_registered'},403)
                     previous=store.latest_subject_overview(path,boot_id,
                         symbol=symbol,market=market,horizon=horizon)
                     if previous and previous['context'].get('ownerInputPolicy') == 'WATCHLIST_ONLY_V1':
