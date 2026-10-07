@@ -1,6 +1,7 @@
 import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
 import './CreditConditionsDetails.css';
+import { useCreditConditions } from '../../hooks/useCreditConditions';
 
 type Row = Record<string, unknown>;
 const object = (value: unknown): value is Row => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -22,13 +23,16 @@ const source = (value: unknown) => {
   try { const url = new URL(text(value, '')); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; }
   catch { return null; }
 };
-export function CreditConditionsDetails({ brief }: { brief: MarketBrief }) {
-  const doc = brief.creditConditions;
+export function CreditConditionsDetails({ brief }: { brief?: Pick<MarketBrief, 'creditConditions'> }) {
+  const current = useCreditConditions();
+  const doc = current.denied ? null : current.document ?? brief?.creditConditions;
   if (!object(doc) || doc.schemaVersion !== 'credit-conditions-v1' || doc.actionAuthority !== false || !object(doc.dimensions)) return null;
   const dimensions = doc.dimensions;
   return <section className="credit-conditions" aria-label="信用環境の公式根拠" data-credit-snapshot={text(doc.snapshotId, '')}>
     {doc.showToday === true && <p className="credit-conditions__notice">信用環境：{Object.entries(labels).filter(([key]) => object(dimensions[key]) && dimensions[key].status === 'OBSERVED').map(([key, label]) => `${label}は${directions[text((dimensions[key] as Row).direction)] ?? '未分類'}`).join('、') || '入力の取得待ち'}。全体の分類は未検証です。</p>}
     <details className="argus-editorial__evidence"><summary>信用環境の根拠・取得状況</summary>
+      <small>公式観測の保存値です。上のAI見立てとは作成時点が異なる場合があります。</small>
+      {current.readFailed && <p>信用環境の最新の保存値を確認できません。取得済みの値を表示しています。</p>}
       {doc.collectionStatus === 'FAILED' && <p>信用環境の更新に失敗しました。受領済みの保存値を表示しています。</p>}
       <p>月次・四半期・半期の統計です。個社の借入金利や、毎日の売買タイミングを示すものではありません。</p>
       <dl>{Object.entries(labels).map(([key, label]) => {
