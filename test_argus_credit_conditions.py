@@ -189,3 +189,20 @@ def test_source_url_cannot_hide_extra_fields_or_repeated_parameters():
     assert not credit.approved_url(url+'&startDate=202501')
     assert not credit.approved_url(url+'&ownerRecord=not-allowed')
     assert not credit.approved_url(url+'&endDate='+('1'*2100))
+
+
+def test_check_clock_alone_reuses_ai_but_changed_credit_input_does_not(monkeypatch,tmp_path):
+    import scanner
+    monkeypatch.setattr(scanner,'_backend_exact_sha',lambda:'1'*40)
+    doc=credit.context_reference(credit.read(retained(tmp_path),cutoff=AT))
+    brief={'generatedAt':AT,'facts':credit.explanation_facts(credit.read(retained(tmp_path),cutoff=AT)),'creditConditions':doc}
+    before=scanner._market_brief_generation_input_digest(brief,{})
+    assert before
+    changed=deepcopy(brief);changed['generatedAt']=LATER
+    changed['creditConditions']['futureMapResearch']['knowledgeCutoff']=LATER
+    for h in changed['creditConditions']['sourceHealth']:
+        h.update(lastAttemptAt=LATER,lastSuccessAt=LATER,lastSuccessfulParseAt=LATER,nextCheckAt=LATER)
+    assert scanner._market_brief_generation_input_digest(changed,{})==before
+    assert brief['creditConditions']['futureMapResearch']['knowledgeCutoff']==AT
+    changed['creditConditions']['dimensions']['borrowingCost']['value']=3
+    assert scanner._market_brief_generation_input_digest(changed,{})!=before

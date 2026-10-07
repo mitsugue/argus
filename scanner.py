@@ -17321,6 +17321,16 @@ def _market_brief_generation_input_digest(brief, internals):
     if isinstance(brief_inputs.get("numericalResearch"), dict):
         brief_inputs["numericalResearch"] = {key: value for key, value in
             brief_inputs["numericalResearch"].items() if key != "readReceipt"}
+    if isinstance(brief_inputs.get("creditConditions"), dict):
+        # The history keeps the exact cutoff. A fresh read/check timestamp alone
+        # cannot invalidate paid explanation reuse for unchanged official facts.
+        credit_inputs = copy.deepcopy(brief_inputs["creditConditions"])
+        if isinstance(credit_inputs.get("futureMapResearch"), dict):
+            credit_inputs["futureMapResearch"].pop("knowledgeCutoff", None)
+        for source in credit_inputs.get("sourceHealth", []):
+            for key in ("lastAttemptAt", "lastSuccessAt", "lastSuccessfulParseAt", "nextCheckAt"):
+                source.pop(key, None)
+        brief_inputs["creditConditions"] = credit_inputs
     inputs = {
         "brief": brief_inputs,
         "index": index, "marketFeatures": copy.deepcopy(_JP_MARKET_FEATURE_HISTORY),
