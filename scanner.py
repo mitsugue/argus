@@ -39577,17 +39577,67 @@ def _analyst_targets_path():
 def _analyst_targets_symbols():
     pairs = {("JP", str(row.get("symbol"))) for row in _JP_WATCHLIST if row.get("symbol")}
     pairs |= {("US", str(row.get("symbol"))) for row in _US_WATCHLIST if row.get("symbol")}
+    registered = set()
     try:
         latest = _layer2b_read_latest()
         for member in (latest.get("members") if isinstance(latest, dict) else []) or []:
             if str(member.get("market")) in ("JP", "US") and member.get("symbol"):
-                pairs.add((str(member["market"]), str(member["symbol"]).upper()))
+                registered.add((str(member["market"]), str(member["symbol"]).upper()))
     except Exception:
         pass
     for symbol, meta in list(_SD_EXTRA_SYMBOLS.items()):
         if meta.get("market") in ("JP", "US") and time.time() - meta.get("ts", 0) <= _SD_EXTRA_TTL:
             pairs.add((meta["market"], symbol))
-    return sorted(pairs)
+    return sorted(registered) + sorted(pairs - registered)
+
+
+def _analyst_targets_saved_company(symbols, today):
+    """Project saved originals independently of Yahoo success and daily due."""
+    import argus_earnings_history
+    if not _cost_policy_durable_enabled():
+        return
+    path = os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3")
+    at = _ai_now_iso()
+    for market, symbol in symbols:
+        if market != "JP":
+            continue
+        key = f"JP:{symbol}"
+        try:
+            company = argus_asset_earnings.company_summary(
+                argus_earnings_history.read(path, cutoff=at, member_codes=[symbol[:4]]), today=today)
+        except Exception:
+            continue  # Preserve any saved result; never replace corruption with empty data.
+        if not company:
+            continue
+        row = dict(_ANALYST_TARGETS["items"].get(key) or {"market": market, "symbol": symbol, "unavailable": True})
+        earnings = dict(row.get("earnings") or {"symbol": symbol, "market": market,
+            "source": "J-Quants 決算短信", "fetchedAt": company["receivedAt"], "currency": "JPY",
+            "next": None, "previous": None, "estimate": None, "actionAuthority": False})
+        earnings["company"] = company
+        row["earnings"] = earnings
+        row["companyStatus"] = "AVAILABLE"
+        _ANALYST_TARGETS["items"][key] = row
+
+
+def _analyst_targets_schedule_warm(symbols, today):
+    """Same daily lane/store: at most ten official single-page reads per warm."""
+    if not _JQUANTS_API_KEY:
+        return
+    pending = [(market, symbol) for market, symbol in symbols if market == "JP"
+               and (_ANALYST_TARGETS["items"].get(f"JP:{symbol}") or {}).get("scheduleAttemptDayJst") != today]
+    for market, symbol in pending[:10]:
+        key, at = f"JP:{symbol}", _ai_now_iso()
+        next_date, status = None, "FETCH_FAILED"
+        try:
+            rows = _jquants_paginated("/fins/earnings-date", {"code": symbol[:4]}, max_pages=1, request_timeout=10)
+            at = _ai_now_iso()
+            next_date, status = argus_asset_earnings.scheduled_date(symbol[:4], rows, today=today, fetched_at=at)
+        except Exception:
+            pass  # Fixed class only, no authenticated provider body or exception text.
+        row = dict(_ANALYST_TARGETS["items"].get(key) or {"market": market, "symbol": symbol, "unavailable": True})
+        row = argus_asset_earnings.attach_schedule(row, symbol=symbol, at=at, next_date=next_date, status=status)
+        row.update(scheduleAttemptDayJst=today, scheduleLastAttemptAt=at)
+        _ANALYST_TARGETS["items"][key] = row
 
 
 def _analyst_targets_load_saved():
@@ -39610,12 +39660,15 @@ def _analyst_targets_warm():
     if not _ANALYST_TARGETS_LOCK.acquire(blocking=False):
         return
     session = None
+    symbols = []
     try:
         now = _ai_now_iso()
         today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
         _ANALYST_TARGETS.update(lastAttemptAt=now, fetchedLastWarm=0)
         _analyst_targets_load_saved()
-        pending = [(market, symbol) for market, symbol in _analyst_targets_symbols()
+        symbols = _analyst_targets_symbols()
+        _analyst_targets_saved_company(symbols, today)
+        pending = [(market, symbol) for market, symbol in symbols
                    if argus_analyst_targets.due(_ANALYST_TARGETS["items"].get(f"{market}:{symbol}"), today)
                    or "earningsStatus" not in (_ANALYST_TARGETS["items"].get(f"{market}:{symbol}") or {})]
         if not pending:
@@ -39655,42 +39708,44 @@ def _analyst_targets_warm():
                 status = "FETCH_FAILED"
             at = _ai_now_iso()
             previous = _ANALYST_TARGETS["items"].get(key)
-            company = None
-            # Existing selected financial originals only; opening a card never acquires data.
-            if market == "JP" and _cost_policy_durable_enabled():
-                try:
-                    financial = argus_earnings_history.read(
-                        os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3"),
-                        cutoff=at, member_codes=[symbol[:4]])
-                    company = argus_asset_earnings.company_summary(financial, today=today)
-                except Exception:
-                    company = None
             result = argus_analyst_targets.attempt_result(previous, row, market=market, symbol=symbol,
                 today=today, at=at, status=status)
             result = argus_asset_earnings.attach(previous, result,
                 earnings=earnings, success=status in ("AVAILABLE", "NO_TARGET"))
-            if company:
-                saved_earnings = dict(result.get("earnings") or {"symbol": symbol, "market": market,
-                    "source": "J-Quants 決算短信", "fetchedAt": at, "currency": "JPY",
-                    "next": None, "previous": None, "estimate": None, "actionAuthority": False})
-                saved_earnings["company"] = company
-                result["earnings"] = saved_earnings
-                if status in ("AVAILABLE", "NO_TARGET"):
-                    result["earningsStatus"] = "AVAILABLE"
+            # Daily Yahoo success must not erase independently received company
+            # results or a company-reported schedule from an earlier warm.
+            old_earnings = (previous or {}).get("earnings") or {}
+            if old_earnings.get("company") or (old_earnings.get("next") or {}).get("certainty") == "COMPANY_SCHEDULE":
+                combined = dict(result.get("earnings") or old_earnings)
+                if old_earnings.get("company"):
+                    combined["company"] = old_earnings["company"]
+                if (old_earnings.get("next") or {}).get("certainty") == "COMPANY_SCHEDULE":
+                    combined["next"] = old_earnings["next"]
+                result["earnings"] = combined
+            if (previous or {}).get("scheduleStatus") in ("NO_SCHEDULE", "CONFLICT") and result.get("earnings"):
+                result["earnings"] = {**result["earnings"], "next": None}
+            for field in ("scheduleStatus", "scheduleAttemptDayJst", "scheduleLastAttemptAt", "companyStatus"):
+                if field in (previous or {}):
+                    result[field] = previous[field]
             _ANALYST_TARGETS["items"][key] = result
             failed = failed or status not in ("AVAILABLE", "NO_TARGET")
             _ANALYST_TARGETS["fetchedLastWarm"] += 1
-        path = _analyst_targets_path()
-        if path:
-            tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as handle:
-                json.dump({"schemaVersion": argus_analyst_targets.SCHEMA, "items": _ANALYST_TARGETS["items"]},
-                          handle, ensure_ascii=False)
-            os.replace(tmp, path)
         _ANALYST_TARGETS["lastError"] = "partial_target_fetch_failed" if failed else None
     except Exception:
         _ANALYST_TARGETS["lastError"] = "target_acquisition_failed"
     finally:
+        try:
+            if symbols:
+                _analyst_targets_schedule_warm(symbols, today)
+                path = _analyst_targets_path()
+                if path:
+                    tmp = path + ".tmp"
+                    with open(tmp, "w", encoding="utf-8") as handle:
+                        json.dump({"schemaVersion": argus_analyst_targets.SCHEMA, "items": _ANALYST_TARGETS["items"]},
+                                  handle, ensure_ascii=False)
+                    os.replace(tmp, path)
+        except Exception:
+            _ANALYST_TARGETS["lastError"] = "saved_targets_unavailable"
         close = getattr(session, "close", None)
         if callable(close):
             close()
@@ -39703,7 +39758,8 @@ def api_argus_analyst_targets():
     _analyst_targets_load_saved()
     rows = dict(_ANALYST_TARGETS.get("items") or {})
     items = {}
-    earnings_items = {key: {**row["earnings"], "acquisitionStatus": row.get("earningsStatus", "AVAILABLE")}
+    earnings_items = {key: {**row["earnings"], "acquisitionStatus": row.get("earningsStatus", "AVAILABLE"),
+                           "scheduleStatus": row.get("scheduleStatus"), "companyStatus": row.get("companyStatus")}
                       for key, row in rows.items() if isinstance(row, dict) and isinstance(row.get("earnings"), dict)}
     for key, row in rows.items():
         if not isinstance(row, dict) or row.get("unavailable"):

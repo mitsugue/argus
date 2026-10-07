@@ -46,3 +46,12 @@ const details=fs.readFileSync('src/components/assetDesk/AssetDecisionCard.tsx','
 assert.ok(summary.includes('<AssetEarningsDate'));
 assert.ok(details.indexOf('<AssetEarningsDetails') < details.indexOf('<AssetMarketContext'));
 console.log('決算の日付・期末・予想の区別、根拠なし表示、閉じたカードと詳細 PASS');
+const official = {...row,market:'JP',symbol:'1001',next:{from:'2026-11-03',to:'2026-11-03',certainty:'COMPANY_SCHEDULE',
+  timezone:'Asia/Tokyo',source:'J-Quants 決算発表予定日',publishedDate:'2026-10-07',fetchedAt:row.fetchedAt}};
+assert.ok(domain.validAssetEarnings(official,'JP:1001'));
+assert.equal(domain.earningsDateLabel(official,new Date('2026-10-08')), '次回決算 11/3（会社予定）');
+assert.equal(domain.validAssetEarnings({...official,next:{...official.next,source:'unknown'}},'JP:1001'),false);
+assert.equal(domain.validAssetEarnings({...official,market:'US'},'US:1001'),false);
+const scheduledHtml = renderToStaticMarkup(React.createElement(AssetEarningsDate,{market:'JP',row:official,refreshFailed:true}));
+assert.ok(scheduledHtml.includes('会社予定') && scheduledHtml.includes('会社が報告') && !scheduledHtml.includes('更新未確認'));
+assert.ok(renderToStaticMarkup(React.createElement(AssetEarningsDate,{market:'JP',row:{...official,scheduleStatus:'FETCH_FAILED'}})).includes('更新未確認'));

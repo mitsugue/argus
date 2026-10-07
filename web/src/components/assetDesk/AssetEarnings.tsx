@@ -5,8 +5,11 @@ import { outlookDay } from '../../domain/assetOutlook';
 
 export const AssetEarningsDate: React.FC<{ market: string; row?: AssetEarnings; loading?: boolean; refreshFailed?: boolean }> =
   ({ market, row, loading, refreshFailed }) => !['JP', 'US'].includes(market) ? null :
-    <span className="ad-earnings-date" title={row ? `${row.source} · ${outlookDay(row.fetchedAt)}取得。予定は取得元の推定。米国は米国東部の日付。` : undefined}>{!row && loading ? '次回決算 確認中' : earningsDateLabel(row)}
-      {(row?.acquisitionStatus === 'FETCH_FAILED' || refreshFailed) && <small> · 更新未確認{row ? '・保存値' : ''}</small>}</span>;
+    <span className="ad-earnings-date" title={row?.next?.certainty === 'COMPANY_SCHEDULE'
+      ? `${row.next.source} · ${outlookDay(row.next.fetchedAt!)}取得 · ${row.next.publishedDate}公表。会社が報告した予定日であり変更される場合があります。`
+      : row ? `${row.source} · ${outlookDay(row.fetchedAt)}取得。予定は取得元の推定。米国は米国東部の日付。` : undefined}>{!row && loading ? '次回決算 確認中' : earningsDateLabel(row)}
+      {(row?.next?.certainty === 'COMPANY_SCHEDULE' ? row.scheduleStatus === 'FETCH_FAILED' : row?.acquisitionStatus === 'FETCH_FAILED' || refreshFailed) &&
+        <small> · 更新未確認{row ? '・保存値' : ''}</small>}</span>;
 
 export const AssetEarningsDetails: React.FC<{ market: string; symbol: string }> = ({ market, symbol }) => {
   const state = useAnalystTargetState();

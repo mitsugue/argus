@@ -1,7 +1,8 @@
 export type AssetEarnings = {
   symbol: string; market: 'JP' | 'US'; source: string; fetchedAt: string; currency: string | null;
-  actionAuthority: false; acquisitionStatus?: string; companyStatus?: string;
-  next: { from: string; to: string; certainty: 'PROVIDER_ESTIMATE'; timezone: string } | null;
+  actionAuthority: false; acquisitionStatus?: string; companyStatus?: string; scheduleStatus?: string | null;
+  next: { from: string; to: string; certainty: 'PROVIDER_ESTIMATE' | 'COMPANY_SCHEDULE'; timezone: string;
+    source?: string; publishedDate?: string; fetchedAt?: string } | null;
   previous: { currency?: string | null; periodEnd: string; epsActual: number; epsEstimate: number | null; surprisePct: number | null } | null;
   estimate: { epsCurrency?: string | null; revenueCurrency?: string | null; periodEnd: string; eps: number | null; epsLow: number | null; epsHigh: number | null;
     analysts: number | null; epsGrowthPct: number | null; revenue: number | null; revenueAnalysts: number | null;
@@ -25,7 +26,9 @@ export function validAssetEarnings(value: unknown, key: string): value is AssetE
     !(row.currency === null || typeof row.currency === 'string' && /^[A-Z]{3}$/.test(row.currency))) return false;
   const n = row.next, p = row.previous, e = row.estimate, c = row.company;
   if (n !== null && (!n || !validEarningsDay(n.from) || !validEarningsDay(n.to) || n.from > n.to ||
-    n.certainty !== 'PROVIDER_ESTIMATE' || n.timezone !== (row.market === 'JP' ? 'Asia/Tokyo' : 'America/New_York'))) return false;
+    !['PROVIDER_ESTIMATE', 'COMPANY_SCHEDULE'].includes(n.certainty) || n.timezone !== (row.market === 'JP' ? 'Asia/Tokyo' : 'America/New_York') ||
+    n.certainty === 'COMPANY_SCHEDULE' && (row.market !== 'JP' || n.from !== n.to || n.source !== 'J-Quants 決算発表予定日' ||
+      !validEarningsDay(n.publishedDate) || !text(n.fetchedAt) || !Number.isFinite(Date.parse(n.fetchedAt))))) return false;
   if (p !== null && (!p || !validEarningsDay(p.periodEnd) || !finite(p.epsActual) ||
     !unit(p.currency) || !optionalNumber(p.epsEstimate) || !optionalNumber(p.surprisePct))) return false;
   if (e !== null && (!e || !validEarningsDay(e.periodEnd) || !unit(e.epsCurrency) || !unit(e.revenueCurrency) || !count(e.analysts) || !count(e.revenueAnalysts) ||
@@ -46,7 +49,7 @@ export function earningsDateLabel(row?: AssetEarnings, now = new Date()): string
   if (!row?.next || row.next.to < earningsToday(row, now)) return '次回決算 日付未取得';
   const short = (day: string) => `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`;
   const dates = row.next.from === row.next.to ? short(row.next.from) : `${short(row.next.from)}〜${short(row.next.to)}`;
-  return `次回決算 ${dates}（推定${row.market === 'US' ? '・米東部' : ''}）`;
+  return `次回決算 ${dates}（${row.next.certainty === 'COMPANY_SCHEDULE' ? '会社予定' : `推定${row.market === 'US' ? '・米東部' : ''}`}）`;
 }
 export function earningsAmount(value: number, currency: string | null): string {
   if (!currency) return `${value.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}（通貨未確認）`;
