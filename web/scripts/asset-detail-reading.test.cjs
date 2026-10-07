@@ -4,9 +4,10 @@ for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.tra
 const React=require('react'),{renderToStaticMarkup}=require('react-dom/server');
 let state={items:{},availability:{},loading:false,refreshFailed:false};
 const load=Module._load;
-Module._load=function(id,...args){if(id.endsWith('/useAnalystTargets'))return{useAnalystTargetState:()=>state};if(id.endsWith('/InstitutionalView'))return{InstitutionalView:()=>null};return load.call(this,id,...args);};
+Module._load=function(id,...args){if(id.endsWith('/useAnalystTargets'))return{useAnalystTargetState:()=>state};if(id.endsWith('/useDecisionEvidence'))return{useTachibanaLiveDocument:()=>null};if(id.endsWith('/InstitutionalView'))return{InstitutionalView:()=>null};return load.call(this,id,...args);};
 const root='../src/components/assetDesk/';
 const {AssetDecisionDetails}=require(root+'AssetDecisionDetails.tsx'),{AssetTargetDetails}=require(root+'AssetTargetDetails.tsx'),{AssetScenarioPanel}=require(root+'AssetScenarioPanel.tsx'),{AssetFlowPanel}=require(root+'AssetFlowPanel.tsx'),{AssetEvidenceSummary}=require(root+'AssetEvidenceSummary.tsx'),{uniqueDetailText,detailTime}=require(root+'detailReading.ts');
+const {AssetDecisionSummary}=require(root+'AssetDecisionSummary.tsx');
 Module._load=load;
 const d={asset:{symbol:'1001',market:'JP'},genre:'jp',quote:{changePct:1.5,date:'2026-10-06'},decisionFirst:{symbol:'1001',currentActionJa:'WAIT',whyJa:'信用買い残が増えています。',nextJa:'次の公表を確認します。',whatChangesJa:'次の公表を確認します。',targets:[{value:'1,100',unit:'円'}],invalidation:{value:'900',unit:'円'},dataStatus:'前回値',dataState:'STALE',evidenceState:'STALE',asOf:'2026-10-06T06:30:00Z',nextCheck:'次の公表を確認します。'},strat:{bigFlowRatio:null,volume:120000,dataLimitations:['週次残高は未取得','週次残高は未取得'],scenarios:[]},sdg:{confidence:0.5,ownerReadableWhyJa:'信用残高を参照しています。',directnessJa:'直接データ',supplyDemandRank:'C',levelJa:'重い',evidence:{marginBuyingBalance:1200,marginSellingBalance:200,marginBalanceChange:{buyPct:2,sellPct:null}},ratios:{margin:6,jsf:0.7},sourceDates:{weeklyMargin:'2026-10-02',jsfDaily:'2026/10/06'},asOf:'2026-10-06T06:30:00Z'}};
 const render=(C,patch={})=>renderToStaticMarkup(React.createElement(C,{d:{...d,...patch}}));
@@ -44,6 +45,21 @@ assert.ok(scenarios.includes('利益が増える')&&scenarios.includes('追加�
 assert.equal((scenarios.match(/別の条件/g)||[]).length,1);assert.ok(!scenarios.includes('次の公表を確認します'));
 const types=require(root+'types.ts');assert.equal(types.tabForDeskSection('scenarios'),'chart');assert.equal(types.tabForDeskSection('flow-supply'),'evidence');
 console.log('Expanded detail reading: dedupe, source separation, missing/saved states and navigation PASS');
+
+// Unknown old owner actions must not turn every registered asset into a waiting task.
+state={items:{},availability:{},loading:false,refreshFailed:false};
+for(const [market,genre,price] of [['JP','jp','1,000円'],['US','us','$100.00']]) {
+  const card={...d,asset:{...d.asset,market},genre,
+    decisionFirst:{...d.decisionFirst,name:'検査用銘柄',held:false,priceText:price,
+      currentActionJa:'確認待ち',canonicalPrimaryAction:'WAIT',canonicalDecisionStatus:'DATA_GATED'},
+    sdg:{...d.sdg,market}};
+  const before=JSON.stringify(card);
+  const first=renderToStaticMarkup(React.createElement(AssetDecisionSummary,{d:card,open:false,onToggle:()=>{}}));
+  for(const text of [price,'検査用銘柄','次回決算','アナリスト目標','需給'])assert.ok(first.includes(text),text);
+  assert.ok(!first.includes('確認待ち')&&!first.includes('ad-cmd')&&!first.includes('買い候補'));
+  assert.equal(JSON.stringify(card),before,'表示整理で判断・根拠・制限を書き換えない');
+}
+console.log('登録日米カード: 一律待機を除去、価格・決算・目標・需給と内部制限を保持 PASS');
 
 const usFlow=render(AssetFlowPanel,{asset:{symbol:'MU',market:'US'},genre:'us',sdg:{...d.sdg,market:'US',ownerReadableWhyJa:'実測フローの取得待ちです。'}});
 for(const text of ['信用倍率 6.00倍','日証金の貸借倍率','信用残 10/2週','日証金 10/6','信用買い残','前週差'])assert.ok(!usFlow.includes(text),text);

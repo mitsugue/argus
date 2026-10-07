@@ -219,14 +219,16 @@ def test_fe_osint_pack_and_ui():
         WEB, "components", "dashboard", "CauseStackCard.tsx"))
 
 
-def test_fe_unified_stance_chip_everywhere():
-    # Round 2: Asset DeskはSDA v2正本をdecision-first viewへ正規化して表示する。
-    # 旧Primary Stanceは選択権を持たず、互換表示もSDA結果からのみ派生する。
+def test_fe_registered_asset_facts_preserve_internal_stance_authority():
+    # 登録銘柄は価格・決算・需給の事実を表示し、旧保有判断を出さない。
+    # 内部のSDA正本と制限は維持し、別の判断経路を作らない。
     details = _read("components", "assetDesk", "AssetDecisionDetails.tsx")
     summary = _read("components", "assetDesk", "AssetDecisionSummary.tsx")
-    # 最終判断は最初のカードに一度だけ表示し、詳細は同じ正本の根拠を読む。
+    # 詳細は同じ正本の根拠を読み、先頭は取得済みの事実を表示する。
     assert "d.decisionFirst" in details and "view.whyJa" in details
-    assert "d.decisionFirst" in summary and "view.currentActionJa" in summary
+    assert "d.decisionFirst" in summary and "view.priceText" in summary
+    assert "AssetEarningsDate" in summary and "AssetOutlookSummary" in summary
+    assert "view.currentActionJa" not in summary and "ad-cmd" not in summary
     assert "view.currentActionJa" not in details
     intel = _read("hooks", "useAssetIntel.ts")
     assert "evaluateSingleDecisionAuthority" in intel and "sdaBySymbol" in intel
