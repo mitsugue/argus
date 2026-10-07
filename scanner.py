@@ -39161,7 +39161,11 @@ def _jp_dividend_warm(member_codes):
                       or code not in completed)
                   and now - _JP_EARNINGS_BACKFILL_ATTEMPTS.get(code, 0.0) >= 300),
                  key=lambda code: (code in completed, store["fetchedAt"].get(code, 0.0)))[:_JP_DIVIDEND_PER_WARM]
+    deadline = time.monotonic() + 150
+    for old_code in set(_JP_EARNINGS_BACKFILL_ATTEMPTS) - set(member_codes):
+        _JP_EARNINGS_BACKFILL_ATTEMPTS.pop(old_code, None)
     for code in due:
+        if time.monotonic() >= deadline: break
         _JP_EARNINGS_BACKFILL_ATTEMPTS[code] = now
         try:
             rows = _jquants_paginated("/fins/summary", {"code": code}, max_pages=3, request_timeout=15)

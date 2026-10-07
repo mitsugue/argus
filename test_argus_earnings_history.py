@@ -162,3 +162,18 @@ def test_failed_backfill_is_bounded_and_retries_without_falsifying_receipt(monke
     scanner._jp_dividend_warm(codes);assert fetch.call_count==25
     now[0]+=300;scanner._jp_dividend_warm(codes);assert fetch.call_count==45
     assert history.completed_codes(tmp_path/'jp_market_source_history.sqlite3',cutoff=AT,member_codes=codes)==set()
+
+
+def test_missing_original_backfill_stops_at_existing_collection_budget(monkeypatch,tmp_path):
+    import scanner
+    from unittest.mock import Mock
+    monkeypatch.setattr(scanner,'_JP_EARNINGS_BACKFILL_ATTEMPTS',{'9999':1})
+    monkeypatch.setattr(scanner,'_JP_DIVIDEND_STORE',dict(rows={},fetchedAt={},closes=None,restoreAttempted=True,lastError=None,requestsLastWarm=0))
+    monkeypatch.setattr(scanner,'_cost_policy_durable_enabled',lambda:False)
+    monkeypatch.setattr(scanner,'_JQUANTS_API_KEY','test')
+    clock=iter([0,0,150]);monkeypatch.setattr(scanner.time,'monotonic',lambda:next(clock))
+    fetch=Mock(side_effect=RuntimeError('synthetic'));monkeypatch.setattr(scanner,'_jquants_paginated',fetch)
+    scanner._jp_dividend_warm(['1000','1001'])
+    assert fetch.call_count==1
+    assert '1001' not in scanner._JP_EARNINGS_BACKFILL_ATTEMPTS
+    assert '9999' not in scanner._JP_EARNINGS_BACKFILL_ATTEMPTS
