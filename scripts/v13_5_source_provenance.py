@@ -353,7 +353,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_owner_dialogue_backup.py': 'cf675c0f2f17840c35e762a35feafc090cab8338',
     'test_argus_owner_dialogue_recovery.py': 'acf706ac87e3ea5a686768bb22d9239e4576c126',
     'test_argus_subject_materials.py': '321b8881f911e5ce356e1684a471c68413498a3d',
-    'test_jp_market_internals.py': '49eb3f360af263f28847f3fb9fceae31c8a539d5',
+    'test_jp_market_internals.py': 'be93cb202d784d879f3c5bdc878810edd65b233d',
     'web/scripts/pwa-recovery.test.mjs': 'd2fc2ff86480cb685328e1341e61d4415285d8a6',
     'web/scripts/shared-market-context.test.cjs': '6ba958105e283011e25af76c3ce538e14833c75b',
     'web/src/components/assetDesk/AssetMarketContext.tsx': '8a00357e8699bc97f844e7701f6d0dbf0e71f99d',
