@@ -40383,6 +40383,38 @@ def _jp_internals_close_row(day, close, *, volume=None, adjusted=None):
             "completed": True, "volume": volume, "adjusted": adjusted}
 
 
+def _jp_earnings_reaction_codes():
+    """Read retained public forecasts for the dated Nikkei cohort, never fetch here."""
+    import argus_earnings_history
+    import argus_warning_candidates as rules
+    import jp_market_level_map
+    import sqlite3
+    from datetime import date as calendar_date
+    if not _cost_policy_durable_enabled(): return []
+    base = ((_JP_INDEX_PROXY.get('factors') or {}).get('factors')) or {}
+    histories = _N225_ANALOG_HISTORY.get('data') or []
+    if len(base) != 225 or not histories: return []
+    try:
+        cutoff = _ai_now_iso(); limit = jp_market_engine._instant(cutoff)
+        sessions, unknown = _jp_exchange_sessions(calendar_date.fromisoformat(min(r['date'] for r in histories)),
+            limit.astimezone(TZ_JST).date(), _N225_ANALOG_HISTORY.get('calendar', []))
+        if unknown: return []
+        closed = [d for d in sessions if rules._session_close(d) <= limit]
+        changes = _nikkei225_constituent_changes() or {}
+        membership = {d: jp_market_level_map.constituents_on(d, base, _JP_INDEX_PROXY.get('weightsAsOf'), changes)[0]
+                      for d in closed[-10:]}
+        scope = set(base)
+        for members in membership.values(): scope.update(members)
+        rows = argus_earnings_history.read(os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3'),
+            cutoff=cutoff, member_codes=scope)
+        codes = rules.reaction_instruments(sessions=sessions, financial_rows=rows, membership_by_day=membership, cutoff=cutoff)
+        # Rotate within the existing collector; preserve its original 150s budget.
+        prices = _JP_INTERNALS_CACHE.get('prices', {})
+        return sorted(codes, key=lambda code: (str((prices.get(code) or {}).get('receivedAt') or ''), code))[:20]
+    except (ValueError, TypeError, KeyError, OSError, sqlite3.Error):
+        return []  # Original-store failures cannot break sector/registered prices.
+
+
 def _jp_internals_warm():
     """Short daily-bar windows on the existing authenticated collection lane."""
     if not _JP_INTERNALS_REFRESH_LOCK.acquire(blocking=False): return
@@ -40401,7 +40433,8 @@ def _jp_internals_warm():
                     "sector17Code": row["sector17Code"], "sector33Code": row.get("sector33Code"),
                     "effectiveDate": row.get("effectiveDate"), "receivedAt": row.get("receivedAt"),
                     "source": "J-Quants V2 equities/master"}
-        symbols = ["1306", *[r["symbol"] for r in jp_market_internals.SECTORS.values()], *public]
+        sector_symbols = ["1306", *[r["symbol"] for r in jp_market_internals.SECTORS.values()]]
+        symbols = list(dict.fromkeys([*sector_symbols, *public, *_jp_earnings_reaction_codes()]))
         deadline = time.monotonic() + 150; failed = []; updated = []
         start = (datetime.now(TZ_JST) - timedelta(days=100)).date().isoformat()
         for symbol in symbols:
@@ -40430,7 +40463,7 @@ def _jp_internals_warm():
                 if not normalized: raise ValueError("internals_no_adjusted_rows")
                 received = _ai_now_iso()
                 _JP_INTERNALS_CACHE["prices"][symbol] = {"instrumentId": symbol,
-                    "instrumentKind": "ETF" if symbol not in public else "EQUITY",
+                    "instrumentKind": "ETF" if symbol in sector_symbols else "EQUITY",
                     "priceBasis": "JQUANTS_ADJUSTED_CLOSE", "receivedAt": received,
                     "source": "J-Quants V2 equities/bars/daily", "sourceResponseSha256": hashlib.sha256(raw).hexdigest(),
                     "rows": sorted(normalized, key=lambda r: r["date"])}

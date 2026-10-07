@@ -292,3 +292,23 @@ def admitted_results(artifact, cutoff):
                 or row['underperformedCount']/row['goodEarningsCount']!=value
                 or threshold.get('unit')!='FRACTION'):return None
     return rows
+
+
+def reaction_instruments(*, sessions, financial_rows, membership_by_day, cutoff):
+    """Price acquisition scope only: a forecast disclosure is not a lit warning."""
+    days, limit = _calendar(sessions, cutoff)
+    if len(financial_rows) > 30000 or len(days) < 10: return []
+    recent = set(days[-10:]); codes = set()
+    for row in financial_rows:
+        if not isinstance(row, Mapping) or not isinstance(row.get('summary'), Mapping): continue
+        known, published = _row_time(row), _instant(row.get('publishedAt')); summary = row['summary']
+        day = summary.get('DiscDate'); code = str(summary.get('Code') or '')[:4]
+        members = membership_by_day.get(day)
+        if (day not in recent or not isinstance(members, (list, tuple, set)) or len(set(members)) != 225
+                or code not in members or known is None or known > limit or published is None
+                or published > known or published > limit or published.astimezone(TOKYO).date().isoformat() != day): continue
+        if any(fiscal and _forecast(value) is not None for fiscal, value in (
+                (summary.get('CurFYEn'), summary.get('FOP')), (summary.get('CurFYEn'), summary.get('FNCOP')),
+                (summary.get('NxtFYEn'), summary.get('NxFOP')), (summary.get('NxtFYEn'), summary.get('NxFNCOP')))):
+            codes.add(code)
+    return sorted(codes)

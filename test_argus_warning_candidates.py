@@ -141,3 +141,22 @@ def test_seal_is_separate_and_zero_authority():
     sealed=seal_candidates(cutoff=AT,results=rows)
     assert sealed['validationStatus']=='UNVALIDATED' and sealed['probability'] is None
     with pytest.raises(ValueError):seal_candidates(cutoff=AT,results={'D03':rows['D03']})
+
+
+def test_price_reaction_scope_is_dated_and_is_not_a_warning_or_current_watchlist():
+    from argus_warning_candidates import reaction_instruments
+    data=cohort();before=deepcopy(data)
+    args={key:data[key] for key in ('sessions','financial_rows','membership_by_day','cutoff')}
+    assert reaction_instruments(**args)==[str(1000+i) for i in range(5)]
+    assert data==before
+    # A recent forecast is an acquisition candidate even before it is a proven
+    # good-earnings revision. Never count that price scope as a lit condition.
+    args['financial_rows']=[data['financial_rows'][-1]]
+    assert reaction_instruments(**args)==['1004']
+    args['financial_rows']=[{**data['financial_rows'][-1],'knownAt':'2026-09-16T00:00:00Z'}]
+    assert reaction_instruments(**args)==[]
+    args['financial_rows']=[data['financial_rows'][0]]
+    assert reaction_instruments(**args)==[]
+    args['financial_rows']=[data['financial_rows'][-1]]
+    args['membership_by_day']={}
+    assert reaction_instruments(**args)==[]

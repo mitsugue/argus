@@ -53,3 +53,14 @@ def test_repeated_pagination_cannot_be_retained_as_complete_market_cohort(monkey
     with pytest.raises(RuntimeError,match='repeated_pagination_cursor'):
         scanner._jquants_paginated('/fins/summary',{'date':'2026-09-01'})
     assert request.call_count==2
+
+
+def test_reaction_scope_reads_market_originals_without_network_and_rotates_twenty(monkeypatch,tmp_path):
+    from test_argus_warning_candidates import cohort
+    import argus_earnings_history
+    setup_inputs(monkeypatch,tmp_path);data=cohort()
+    monkeypatch.setattr(scanner,'_ai_now_iso',lambda:AT)
+    monkeypatch.setattr(argus_earnings_history,'read',lambda *a,**k:data['financial_rows'])
+    assert scanner._jp_earnings_reaction_codes()==[str(1000+i) for i in range(5)]
+    monkeypatch.setattr(argus_earnings_history,'read',Mock(side_effect=sqlite3.DatabaseError('synthetic')))
+    assert scanner._jp_earnings_reaction_codes()==[]
