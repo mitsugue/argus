@@ -129,7 +129,7 @@ async function screenshot(page, name, fullPage = false) {
   });
 }
 
-function observe(page, evidence) {
+function observe(page, evidence, contextKind) {
   page.on('console', (message) => {
     const location = message.location().url || '';
     const isIntentionallyBlockedSupportGet = location.includes('/api/argus/')
@@ -194,7 +194,10 @@ function observe(page, evidence) {
           url: response.url(), status: response.status(),
           retryAfter: response.headers()['retry-after'] ?? null,
           contractValid,
-          bodyRead, bodyReadError, browserProof,
+          bodyRead, bodyReadError, browserProof, contextKind,
+          browserProofInstalled: await page.evaluate(() => window.__argusAcceptanceRateLimitReads instanceof Map).catch(() => false),
+          corsOriginMatches: response.headers()['access-control-allow-origin'] === new URL(page.url()).origin,
+          requestFailed: response.request().failure() !== null,
           method: ['GET', 'OPTIONS'].includes(response.request().method())
             ? response.request().method() : 'OTHER',
           contentType: String(response.headers()['content-type'] || '').startsWith('application/json')
@@ -493,7 +496,8 @@ async function run() {
   });
   await isolateChartReads(context, evidence);
   const page = await context.newPage();
-  observe(page, evidence);
+  await context.addInitScript(installBrowserRateLimitProof);
+  observe(page, evidence, 'MAIN');
   const initialRequestsAt = evidence.network.length;
   await page.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(page);
@@ -789,7 +793,8 @@ async function run() {
   await warm.route('**/api/argus/chart-intelligence?*',
     (route) => fulfillCapturedSnapshot(route, evidence, 0));
   const warmPage = await warm.newPage();
-  observe(warmPage, evidence);
+  await warm.addInitScript(installBrowserRateLimitProof);
+  observe(warmPage, evidence, 'WARM');
   await warmPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(warmPage);
   await selectCanonicalControls(warmPage);
@@ -903,7 +908,7 @@ async function run() {
     (route) => fulfillCapturedSnapshot(route, evidence, 0));
   await rateLimitContext.addInitScript(installBrowserRateLimitProof);
   const rateLimitPage = await rateLimitContext.newPage();
-  observe(rateLimitPage, evidence);
+  observe(rateLimitPage, evidence, 'CONTROLLED_429');
   await rateLimitPage.goto(TODAY_URL, {
     waitUntil: 'domcontentloaded', timeout: 30_000,
   });
@@ -1029,7 +1034,8 @@ async function run() {
     return route.abort('blockedbyclient');
   });
   const headlinePage = await headlineContext.newPage();
-  observe(headlinePage, evidence);
+  await headlineContext.addInitScript(installBrowserRateLimitProof);
+  observe(headlinePage, evidence, 'HEADLINE');
   await headlinePage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(headlinePage);
   try {
@@ -1136,6 +1142,8 @@ async function run() {
   // nonce, credential, registered instrument or owner's saved snapshot.
   for (const row of evidence.rateLimits.filter((item) => !item.contractValid).slice(0, 10)) {
     console.error(`mobile-today-acceptance rate-limit-invalid: ${JSON.stringify({
+      contextKind: row.contextKind, browserProofInstalled: row.browserProofInstalled,
+      corsOriginMatches: row.corsOriginMatches, requestFailed: row.requestFailed,
       method: row.method, bodyRead: row.bodyRead, bodyReadError: row.bodyReadError,
       browserProof: row.browserProof, contentType: row.contentType,
       errorField: row.errorField, messageIsString: row.messageIsString,
