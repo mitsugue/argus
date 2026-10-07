@@ -173,3 +173,63 @@ def test_known_incomplete_eps_cannot_light_or_clear_the_rule_before_complete_cor
     assert result['conditionMet'] is True and partial==before
     rows[-11]['coverage']['missingMarketCap']=1
     assert eps_rule(sessions=DAYS,eps_rows=rows[:-1]+[partial,complete],cutoff=AT)['conditionMet'] is None
+
+
+@pytest.mark.parametrize('count',[0,1,4])
+def test_complete_cohort_below_minimum_is_clear_without_unused_reaction_prices(count):
+    data=cohort()
+    data['financial_rows']=data['financial_rows'][:2*count]
+    data['stock_bars']={};data['topix_rows']=[]
+    before=deepcopy(data)
+    result=earnings_rule(**data)
+    assert result['status']=='AVAILABLE' and result['state']=='CLEAR'
+    assert result['conditionMet'] is False and result['goodEarningsCount']==count
+    assert result['underperformedCount'] is None
+    assert result['threshold']=={'value':5,'operator':'>=','unit':'CASES'}
+    assert result['value']==count and result['knowledgeTime']=='2026-09-15T12:00:00+00:00'
+    assert result['validationStatus']=='UNVALIDATED' and result['probability'] is None
+    assert data==before
+
+
+def test_below_minimum_never_hides_missing_cohort_or_prior_forecast():
+    data=cohort();data['financial_rows']=data['financial_rows'][:8]
+    data['coverage_by_day'].pop(DAYS[-1])
+    assert earnings_rule(**data)['conditionMet'] is None
+    data=cohort();data['financial_rows']=data['financial_rows'][:8]
+    data['financial_rows'].pop(0)
+    result=earnings_rule(**data)
+    assert result['state']=='DATA_GATED' and result['missingComparisonCases']==1
+
+
+def test_complete_low_count_reaction_is_not_used_as_false_underperformance():
+    data=cohort();data['financial_rows']=data['financial_rows'][:8]
+    for rows in data['stock_bars'].values():
+        rows[-2]['close']=1
+    result=earnings_rule(**data)
+    assert result['conditionMet'] is False and result['value']==4
+    assert result['underperformedCount'] is None
+
+
+def test_complete_low_count_is_admitted_to_v3_and_tampered_count_is_rejected():
+    from argus_warning_candidates import admitted_results
+    from jp_market_engine import _sha256
+    data=cohort();data['financial_rows']=data['financial_rows'][:8]
+    rows={f:_empty(f,'missing') for f in ('D03','D04','D07')}
+    rows['D07']=earnings_rule(**data)
+    sealed=seal_candidates(cutoff=AT,results=rows)
+    assert admitted_results(sealed,AT)['D07']['state']=='CLEAR'
+    for change in ({'value':3},{'goodEarningsCount':True},{'underperformedCount':0},
+                   {'threshold':{'value':4,'operator':'>=','unit':'CASES'}},
+                   {'threshold':{'value':5,'operator':'>=','unit':'FRACTION'}},
+                   {'state':'ACTIVE','conditionMet':True}):
+        bad=deepcopy(sealed);bad['results']['D07'].update(change);bad.pop('artifactId')
+        bad['artifactId']='argus-adopted-warning-'+_sha256(bad)
+        assert admitted_results(bad,AT) is None
+    from test_argus_warning_conditions import evidence
+    from argus_warning_conditions import project_warning_conditions
+    original=evidence();original['informationCutoff']=AT;original.pop('artifactId')
+    original['artifactId']='jp-market-engine-evidence-'+_sha256(original)
+    projected=project_warning_conditions(original,cutoff=AT,adopted_rules=sealed)
+    assert projected['schemaVersion']=='jp-warning-conditions-v3'
+    assert projected['signals'][6]['state']=='CLEAR'
+    assert projected['signals'][6]['distance']['unit']=='CASES'
