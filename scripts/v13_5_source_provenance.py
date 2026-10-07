@@ -38,7 +38,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # 信用環境の公式入力・保存・表示を確認した正確な内容。
     'argus_credit_conditions.py': 'a17c75bfb12cbff2a94957b30e17d0a9ae959371',
     'docs/operations/credit-conditions.md': '7b63f2377989813eb0ffa9785717d798ee856cbe',
-    'test_argus_credit_conditions.py': 'cfa7d7049adaa819880378a626a5973878b36c89',
+    'test_argus_credit_conditions.py': 'fff378f26b24550884cd56c3f8f3fda84692fccd',
     'web/scripts/credit-conditions.test.cjs': '023a835dcd3e05a90da9046ac772088d96a0b310',
     'web/src/components/today/CreditConditionsDetails.css': 'cd4c4e8e641c1dc909b5d834370919174c4a88f7',
     'web/src/components/today/CreditConditionsDetails.tsx': '58940ae3fe128467f65dbcfa58e5a9c2ea0f7094',
