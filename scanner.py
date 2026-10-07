@@ -39737,6 +39737,82 @@ _FUTURE_MAP_LOCK = threading.RLock()
 #: day. Collection warms no longer read the private store.
 FUTURE_MAP_FALLBACK_HOUR_JST = 6
 _FUTURE_MAP_FALLBACK = {"lastDay": None, "lastDecision": None, "emptyRetryAt": None}
+_FUTURE_MAP_SCORING = {"status": "NOT_RUN", "lastError": None, "versions": [], "outcomes": {}, "record": None}
+_FUTURE_MAP_SCORING_LOCK = threading.Lock()
+
+
+def _future_map_register(public, received_at):
+    """Append immutable versions in the existing store, at actual receipt time."""
+    import argus_future_map_scoring as scoring
+    path = _level_map_history_path()
+    if not path:
+        _FUTURE_MAP_SCORING.update(status="NOT_CONFIGURED")
+        return
+    argus_analysis_history.initialize(path)
+    state = argus_analysis_history.read_future_map_state(path)
+    seen = {row["recordId"] for row in state["versions"]}
+    for row in public.get("rows") or []:
+        record = scoring.registration(row, received_at=received_at)
+        if record["recordId"] not in seen:
+            argus_analysis_history.append_future_map_version(path, record)
+            state["versions"].append(record)
+            seen.add(record["recordId"])
+    outcomes = {row["recordId"]: row for row in state["outcomes"]}
+    _FUTURE_MAP_SCORING.update(status="AVAILABLE", lastError=None, versions=state["versions"],
+                               outcomes=outcomes, record=scoring.summarize(state["versions"], outcomes))
+
+
+def _future_map_scoring_tick(nikkei_rows):
+    """Price-cache consumer only. No provider call, AI generation or remote read."""
+    if not _FUTURE_MAP_SCORING_LOCK.acquire(blocking=False):
+        return
+    try:
+        import argus_future_map_scoring as scoring
+        _future_map_load_saved()
+        public = _FUTURE_MAP.get("public")
+        if not public:
+            return
+        now = _ai_now_iso()
+        # Restored legacy tables have no proof of an earlier registration.
+        with _FUTURE_MAP_LOCK:
+            _future_map_register(public, now)
+        path = _level_map_history_path()
+        if not path:
+            return
+        outcomes = dict(_FUTURE_MAP_SCORING["outcomes"])
+        for record in _FUTURE_MAP_SCORING["versions"]:
+            outcome = scoring.score(record, nikkei_rows or [], now_iso=now)
+            if outcome["status"] == "SCORED":
+                prior = outcomes.get(record["recordId"]) or {}
+                if prior.get("outcomeId") != outcome["outcomeId"]:
+                    argus_analysis_history.append_future_map_outcome(path, outcome)
+                else:
+                    outcome = prior
+            outcomes[record["recordId"]] = outcome
+        _FUTURE_MAP_SCORING.update(status="AVAILABLE", lastError=None, outcomes=outcomes,
+            record=scoring.summarize(_FUTURE_MAP_SCORING["versions"], outcomes))
+    except Exception as exc:
+        _FUTURE_MAP_SCORING.update(status="FAILED", lastError=type(exc).__name__)
+    finally:
+        _FUTURE_MAP_SCORING_LOCK.release()
+
+
+def _future_map_scored_display(body):
+    """Cached results only; a page read cannot register, score or fetch."""
+    import argus_future_map_scoring as scoring
+    state = _FUTURE_MAP_SCORING
+    rows = []
+    for source in body.get("rows") or []:
+        row = dict(source)
+        record_id = scoring.record_id(row)
+        outcome = state["outcomes"].get(record_id) or {}
+        row.update(result=outcome.get("result"), scoringStatus=outcome.get("status", "WAITING_PRICES"))
+        rows.append(row)
+    return {**body, "rows": rows, "record": state.get("record") or {"scored": 0, "reached": 0},
+            "scoring": {"method": scoring.METHOD, "status": state["status"], "lastError": state["lastError"],
+                        "resultVersion": scoring.digest({"rows": [(row["id"], row["result"], row["scoringStatus"]) for row in rows],
+                                                          "record": state.get("record"), "status": state["status"]}),
+                        "firstVersionOnly": True, "turningPointValidated": False, "remoteRecoveryVerified": False}}
 
 
 def _future_map_path():
@@ -39813,6 +39889,15 @@ def _future_map_refresh(wait_seconds=0, trigger="unspecified"):
                               last_changed_at=changed_at, last_trigger=trigger)
         _FUTURE_MAP.update(public=public, sha=sha, lastChangedAt=changed_at,
                            lastReadOkAt=completed_at, lastError=None)
+        # Reading the table and durable scoring registration are distinct.
+        # A scoring storage failure must remain visible without hiding a valid table.
+        if _FUTURE_MAP_SCORING_LOCK.acquire(blocking=False):
+            try:
+                _future_map_register(public, completed_at)
+            except Exception as exc:
+                _FUTURE_MAP_SCORING.update(status="FAILED", lastError=type(exc).__name__)
+            finally:
+                _FUTURE_MAP_SCORING_LOCK.release()
         return True
     except Exception as exc:
         _FUTURE_MAP["lastError"] = type(exc).__name__
@@ -39882,6 +39967,7 @@ def api_argus_future_map():
                         "reason": _FUTURE_MAP.get("lastError") or "not_loaded", "actionAuthority": False})
     today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
     body = argus_future_map.for_display({k: v for k, v in public.items() if k != "remoteSha"}, today)
+    body = _future_map_scored_display(body)
     return jsonify({**body, "availability": "AVAILABLE", "lastChangedAt": _FUTURE_MAP.get("lastChangedAt"),
                     "checkedAt": _FUTURE_MAP.get("lastAttemptAt"), "lastReadOkAt": _FUTURE_MAP.get("lastReadOkAt"),
                     "lastTrigger": _FUTURE_MAP.get("lastTrigger"), "lastError": _FUTURE_MAP.get("lastError"),
@@ -41494,6 +41580,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         credit_rows = []
     if warm:
         _cftc_jpy_autorefresh()
+        _future_map_scoring_tick(nikkei_rows)
         _jp_index_valuation_warm()
         _jp_index_proxy_warm(nikkei_rows)
         _level_map_warm(nikkei_rows)

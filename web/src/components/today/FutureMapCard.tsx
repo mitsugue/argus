@@ -9,6 +9,8 @@ const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
 const levelText = (row: FutureMapRow) => !row.level ? '―'
   : row.level.low === row.level.high ? yen(row.level.low) : `${yen(row.level.low)}〜${yen(row.level.high)}`;
 const RESULT_JA = { reached: '到達', missed: '外れ' } as const;
+const SCORE_WAIT_JA: Record<string, string> = { LATE_REGISTRATION: '事前記録なし・成績に含めません',
+  PRICES_INCOMPLETE: '採点に必要な価格が不足', DIRECTION_NOT_DEFINED: '方向の採点規則なし' };
 
 function sourceUpdateTimestamp(updatedAt: string) {
   const parts = typeof updatedAt === 'string'
@@ -40,6 +42,7 @@ function Row({ row }: { row: FutureMapRow }) {
       <span>{row.view}</span>{row.agree > 0 && <span className="fm-agree" aria-label={`同じ見立て ${row.agree}`}>{'●'.repeat(row.agree)}</span>}
       {row.changed && <small className="fm-changed">変</small>}
       {row.result && <small className={`fm-result is-${row.result}`}>{RESULT_JA[row.result]}</small>}
+      {!row.result && row.scoringStatus && SCORE_WAIT_JA[row.scoringStatus] && <small className="fm-sub">{SCORE_WAIT_JA[row.scoringStatus]}</small>}
       {row.reason && <small className="fm-sub">{row.reason}</small>}
       {row.alt && <small className="fm-sub">別の見方: {row.alt}</small>}
     </td>
@@ -70,7 +73,7 @@ export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?
   const { position, nextAlert, nextBottom } = doc.status;
   return <section className="fm-card card" aria-label="FUTURE MAP" data-argus-contract="future-map-v1">
     <div className="fm-head"><b>FUTURE MAP</b>
-      <span>外部の見立て ・ {updateDate}更新 ・ ARGUS未検証</span>
+      <span>外部の見立て ・ {updateDate}更新 ・ 予測が当たるかは未検証</span>
       <span className={`fm-age${age.warning ? ' is-warning' : ''}`} role={age.warning ? 'status' : undefined}>{age.label}</span></div>
     <div className="fm-boxes">
       <div className="fm-box tone-red"><small>いまの位置</small><b>{position}</b></div>
@@ -84,7 +87,12 @@ export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?
     {hidden > 0 && <button type="button" className="fm-more" aria-expanded={open} onClick={() => setOpen(v => !v)}>
       {open ? '閉じる' : `すべて表示（残り${hidden}件${goal ? `・${goal.periodLabel} ${goal.view.split('。')[0]}まで` : ''}）`}</button>}
     <p className="fm-foot">●の数 = 同じことを言っている見立ての数 ・ {doc.record.scored > 0
-      ? `見立ての成績: ${doc.record.scored}件中${doc.record.reached}件到達` : '見立ての成績: 10/5から採点'}</p>
+      ? `答え合わせ: ${doc.record.scored}件中${doc.record.reached}件到達${doc.record.scored < 10 ? '（件数不足）' : ''}` : '答え合わせ: 0件（まだ成績なし）'}</p>
+    {doc.scoring && <details><summary>答え合わせの条件</summary>
+      <p>水準つきは期日前後５営業日の価格±１％、方向だけは期間中の３％の動きを確認します。確認期間が終わり、全営業日の価格がそろってから採点します。</p>
+      <p>最初に保存した予測だけを成績に数えます。事前記録がない行は除き、変更前の予測と結果は残します。価格到達は天井・底や売買の有効性の証明ではありません。</p>
+      {doc.scoring.status === 'FAILED' && <p role="status">答え合わせの保存・計算を確認できません。前回の結果を表示しています。</p>}
+    </details>}
   </section>;
 }
 
