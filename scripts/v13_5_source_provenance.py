@@ -334,7 +334,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_analysis_history_backup.py': 'ae9013e5b81e9bf743821cd6ef0ea17c1b829ceb',
     'argus_explanation_contract.py': '2759395570915bc27752feb9aac56f79ae9a5fe8',
     'argus_owner_dialogue.py': '08f98d645f66271cc1de9959703774f5a414b7a4',
-    'argus_owner_dialogue_api.py': '0dd202b663436d5b07efc8ae8cd8da244a34090d',
+    'argus_owner_dialogue_api.py': '625bea895225afedd66c5f7de32cf5bc2019b0da',
     'argus_owner_dialogue_backup.py': '4560f85996da2d78a68ff0cb4e28a1cdb8bf50bc',
     'argus_owner_dialogue_recovery.py': 'bfc92ba9d12514167c622df5bcf04f87e945d721',
     'argus_owner_dialogue_store.py': '72422e35451def9da106bb200acd49e880a9a2f1',
