@@ -46,6 +46,8 @@ console.log('Initial analyst/supply facts, current quote comparison, saved/missi
     if (failRead) throw new Error('offline');
     return { ok:true, json:async () => ({actionAuthority:false, lastError:'partial_target_fetch_failed',
       items:{'JP:1001':{...target,acquisitionStatus:'AVAILABLE'}},
+      earningsItems:{'JP:1001':{market:'JP',symbol:'1001',source:'Yahoo Finance',fetchedAt:target.fetchedAt,currency:'JPY',actionAuthority:false,
+        next:{from:'2026-11-02',to:'2026-11-02',certainty:'PROVIDER_ESTIMATE',timezone:'Asia/Tokyo'},previous:null,estimate:null}},
       availability:{'JP:1001':{status:'AVAILABLE'},'JP:1002':{status:'HTTP_503'}}}) };
   };
   try {
@@ -67,6 +69,7 @@ console.log('Initial analyst/supply facts, current quote comparison, saved/missi
     assert.equal(calls,1);
     const current = hook();
     assert.equal(current.items['JP:1001'].mean,1200);
+    assert.equal(current.earnings['JP:1001'].next.from,'2026-11-02');
     assert.equal(current.refreshFailed,false);
     assert.equal(current.availability['JP:1002'].status,'HTTP_503');
     failRead = true; interval(); interval();
@@ -75,6 +78,7 @@ console.log('Initial analyst/supply facts, current quote comparison, saved/missi
     assert.equal(calls,2);
     assert.equal(saved.refreshFailed,true);
     assert.equal(saved.items['JP:1001'].mean,1200);
+    assert.equal(saved.earnings['JP:1001'].next.from,'2026-11-02');
     console.log('Shared target read, per-symbol failure isolation and retained snapshot PASS');
   } finally { subscriptions.forEach(stop => stop()); global.fetch = originalFetch; }
 })().catch(error => { console.error(error); process.exitCode = 1; });
