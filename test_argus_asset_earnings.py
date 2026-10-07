@@ -98,3 +98,15 @@ def test_no_target_earnings_are_persisted_and_cached_get_never_fetches(monkeypat
     assert result['items'] == {} and result['earningsItems']['US:TEST']['previous']['epsActual'] == -2
     assert result['earningsItems']['US:TEST']['acquisitionStatus'] == 'AVAILABLE'
     assert len(calls) == count
+
+
+def test_company_reporting_scope_comes_from_document_not_amount_presence():
+    base = {'DiscDate': '2026-07-31', 'CurPerEn': '2026-06-30', 'CurPerType': '1Q', 'OP': '100', 'FOP': '500',
+            'NCOP': '80', 'FNCOP': '400'}
+    read = lambda patch: earnings.company_summary([{'summary': {**base, **patch}, 'receivedAt': AT}], today=TODAY)
+    single = read({'DocType': '1QFinancialStatements_NonConsolidated_JP'})
+    assert single['consolidated'] is False and single['operatingProfit'] == 100
+    assert single['forecastOperatingProfit'] == 500
+    assert read({'DocType': '1QFinancialStatements_Consolidated_JP'})['consolidated'] is True
+    assert read({'DocType': '1QFinancialStatements_Consolidated_JP', 'OP': ''}) is None
+    assert read({'DocType': '1QFinancialStatements_Unknown'}) is None
