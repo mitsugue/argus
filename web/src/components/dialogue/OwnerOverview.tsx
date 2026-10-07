@@ -61,7 +61,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
         }
         const savedOnly=value.overviewRead?.mode==='SAVED_ONLY';
         if(savedOnly&&value.status==='WAITING'){
-          if(!stopped){pending=true;const message='銘柄のAI説明は初回の定期作成待ちです。決算・価格・ニュースは確認できます。';setError(message);savedReadCache.put(cacheKey,{error:message},30_000);timer=window.setTimeout(()=>void load(),30_000);}
+          if(!stopped){pending=true;const message='この銘柄のAI説明はまだ保存されていません。取得済みの決算・価格・ニュースは各項目で読めます。';setError(message);savedReadCache.put(cacheKey,{error:message},30_000);timer=window.setTimeout(()=>void load(),30_000);}
           return;
         }
         const evaluation=value.overviewEvaluation;
@@ -101,7 +101,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
         {saved.context.facts.map(f=><p key={f.evidenceId}>{f.text}{f.provenance?.url?.startsWith('https://')&&<> <a href={f.provenance.url} target="_blank" rel="noopener noreferrer">出典</a></>}</p>)}
         <p>対象 {market}:{symbol} · {horizon}営業日 · 市場の根拠ID {saved.context.baseMarketContextId}</p>
         <p>応答モデル {saved.result?.provider?.returnedModel||'未確認'} · {saved.result?.provider?.completedAt||'完了時刻未確認'}</p>
-        <p>{saved.persistenceStatus==='LOCAL_DURABLE'?'サーバー保存・読み戻し済み':'保存確認待ち'}。端末変更後の復旧は別途確認が必要です。</p>
+        <p>{saved.persistenceStatus==='LOCAL_DURABLE'?'サーバー保存・読み戻し済み':'サーバーへの保存を検証できていません'}。端末変更後の復旧は別途確認が必要です。</p>
       </details></>}
     {current&&validJob(job?.previousOverview)&&<details><summary>更新前の説明を見る</summary><p>{job.previousOverview.result?.provider?.completedAt||'当時の完了時刻は未確認'}</p><OwnerAnswerBody job={job.previousOverview}/></details>}
     {error&&<button type="button" onClick={()=>setRevision(value=>value+1)}>保存した状態を再取得</button>}
