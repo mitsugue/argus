@@ -216,3 +216,31 @@ def test_published_december_tankan_is_a_period_not_a_future_observed_day():
     assert rows[-1]['observationPeriod']=='202604' and rows[-1]['dataAsOfBasis']=='QUARTER_END_LABEL'
     assert rows[-1]['knownAt']=='2026-12-16T10:00:00Z' and rows[-1]['publicationAt'] is None
     with pytest.raises(ValueError):credit.parse_api(raw,group='stance',source_url=credit.api_url('stance',AT),received_at=AT)
+
+
+def test_store_failure_reports_fixed_code_without_sql_or_exception_text(tmp_path, monkeypatch):
+    path=retained(tmp_path)
+    original=store.connect
+    def short_connect(path):
+        db=original(path);db.execute('PRAGMA busy_timeout=1');return db
+    monkeypatch.setattr(store,'connect',short_connect)
+    lock=sqlite3.connect(path);lock.execute('BEGIN IMMEDIATE')
+    def forbidden(*a,**kw):raise TimeoutError('private source text')
+    try:
+        with pytest.raises(credit.CreditStoreError) as failed:
+            credit.refresh(path,now_iso=LATER,get=forbidden,clock=lambda:LATER)
+        assert failed.value.diagnostic=={'stage':'CONTROL_OR_PROJECTION','sqliteCode':5,'kind':'BUSY'}
+        assert str(failed.value)=='credit_store_failed'
+    finally:lock.rollback();lock.close()
+    assert credit.read(path,cutoff=AT)['dimensions']['borrowingCost']['value']==2
+
+
+def test_store_open_failure_is_distinct_and_never_fetches(monkeypatch):
+    def denied(*a,**kw):
+        error=sqlite3.OperationalError('private path or credential must stay absent')
+        error.sqlite_errorcode=14;raise error
+    monkeypatch.setattr(store,'connect',denied)
+    with pytest.raises(credit.CreditStoreError) as failed:
+        credit.refresh('unused',now_iso=AT,get=lambda *a,**kw:pytest.fail('no request'),clock=lambda:AT)
+    assert failed.value.diagnostic=={'stage':'OPEN_STORE','sqliteCode':14,'kind':'CANNOT_OPEN'}
+    assert 'private' not in str(failed.value)

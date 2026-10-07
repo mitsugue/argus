@@ -40867,7 +40867,7 @@ def _jp_market_internals_cached():
 
 _CREDIT_CONDITIONS_LOCK = threading.Lock()
 _CREDIT_CONDITIONS_CACHE = {"document": None, "restoreAttempted": False,
-                            "status": "NOT_RUN", "errorClass": None}
+                            "status": "NOT_RUN", "errorClass": None, "failure": None}
 
 
 def _credit_conditions_path():
@@ -40886,7 +40886,7 @@ def _credit_conditions_document():
             _CREDIT_CONDITIONS_CACHE["errorClass"] = type(exc).__name__
     doc = argus_credit_conditions.current_projection(_CREDIT_CONDITIONS_CACHE["document"], cutoff=_ai_now_iso())
     if doc:
-        doc["worker"] = {key: _CREDIT_CONDITIONS_CACHE[key] for key in ("status", "errorClass")}
+        doc["worker"] = {key: _CREDIT_CONDITIONS_CACHE.get(key) for key in ("status", "errorClass", "failure")}
     return doc
 
 
@@ -40895,14 +40895,15 @@ def _credit_conditions_warm():
         return {"status": "PERSISTENCE_UNAVAILABLE"}
     if not _CREDIT_CONDITIONS_LOCK.acquire(blocking=False):
         return {"status": "ALREADY_RUNNING"}
-    _CREDIT_CONDITIONS_CACHE.update(status="RUNNING", errorClass=None)
+    _CREDIT_CONDITIONS_CACHE.update(status="RUNNING", errorClass=None, failure=None)
     def work():
         try:
             document = argus_credit_conditions.refresh(_credit_conditions_path(), now_iso=_ai_now_iso(),
                 get=requests.get, clock=_ai_now_iso)
             _CREDIT_CONDITIONS_CACHE.update(document=document, restoreAttempted=True, status="SAVED")
         except Exception as exc:
-            _CREDIT_CONDITIONS_CACHE.update(status="FAILED", errorClass=type(exc).__name__)
+            _CREDIT_CONDITIONS_CACHE.update(status="FAILED", errorClass=type(exc).__name__,
+                failure=exc.diagnostic if isinstance(exc, argus_credit_conditions.CreditStoreError) else None)
         finally:
             _CREDIT_CONDITIONS_LOCK.release()
     try:
