@@ -399,8 +399,17 @@ def test_us_poll_error_is_not_hidden_by_previous_receipt(monkeypatch):
 
 
 def test_us_closed_session_remains_waiting(monkeypatch):
-    lamp = _us_receipt_lamp(monkeypatch, receipt_age=150, opened=False)
-    assert lamp["status"] == "off" and "市場時間外" in lamp["detailJa"]
+    for age in (30, 150, None):
+        lamp = _us_receipt_lamp(monkeypatch, receipt_age=age, opened=False)
+        assert lamp["status"] == "off" and "市場時間外" in lamp["detailJa"]
+
+
+def test_us_current_30_second_collector_delay_and_error_are_not_hidden(monkeypatch):
+    lamp = _us_receipt_lamp(monkeypatch, receipt_age=150, interval=30)
+    assert lamp['status'] == 'warning' and '更新に遅れ' in lamp['detailJa']
+    assert '5分間隔' not in lamp['detailJa'] and '受信記録なし' not in lamp['detailJa']
+    lamp = _us_receipt_lamp(monkeypatch, receipt_age=30, interval=30, us_status='degraded')
+    assert lamp['status'] == 'warning' and '価格を受信' in lamp['detailJa'] and 'degraded' in lamp['detailJa']
 
 
 def test_us_invalid_reported_interval_is_bounded(monkeypatch):
