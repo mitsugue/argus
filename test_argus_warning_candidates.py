@@ -108,6 +108,48 @@ def test_same_publication_conflicting_forecasts_are_ambiguous_not_last_row_wins(
         'summary':{**data['financial_rows'][1]['summary'],'DiscNo':'correction','FOP':500}})
     assert earnings_rule(**data)['conditionMet'] is None
 
+def historical_conflict(data, *, resolved):
+    original=data['financial_rows'][0]
+    day=DAYS[-25] if resolved else original['summary']['DiscDate']
+    source={**original,'publishedAt':day+'T07:00:00Z',
+            'summary':{**original['summary'],'DiscDate':day,'DiscNo':'old-first','FOP':90}}
+    other={**source,'summary':{**source['summary'],'DiscNo':'old-second','FOP':95}}
+    data['financial_rows'] += [source,other]
+
+
+def test_resolved_old_conflict_does_not_gate_current_cohort_or_rewrite_inputs():
+    data=cohort();expected=earnings_rule(**data)
+    historical_conflict(data,resolved=True);before=deepcopy(data)
+    assert earnings_rule(**data)==expected
+    assert data==before
+    data['financial_rows'].reverse()
+    assert earnings_rule(**data)==expected
+
+
+def test_unresolved_old_conflict_needed_by_current_revision_remains_gated():
+    data=cohort();historical_conflict(data,resolved=False)
+    result=earnings_rule(**data)
+    assert result['state']=='DATA_GATED' and result['conditionMet'] is None
+    assert '修正前' in result['reasonJa']
+    data['financial_rows'].reverse()
+    assert earnings_rule(**data)==result
+
+
+def test_historical_ambiguity_is_not_resolved_by_equal_third_variant():
+    data=cohort();historical_conflict(data,resolved=False)
+    row=data['financial_rows'][-1]
+    data['financial_rows'].append({**row,'summary':{**row['summary'],'DiscNo':'old-third'}})
+    assert earnings_rule(**data)['conditionMet'] is None
+
+
+def test_conflicts_outside_dated_cohort_do_not_gate_current_members():
+    data=cohort();expected=earnings_rule(**data)
+    first=data['financial_rows'][1]
+    data['financial_rows'] += [{**first,'summary':{**first['summary'],'Code':'9999','DiscNo':'other-a','FOP':90}},
+                             {**first,'summary':{**first['summary'],'Code':'9999','DiscNo':'other-b','FOP':95}}]
+    assert earnings_rule(**data)==expected
+
+
 def test_adopted_projection_preserves_old_evidence_and_rejects_corruption():
     from test_argus_warning_conditions import evidence
     from argus_warning_conditions import project_warning_conditions
