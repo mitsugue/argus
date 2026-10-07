@@ -15483,14 +15483,36 @@ def _system_health(*, allow_provider_fetch=True):
               f"使用率 {disk}% — 拡張/掃除が必要")
         # US realtime — session-aware
         uss = str(hb.get("usRealtimeStatus") or "unknown")
-        if us_ages and min(us_ages) <= 120:
-            L("us_realtime", "US realtime", "ok", "LIVE — moomooから更新中")
-        elif not us_open:
+        # Receipt age proves delivery, never venue-time realtime. Use the
+        # bridge's bounded reported cadence (current collector: 30 seconds),
+        # not an assumed legacy five-minute cadence. Preserve the existing
+        # warning threshold; distinguish waiting, delayed and absent evidence.
+        valid_us_ages = [age for age in us_ages if age >= 0]
+        us_age = min(valid_us_ages) if valid_us_ages else None
+        interval = hb.get("intervalSec")
+        interval = (int(interval) if isinstance(interval, (int, float))
+                    and not isinstance(interval, bool) and 30 <= interval <= 600
+                    else None)
+        if not us_open:
             L("us_realtime", "US realtime", "off", "市場時間外(待機)")
+        elif us_age is not None and us_age <= 120:
+            detail = f"価格を受信({int(us_age)}秒前) · 市場側の価格時刻は別途確認"
+            if uss not in ("ok", "unknown"):
+                detail += f" · 状態: {uss}"
+            L("us_realtime", "US realtime", "ok" if uss in ("ok", "unknown") else "warning", detail)
+        elif us_age is not None:
+            cadence = (f"{interval // 60}分" if interval is not None and interval % 60 == 0
+                       else f"{interval}秒")
+            detail = (f"価格は受信済み({int(us_age)}秒前) · {cadence}間隔で取得"
+                      if interval is not None and us_age <= interval + 60 else
+                      f"価格の更新に遅れ · 前回受信{int(us_age)}秒前")
+            if uss not in ("ok", "unknown"):
+                detail += f" · 状態: {uss}"
+            L("us_realtime", "US realtime", "warning", detail)
         elif uss in ("ok", "unknown"):
-            L("us_realtime", "US realtime", "warning", "市場時間中なのにUS push無し")
+            L("us_realtime", "US realtime", "warning", "市場時間中・米国価格の受信記録なし")
         else:
-            L("us_realtime", "US realtime", "warning", f"状態: {uss}")
+            L("us_realtime", "US realtime", "warning", f"受信記録なし · 状態: {uss}")
         # JP realtime — v13.5.45: Tachibana is the JP realtime source when its
         # product boundary reports current/closed evidence; the moomoo
         # entitlement text only remains while Tachibana is disabled/absent.
