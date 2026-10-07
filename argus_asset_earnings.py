@@ -144,3 +144,70 @@ def attach(previous, result, *, earnings, success):
         result['earnings'] = old
         result['earningsStatus'] = 'FETCH_FAILED'
     return result
+
+
+def scheduled_date(symbol, rows, *, today, fetched_at):
+    """Company-reported schedules; latest publication may withdraw a date.
+
+    Each fiscal period has its own correction history. Same-day contradictory
+    publications are not resolved by source order. Unknown dates are not zero.
+    """
+    groups = {}
+    for row in rows:
+        if not isinstance(row, Mapping) or str(row.get('Code') or '') not in (symbol, symbol + '0'):
+            continue
+        published = day(row.get('PubDate'), 'JP')
+        # Official FYE is MMDD (e.g. 0331), not a fiscal-year date.
+        year_end = row.get('FYE')
+        valid_year_end = isinstance(year_end, str) and len(year_end) == 4 and year_end.isdigit()
+        try:
+            if valid_year_end:
+                date(2000, int(year_end[:2]), int(year_end[2:]))
+        except ValueError:
+            valid_year_end = False
+        quarter = row.get('FQName')
+        if not published or published > today or not valid_year_end or not isinstance(quarter, str) or not quarter:
+            continue
+        scheduled = day(row.get('SchDate'), 'JP')
+        if row.get('SchDate') not in (None, '', '-') and scheduled is None:
+            raise ValueError('schedule_date_invalid')
+        key = (year_end, quarter)
+        groups.setdefault(key, []).append((published, scheduled))
+    candidates = []
+    for values in groups.values():
+        latest = max(value[0] for value in values)
+        dates = {value[1] for value in values if value[0] == latest}
+        if len(dates) != 1:
+            if any(value is None or value >= today for value in dates):
+                return None, 'CONFLICT'
+            continue  # An expired past-period disagreement is not today's schedule.
+        scheduled = dates.pop()
+        if scheduled and today <= scheduled <= (date.fromisoformat(today) + timedelta(days=370)).isoformat():
+            candidates.append((scheduled, latest))
+    if not candidates:
+        latest = max((value[0] for values in groups.values() for value in values), default=None)
+        withdrawn = latest and any(value == (latest, None) for values in groups.values() for value in values)
+        return None, 'NO_SCHEDULE' if withdrawn else 'NOT_REPORTED'
+    scheduled, published = min(candidates)
+    return {'from': scheduled, 'to': scheduled, 'certainty': 'COMPANY_SCHEDULE',
+            'timezone': 'Asia/Tokyo', 'source': 'J-Quants 決算発表予定日',
+            'publishedDate': published, 'fetchedAt': fetched_at}, 'AVAILABLE'
+
+
+def attach_schedule(result, *, symbol, at, next_date, status):
+    result = dict(result)
+    result['scheduleStatus'] = status
+    old = result.get('earnings')
+    value = dict(old) if isinstance(old, Mapping) else {
+        'symbol': symbol, 'market': 'JP', 'source': 'J-Quants 決算発表予定日',
+        'fetchedAt': at, 'currency': 'JPY', 'next': None, 'previous': None,
+        'estimate': None, 'actionAuthority': False}
+    if status == 'AVAILABLE':
+        value['next'] = next_date
+    elif status in ('NO_SCHEDULE', 'CONFLICT'):
+        # A withdrawal or conflicting company record overrides an old estimate.
+        value['next'] = None
+    # FETCH_FAILED preserves the saved date and its original receipt clock.
+    if any(value.get(key) for key in ('next', 'previous', 'estimate', 'company')):
+        result['earnings'] = value
+    return result
