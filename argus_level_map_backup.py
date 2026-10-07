@@ -1,13 +1,13 @@
 """Remote copy of the morning level map record (2026-10-04).
 
-The two append-only level-map tables live in the market analysis history
+The append-only level-map records live in the market analysis history
 file, whose remote archive format (views, then outcomes) is not changed.
 This module copies them to the same private store over the same
 authenticated, read-back-verified connection, under their own prefix:
 
 * every stored estimate and morning map is one immutable object named by
   its date; an existing object with different bytes is a conflict, never
-  overwritten;
+  overwritten; later corrections of known partial inputs are separate objects;
 * one manifest lists the objects with their digests and is replaced by
   compare-and-swap after the objects are written, then read back;
 * restore runs only when the local tables are empty and inserts through the
@@ -31,7 +31,7 @@ def _encode(value: Any) -> bytes:
 
 
 def _key(kind: str, day: str) -> str:
-    if kind not in ("eps", "mornings", "candidates") or len(day) < 10:
+    if kind not in ("eps", "eps_corrections", "mornings", "morning_corrections", "candidates") or len(day) < 10:
         raise ValueError("level_map_backup_key_invalid")
     return f"{kind}/{day}"
 
@@ -47,9 +47,12 @@ def _manifest(remote):
 
 
 def _local_items(path) -> Dict[str, Any]:
-    state = history.read_level_map_state(path)
-    items = {_key("eps", day): record for day, record in state["eps"].items()}
-    items.update({_key("mornings", record["morningOf"]): record for record in state["mornings"]})
+    originals,corrections = history.read_level_map_eps_originals(path)
+    items = {_key("eps", day): record for day, record in originals.items()}
+    items.update({_key('eps_corrections', row['date']+'-'+row['correctionId']):row for row in corrections})
+    original_mornings,morning_corrections=history.read_level_map_eps_originals(path,morning=True)
+    items.update({_key("mornings", day):record for day,record in original_mornings.items()})
+    items.update({_key('morning_corrections',row['date']+'-'+row['correctionId']):row for row in morning_corrections})
     # Pre-registered candidate records ride the same copy (2026-10-04).
     items.update({_key("candidates", f"{record['signalDate']}-{record['candidate']}"): record
                   for record in history.read_candidate_records(path)})
@@ -96,12 +99,29 @@ def restore(path, remote) -> Dict[str, Any]:
         return {"status": "LOCAL_NOT_EMPTY", "restored": 0}
     manifest, _ = _manifest(remote)
     restored = 0
-    for key, digest in sorted(manifest["entries"].items()):
+    # Original eps/mornings must precede their separately dated corrections.
+    for key, digest in sorted(manifest["entries"].items(),key=lambda item:('_corrections/' in item[0],item[0])):
         raw, _ = remote.get(f"{PREFIX}/{key}.json")
         if raw is None or hashlib.sha256(raw).hexdigest() != digest:
             raise ValueError("level_map_backup_object_invalid")
         record = json.loads(raw)
         kind = key.split("/", 1)[0]
+        if kind in ('eps_corrections','morning_corrections'):
+            original_day = record['date']
+            originals,_ = history.read_level_map_eps_originals(path,morning=kind=='morning_corrections')
+            original = originals.get(original_day)
+            time_field = 'recordedAt' if kind=='eps_corrections' else 'createdAt'
+            expected_id = hashlib.sha256(_encode([original_day,record['originalSha256'],record['record']])).hexdigest()
+            if (original is None or hashlib.sha256(_encode(original)).hexdigest()!=record['originalSha256']
+                    or record['recordedAt']!=record['record'].get(time_field)
+                    or record['correctionId']!=expected_id
+                    or key!=_key(kind,original_day+'-'+expected_id)):
+                raise ValueError('level_map_backup_correction_identity')
+            result=(history.append_level_map_eps_correction(path, record['record']) if kind=='eps_corrections'
+                    else history.append_level_map_morning_correction(path,record['record']))
+            if result['correctionId'] != record['correctionId']:
+                raise ValueError('level_map_backup_correction_identity')
+            restored+=int(result['inserted']);continue
         result = (history.append_level_map_eps(path, record) if kind == "eps"
                   else history.append_candidate_record(path, record) if kind == "candidates"
                   else history.append_level_map(path, record))

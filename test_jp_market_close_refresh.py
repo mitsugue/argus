@@ -109,6 +109,40 @@ def test_worker_is_one_slot_only_current_valuation_and_no_full_collection(monkey
     assert calls == [True]
 
 
+def test_known_partial_saved_eps_keeps_resident_valuation_retry_due(monkeypatch):
+    import scanner
+    rows=[{'date':'2026-10-07','close':70035.71,'high':71000,'low':69000,
+           'availableFrom':'2026-10-07T06:45:00Z'}]
+    monkeypatch.setattr(scanner,'_NIKKEI_CLOSE_REFRESH',{'lastSlot':None})
+    monkeypatch.setattr(scanner,'_LEVEL_MAP',{'eps':{'2026-10-07':{'eps':4549.812,
+        'coverage':{'members':225,'missingMarketCap':200}}}})
+    monkeypatch.setattr(scanner,'_ai_now_iso',lambda:'2026-10-07T07:35:00Z')
+    monkeypatch.setattr(scanner,'_nikkei_chart_rows',lambda:rows)
+    calls=[];monkeypatch.setattr(scanner,'_level_map_warm',lambda rows,**kw:calls.append(kw))
+    assert scanner._nikkei_close_refresh_tick()['status']=='WAITING_FOR_VALUATION'
+    assert calls==[{'current_only':True}]
+
+
+def test_early_partial_valuation_does_not_poison_same_day_cache(monkeypatch):
+    import scanner
+    now=datetime(2026,10,7,6,51,tzinfo=timezone.utc)
+    class Clock(datetime):
+        @classmethod
+        def now(cls,tz=None):return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+    class Response:
+        status_code=200
+        def json(self):return {'data':[{'Date':'2026-10-07','Code':'11110','MktCap':1000,'FwdPER':20}]}
+    monkeypatch.setattr(scanner,'datetime',Clock)
+    monkeypatch.setattr(scanner,'_JQ_VALUATION_DAY_CACHE',{})
+    monkeypatch.setattr(scanner,'_JP_INDEX_PROXY',{'requestsLastWarm':0})
+    calls=[];monkeypatch.setattr(scanner.requests,'get',lambda *a,**kw:calls.append(1) or Response())
+    assert scanner._jq_valuation_for_date('2026-10-07',{})['1111']['FwdPER']==20
+    assert scanner._JQ_VALUATION_DAY_CACHE=={}
+    now=datetime(2026,10,7,7,35,tzinfo=timezone.utc)
+    scanner._jq_valuation_for_date('2026-10-07',{})
+    assert len(calls)==2 and '2026-10-07' in scanner._JQ_VALUATION_DAY_CACHE
+
+
 def test_stored_comparison_receives_fresh_display_without_recalculating_it(monkeypatch):
     import scanner
     saved = {'comparison': {'asOf':'2026-10-05'}, 'researchCache': {'recordSha256':'a'*64},
