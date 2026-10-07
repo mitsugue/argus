@@ -87,3 +87,15 @@ def test_duplicate_macd_sessions_and_unbounded_numeric_values_are_not_admitted()
     for value in (True,10**400):
         row=evidence()["families"]["D05"];row["flowValue"]=value
         assert project_warning_conditions(evidence(D05=row),cutoff=AT)["signals"][4]["state"]=="DATA_GATED"
+
+def test_eps_fact_uses_current_estimate_without_activating_undefined_rule_or_legacy_eps():
+    from jp_market_engine import fact_note_ja
+    current = {"status": "AVAILABLE", "lineage": "ARGUS_CURRENT_ESTIMATE", "eps": 3994.65, "per": 17.51}
+    assert fact_note_ja("D04", current) == "推計EPS 3,994.65円・PER 17.51倍（最新の時価総額加重推計）"
+    projected = project_warning_conditions(evidence(D04=current), cutoff=AT)["signals"][3]
+    assert projected["state"] == "DATA_GATED" and projected["conditionMet"] is None
+    assert "3,994.65円" in projected["factNoteJa"]
+    legacy = {**current, "lineage": "LEGACY"}
+    assert "EPS" not in fact_note_ja("D04", legacy)
+    for missing in (None, 0, -1, True, float("nan")):
+        assert "EPS" not in fact_note_ja("D04", {**current, "eps": missing})

@@ -15,9 +15,9 @@ export const linkedTagJa = (le: DeskEventTag) =>
     .filter(Boolean).join(' · ');
 
 export function fmtPrice(market: string, v?: number | null): string {
-  if (v == null) return '—';
+  if (v == null || !Number.isFinite(v) || v <= 0) return '—';
   if (market === 'JP' || market === 'CORE' || market === 'FUND') return `¥${Math.round(v).toLocaleString('en-US')}`;
-  if (market === 'US') return `$${v.toFixed(2)}`;
+  if (market === 'US') return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   if (market === 'CRYPTO') {
     return v >= 1000 ? `$${Math.round(v).toLocaleString('en-US')}` : `$${v.toFixed(2)}`;
   }

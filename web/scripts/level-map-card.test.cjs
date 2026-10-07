@@ -21,6 +21,7 @@ const latest = { schemaVersion: 'jp-market-level-map-v1', morningOf: '2026-10-05
          row('DOWN', ['PER_LINE'], 66854, -2.1, -1.2, 17, '1〜2割', 64, 3, 0, 9)],
   atrGuides: { UP: [69544, 70779, 72014], DOWN: [67074, 65839, 64604] },
   fixedNotesJa: ['水準を見ずに今の値±2ATRと言うのと同じ精度です。', '数字は過去の頻度であり、確率ではありません。'], actionAuthority: false };
+latest.rows=latest.rows.map(r=>({...r,distancePct:(r.price/latest.previousClose-1)*100,distanceAtr:(r.price-latest.previousClose)/latest.atr14}));
 const tally = { STOPPED: 0, BROKE: 0, UNDECIDED: 0, OPEN: 0 };
 const score = (pre, mornings) => ({ firstMorning: pre ? '2026-10-05' : '2026-06-01', mornings, phases: 0, phaseOutcomes: tally,
   fakeLineOutcomes: tally, preRegisteredOnly: pre, turningPoints: { evaluated: 8, perLineHits: 6, atr2Hits: 1, chanceExpected: 2.86 } });
@@ -30,7 +31,7 @@ const html = renderToStaticMarkup(React.createElement(LevelMapView, { state }));
 assert.ok(html.includes('日経平均の価格の目盛り') && html.includes('2026-10-05 朝') && html.includes('寄付前に固定保存'));
 assert.ok(html.includes('企業の利益に対して、日経平均が何倍の値段になっているか'));
 assert.ok(html.includes('約17.37倍') && html.includes('70,787円まで上がると18倍、66,854円まで下がると17倍'));
-assert.ok(html.includes('PER18倍線（毎朝動く）') && html.includes('直前の天井と同じ倍率 17.884倍'));
+assert.ok(html.includes('PER18倍線（EPS更新で動く）') && html.includes('直前の天井と同じ倍率 17.884倍'));
 const table = html.split('<tbody>')[1];
 assert.ok(table.indexOf('70,787') < table.indexOf('前日終値</td>') && table.indexOf('前日終値</td>') < table.indexOf('66,854'),
   'upper rows above the close, lower rows below');
@@ -43,7 +44,8 @@ assert.equal(renderToStaticMarkup(React.createElement(LevelMapView, { state: nul
 assert.equal(renderToStaticMarkup(React.createElement(LevelMapView, { state: { ...state, latest: null } })), '');
 const singleSide = renderToStaticMarkup(React.createElement(LevelMapView, { state: { ...state,
   latest: { ...latest, rows: latest.rows.filter(r => r.side === 'DOWN') } } }));
-assert.ok(singleSide.includes('日経平均が66,854円まで下がると17倍になります。'));
+assert.ok(singleSide.includes('18倍まで上がると') && singleSide.includes('17倍まで下がると'));
+assert.ok(singleSide.includes('未集計'), 'no distance stats are invented for an absent row');
 console.log('Level map card PASS');
 
 const history = {basis:'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD',firstDate:'2024-01-04',lastDate:'2026-10-02',
@@ -56,3 +58,42 @@ for (const invalid of [{...history,basis:'INDEX_WEIGHTED'},{...history,lastDate:
  {...history,atOrAboveUpper:601},{...history,sufficient:false}]) {
  assert.ok(!renderHistory(invalid).includes('210 / 600営業日'));
 }
+
+const closingAtr=latest.atr14;
+const closing = {...latest,displayOnly:true,asOf:'2026-10-05',morningOf:'2026-10-06',
+ previousSession:'2026-10-05',previousClose:70000,epsDate:'2026-10-02',valuationPending:true,per:17.8,
+ rows:latest.rows.map(r=>({...r,distancePct:(r.price/70000-1)*100,distanceAtr:(r.price-70000)/closingAtr}))};
+const closingHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:closing}}}));
+assert.ok(closingHtml.includes('最新終値')&&closingHtml.includes('70,000'));
+assert.ok(closingHtml.includes('当日分の入力待ち'));
+assert.ok(closingHtml.includes('2026-10-05 朝')&&closingHtml.includes('68,309'));
+assert.deepEqual(state.latest,latest);
+const freshHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:{...closing,epsDate:'2026-10-05',valuationPending:false}}}}));
+assert.ok(freshHtml.includes('当日分のPER・価格の目盛りを再計算済み'));
+const invalidHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:{...closing,epsDate:'2026-10-06'}}}}));
+assert.ok(!invalidHtml.includes('最新終値'));
+
+// The visible prices and expanded calculation table must share the close.
+const enriched = {...closing, epsCoverage:{filledFromTrailing:3,negativeForecast:2}, constituentsAsOf:'2026-09-30',
+ rows:closing.rows.map(r=>({...r,reachedWithin10SessionsPct: r.side==='UP'?82:45,sessionsMedian:2}))};
+const scaleHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:enriched}}}));
+const calculations=scaleHtml.split('<details class="lm-all-levels">')[1].split('</details>')[0];
+assert.ok(calculations.includes('70,000')&&!calculations.includes('68,309'),'expanded table uses latest close');
+assert.ok(calculations.includes('+1.1%')&&!calculations.includes('+3.6%'),'expanded distances use latest close');
+assert.ok(calculations.includes('82%')&&calculations.includes('実績で補った社 3'),'fresh stats and EPS coverage');
+assert.ok(scaleHtml.includes('朝の固定記録を見る')&&scaleHtml.includes('68,309'),'fixed record remains separate');
+const pendingHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{today:'2026-10-06',closePending:true}}}));
+assert.ok(pendingHtml.includes('10/06の終値は取得待ち')&&pendingHtml.includes('10/02の終値を表示'),'missing close is visibly dated');
+const mergedMap={...closing,eps:4000,per:17.5,rows:[
+ {...row('UP',['SAME_MULTIPLE','PER_LINE'],71800,2.571,1.457,17.95,'2割前後',56,6,2,14),mergedMultiples:[17.95,18]},
+ row('DOWN',['PER_LINE'],68000,-2.857,-1.619,17,'1〜2割',64,3,0,9)]};
+const mergedHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:mergedMap,nearest:[
+ {side:'UP',multiple:18,price:72000,distancePct:2.857,distanceAtr:1.619,reachedWithin10SessionsPct:56,sessionsMedian:6},
+ {side:'DOWN',multiple:17,price:68000,distancePct:-2.857,distanceAtr:-1.619,reachedWithin10SessionsPct:64,sessionsMedian:3}]}}}));
+const mergedLadder=mergedHtml.split('aria-label="価格と利益の倍率"')[1].split('</div>')[0];
+assert.ok(mergedLadder.includes('18倍まで上がると')&&mergedLadder.includes('72,000'),'merged pivot does not replace exact integer PER price');
+assert.ok(mergedHtml.includes('近接するPER18倍線')&&mergedHtml.includes('同じ倍率 17.950倍'),'merged row identifies both original levels');
+
+const staleStats=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:mergedMap,nearest:[
+ {side:'UP',multiple:18,price:72000,distancePct:8,distanceAtr:4,reachedWithin10SessionsPct:99,sessionsMedian:1}]}}}));
+assert.ok(!staleStats.includes('99%')&&staleStats.includes('未集計'),'ignore stats from another distance');

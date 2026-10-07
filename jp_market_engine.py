@@ -765,13 +765,17 @@ def fact_note_ja(family: str, row: Mapping[str, Any]) -> Optional[str]:
             return None
         if row.get("sourceType") == "ETF_PROXY":
             return f"20営業日の日米相対力 {value * 100:+.2f}ポイント（ETFの比較）"
-        return f"日米相対力 {value:+.4f}（指数の比較）"
+        ratio = _finite(row.get("indexRatio"))
+        return f"20営業日の日米相対力 {value * 100:+.2f}ポイント（現物指数）" + (f"。日経平均÷S&P500 {ratio:.4f}" if ratio is not None else "")
     if family == "D04":
         value = _finite(row.get("per"))
         if value is None or value <= 0:
             return None
         kind = ("最新の時価総額加重推計" if row.get("lineage") == "ARGUS_CURRENT_ESTIMATE" else
                 "旧方式のARGUS代理値" if row.get("propositionId") == "ARGUS-D04-PROXY-CONSTITUENT-EPS" else "指数ベース")
+        eps = _finite(row.get("eps")) if row.get("lineage") == "ARGUS_CURRENT_ESTIMATE" else None
+        if eps is not None and eps > 0:
+            return f"推計EPS {eps:,.2f}円・PER {value:.2f}倍（{kind}）"
         return f"日経平均のPER {value:.2f}倍（{kind}）"
     if family == "D06":
         level = _finite(row.get("level"))
@@ -879,6 +883,8 @@ def evaluate_d03(*, cutoff: str,
         "status": "AVAILABLE" if selected is not None else "MISSING",
         "sourceType": source_type,
         "relativeStrengthValue": selected["value"] if selected else None,
+        "indexRatio": selected.get("indexRatio") if selected else None,
+        "comparisonDate": selected.get("comparisonDate") if selected else None,
         # v13.5.44: deterministic ARGUS candidate condition — the analysis
         # instrument outperformed the comparison over the window (value > 0).
         # The JP_MARKET_ENGINE-original threshold stays UNKNOWN; this is labelled research.
@@ -2752,7 +2758,8 @@ def project_today_sda_safe(*, cutoff: str,
                            reversal: Optional[Mapping[str, Any]] = None,
                            target_ladder: Optional[Mapping[str, Any]] = None,
                            direct_index: Optional[Mapping[str, Any]] = None,
-                           stock_lens: Optional[Mapping[str, Any]] = None) \
+                           stock_lens: Optional[Mapping[str, Any]] = None,
+                           warning_performance: Optional[Mapping[str, Any]] = None) \
         -> Dict[str, Any]:
     """Project compact read-only evidence for Today/SDA consumers.
 
@@ -2847,7 +2854,8 @@ def project_today_sda_safe(*, cutoff: str,
         # MARKET SIGNALS SIG-01..07 with a computed count (pure, no authority).
         "marketSignals": argus_market_signals.project_market_signals(
             family_projection),
-        "warningSignals": project_warning_conditions(admitted.get("evidence"), cutoff=cutoff),
+        "warningSignals": project_warning_conditions(admitted.get("evidence"), cutoff=cutoff,
+                                                      performance=warning_performance),
         "reversal": reversal_projection,
         "targetZones": target_projection,
         "indexIdentity": identity_projection,

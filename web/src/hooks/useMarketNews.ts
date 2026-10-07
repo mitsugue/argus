@@ -1,3 +1,4 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useEffect, useState } from 'react';
 import { MARKET_NEWS_CLOSED_INTERVAL_MS, MARKET_NEWS_OPEN_INTERVAL_MS } from '../lib/pollingPolicy';
 
@@ -109,16 +110,13 @@ export function useMarketNews(): State {
     }
 
     void fetchOnce();
-    let t = window.setTimeout(function poll() {
-      void fetchOnce();
-      t = window.setTimeout(poll, marketNewsRefreshInterval());
-    }, marketNewsRefreshInterval());
+    const stopPolling = scheduleVisibleInterval(() => void fetchOnce(), marketNewsRefreshInterval);
     const onVisible = () => { if (!document.hidden) void fetchOnce(); };
-    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
     return () => {
       cancelled = true;
-      clearTimeout(t);
-      document.removeEventListener('visibilitychange', onVisible);
+      stopPolling();
+      stopInitialOnVisible();
     };
   }, []);
 

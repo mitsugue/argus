@@ -25,7 +25,7 @@ def _mapping(value):
     return value if isinstance(value, Mapping) else {}
 
 
-def project_warning_conditions(evidence, *, cutoff):
+def project_warning_conditions(evidence, *, cutoff, performance=None):
     # Imported at the seam to avoid a module cycle. The admitted sealed input,
     # not compact legacy counts or retrospective event-study results, is used.
     from jp_market_engine import (_content_id_valid, _cutoff, _instant, fact_note_ja,
@@ -98,6 +98,11 @@ def project_warning_conditions(evidence, *, cutoff):
             row["state"] = status
         elif status in ("PARTIAL", "UNVALIDATED", "DATA_GATED"):
             row["state"] = "DATA_GATED"
+        if admitted and performance is not None:
+            from argus_warning_history import performance_for
+            result = performance_for(performance, family, cutoff)
+            if result is not None:
+                row["performance"] = deepcopy(result)
         output.append(row)
     support = [{"family": family, "legacyRuleId": f"legacy-v1.{family}", "conditionMet": source.get("conditionMet"),
                 "status": source.get("status"), "performanceReusedForWarning": False}

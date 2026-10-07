@@ -1,10 +1,11 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useEffect, useSyncExternalStore } from 'react';
 
 // FUTURE MAP (2026-10-04): external views written by the research side to the
 // private store; the server validates them. The table changes without a
-// restart: it is read again whenever Today is shown or the app comes to the
-// front, and every five minutes while it stays in front (never in the
-// background). The table is replaced only when its version changed.
+// restart: it is read on initial display and every five minutes while in
+// front. An app switch retains the table without an extra read; hidden initial
+// reads resume once. The table is replaced only when its version changed.
 export type FutureMapRow = { id: string; periodLabel: string; start: string; end: string; view: string;
   reason: string | null; alt: string | null; level: { low: number; high: number } | null; tag: string;
   tone: 'red' | 'amber' | 'green' | 'grey'; agree: number; emphasis: boolean; changed: boolean;
@@ -41,6 +42,7 @@ const emit = () => listeners.forEach(listener => listener());
 
 /** Read the table once; keep the last one when the read fails. */
 export function refreshFutureMap(): Promise<void> {
+  if (document.visibilityState !== 'visible') return Promise.resolve();
   const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
   if (!base) {                                                 // never leave the console waiting
     if (load === 'loading') { load = 'unavailable'; emit(); }
@@ -68,9 +70,9 @@ let stopSync: (() => void) | null = null;
 function startSync(): () => void {
   const visible = () => document.visibilityState === 'visible';
   const onVisibility = () => { if (visible()) void refreshFutureMap(); };
-  const timer = window.setInterval(() => { if (visible()) void refreshFutureMap(); }, FUTURE_MAP_POLL_MS);
-  document.addEventListener('visibilitychange', onVisibility);
-  return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisibility); };
+  const timer = scheduleVisibleInterval(() => { if (visible()) void refreshFutureMap(); }, FUTURE_MAP_POLL_MS);
+  const stopInitialOnVisibility = subscribeInitialVisibleRead(onVisibility);
+  return () => { timer(); stopInitialOnVisibility(); };
 }
 
 function subscribe(listener: () => void): () => void {

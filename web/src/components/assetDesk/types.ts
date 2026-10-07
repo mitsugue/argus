@@ -62,7 +62,7 @@ export const DESK_TABS = [
 export type DeskTab = (typeof DESK_TABS)[number];
 
 export function tabForDeskSection(section?: string | null): DeskTab {
-  if (section === 'technical' || section === 'chart') return 'chart';
+  if (section === 'technical' || section === 'chart' || section === 'scenarios') return 'chart';
   if (section === 'why-downside' || section === 'flow-supply'
       || section === 'events' || section === 'evidence') return 'evidence';
   if (section === 'owner-position' || section === 'position') return 'decision';

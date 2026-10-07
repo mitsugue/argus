@@ -1,39 +1,48 @@
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
+import { createSharedPollingStore } from '../lib/sharedPollingStore';
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { validAnalystTarget, type AnalystTarget } from '../domain/assetOutlook';
+export type { AnalystTarget } from '../domain/assetOutlook';
 
-// Analyst consensus target prices of watched stocks (owner 2026-10-04): the
-// server fetches once a day; this reads the stored values once per page view.
-export type AnalystTarget = { symbol: string; market: 'JP' | 'US'; mean: number; median: number | null;
-  high: number | null; low: number | null; analysts: number; currency: string | null;
-  priceAtFetch: number | null; gapPct: number | null; fetchedAt: string; source: string };
-type Store = Record<string, AnalystTarget>;
-let cache: { at: number; items: Store } | null = null;
-let flight: Promise<Store> | null = null;
-const TTL_MS = 30 * 60_000;
-
-const valid = (row: unknown): row is AnalystTarget => {
-  const r = row as AnalystTarget;
-  return !!r && typeof r.symbol === 'string' && typeof r.mean === 'number' && Number.isFinite(r.mean)
-    && typeof r.analysts === 'number' && typeof r.fetchedAt === 'string';
+export type AnalystTargetsState = {
+  items: Record<string, AnalystTarget>;
+  availability: Record<string, { status: string; lastAttemptAt?: string | null }>;
+  loading: boolean; refreshFailed: boolean;
 };
-
-async function load(base: string): Promise<Store> {
-  const response = await fetch(`${base}/api/argus/analyst-targets`, { cache: 'no-store' });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const body = await response.json();
-  if (body?.actionAuthority !== false || typeof body.items !== 'object' || !body.items) return {};
-  return Object.fromEntries(Object.entries(body.items as Record<string, unknown>).filter(([, row]) => valid(row))) as Store;
+const store = createSharedPollingStore<AnalystTargetsState>(
+  { items: {}, availability: {}, loading: true, refreshFailed: false },
+  (set, get) => {
+    const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+    if (!base) { set({ ...get(), loading: false, refreshFailed: true }); return () => {}; }
+    let alive = true;
+    let flight: Promise<void> | null = null;
+    const controller = new AbortController();
+    async function load() {
+      try {
+        const response = await fetch(`${base}/api/argus/analyst-targets`, { cache: 'no-store', signal: controller.signal });
+        if (!response.ok) throw new Error('analyst_snapshot_unavailable');
+        const body = await response.json();
+        if (body?.actionAuthority !== false || !body.items || typeof body.items !== 'object' || Array.isArray(body.items)) {
+          throw new Error('analyst_snapshot_invalid');
+        }
+        const items = Object.fromEntries(Object.entries(body.items).filter(([key, row]) => validAnalystTarget(row, key)));
+        const availability = Object.fromEntries(Object.entries(body.availability ?? {}).filter(([, value]) =>
+          value && typeof value === 'object' && typeof (value as { status?: unknown }).status === 'string'));
+        if (alive) set({ items: items as Record<string, AnalystTarget>, availability: availability as AnalystTargetsState['availability'],
+          loading: false, refreshFailed: !!body.lastError && body.lastError !== 'partial_target_fetch_failed' });
+      } catch {
+        if (alive) set({ ...get(), loading: false, refreshFailed: true });
+      }
+    }
+    const acquire = () => { flight ??= load().finally(() => { flight = null; }); };
+    // All cards share one cache read; no provider/AI request and no burst on app resume.
+    const stopInterval = scheduleVisibleInterval(acquire, 5 * 60_000);
+    const stopInitial = subscribeInitialVisibleRead(acquire);
+    acquire();
+    return () => { alive = false; controller.abort(); stopInterval(); stopInitial(); };
+  },
+);
+export function useAnalystTargetState(): AnalystTargetsState {
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
 }
-
-export function useAnalystTargets(): Store {
-  const base = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
-  const [items, setItems] = useState<Store>(cache?.items ?? {});
-  useEffect(() => {
-    if (!base || (cache && Date.now() - cache.at < TTL_MS)) return;
-    let live = true;
-    flight ??= load(base).then(found => { cache = { at: Date.now(), items: found }; return found; })
-      .finally(() => { flight = null; });
-    flight.then(found => { if (live) setItems(found); }).catch(() => { /* the row simply stays absent */ });
-    return () => { live = false; };
-  }, [base]);
-  return items;
-}
+export function useAnalystTargets(): Record<string, AnalystTarget> { return useAnalystTargetState().items; }

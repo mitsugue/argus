@@ -53,6 +53,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Check index chart subject isolation
         run: node web/scripts/index-chart-isolation.test.mjs
+      - name: 通常復帰で認証と一斉取得を繰り返さない
+        run: node web/scripts/app-resume-browser.test.mjs
       - name: Check news presentation hierarchy
         run: node web/scripts/news-presentation.test.mjs
       - name: チャートの指操作と価格表示

@@ -240,7 +240,7 @@ check('unknown important-events authority blocks every plan',
 check('unknown downside authority reaches the global partial boundary',
   assetIntel.includes("downsideUnknown ? 'downside_unread' : null")
   && assetIntel.includes("importantEventsUnknown ? 'important_events_unread' : null")
-  && assetIntel.includes("phase === 'partial' ? 'watchlist_polling_partial' : null")
+  && assetIntel.includes('...partialFeedReasonCodes({ actionLabels: al.phase')
   && assetIntel.includes('const isPartial = partialReasonCodes.length > 0;')
   && assetIntel.includes("? 'REVIEW_REQUIRED' : downside?.holderRiskOverlay"));
 check('every authority the boundary depends on is named, not silently folded in',

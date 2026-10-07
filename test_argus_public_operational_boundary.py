@@ -1616,6 +1616,8 @@ def _td_fresh_state(monkeypatch, *, session="REGULAR", owner=("SPCX", "IONQ", "S
     import argus_td_warm
     monkeypatch.setattr(scanner, "_TD_WARM_STATE", argus_td_warm.new_state())
     monkeypatch.setattr(scanner, "_US_WARM_ROWS", {})
+    monkeypatch.setattr(scanner, "_US_WARM_HINTS", {})
+    monkeypatch.setattr(scanner, "FINNHUB_API_KEY", "")
     monkeypatch.setattr(scanner, "_TD_WARM_UNIVERSE_CACHE", {"data": None, "expires": 0.0})
     monkeypatch.setattr(scanner, "_US_DYN_CACHE", {})
     monkeypatch.setitem(scanner._US_CACHE, "data", None)
@@ -3456,3 +3458,73 @@ def test_jquants_shape_audit_reads_only_allowed_new_endpoints(monkeypatch):
     assert calls == [("/equities/valuation", {"date": "2026-10-02"})]
     assert body["status"] == "success" and body["filled"] == {"Code": 1, "FwdEPS": 1, "PER": 0}
     assert body["columns"] == ["Code", "FwdEPS", "PER"] and body["automaticAiCalls"] == 0
+
+
+def test_us_requested_symbol_warms_without_provider_fetch_on_get(monkeypatch):
+    _td_fresh_state(monkeypatch, owner=())
+    client = scanner.app.test_client()
+    monkeypatch.setattr(scanner, 'get_us_watchlist_snapshot', lambda *a, **kw: {'stocks': [], 'status': 'partial'})
+    monkeypatch.setattr(scanner.requests, 'get', lambda *a, **kw: (_ for _ in ()).throw(AssertionError('GET must stay cached')))
+    assert client.get('/api/argus/us-watchlist?symbols=MU,!!,MU').status_code == 200
+    assert set(scanner._US_WARM_HINTS) == {'MU'}
+    universe = scanner._td_warm_universe()
+    assert 'MU' in universe['symbols']
+    assert 'MU' not in scanner._td_owner_us_members()  # hint is not confirmed realtime registration
+
+
+def test_us_background_fallback_fills_only_missing_admitted_rows(monkeypatch):
+    import datetime as dt
+    _td_fresh_state(monkeypatch, owner=())
+    monkeypatch.setattr(scanner, 'FINNHUB_API_KEY', 'test-only')
+    calls = []; now = dt.datetime.now(dt.timezone.utc)
+    stamp = now.isoformat()
+    def row(sym, source):
+        return {'symbol': sym, 'price': 120, 'source': source, 'sourceTimestamp': stamp}
+    monkeypatch.setattr(scanner, '_td_warm_fetch', lambda batch: ([row(batch[0], 'twelvedata')], True, False, None))
+    monkeypatch.setattr(scanner, '_finnhub_quote_row', lambda sym: calls.append(sym) or row(sym, 'finnhub'))
+    result = scanner._td_warm_tick(now_utc=now)
+    assert calls == result['batch'][1:]
+    assert result['fallbackRowsStored'] == len(calls)
+    assert scanner._US_WARM_ROWS[calls[0]]['row']['source'] == 'finnhub'
+    assert scanner._US_WARM_ROWS[calls[0]]['row']['sourceTimestamp'] == stamp
+    assert scanner._td_warm_tick(now_utc=now)['action'] == 'skip'
+    assert calls == result['batch'][1:]
+
+
+def test_old_partial_us_batch_does_not_hide_newly_warmed_symbol(monkeypatch):
+    import datetime as dt
+    _td_fresh_state(monkeypatch, owner=())
+    now = scanner.time.time(); stamp = dt.datetime.now(dt.timezone.utc).isoformat()
+    monkeypatch.setitem(scanner._US_DYN_CACHE, ('AAPL', 'MU'), {
+        'expires': now + 600, 'data': {'stocks': [{'symbol': 'AAPL', 'price': 100, 'sourceTimestamp': stamp}]}})
+    scanner._td_warm_store([{'symbol': 'MU', 'price': 120, 'source': 'twelvedata', 'sourceTimestamp': stamp}], now)
+    snapshot = scanner._get_us_watchlist_core(['AAPL', 'MU'], allow_provider_fetch=False)
+    assert {row['symbol'] for row in snapshot['stocks']} == {'AAPL', 'MU'}
+
+
+def test_us_last_received_price_survives_closed_market_without_live_authority(monkeypatch):
+    import datetime as dt
+    _td_fresh_state(monkeypatch, owner=())
+    now = scanner.time.time(); stamp = dt.datetime.fromtimestamp(now - 86400, dt.timezone.utc).isoformat()
+    monkeypatch.setattr(scanner, '_PUSHED_QUOTES', {'US': {}})
+    monkeypatch.setattr(scanner, '_FINNHUB_QUOTE_CACHE', {})
+    scanner._US_WARM_ROWS['MU'] = {'expires': now - 1000, 'row': {
+        'symbol': 'MU', 'price': 120, 'source': 'twelvedata', 'sourceTimestamp': stamp}}
+    row = scanner._quote_cached_only('MU', 'US')
+    assert row['price'] == 120 and row['sourceTimestamp'] == stamp
+    assert row['decisionUsable'] is False and row['realtimeEvidence'] is False
+    assert row['delayClass'] != 'LIVE'
+    scanner._US_WARM_ROWS['MU']['row']['sourceTimestamp'] = dt.datetime.fromtimestamp(now - 8 * 86400, dt.timezone.utc).isoformat()
+    assert scanner._quote_cached_only('MU', 'US') is None
+
+
+def test_registered_us_scope_requires_admin_and_excludes_hints(monkeypatch):
+    _td_fresh_state(monkeypatch, owner=('MU',))
+    scanner._note_us_warm_hints(['SPCX'])
+    client = scanner.app.test_client()
+    monkeypatch.setattr(scanner, '_require_admin', lambda: (False, {'error': 'auth_required'}, 401))
+    assert client.get('/api/argus/us-universe?scope=registered').status_code == 401
+    monkeypatch.setattr(scanner, '_require_admin', lambda: (True, None, 200))
+    body = client.get('/api/argus/us-universe?scope=registered').get_json()
+    assert body['scope'] == 'registered' and 'US.MU' in body['codes']
+    assert 'US.SPCX' not in body['codes'] and body['count'] == 9
