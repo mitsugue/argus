@@ -1,3 +1,4 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
 import { FEED_VISIBLE_MS } from '../lib/pollingPolicy';
@@ -209,7 +210,7 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
     }
 
     void fetchOnce();
-    const timer = window.setInterval(() => {
+    const timer = scheduleVisibleInterval(() => {
       // A symbol-set change is picked up on the next cycle; an unchanged set
       // simply refreshes within the backend TTL cadence.
       void fetchOnce();
@@ -220,14 +221,14 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
       const visibleLive = live?.displayApproved === true && (live.status === 'LIVE' || live.status === 'DEGRADED');
       if (desiredRevision !== fetchedRevision || visibleLive && Date.now() - lastCycleAt >= 10_000) void fetchOnce();
     }, 5_000);
-    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
     return () => {
       cancelled = true;
       for (const controller of controllers) controller.abort();
       controllers.clear();
-      window.clearInterval(timer);
+      timer();
       window.clearInterval(revisionTimer);
-      document.removeEventListener('visibilitychange', onVisible);
+      stopInitialOnVisible();
     };
   },
 );

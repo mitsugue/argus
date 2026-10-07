@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """ARGUS moomoo bridge — runs NEXT TO OpenD (same machine, e.g. your AWS box).
 
-Collects only the eight shared US market-regime ETFs during regular sessions.
-Individual watchlist quotes, money-flow calls and universe sweeps are retired.
+Collects shared US ETFs and confirmed registered US prices during regular sessions.
+Money-flow calls and broad universe sweeps remain retired.
 Existing tokens, HMAC signing and provider observation timestamps are retained.
 OpenD remains local; never expose port 11111 to the internet.
 
@@ -17,6 +17,7 @@ Logs: journalctl -u argus-bridge -f
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
 import shutil
@@ -35,7 +36,7 @@ except ImportError:
     OpenQuoteContext = None
     RET_OK = 0
 
-BRIDGE_VERSION = "13.7.33"
+BRIDGE_VERSION = "13.8.72"
 
 BACKEND  = os.environ.get("ARGUS_BACKEND", "https://argus-backend-3j2m.onrender.com").rstrip("/")
 TOKEN    = os.environ.get("ARGUS_ADMIN_TOKEN", "")
@@ -53,10 +54,9 @@ PORT     = int(os.environ.get("OPEND_PORT", "11111"))
 DISABLE_JP = os.environ.get("ARGUS_DISABLE_JP_QUOTES", "0") not in ("0", "false", "")
 JP_ENTITLEMENT_BACKOFF_SEC = max(3600, int(os.environ.get("JP_ENTITLEMENT_BACKOFF_SEC", "604800")))
 HEARTBEAT_INTERVAL = max(30, int(os.environ.get("BRIDGE_HEARTBEAT_SEC", "60")))
-# Shared regime inputs retain a five-minute cadence inside the backend's
-# ten-minute freshness window. Legacy fast/individual settings cannot reenable
-# retired execution paths. No flow or owner-watchlist acquisition is scheduled.
-INTERVAL = max(300, int(os.environ.get("PUSH_INTERVAL_SEC", "300")))
+# One bounded snapshot every 30 seconds; do not subscribe to a stream or
+# acquire flow/boards/orders. The registered set comes only from admin sync.
+INTERVAL = 30
 _REGIME_ETF_CODES = ["US.SPY", "US.QQQ", "US.IWM", "US.XLK", "US.XLU", "US.GLD", "US.TLT", "US.HYG"]
 CODES = list(_REGIME_ETF_CODES)
 
@@ -385,8 +385,15 @@ def rows_from_snapshot(df):
             prev = float(r.get("prev_close_price") or 0)
         except (TypeError, ValueError):
             continue
-        if not sym or last <= 0:
+        if not sym or not math.isfinite(last) or last <= 0:
             continue
+        if not math.isfinite(prev) or prev <= 0:
+            prev = 0
+        try:
+            raw_volume = float(r.get("volume") or 0)
+            volume = int(raw_volume) if math.isfinite(raw_volume) and raw_volume >= 0 else 0
+        except (TypeError, ValueError, OverflowError):
+            volume = 0
         exchange_ts = exchange_timestamp(first_present(
             r.get("update_timestamp"), r.get("updateTimestamp"),
             r.get("update_time"), r.get("updateTime")), market.upper())
@@ -399,7 +406,7 @@ def rows_from_snapshot(df):
             "price": last,
             "changeAbs": round(last - prev, 4) if prev else 0.0,
             "changePct": round((last - prev) / prev * 100, 4) if prev else 0.0,
-            "volume": int(r.get("volume") or 0),
+            "volume": volume,
             "exchangeTs": exchange_ts,
             # Snapshot success does not itself identify the contracted quote
             # right. Runtime timestamp distribution proves freshness separately.
@@ -769,12 +776,35 @@ def shared_session_open(now=None):
     return market_session(US_EQUITY, now)['session'] == 'REGULAR'
 
 
+def registered_us_codes():
+    """One private list read per quote cycle; errors fall back to shared ETFs.
+
+    No saved stale owner set: removing a registration takes effect on the next
+    successful read, and an unavailable read cannot authorize old targets.
+    """
+    try:
+        response = requests.get(f"{BACKEND}/api/argus/us-universe",
+            params={"scope": "registered"}, headers={"X-ARGUS-ADMIN-TOKEN": TOKEN}, timeout=8)
+        if not response.ok:
+            return list(_REGIME_ETF_CODES)
+        body = response.json()
+        if body.get("scope") != "registered":
+            return list(_REGIME_ETF_CODES)
+        import re
+        codes = [code for code in body.get("codes", []) if isinstance(code, str)
+                 and re.fullmatch(r"US\.[A-Z][A-Z0-9.\-]{0,5}", code)]
+        return list(dict.fromkeys(_REGIME_ETF_CODES + codes))[:32]
+    except Exception:
+        return list(_REGIME_ETF_CODES)
+
+
 def shared_quote_cycle(qc):
-    """The sole production acquisition path; no individual or money-flow calls."""
+    """Prices only: shared ETFs plus confirmed registered US names."""
     if not shared_session_open():
         return 0
-    stocks, _ = fetch_market_quotes(qc, {'JP':[], 'US':list(_REGIME_ETF_CODES)}, disable_jp=True)
-    allowed = set(_REGIME_ETF_CODES)
+    codes = registered_us_codes()
+    stocks, _ = fetch_market_quotes(qc, {'JP': [], 'US': codes}, disable_jp=True)
+    allowed = set(codes)
     stocks = [s for s in stocks if s.get('market', '') + '.' + s.get('symbol', '') in allowed]
     if not stocks:
         return 0
@@ -782,7 +812,8 @@ def shared_quote_cycle(qc):
     if not resp.ok:
         return 0
     accepted = resp.json().get('accepted')
-    record_push_result(stocks, accepted)
+    if accepted:
+        record_push_result(stocks, accepted)
     return accepted or 0
 
 
@@ -793,7 +824,7 @@ def main():
     if not TOKEN:
         print("ARGUS_ADMIN_TOKEN is not set", file=sys.stderr)
         sys.exit(1)
-    print(f"argus-bridge v{BRIDGE_VERSION}: shared market ETFs only; interval={INTERVAL}s")
+    print(f"argus-bridge v{BRIDGE_VERSION}: 共有ETFと登録米国株の価格; interval={INTERVAL}s")
     # OpenD initialization can wait indefinitely in the SDK. Only one bounded-
     # cadence worker may own that wait; health reporting never waits for it.
     worker = None

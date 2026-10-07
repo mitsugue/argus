@@ -14,7 +14,7 @@ require.extensions['.ts'] = (mod, filename) => {
 const root = path.join(__dirname, '..');
 const {
   buildArgusTodayView, buildTodayProjection, selectAutoMarket, selectTodayNews,
-  formatEventTime,
+  formatEventTime, nextEventContext,
 } = require(path.join(root, 'src/domain/argusTodayView.ts'));
 let failed = 0;
 function check(name, condition) {
@@ -65,6 +65,27 @@ check('Today bounds coming events to the month and deduplicates owner priorities
 check('legacy-looking extra inputs cannot override canonical action',
   buildArgusTodayView({ ...view, now, selectionMode: 'JP', dataQuality: 'LIVE',
     baseSignal: 'ENTER', aiFinalAction: 'BUY', canonicalDecision: canonical('EXIT', 'EVALUATED', 1) }).finalAction === 'EXIT');
+
+// Fixed event context must remain identical across legacy action states.
+const futureAuction = { id: 'auction-ten', code: 'AUCTION', title: 'US Treasury 10-Year Auction',
+  at: '2026-10-07T14:59:00Z', dateOnly: true, impact: 'high' };
+const footerNow = new Date('2026-10-06T15:01:00Z');
+const footerInput = { now: footerNow, selectionMode: 'JP', dataQuality: 'PARTIAL', events: [futureAuction] };
+const footerWait = buildArgusTodayView({ ...footerInput, canonicalDecision: canonical('WAIT', 'DATA_GATED') });
+const footerExit = buildArgusTodayView({ ...footerInput, canonicalDecision: canonical('EXIT') });
+check('fixed bar uses the dated calendar, independent of a legacy action',
+  footerWait.footerText === footerExit.footerText && !/WAIT|EXIT|判断/.test(footerWait.footerText)
+  && footerWait.footerEvent.name === '米10年債入札' && footerWait.footerEvent.remaining === '本日'
+  && footerWait.footerEvent.when === '10/7・時刻未公表');
+const timedFooter = nextEventContext({ ...futureAuction, code: 'FOMC', title: 'FOMC',
+  at: '2026-10-28T18:00:00Z', dateOnly: false }, new Date('2026-10-28T17:00:00Z'));
+check('timed event countdown and date use Japan time across UTC midnight',
+  timedFooter.when === '10/29 03:00 JST' && timedFooter.remaining === 'あと1時間');
+check('missing calendar never masquerades as no scheduled events',
+  buildArgusTodayView({ ...footerInput, events: [], eventsAuthorityUnknown: true,
+    canonicalDecision: canonical() }).footerText === '次のイベント: 日程を確認できません'
+  && buildArgusTodayView({ ...footerInput, events: [], eventsAuthorityUnknown: false,
+    canonicalDecision: canonical() }).footerText === '次のイベント: 予定なし');
 
 const CAL_NOW = Date.parse('2026-07-22T00:00:00Z');
 check('AUTO delegates to canonical JP open state',
@@ -207,15 +228,16 @@ check('Today never claims an empty calendar it could not read',
     calendar: { JP: state('JP', 'MORNING_SESSION'), US: state('US', 'CLOSED') },
     canonicalDecision: canonical('WAIT', 'EVALUATED', null) };
   const partial = buildArgusTodayView({ ...base, dataQuality: 'PARTIAL',
-    dataQualityReasonCodes: ['fx_authority_missing', 'visibility_limited'] });
+    dataQualityReasonCodes: ['fx_authority_missing', 'visibility_limited'],
+    dataQualityDetailLinesJa:['TEST：価格時刻が未確認'] });
   check('a partial data status carries the reasons it is partial',
     partial.dataStatus.label === '一部不足'
     && partial.dataQualityReasonCodes.join(',')
-      === 'fx_authority_missing,visibility_limited');
+      === 'fx_authority_missing,visibility_limited' && partial.dataQualityDetailLinesJa[0] === 'TEST：価格時刻が未確認');
   const live = buildArgusTodayView({ ...base, dataQuality: 'LIVE',
-    dataQualityReasonCodes: ['fx_authority_missing'] });
+    dataQualityReasonCodes: ['fx_authority_missing'],dataQualityDetailLinesJa:['old'] });
   check('a LIVE status never carries a shortfall reason',
-    live.dataStatus.label === '正常' && live.dataQualityReasonCodes.length === 0);
+    live.dataStatus.label === '正常' && live.dataQualityReasonCodes.length === 0 && live.dataQualityDetailLinesJa.length === 0);
   check('every partial reason has Japanese the owner can act on',
     ['watchlist_polling_partial', 'important_events_unread', 'downside_unread',
       'flow_authority_stale', 'supply_demand_authority_stale',
@@ -530,3 +552,11 @@ console.log('argus-engine.test: all checks passed');
 }
 
 if (failed) process.exit(1);
+
+const {partialFeedReasonCodes} = require(path.join(root,'src/domain/dataShortfalls.ts'));
+const feedOk={actionLabels:'live',marketRegime:'live',eventRadar:'live',jpQuotes:'live',usQuotes:'live',hasJpAssets:true,hasUsAssets:true};
+check('market analysis partial is not attributed to prices',partialFeedReasonCodes({...feedOk,marketRegime:'partial'}).join(',')==='market_regime_partial');
+check('registered quote shortfall names the price reader',partialFeedReasonCodes({...feedOk,jpQuotes:'partial'}).join(',')==='watchlist_polling_partial');
+check('unused curated feed does not blame owner watchlist',partialFeedReasonCodes({...feedOk,jpQuotes:'partial',hasJpAssets:false}).length===0);
+check('all partial readers remain independently visible',partialFeedReasonCodes({...feedOk,actionLabels:'partial',marketRegime:'partial',eventRadar:'partial',usQuotes:'partial'}).length===4);
+if(failed) process.exit(1);

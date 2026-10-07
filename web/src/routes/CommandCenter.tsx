@@ -5,6 +5,7 @@ import { useAssetIntel } from '../hooks/useAssetIntel';
 import { publishEventsJa, publishDataQuality } from '../lib/positionExposureShare';
 import { maybeUpdateOutcomes } from '../lib/decisionQuality';
 import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { runNotificationEngine } from '../lib/notifications';
 import { assessBackupSafety } from '../lib/backupSafety';
 import {ownerVaultProtection} from '../lib/ownerVault';
@@ -145,6 +146,15 @@ function missingTodayDecision(symbol: string, market: 'JP' | 'US', assets: Retur
 
 export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, onNavigateToSettings }) => {
   useLocale();   // re-render Today on locale switch
+  // Local calendar clock only: countdowns and past-event removal do not wait
+  // for the next server poll, and never trigger a provider or AI request.
+  const [calendarNow, setCalendarNow] = useState(() => Date.now());
+  useEffect(() => {
+    const refreshClock = () => setCalendarNow(Date.now());
+    const stopTimer = scheduleVisibleInterval(refreshClock, 60_000);
+    const stopVisible = subscribeInitialVisibleRead(refreshClock);
+    return () => { stopTimer(); stopVisible(); };
+  }, []);
   const assetsApi = useAssets();
   // V12.2.12: 個別銘柄系のデータ組み立ては useAssetIntel(Today/Asset Desk共有の
   // 正本)へ移設。市場の優先確認・概要・シナリオを共有し、旧保有計算は行わない。
@@ -152,7 +162,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     assets, regime, impEvents, rates, events247,
     flowRecords, sdSignals,
     apItems, sessionBrief, scenarioSets, positionPlans,
-    judgment, isPartial, partialReasonCodes, dataQualityNotes, visLimited,
+    judgment, isPartial, partialReasonCodes, dataQualityDetailLinesJa, dataQualityNotes, visLimited,
     overlay, sdaBySymbol, importantEventsUnknown, jpQuotes,
   } = useAssetIntel({ publish: true, assets: assetsApi.assets });
   // v13.5.59 (owner): every JP code is shown with its company name — the
@@ -504,11 +514,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     const selectedSymbol = selectedInstrument[effectiveMarket];
     const canonicalDecision = sdaBySymbol.get(selectedSymbol)
       ?? missingTodayDecision(selectedSymbol, effectiveMarket, assets);
-    const now = new Date();
+    const now = new Date(calendarNow);
     return buildArgusTodayView({
       now, selectionMode: marketMode,
       calendar: decisionCalendar,
-      dataQuality, dataQualityReasonCodes, dataQualityNotes,
+      dataQuality, dataQualityReasonCodes, dataQualityDetailLinesJa, dataQualityNotes,
       globalRisk: overlay.globalRegime,
       factors: { JP: jpFactors, US: usFactors },
       events: eventRows, eventsAuthorityUnknown: importantEventsUnknown,
@@ -533,14 +543,14 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         rule: `最終判断 ${canonicalDecision.status}` },
       canonicalDecision,
     });
-  }, [judgment, overlay, isPartial, partialReasonCodes, dataQualityNotes, visLimited, marketLedger.ledger,
+  }, [judgment, overlay, isPartial, partialReasonCodes, dataQualityDetailLinesJa, dataQualityNotes, visLimited, marketLedger.ledger,
     regime.data, impEvents, rates.data, events247,
     assets, apItems, marketMode,
     headline.document, marketNews.data,
     selectedChart.data, headlineIndex.data,
     marketNews.lastChecked, marketNews.failureClass,
     selectedInstrument, effectiveMarket, selectedChart.decisionData, decisionCalendar,
-    sdaBySymbol]);
+    sdaBySymbol, calendarNow]);
 
   // Which canonical source feeds the visible projection right now.
   const projectionSource = selectedChart.data ? 'verified-snapshot' as const
@@ -619,7 +629,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         onNavigate={onNavigate} onNavigateToAsset={onNavigateToAsset}
         onNavigateToSettings={onNavigateToSettings}
         aiButton={null} />
-      <MobileStickyCommand text={argusToday.footerText} />
+      <MobileStickyCommand text={argusToday.footerText} event={argusToday.footerEvent} />
     </PageShell>
   );
 };

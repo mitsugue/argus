@@ -235,6 +235,8 @@ class OwnerAuth:
 def install(app, env=None):
     auth = OwnerAuth(dict(os.environ if env is None else env))
     app.extensions['argus_owner_auth'] = auth
+    from argus_account_watchlist import prepare
+    prepare(auth)
 
     @app.before_request
     def owner_boundary():
@@ -273,6 +275,9 @@ def install(app, env=None):
 
     @app.route(PREFIX + '/<action>', methods=['GET', 'POST'])
     def owner_action(action):
+        if action == 'watchlist':
+            from argus_account_watchlist import action as watchlist_action
+            return watchlist_action(auth)
         if not auth.enabled:
             return jsonify(error='owner_auth_disabled'), 503
         if request.method == 'GET' and action == 'session':

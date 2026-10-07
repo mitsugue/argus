@@ -168,3 +168,40 @@ def test_canonical_push_precedes_every_auxiliary_persistence_failure():
     assert 'id: canonical_commit' in step
     assert 'snap.pending.json' in source[capture:commit]
     assert 'mv snap.pending.json snap.json' in source[capture:commit]
+
+
+def test_backup_failure_stays_red_but_does_not_skip_independent_saves():
+    source = _source()
+    following = source.split('id: backup_vault', 1)[1].split('Publish bounded event prediction result lookup', 1)[0]
+    for block in following.split('      - name: ')[1:]:
+        if block.startswith(('Persist ', 'Commit to ledger branch', 'Layer 2B', 'Decision Value')):
+            condition = next(line for line in block.splitlines() if line.strip().startswith('if:'))
+            assert '!cancelled()' in condition
+            assert "steps.canonical_commit.outcome == 'success'" in condition
+    assert 'continue-on-error' not in source
+    stage = source.split('Switch to ledger branch')[0]
+    assert 'persist_backup_vault.py' in stage
+    assert '"$RUNNER_TEMP/workflow_http.py" \\' in stage
+
+
+def test_notification_distinguishes_saved_canonical_ledger(tmp_path):
+    import os
+    import subprocess
+    import textwrap
+    stub = tmp_path / 'curl'
+    stub.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$NOTIFY_TEST_ARGS"\n')
+    stub.chmod(0o755)
+    source = _source().split('      - name: Notify on failure', 1)[1]
+    script = textwrap.dedent(source.split('        run: |\n', 1)[1]).replace('${{ github.run_id }}', '123')
+    for outcome, title, body in (
+        ('success', 'ARGUS auxiliary save FAILED', '予測台帳の記録・採点は保存済み'),
+        ('failure', 'ARGUS ledger FAILED', '保存できませんでした')):
+        args = tmp_path / 'args'
+        result = subprocess.run(['bash', '-e', '-c', script], env={**os.environ,
+            'PATH': str(tmp_path) + os.pathsep + os.environ['PATH'],
+            'NTFY_TOPIC': 'synthetic-test', 'CANONICAL_OUTCOME': outcome,
+            'NOTIFY_TEST_ARGS': str(args)}, capture_output=True, text=True)
+        assert result.returncode == 0
+        sent = args.read_text()
+        assert title in sent and body in sent
+        assert '/actions/runs/123' in sent

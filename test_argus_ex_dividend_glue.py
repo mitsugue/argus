@@ -12,6 +12,7 @@ def _row(code, fdiv2q="40.0", fdivfy="50.0", disc="2026-08-07"):
 
 
 def _reset(monkeypatch, tmp_path):
+    monkeypatch.setattr(scanner, "_JP_EARNINGS_BACKFILL_ATTEMPTS", {})
     scanner._JP_DIVIDEND_STORE.update(rows={}, fetchedAt={}, closes=None, restoreAttempted=False, lastError=None, requestsLastWarm=0)
     path = str(tmp_path / "jp_dividend_forecasts.json")
     monkeypatch.setattr(scanner, "_jp_dividend_path", lambda: path)
@@ -55,6 +56,29 @@ def test_a_failed_company_read_is_reported_not_fatal(monkeypatch, tmp_path):
     scanner._jp_dividend_warm(["1000", "1001", "1002"])
     assert scanner._JP_DIVIDEND_STORE["lastError"] == "RuntimeError" and set(scanner._JP_DIVIDEND_STORE["rows"]) == {"1000", "1002"}
     assert "1001" not in scanner._JP_DIVIDEND_STORE["fetchedAt"]            # retried at the next warm
+
+
+def test_shared_lane_backfills_former_members_without_refreshing_completed_current_members(monkeypatch, tmp_path):
+    import argus_earnings_history
+    _reset(monkeypatch, tmp_path)
+    current=[str(1000+i) for i in range(225)]
+    former=[str(9000+i) for i in range(25)]
+    monkeypatch.setattr(scanner,'_cost_policy_durable_enabled',lambda:True)
+    monkeypatch.setattr(scanner,'_DURABILITY_PATHS',{'root':str(tmp_path)})
+    monkeypatch.setattr(scanner,'_nikkei225_constituent_changes',lambda:{
+        'schemaVersion':'nikkei225-constituent-changes-v1',
+        'rows':[{'effective':'2026-10-01','removed':former,'added':current[:25]}]})
+    monkeypatch.setattr(argus_earnings_history,'completed_codes',lambda *a,**k:set(current))
+    monkeypatch.setattr(scanner,'_jp_earnings_history_retain',lambda *a,**k:None)
+    scanner._JP_DIVIDEND_STORE['fetchedAt']={c:scanner.time.time() for c in current}
+    calls=[]
+    monkeypatch.setattr(scanner,'_jquants_paginated',lambda path,params,**kwargs:(calls.append(params['code']) or []))
+    scanner._jp_dividend_warm(current)
+    assert calls == former[:20]
+    # Completed company proof is independent of date-cohort completeness.
+    # The same five-minute retry gate applies to former constituents.
+    scanner._jp_dividend_warm(current)
+    assert calls == former
 
 
 def test_the_calendar_shows_the_yen_estimate_with_coverage_on_the_ex_dividend_day(monkeypatch, tmp_path):

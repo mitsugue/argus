@@ -176,3 +176,30 @@ def test_collector_records_actual_receipt_and_keeps_last_good_on_source_failure(
     scanner._jp_internals_warm()
     assert scanner._JP_INTERNALS_ACQUISITION['status']=='PARTIAL'
     assert scanner._JP_INTERNALS_CACHE['prices']==old
+
+
+def test_forecast_reaction_equity_shares_price_collector_without_duplicate_registered_read(monkeypatch):
+    import scanner
+    monkeypatch.setattr(scanner,'_JQUANTS_API_KEY','synthetic')
+    monkeypatch.setattr(scanner,'_JP_WATCHLIST',[{'symbol':'1234'}])
+    monkeypatch.setattr(internal,'SECTORS',{})
+    monkeypatch.setattr(scanner,'_jp_internals_storage',lambda **k:None)
+    monkeypatch.setattr(scanner,'_jq_master',lambda:[])
+    monkeypatch.setattr(scanner,'_JP_INTERNALS_CACHE',{'prices':{},'classifications':{},'restoreAttempted':True})
+    monkeypatch.setattr(scanner,'_JP_INTERNALS_ACQUISITION',{'status':'NOT_RUN'})
+    monkeypatch.setattr(scanner,'_jp_earnings_reaction_codes',lambda:['1234','4321'])
+    monkeypatch.setattr(scanner,'_ai_now_iso',lambda:AT)
+    calls=[]
+    class Response:
+        status_code=200
+        def __init__(self,code):self.code=code
+        def __enter__(self):return self
+        def __exit__(self,*a):return None
+        def iter_content(self,size):
+            yield json.dumps({'data':[{'Code':self.code+'0','Date':DATES[-1],'AdjC':105,'Vo':1000}]}).encode()
+    def get(*a,**k):calls.append(k['params']['code']);return Response(k['params']['code'])
+    monkeypatch.setattr(scanner.requests,'get',get)
+    scanner._jp_internals_warm()
+    assert calls==['1306','1234','4321']
+    assert scanner._JP_INTERNALS_CACHE['prices']['4321']['instrumentKind']=='EQUITY'
+    assert scanner._JP_INTERNALS_CACHE['prices']['4321']['priceBasis']=='JQUANTS_ADJUSTED_CLOSE'

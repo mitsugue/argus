@@ -147,9 +147,12 @@ import jp_market_dynamics
 import argus_macro_frequency
 import jp_market_level_map
 import jp_market_chart_layers
+import jp_market_close_refresh
+import math
 import argus_future_map
 import jp_market_candidates
 import argus_analyst_targets
+import argus_asset_earnings
 import argus_level_map_backup
 import jp_market_features
 import jp_market_acquisition
@@ -1630,17 +1633,22 @@ def _layer2b_persist_private(snapshot, expected_version, store=None, **kwargs):
     return (store or _layer2b_private_store()).save(snapshot, expected_version, **kwargs)
 
 def _layer2b_read_latest():
-    """Read the latest membership snapshot from the private repo (owner-gated)."""
-    if not _layer2b_store_configured():
-        return None
-    import json as _json
-    content, _ = _gh_private_get("membership/latest.json")
-    if not content:
-        return None
-    try:
-        return _json.loads(content)
-    except Exception:
-        return None
+    """Current account registrations, retaining legacy non-monetary settings.
+
+    Until the account first joins, the existing private membership stays the
+    source. Historical daily records are unchanged; only future reads use the
+    account registration source, including an explicitly empty account.
+    """
+    legacy = None
+    if _layer2b_store_configured():
+        content, _ = _gh_private_get("membership/latest.json")
+        if content:
+            try:
+                legacy = json.loads(content)
+            except (ValueError, TypeError):
+                pass
+    from argus_account_watchlist import membership_snapshot
+    return membership_snapshot(app.extensions.get('argus_owner_auth'), legacy)
 
 
 def _layer2b_read_diagnostic():
@@ -1860,8 +1868,9 @@ def _layer2b_publish_membership(snapshot):
             "syms": {str(m["symbol"]).upper(): {
                 "ownerState": m["ownerState"], "downsideStrictness": m["downsideStrictness"],
                 "priority": m["priority"]} for m in members},
-            "ts": time.time(), "status": "fresh"})
+            "ts": time.time(), "status": "fresh", "accountRevision": None})
     _LAYER2B_STATE.update(lastHash=argus_watchlist_sync.content_hash(members), symbolCount=len(members))
+    _TD_WARM_UNIVERSE_CACHE.update(data=None, expires=0.0)
 
 
 @app.route("/api/argus/calibration/watchlist-sync", methods=["POST"])
@@ -3742,12 +3751,9 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
             universe = tuple(_sanitize_symbols(symbols, _US_SYM_RE, _US_UNIVERSE_CAP))
             if not universe:
                 return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
-            hit = _US_DYN_CACHE.get(universe)
-            if hit and now < hit["expires"]:
-                return _canonical_quote_snapshot_age(hit["data"], "stocks")
-            return (_cached_quote_snapshot(hit["data"]) if hit
-                    else _dynamic_cached_only_snapshot(
-                        universe, "US", "twelvedata"))
+            # Assemble every row from shared caches: an old partial batch must
+            # not hide a newly warmed symbol or a newer provider observation.
+            return _dynamic_cached_only_snapshot(universe, "US", "twelvedata")
         syms = tuple(_sanitize_symbols(symbols, _US_SYM_RE, _US_DYN_MAX))
         if not syms:
             return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
@@ -3864,7 +3870,7 @@ def _finnhub_quote_row(sym):
                          params={"symbol": sym, "token": FINNHUB_API_KEY}, timeout=6)
         d = r.json() if r.ok else {}
         price = d.get("c")
-        if isinstance(price, (int, float)) and price > 0:
+        if type(price) in (int, float) and math.isfinite(price) and price > 0:
             ts = d.get("t") or 0
             source_timestamp = (datetime.fromtimestamp(ts, pytz.utc)
                                 .strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -3947,15 +3953,34 @@ def _td_warm_row_ttl(session=None):
     return max(_US_CACHE_TTL, 2 * _TD_WARM_REGULAR_SEC)
 
 
+_US_WARM_HINTS = {}   # fallback interest only; never authorizes EC2 realtime
+_US_WARM_HINT_TTL = 7 * 24 * 3600
+_US_WARM_HINT_MAX = 200
+_US_WARM_HINT_LOCK = threading.Lock()
+
+
+def _note_us_warm_hints(symbols):
+    now = time.time()
+    with _US_WARM_HINT_LOCK:
+        for sym in _sanitize_symbols(symbols or [], _US_SYM_RE, _US_UNIVERSE_CAP):
+            _US_WARM_HINTS[sym] = now
+        for sym, stamp in list(_US_WARM_HINTS.items()):
+            if not 0 <= now - stamp <= _US_WARM_HINT_TTL:
+                _US_WARM_HINTS.pop(sym, None)
+        for sym in sorted(_US_WARM_HINTS, key=_US_WARM_HINTS.get)[:-_US_WARM_HINT_MAX]:
+            _US_WARM_HINTS.pop(sym, None)
+        _TD_WARM_UNIVERSE_CACHE.update(data=None, expires=0.0)
+
+
 def _td_owner_us_members():
-    """Owner-authorized US interest (Layer-2B membership, market == US).
-    Private store; symbols are used for scheduling only and never logged or
-    exposed by the budget diagnostics."""
+    """Confirmed private registration; no public query authorizes realtime."""
     try:
-        mem = _layer2b_read_latest()
-        rows = (mem.get("members") if isinstance(mem, dict) else []) or []
-        return [str(m.get("symbol") or "").upper() for m in rows
-                if isinstance(m, dict) and str(m.get("market") or "").upper() == "US"]
+        rows = _owner_overview_registered_subjects() or []
+        return _sanitize_symbols([
+            m.get("symbol") for m in rows if isinstance(m, dict)
+            and str(m.get("market") or "").upper() == "US"
+            and m.get("enabled", True) is not False and not m.get("removedAt")
+        ], _US_SYM_RE, _US_UNIVERSE_CAP)
     except Exception:
         return []
 
@@ -3965,9 +3990,13 @@ def _td_warm_universe(now=None):
     cached = _TD_WARM_UNIVERSE_CACHE
     if cached["data"] is not None and now < cached["expires"]:
         return cached["data"]
+    with _US_WARM_HINT_LOCK:
+        hints = [sym for sym, stamp in _US_WARM_HINTS.items()
+                 if 0 <= now - stamp <= _US_WARM_HINT_TTL]
     universe = argus_td_warm.build_universe(
         curated=[s["symbol"] for s in _US_WATCHLIST],
         owner_members=_td_owner_us_members(),
+        hints=hints,
         universe_cap=_US_UNIVERSE_CAP)
     universe["cadenceFit"] = _td_effective_cadence(len(universe["symbols"]))
     cached.update({"data": universe, "expires": now + _TD_WARM_UNIVERSE_TTL})
@@ -4069,9 +4098,19 @@ def _td_warm_tick(now_utc=None):
         if decision["action"] != "fetch":
             return decision
     rows, ok, rate_limited, err = _td_warm_fetch(decision["batch"])
+    # The cache-only card cannot invoke the legacy Finnhub fallback itself.
+    # Reuse that bounded adapter in the already admitted background batch.
+    have = {row.get("symbol") for row in rows}
+    fallback = []
+    if FINNHUB_API_KEY:
+        for sym in decision["batch"]:
+            if sym not in have:
+                row = _finnhub_quote_row(sym)
+                if row is not None:
+                    fallback.append(row)
     with _TD_WARM_LOCK:
-        if ok:
-            _td_warm_store(rows, now, session)
+        if ok or fallback:
+            _td_warm_store(rows + fallback, now, session)
         warm_count = sum(1 for sym in universe["symbols"] if _td_warm_row(sym, now))
         argus_td_warm.record_request(
             _TD_WARM_STATE, decision, now_utc=now_utc, ok=ok,
@@ -4080,7 +4119,8 @@ def _td_warm_tick(now_utc=None):
             # so the retry cannot land inside the same exhausted minute.
             backoff_sec=120, error_class=err)
     return {**decision, "ok": ok, "rateLimited": rate_limited,
-            "rowsStored": len(rows) if ok else 0}
+            "rowsStored": (len(rows) if ok else 0) + len(fallback),
+            "fallbackRowsStored": len(fallback)}
 
 
 def _td_warm_diagnostics():
@@ -4158,6 +4198,7 @@ def api_argus_us_watchlist():
     symbols = [s for s in raw.split(",") if s.strip()] or None
     # Public GET is cache/bridge-only; never fetch a market-data provider here.
     snapshot = get_us_watchlist_snapshot(symbols, allow_provider_fetch=False)
+    _note_us_warm_hints(symbols)
     # v13.5.54: the bound the owner can hit here is the AUTHORIZED universe cap;
     # the 8-credit batch cap governs single provider requests, not this read.
     return jsonify(_with_cap_truth(snapshot, symbols, _US_SYM_RE, _US_UNIVERSE_CAP))
@@ -5147,6 +5188,10 @@ def _quote_cached_only(sym, market):
         warm = _td_warm_row(sym, now)
         if warm is not None:
             return _canonical_cached_quote_row_age(warm, now_epoch=now)
+        cached_finnhub = _FINNHUB_QUOTE_CACHE.get(sym) or {}
+        if (isinstance(cached_finnhub.get("row"), dict) and
+                0 <= now - float(cached_finnhub.get("ts") or 0) <= _FINNHUB_QUOTE_TTL):
+            return _canonical_cached_quote_row_age(cached_finnhub["row"], now_epoch=now)
     dyn = _JP_DYN_CACHE if market == "JP" else _US_DYN_CACHE
     try:
         # The dynamic TTL describes storage lifetime, not source truth: the
@@ -5178,6 +5223,17 @@ def _quote_cached_only(sym, market):
     for s in (cur.get("stocks") or []):
         if str(s.get("symbol")).upper() == sym:
             return _canonical_cached_quote_row_age(s, now_epoch=now)
+    if market == "US":
+        last = (_US_WARM_ROWS.get(sym) or {}).get("row")
+        if not isinstance(last, dict) and q and isinstance(q.get("row"), dict):
+            last = q["row"]
+        if isinstance(last, dict):
+            stamp = last.get("sourceTimestamp") or last.get("exchangeTs")
+            if _source_time_within(stamp, 7 * 86400, now_epoch=now, allow_date_only=True):
+                retained = _canonical_cached_quote_row_age({**last, "sourceTimestamp": stamp}, now_epoch=now)
+                return {**retained, "status": "delayed", "delayClass": "UNKNOWN",
+                        "realtimeEvidence": False, "decisionUsable": False,
+                        "cacheState": "last_observation", "symbol": sym}
     return None
 
 def _visibility_guard_cached_only():
@@ -6050,6 +6106,14 @@ def api_argus_us_universe():
     ok, err, code = _require_admin()
     if not ok:
         return jsonify(err), code
+    if request.args.get("scope") == "registered":
+        # Reuse this admin-only route; do not expose private registration in a
+        # public diagnostic or revive the broad movers/universe sweep.
+        members = _td_owner_us_members()
+        syms = list(dict.fromkeys(list(_REGIME_ETFS) + members))
+        return jsonify({"codes": [f"US.{sym}" for sym in syms],
+                        "count": len(syms), "scope": "registered",
+                        "asOf": _ai_now_iso()})
     syms = {s.strip().upper() for s in _US_MOVER_UNIVERSE if s.strip()}
     syms |= {s["symbol"].upper() for s in _US_WATCHLIST}
     syms |= {e.upper() for e in _REGIME_ETFS}
@@ -7929,8 +7993,9 @@ def _supply_demand_signal_for(symu, market="JP"):
         raw_margin = (margin_cache.get("data") or []
                       if _cache_expiry_usable(
                           margin_cache, now_epoch=now_epoch) else [])
-        hist, _margin_reason = _entry_weekly_margin_evidence(
-            raw_margin, now_epoch=now_epoch)
+        hist = argus_supply_demand.recent_margin_rows(raw_margin, lambda day:
+            _bounded_market_session_date(day, "JP", _ENTRY_WEEKLY_MARGIN_MAX_CALENDAR_DAYS,
+                accepted_formats=("%Y-%m-%d",), now_epoch=now_epoch)[0] is not None)
         if hist:
             ev["marginBuying"] = hist[0].get("longVol")
             ev["marginSelling"] = hist[0].get("shortVol")
@@ -7938,6 +8003,7 @@ def _supply_demand_signal_for(symu, market="JP"):
             if len(hist) > 1:
                 ev["marginBuyingPrev"] = hist[1].get("longVol")
                 ev["marginSellingPrev"] = hist[1].get("shortVol")
+                ev["marginPrevDate"] = hist[1].get("date")
     except Exception:
         pass
     try:
@@ -9333,10 +9399,10 @@ def _sd_register_extra(symu, mkt):
             _SD_EXTRA_SYMBOLS.pop(k, None)
 
 
-def _sd_parse_extra_symbols(raw, base_syms):
+def _sd_parse_extra_symbols(raw, base_syms, cap=10):
     """?symbols=6965,7011,IONQ → validated (sym, market) pairs not already served."""
     pairs = []
-    for tok in str(raw or "").split(",")[:24]:
+    for tok in str(raw or "").split(",")[:50]:
         s = tok.strip().upper()
         if not s or s in base_syms or any(s == p[0] for p in pairs):
             continue
@@ -9344,7 +9410,7 @@ def _sd_parse_extra_symbols(raw, base_syms):
             pairs.append((s, "JP"))
         elif _US_SYM_RE.match(s):
             pairs.append((s, "US"))
-        if len(pairs) >= 10:
+        if len(pairs) >= cap:
             break
     return pairs
 
@@ -9364,7 +9430,17 @@ def api_argus_supply_demand():
                         "signal": sig, "disclaimerJa": sig["complianceNote"]})
     signals = _supply_demand_list(cap=12)
     base_syms = {s["symbol"] for s in signals}
-    for xs, xmkt in _sd_parse_extra_symbols(request.args.get("symbols"), base_syms):
+    raw_symbols = request.args.get("symbols")
+    extra_pairs = _sd_parse_extra_symbols(raw_symbols, base_syms)
+    # Saved, enabled owner registrations can fill all fifty requested rows;
+    # unregistered extras retain the original ten-row bound. Cached-only.
+    registered = {(str(row.get("symbol") or "").upper(), str(row.get("market") or "").upper())
+                  for row in (_OWNER_OVERVIEW_MEMBERSHIP.get("members") or [])
+                  if isinstance(row, dict) and row.get("enabled", True) is not False}
+    for pair in _sd_parse_extra_symbols(raw_symbols, base_syms, cap=50):
+        if pair in registered and pair not in extra_pairs:
+            extra_pairs.append(pair)
+    for xs, xmkt in extra_pairs:
         try:
             xsig = _supply_demand_signal_for(xs, xmkt)
             q = _quote_cached_only(xs, xmkt) or {}
@@ -9829,6 +9905,12 @@ def _collect_institutional_intel_and_warm():
     # bounded batch); the cache-only reads then assemble them per symbol.
     _intel_collect_stage("owner_watchlist")
     owner_codes = _owner_jp_symbols_for_warm()
+    for code in _owner_jp_symbols_for_warm(limit=50):
+        try:
+            _jq_weekly_margin(code)
+            _jq_price_history(code)
+        except Exception:
+            continue
     if owner_codes:
         try:
             _get_japan_watchlist_core(list(owner_codes), allow_provider_fetch=True)
@@ -17507,12 +17589,18 @@ _OWNER_OVERVIEW_MEMBERSHIP_LOCK = threading.Lock()
 
 
 def _owner_overview_registered_subjects():
-    # Reuse private durable membership; avoid a remote read every scheduler tick.
+    # Account revision invalidates the legacy five-minute cache without an
+    # external request. Preserve the old path until normal login first joins.
+    from argus_account_watchlist import account_state
+    account = account_state(app.extensions.get('argus_owner_auth'))
+    revision = account['revision'] if account else None
     with _OWNER_OVERVIEW_MEMBERSHIP_LOCK:
         now_mono = time.monotonic()
-        if not _OWNER_OVERVIEW_MEMBERSHIP["checkedAt"] or now_mono - _OWNER_OVERVIEW_MEMBERSHIP["checkedAt"] >= 300:
+        if (_OWNER_OVERVIEW_MEMBERSHIP.get("accountRevision") != revision
+                or not _OWNER_OVERVIEW_MEMBERSHIP["checkedAt"]
+                or now_mono - _OWNER_OVERVIEW_MEMBERSHIP["checkedAt"] >= 300):
             snap = _layer2b_read_latest()
-            _OWNER_OVERVIEW_MEMBERSHIP.update(checkedAt=now_mono,
+            _OWNER_OVERVIEW_MEMBERSHIP.update(checkedAt=now_mono, accountRevision=revision,
                 members=(snap.get("members") if isinstance(snap, dict) else None))
         return _OWNER_OVERVIEW_MEMBERSHIP["members"]
 
@@ -17592,10 +17680,20 @@ def api_argus_market_brief():
         except Exception as exc:
             return jsonify({"status": "UNAVAILABLE", "reason": type(exc).__name__}), 503
     try:
-        if _MARKET_BRIEF["data"] is None or \
-                time.time() - _MARKET_BRIEF["composedAt"] > _MARKET_BRIEF_TTL_SEC:
-            _market_brief_refresh(allow_ai=False)
-        return jsonify({**_MARKET_BRIEF["data"], "generationWorker": {
+        _market_brief_history_restore()
+        cached = (_MARKET_BRIEF['data'] or _MARKET_BRIEF.get('lastSuccessful')
+                  or _MARKET_BRIEF.get('lastPresentation'))
+        if cached is None:
+            return jsonify({'schemaVersion': argus_market_brief.BRIEF_SCHEMA,
+                'status': 'unavailable', 'reason': 'edition_not_yet_available',
+                'sdaAuthority': False, 'automaticAiCalls': 0}), 503
+        retained = _MARKET_BRIEF.get('lastPresentation') or _MARKET_BRIEF.get('lastSuccessful')
+        if retained and not cached.get('unifiedSummary'):
+            # Keep the new worker state, while returning the complete original edition.
+            # Its prose and calculations stay together, never on the pending inputs.
+            cached = {**cached, 'retainedPresentation': cached.get('retainedPresentation') or retained,
+                'lastSuccessfulAiAt': (retained.get('aiDiagnostics') or {}).get('completedAt')}
+        return jsonify({**cached, "generationWorker": {
             key: value for key, value in _MARKET_BRIEF_WORKER.items()
             if key != "lastAttemptMonotonic"},
             "generationGate": _market_brief_generation_gate()})
@@ -20073,6 +20171,16 @@ def _owner_symbols_cached():
     NOTE: returns a dict, so `sym in owner` still works (checks keys)."""
     now = time.time()
     age = now - float(_OWNER_SYMS_CACHE.get("ts") or 0.0)
+    from argus_account_watchlist import account_state
+    try:
+        account = account_state(app.extensions.get('argus_owner_auth'))
+        account_revision = account['revision'] if account else None
+    except Exception:
+        _OWNER_SYMS_CACHE.update({"syms": None, "ts": now, "status": "unavailable"})
+        return {}
+    if _OWNER_SYMS_CACHE.get("accountRevision") != account_revision:
+        _OWNER_SYMS_CACHE.update({"syms": None, "ts": 0.0, "status": "unknown"})
+        age = _OWNER_SYMS_TTL
     if _OWNER_SYMS_CACHE["syms"] is not None and age < _OWNER_SYMS_TTL:
         return _OWNER_SYMS_CACHE["syms"]
     if _OWNER_SYMS_CACHE.get("status") == "unavailable" and age < _OWNER_SYMS_TTL:
@@ -20098,6 +20206,7 @@ def _owner_symbols_cached():
         # read again.  Never log member symbols or exception text here.
         _OWNER_SYMS_CACHE.update({"syms": None, "ts": now, "status": "unavailable"})
         return {}
+    _OWNER_SYMS_CACHE["accountRevision"] = account_revision
     _OWNER_SYMS_CACHE["syms"] = flags
     _OWNER_SYMS_CACHE["ts"] = now
     _OWNER_SYMS_CACHE["status"] = "fresh"
@@ -38584,7 +38693,15 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
     cache still serves (its rows carry their own PIT stamps)."""
     now = time.time()
     cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(yahoo_symbol)
-    if cached and (not fetch or now < cached["expires"]):
+    # A fresh short-history result is not a successful wider-scope request.
+    # Reading remains cache-only; only the existing warm lane may expand it.
+    scope_years = {"2y": 2, "10y": 10}
+    wider_scope = bool(cached and yahoo_symbol != "^N225"
+        and scope_years.get(range_, 0) > scope_years.get(cached.get("historyRange"), 0))
+    failed_scope_backoff = bool(cached and cached.get("lastFetchStatus") == "FAILED"
+        and cached.get("lastAttemptRange") == range_)
+    if cached and (not fetch or (now < cached["expires"]
+            and (not wider_scope or failed_scope_backoff))):
         return cached["data"]
     if not fetch:
         return []
@@ -38624,6 +38741,18 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
             else:
                 available = (date.isoformat()
                              + f"T{int(available_hour_utc):02d}:00:00Z")
+            if yahoo_symbol == "^N225" and date == datetime.now(TZ_JST).date():
+                final_at = argus_market_clock._local_close(argus_market_clock.JP_EQUITY, date,
+                                                           datetime.now(pytz.utc))
+                reported = meta.get("regularMarketTime")
+                final_price = meta.get("regularMarketPrice")
+                if (isinstance(reported, (int, float)) and not isinstance(reported, bool)
+                        and final_at.timestamp() <= reported <= now and now >= final_at.timestamp()
+                        and isinstance(final_price, (int, float)) and not isinstance(final_price, bool)
+                        and math.isfinite(final_price) and abs(values["close"] - final_price) < 0.01):
+                    available = _ai_now_iso()
+                elif isinstance(reported, (int, float)) or datetime.now(pytz.utc) < final_at + timedelta(minutes=30):
+                    continue
             by_date[date.isoformat()] = {
                 "instrumentId": instrument_id, "date": date.isoformat(),
                 **{key: float(values[key]) for key in
@@ -38651,10 +38780,16 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
             except Exception: pass
     if not rows and cached and cached.get("data"):
         cached.update(expires=now+300, lastFetchStatus="FAILED", lastAttemptAt=_ai_now_iso(),
-                      lastErrorClass=fetch_error or "EmptyIndexHistory")
+                      lastAttemptRange=range_, lastErrorClass=fetch_error or "EmptyIndexHistory")
         return cached["data"]
     _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE[yahoo_symbol] = {
         "data": rows, "sourceResponseSha256": source_hash if rows else None,
+        # This is the requested acquisition scope, not a claim that every
+        # historical session was returned. Actual coverage is measured below.
+        "historyRange": (cached.get("historyRange") if cached
+            and scope_years.get(cached.get("historyRange"), 0) > scope_years.get(range_, 0)
+            else range_) if rows else None,
+        "lastAttemptRange": range_,
         "lastFetchStatus": "AVAILABLE" if rows else "FAILED", "lastAttemptAt": _ai_now_iso(),
         "acquiredAt": datetime.now(pytz.utc).isoformat() if rows else None,
         "expires": now + (_JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC if rows else 300)}
@@ -38776,7 +38911,10 @@ def _jq_valuation_for_date(date_str, headers, max_pages=40):
     """All-stocks valuation for one date → {code: {FwdEPS, EPS, MktCap, FwdPER,
     PER, PBR, BPS}}; {} on error. The level map (2026-10-04) reads the same
     day; a complete day is kept for the rest of the warm."""
-    if date_str in _JQ_VALUATION_DAY_CACHE:
+    current_time = datetime.now(TZ_JST)
+    early_today = (date_str == current_time.date().isoformat()
+                   and (current_time.hour, current_time.minute) < (16, 35))
+    if date_str in _JQ_VALUATION_DAY_CACHE and not early_today:
         return _JQ_VALUATION_DAY_CACHE[date_str]
     out, params, pages = {}, {"date": date_str}, 0
     try:
@@ -38798,7 +38936,7 @@ def _jq_valuation_for_date(date_str, headers, max_pages=40):
                     out[key] = {field: row.get(field) for field in _JQ_VALUATION_FIELDS}
             pk = body.get("pagination_key")
             if not pk:
-                if out:
+                if out and not early_today:
                     _JQ_VALUATION_DAY_CACHE[date_str] = out
                     for stale in sorted(_JQ_VALUATION_DAY_CACHE)[:-2]:
                         del _JQ_VALUATION_DAY_CACHE[stale]
@@ -38982,6 +39120,7 @@ def _jp_index_proxy_compact(proxy):
 # warm, and kept on the durable disk; the estimate itself is arithmetic.
 _JP_DIVIDEND_STORE = {"rows": {}, "fetchedAt": {}, "closes": None, "restoreAttempted": False,
                       "lastError": None, "requestsLastWarm": 0}
+_JP_EARNINGS_BACKFILL_ATTEMPTS = {}
 _JP_DIVIDEND_PER_WARM = 20
 _JP_DIVIDEND_REFRESH_SECONDS = 7 * 86400
 _JP_DIVIDEND_KEEP = ("Code", "DiscDate", "DiscTime", "DocType", "CurPerType", "CurFYEn",
@@ -39027,6 +39166,14 @@ def _jp_dividend_persist():
 
 def _jp_dividend_warm(member_codes):
     """A bounded batch of per-company /fins/summary reads; newest disclosure kept."""
+    current_members = set(member_codes)
+    # Reuse this acquisition lane for the adopted ten-year earnings study.
+    # Former constituents need their original forecasts too; the current
+    # weight table alone cannot cover the dated historical 225-member sets.
+    if len(current_members) == 225 and _cost_policy_durable_enabled():
+        from argus_earnings_history import acquisition_members
+        member_codes = acquisition_members(current_members,
+            _nikkei225_constituent_changes(), through=datetime.now(TZ_JST).date().isoformat())
     store = _JP_DIVIDEND_STORE
     if not store["restoreAttempted"]:
         _jp_dividend_restore()
@@ -39034,10 +39181,29 @@ def _jp_dividend_warm(member_codes):
     if not _JQUANTS_API_KEY or not member_codes:
         return
     now = time.time()
+    completed = set(member_codes)  # No durable original destination: do not add acquisition.
+    if _cost_policy_durable_enabled():
+        import argus_earnings_history
+        import sqlite3
+        try:
+            completed = argus_earnings_history.completed_codes(
+                os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3"),
+                cutoff=_ai_now_iso(), member_codes=member_codes)
+        except (ValueError, TypeError, OSError, sqlite3.Error) as exc:
+            # Broken proof is a visible store failure, not 225 new requests.
+            _JP_EARNINGS_HISTORY_STATUS.update(status="PERSIST_FAILED", errorClass=type(exc).__name__)
     due = sorted((code for code in member_codes
-                  if now - store["fetchedAt"].get(code, 0.0) >= _JP_DIVIDEND_REFRESH_SECONDS),
-                 key=lambda code: store["fetchedAt"].get(code, 0.0))[:_JP_DIVIDEND_PER_WARM]
+                  if (now - store["fetchedAt"].get(code, 0.0) >= _JP_DIVIDEND_REFRESH_SECONDS
+                      or code not in completed)
+                  and now - _JP_EARNINGS_BACKFILL_ATTEMPTS.get(code, 0.0) >= 300),
+                 key=lambda code: (code in completed, code not in current_members,
+                                   store["fetchedAt"].get(code, 0.0)))[:_JP_DIVIDEND_PER_WARM]
+    deadline = time.monotonic() + 150
+    for old_code in set(_JP_EARNINGS_BACKFILL_ATTEMPTS) - set(member_codes):
+        _JP_EARNINGS_BACKFILL_ATTEMPTS.pop(old_code, None)
     for code in due:
+        if time.monotonic() >= deadline: break
+        _JP_EARNINGS_BACKFILL_ATTEMPTS[code] = now
         try:
             rows = _jquants_paginated("/fins/summary", {"code": code}, max_pages=3, request_timeout=15)
             store["requestsLastWarm"] += 1
@@ -39046,6 +39212,7 @@ def _jp_dividend_warm(member_codes):
             store["requestsLastWarm"] += 1
             continue
         latest = argus_ex_dividend.latest_disclosures(rows).get(code)
+        _jp_earnings_history_retain(rows, member_codes=member_codes, query_code=code)
         store["fetchedAt"][code] = now
         if latest:
             store["rows"][code] = {k: latest.get(k) for k in _JP_DIVIDEND_KEEP if latest.get(k) not in (None,)}
@@ -39198,10 +39365,12 @@ def _level_map_remote():
 def _level_map_completed_bars(nikkei_rows, now_iso):
     """Sessions whose close is final by now (an in-progress bar is left out)."""
     out = []
+    cutoff = jp_market_engine._instant(now_iso)
     for row in nikkei_rows or ():
         available = str(row.get("availableFrom") or "")
+        received = jp_market_engine._instant(available) if available else None
         if row.get("date") and row.get("close") and row.get("high") and row.get("low") \
-                and (not available or available <= now_iso):
+                and cutoff is not None and (not available or received is not None and received <= cutoff):
             out.append({"date": str(row["date"])[:10], "close": row["close"], "high": row["high"], "low": row["low"]})
     return sorted(out, key=lambda r: r["date"])
 
@@ -39215,7 +39384,12 @@ def _level_map_next_session(after_day):
     return None
 
 
-def _level_map_warm(nikkei_rows):
+def _level_map_admitted_eps():
+    return {day:row for day,row in (_LEVEL_MAP.get('eps') or {}).items()
+            if jp_market_level_map.estimate_input_usable(row)}
+
+
+def _level_map_warm(nikkei_rows, *, current_only=False):
     if not _LEVEL_MAP_LOCK.acquire(blocking=False):
         return
     try:
@@ -39237,6 +39411,11 @@ def _level_map_warm(nikkei_rows):
                     except Exception as exc:
                         _LEVEL_MAP["remoteRestore"] = {"status": "FAILED", "errorClass": type(exc).__name__}
             _LEVEL_MAP.update(eps=state["eps"], mornings=state["mornings"], loaded=True)
+        # Keep incomplete originals on disk, but neither display nor grade
+        # them as completed inputs. A later complete receipt appends a
+        # correction instead of changing the original or an issued morning.
+        _LEVEL_MAP['eps'] = _level_map_admitted_eps()
+        _LEVEL_MAP['mornings'] = [m for m in _LEVEL_MAP['mornings'] if jp_market_level_map.morning_input_usable(m)]
         bars = _level_map_completed_bars(nikkei_rows, now)
         if len(bars) < 30:
             _LEVEL_MAP.update(status="PRICES_COLD", lastErrorReason="nikkei_history_not_ready")
@@ -39254,17 +39433,18 @@ def _level_map_warm(nikkei_rows):
         as_of = _JP_INDEX_PROXY.get("weightsAsOf")
         if constituents and _JQUANTS_API_KEY:
             wanted = [sessions[-1]]
-            for pivot in jp_market_level_map.zigzag(bars)[-4:]:
+            for pivot in ([] if current_only else jp_market_level_map.zigzag(bars)[-4:]):
                 before = [day for day in sessions if day < pivot["date"]]
                 if before:
                     wanted.append(before[-1])
-            wanted += [day for day in reversed(estimate_sessions) if day >= _LEVEL_MAP_EPS_SINCE]
+            if not current_only:
+                wanted += [day for day in reversed(estimate_sessions) if day >= _LEVEL_MAP_EPS_SINCE]
             pending, seen = [], set()
             for day in wanted:
                 if day not in seen and day not in _LEVEL_MAP["eps"]:
                     seen.add(day); pending.append(day)
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            for day in pending[:_LEVEL_MAP_EPS_PER_WARM]:
+            for day in pending[:1 if current_only else _LEVEL_MAP_EPS_PER_WARM]:
                 values = _jq_valuation_for_date(day, headers)
                 if not values:
                     continue
@@ -39274,13 +39454,23 @@ def _level_map_warm(nikkei_rows):
                     estimate = jp_market_level_map.weighted_eps(
                         values, members, index_close=float(close_by_day[day]), date=day,
                         constituents_as_of=members_label)
+                    if not jp_market_level_map.estimate_input_usable(estimate, strict=True):
+                        _JQ_VALUATION_DAY_CACHE.pop(day, None)
+                        if day == sessions[-1]:
+                            _LEVEL_MAP.update(lastErrorReason='constituent_valuation_incomplete',
+                                             pendingEstimateDate=day, pendingEstimateCoverage=estimate['coverage'])
+                        continue
                 except jp_market_level_map.LevelMapError:
                     continue
                 estimate["recordedAt"] = _ai_now_iso()
                 stored = argus_analysis_history.append_level_map_eps(path, estimate)
+                if stored.get('conflict'):
+                    stored = argus_analysis_history.append_level_map_eps_correction(path, estimate)
                 if stored["inserted"]:
                     _LEVEL_MAP["eps"][day] = estimate
                     _LEVEL_MAP["estimatesLastWarm"] += 1
+                    if _LEVEL_MAP.get('pendingEstimateDate') == day:
+                        _LEVEL_MAP.pop('pendingEstimateDate',None);_LEVEL_MAP.pop('pendingEstimateCoverage',None)
         # Provider collection may cross the open; the morning record must
         # be admitted against completion time, never the warm's start time.
         now = _ai_now_iso()
@@ -39299,6 +39489,8 @@ def _level_map_warm(nikkei_rows):
                     morning, bars, eps_series, eps_records=_LEVEL_MAP["eps"], created_at=now)
                 argus_product_naming.require_allowed(record)
                 result = argus_analysis_history.append_level_map(path, record)
+                if result.get('conflict'):
+                    result=argus_analysis_history.append_level_map_morning_correction(path,record)
                 if result["inserted"]:
                     _LEVEL_MAP["mornings"].append(record)
                     _LEVEL_MAP["lastCreatedAt"] = now
@@ -39334,8 +39526,10 @@ def _level_map_warm(nikkei_rows):
                 _LEVEL_MAP["remoteBackup"] = {**argus_level_map_backup.synchronize(path, remote), "at": now}
             except Exception as exc:
                 _LEVEL_MAP["remoteBackup"] = {"status": "FAILED", "errorClass": type(exc).__name__, "at": now}
-        _LEVEL_MAP.update(status="AVAILABLE" if _LEVEL_MAP["mornings"] else "WAITING_FOR_ESTIMATE",
-                          lastError=None, lastErrorReason=None)
+        pending_current = _LEVEL_MAP.get('pendingEstimateDate') == latest and latest not in _LEVEL_MAP['eps']
+        _LEVEL_MAP.update(status='WAITING_FOR_CURRENT_ESTIMATE' if pending_current else
+                          "AVAILABLE" if _LEVEL_MAP["mornings"] else "WAITING_FOR_ESTIMATE",
+                          lastError=None, lastErrorReason='constituent_valuation_incomplete' if pending_current else None)
     except Exception as exc:
         _LEVEL_MAP.update(status="FAILED", lastError=type(exc).__name__, lastErrorReason=str(exc)[:80])
     finally:
@@ -39348,6 +39542,7 @@ def _level_map_warm(nikkei_rows):
 _ANALYST_TARGETS = {"loaded": False, "items": {}, "lastAttemptAt": None, "lastError": None,
                     "fetchedLastWarm": 0}
 _ANALYST_TARGETS_LOCK = threading.Lock()
+_ANALYST_TARGETS_LOAD_LOCK = threading.Lock()
 _ANALYST_TARGETS_PER_WARM = 25
 
 
@@ -39367,69 +39562,144 @@ def _analyst_targets_symbols():
                 pairs.add((str(member["market"]), str(member["symbol"]).upper()))
     except Exception:
         pass
+    for symbol, meta in list(_SD_EXTRA_SYMBOLS.items()):
+        if meta.get("market") in ("JP", "US") and time.time() - meta.get("ts", 0) <= _SD_EXTRA_TTL:
+            pairs.add((meta["market"], symbol))
     return sorted(pairs)
 
+
+def _analyst_targets_load_saved():
+    with _ANALYST_TARGETS_LOAD_LOCK:
+        if _ANALYST_TARGETS["loaded"]:
+            return
+        path = _analyst_targets_path()
+        try:
+            if path and os.path.isfile(path):
+                with open(path, encoding="utf-8") as handle:
+                    saved = json.load(handle)
+                if not isinstance(saved, dict) or saved.get("schemaVersion") != argus_analyst_targets.SCHEMA:
+                    raise ValueError("invalid_target_store")
+                _ANALYST_TARGETS["items"] = dict(saved.get("items") or {})
+            _ANALYST_TARGETS["loaded"] = True
+        except Exception:
+            _ANALYST_TARGETS["lastError"] = "saved_targets_unavailable"
 
 def _analyst_targets_warm():
     if not _ANALYST_TARGETS_LOCK.acquire(blocking=False):
         return
+    session = None
     try:
         now = _ai_now_iso()
         today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
         _ANALYST_TARGETS.update(lastAttemptAt=now, fetchedLastWarm=0)
-        path = _analyst_targets_path()
-        if not _ANALYST_TARGETS["loaded"]:
-            _ANALYST_TARGETS["loaded"] = True
-            if path and os.path.isfile(path):
-                with open(path, encoding="utf-8") as handle:
-                    saved = json.load(handle)
-                if isinstance(saved, dict) and saved.get("schemaVersion") == argus_analyst_targets.SCHEMA:
-                    _ANALYST_TARGETS["items"] = dict(saved.get("items") or {})
+        _analyst_targets_load_saved()
         pending = [(market, symbol) for market, symbol in _analyst_targets_symbols()
-                   if argus_analyst_targets.due(_ANALYST_TARGETS["items"].get(f"{market}:{symbol}"), today)]
+                   if argus_analyst_targets.due(_ANALYST_TARGETS["items"].get(f"{market}:{symbol}"), today)
+                   or "earningsStatus" not in (_ANALYST_TARGETS["items"].get(f"{market}:{symbol}") or {})]
         if not pending:
             return
         session = requests.Session()
         session.headers["User-Agent"] = "Mozilla/5.0 (argus)"
         session.get("https://fc.yahoo.com", timeout=10, allow_redirects=True)
-        crumb = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=10).text.strip()
-        if not crumb or len(crumb) > 64:
+        crumb_response = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=10)
+        crumb = crumb_response.text.strip()
+        if crumb_response.status_code != 200 or not crumb or len(crumb) > 64:
             raise ValueError("yahoo_crumb_unavailable")
+        failed = False
         for market, symbol in pending[:_ANALYST_TARGETS_PER_WARM]:
             ticker = argus_analyst_targets.yahoo_symbol(market, symbol)
             key = f"{market}:{symbol}"
             if not ticker:
                 continue
-            response = session.get(f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}",
-                                   params={"modules": "financialData", "crumb": crumb}, timeout=10)
-            row = (argus_analyst_targets.parse_financial_data(symbol, response.json(), fetched_at=now)
-                   if response.status_code == 200 else None)
-            _ANALYST_TARGETS["items"][key] = ({**row, "market": market, "fetchedDayJst": today} if row else
-                                              {"symbol": symbol, "market": market, "unavailable": True,
-                                               "httpStatus": response.status_code, "fetchedDayJst": today})
+            row, earnings, status = None, None, "FETCH_FAILED"
+            try:
+                response = session.get(f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}",
+                                       params={"modules": "financialData,calendarEvents,earningsHistory,earningsTrend", "crumb": crumb}, timeout=10)
+                if response.status_code == 200:
+                    payload = response.json()
+                    modules = (payload.get("quoteSummary") or {}).get("result") if isinstance(payload, dict) else None
+                    if not isinstance(modules, list) or not modules or not isinstance(modules[0], dict):
+                        raise ValueError("summary_modules_unavailable")
+                    row = argus_analyst_targets.parse_financial_data(symbol, payload, fetched_at=_ai_now_iso())
+                    earnings = argus_asset_earnings.parse(symbol, market, payload, fetched_at=_ai_now_iso(),
+                        today=argus_asset_earnings.market_today(at=_ai_now_iso(), market=market))
+                    status = "AVAILABLE" if row else "NO_TARGET"
+                    if row:
+                        # Targets are listing prices; financialCurrency is the company's reporting currency.
+                        row["currency"] = "JPY" if market == "JP" else "USD"
+                else:
+                    status = "HTTP_" + str(response.status_code)
+            except Exception:
+                status = "FETCH_FAILED"
+            at = _ai_now_iso()
+            previous = _ANALYST_TARGETS["items"].get(key)
+            company = None
+            # Existing selected financial originals only; opening a card never acquires data.
+            if market == "JP" and _cost_policy_durable_enabled():
+                try:
+                    financial = argus_earnings_history.read(
+                        os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3"),
+                        cutoff=at, member_codes=[symbol[:4]])
+                    company = argus_asset_earnings.company_summary(financial, today=today)
+                except Exception:
+                    company = None
+            result = argus_analyst_targets.attempt_result(previous, row, market=market, symbol=symbol,
+                today=today, at=at, status=status)
+            result = argus_asset_earnings.attach(previous, result,
+                earnings=earnings, success=status in ("AVAILABLE", "NO_TARGET"))
+            if company:
+                saved_earnings = dict(result.get("earnings") or {"symbol": symbol, "market": market,
+                    "source": "J-Quants 決算短信", "fetchedAt": at, "currency": "JPY",
+                    "next": None, "previous": None, "estimate": None, "actionAuthority": False})
+                saved_earnings["company"] = company
+                result["earnings"] = saved_earnings
+                if status in ("AVAILABLE", "NO_TARGET"):
+                    result["earningsStatus"] = "AVAILABLE"
+            _ANALYST_TARGETS["items"][key] = result
+            failed = failed or status not in ("AVAILABLE", "NO_TARGET")
             _ANALYST_TARGETS["fetchedLastWarm"] += 1
+        path = _analyst_targets_path()
         if path:
             tmp = path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as handle:
                 json.dump({"schemaVersion": argus_analyst_targets.SCHEMA, "items": _ANALYST_TARGETS["items"]},
                           handle, ensure_ascii=False)
             os.replace(tmp, path)
-        _ANALYST_TARGETS["lastError"] = None
-    except Exception as exc:
-        _ANALYST_TARGETS["lastError"] = type(exc).__name__
+        _ANALYST_TARGETS["lastError"] = "partial_target_fetch_failed" if failed else None
+    except Exception:
+        _ANALYST_TARGETS["lastError"] = "target_acquisition_failed"
     finally:
+        close = getattr(session, "close", None)
+        if callable(close):
+            close()
         _ANALYST_TARGETS_LOCK.release()
 
 
 @app.route("/api/argus/analyst-targets")
 def api_argus_analyst_targets():
-    """PUBLIC cached-only: consensus target prices of watched stocks (never fetches)."""
-    items = {key: row for key, row in (_ANALYST_TARGETS.get("items") or {}).items()
-             if isinstance(row, dict) and not row.get("unavailable")}
+    """Cached-only: persisted targets are readable even before collection warms."""
+    _analyst_targets_load_saved()
+    rows = dict(_ANALYST_TARGETS.get("items") or {})
+    items = {}
+    earnings_items = {key: {**row["earnings"], "acquisitionStatus": row.get("earningsStatus", "AVAILABLE")}
+                      for key, row in rows.items() if isinstance(row, dict) and isinstance(row.get("earnings"), dict)}
+    for key, row in rows.items():
+        if not isinstance(row, dict) or row.get("unavailable"):
+            continue
+        projected = {name: value for name, value in row.items() if name not in ("earnings", "earningsStatus")}
+        # Older stores used financial reporting currency for a listing price.
+        # Project only the known Yahoo listing unit; never convert the amount
+        # or rewrite the original observation and its acquisition timestamps.
+        if row.get("source") == argus_analyst_targets.SOURCE_LABEL and row.get("market") in ("JP", "US"):
+            projected["currency"] = "JPY" if row["market"] == "JP" else "USD"
+        items[key] = projected
+    availability = {key: {"status": row.get("acquisitionStatus", "AVAILABLE" if not row.get("unavailable") else "UNAVAILABLE"),
+                          "lastAttemptAt": row.get("lastAttemptAt")}
+                    for key, row in rows.items() if isinstance(row, dict)}
     return jsonify({"schemaVersion": argus_analyst_targets.SCHEMA, "items": items,
+                    "availability": availability, "earningsItems": earnings_items,
                     "sourceLabel": argus_analyst_targets.SOURCE_LABEL, "asOf": _ANALYST_TARGETS.get("lastAttemptAt"),
                     "lastError": _ANALYST_TARGETS.get("lastError"), "actionAuthority": False})
-
 
 # ── FUTURE MAP: external views of the coming weeks (2026-10-04) ───────────────
 # The research side writes future_map.v1 to the existing private store; the
@@ -39790,9 +40060,7 @@ def _level_map_current_valuation(cutoff, *, nikkei_rows=None):
     Missing current estimates remain missing even when a legacy proxy exists.
     """
     limit = jp_market_engine._instant(cutoff)
-    rows = nikkei_rows if nikkei_rows is not None else (
-        _N225_ANALOG_HISTORY.get("data") or
-        (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}).get("data") or [])
+    rows = nikkei_rows if nikkei_rows is not None else _nikkei_chart_rows()
     visible = []
     for bar in rows:
         known = jp_market_engine._instant(bar.get("availableFrom"))
@@ -39803,7 +40071,7 @@ def _level_map_current_valuation(cutoff, *, nikkei_rows=None):
     if not visible:
         return {}
     last = max(visible, key=lambda bar: bar["date"])
-    row = (_LEVEL_MAP.get("eps") or {}).get(last["date"])
+    row = _level_map_admitted_eps().get(last["date"])
     if not isinstance(row, dict):
         return {}
     # A copied projection carries the store's existing acquisition time.
@@ -39814,13 +40082,30 @@ def _level_map_current_valuation(cutoff, *, nikkei_rows=None):
     return current if scale["status"] == "AVAILABLE" else {}
 
 
+def _nikkei_chart_rows():
+    """Cache-only: join the retained history with a newer received window."""
+    history = _N225_ANALOG_HISTORY
+    cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
+    rows = history.get("data") or []
+    current = cached.get("data") or []
+    known = jp_market_engine._instant(cached.get("acquiredAt"))
+    held = jp_market_engine._instant(history.get("currentSourceAcquiredAt"))
+    if current and (not rows or (known is not None and (held is None or known >= held))):
+        # The read cache also admits legacy close-only rows. Do not force a
+        # persistent OHLC envelope on that read path or invent missing fields.
+        # Each received row replaces the whole prior row of the same date.
+        by_day = {row["date"]: row for row in rows}
+        by_day.update({row["date"]: row for row in current})
+        return [by_day[day] for day in sorted(by_day)]
+    return rows or current
+
+
 def _level_map_public():
     """The latest stored morning map and the estimate lane's state (no per-member values)."""
-    eps = _LEVEL_MAP.get("eps") or {}
+    eps = _level_map_admitted_eps()
     latest_eps = eps[max(eps)] if eps else None
-    mornings = _LEVEL_MAP.get("mornings") or []
-    chart_rows = (_N225_ANALOG_HISTORY.get("data") or
-                  (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}).get("data") or [])
+    mornings = [m for m in _LEVEL_MAP.get("mornings") or [] if jp_market_level_map.morning_input_usable(m)]
+    chart_rows = _nikkei_chart_rows()
     chart, chart_error = None, None
     try:
         chart_now = _ai_now_iso()
@@ -39976,9 +40261,15 @@ def _index_research_read(key):
 
 
 def _jp_market_comparison_cached(horizon):
-    return _index_research_read(f"comparison:N225:{horizon}") or {
+    result = _index_research_read(f"comparison:N225:{horizon}") or {
         "status": "unavailable", "comparison": None, "automaticAiCalls": 0,
         "actionAuthority": False, "reason": "index_research_preparing", "informationCutoff": None}
+    if horizon == 5:
+        # The saved analog comparison keeps its calculation time and hash.
+        # Display layers are bounded projections of current cached inputs;
+        # they must not wait for another complete analog/AI calculation.
+        result["levelMap"] = _level_map_public()
+    return result
 
 
 def _index_research_warm():
@@ -40108,7 +40399,7 @@ def _jp_market_comparison_calculate(horizon):
     """Bounded cached-only chart calculation; no fetch, AI or persistence."""
     cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}
     stored_history = _N225_ANALOG_HISTORY
-    rows = stored_history.get("data") or cached.get("data") or []
+    rows = _nikkei_chart_rows()
     cutoff = datetime.now(pytz.utc).isoformat()
     failure = {"status": "unavailable", "comparison": None, "automaticAiCalls": 0,
                "actionAuthority": False, "informationCutoff": cutoff,
@@ -40164,6 +40455,42 @@ def _jp_market_comparison_calculate(horizon):
 _JP_INTERNALS_CACHE = {"prices": {}, "classifications": {}, "restoreAttempted": False}
 _JP_INTERNALS_ACQUISITION = {"status": "NOT_RUN", "lastAttemptAt": None, "lastSuccessfulAcquisitionAt": None}
 _JP_INTERNALS_REFRESH_LOCK = threading.Lock()
+_JP_INPUT_BACKUP_LOCK = threading.Lock()
+_JP_INPUT_BACKUP_STATUS = {'status': 'NOT_RUN'}
+
+
+def _jp_market_inputs_backup_schedule():
+    """Reuse the private backup connection; only called by the warm lane."""
+    if not _cost_policy_durable_enabled():
+        return False
+    stamp = _JP_INPUT_BACKUP_STATUS.get('lastAttemptMonotonic')
+    if stamp is not None and time.monotonic() - stamp < 3600:
+        return False
+    if not _JP_INPUT_BACKUP_LOCK.acquire(blocking=False):
+        return False
+    def worker():
+        try:
+            import argus_market_input_backup
+            remote = _level_map_remote()
+            if remote is None:
+                _JP_INPUT_BACKUP_STATUS.update(status='NOT_CONFIGURED')
+                return
+            path = os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3')
+            result = argus_market_input_backup.synchronize(path, remote)
+            _JP_INPUT_BACKUP_STATUS.update(result, verifiedAt=_ai_now_iso())
+        except Exception as exc:
+            _JP_INPUT_BACKUP_STATUS.update(status='FAILED', errorClass=type(exc).__name__)
+        finally:
+            _JP_INPUT_BACKUP_LOCK.release()
+    _JP_INPUT_BACKUP_STATUS.update(status='RUNNING', lastAttemptAt=_ai_now_iso(),
+        lastAttemptMonotonic=time.monotonic())
+    try:
+        threading.Thread(target=worker, name='market-input-private-backup', daemon=True).start()
+    except Exception:
+        _JP_INPUT_BACKUP_LOCK.release()
+        _JP_INPUT_BACKUP_STATUS.update(status='FAILED', errorClass='WorkerStartFailed')
+        return False
+    return True
 
 
 _JP_SECTOR_HEATMAP = None
@@ -40269,8 +40596,41 @@ def _jp_internals_close_row(day, close, *, volume=None, adjusted=None):
             "completed": True, "volume": volume, "adjusted": adjusted}
 
 
+def _jp_earnings_reaction_codes():
+    """Read retained public forecasts for the dated Nikkei cohort, never fetch here."""
+    import argus_earnings_history
+    import argus_warning_candidates as rules
+    import jp_market_level_map
+    import sqlite3
+    from datetime import date as calendar_date
+    if not _cost_policy_durable_enabled(): return []
+    base = ((_JP_INDEX_PROXY.get('factors') or {}).get('factors')) or {}
+    histories = _N225_ANALOG_HISTORY.get('data') or []
+    if len(base) != 225 or not histories: return []
+    try:
+        cutoff = _ai_now_iso(); limit = jp_market_engine._instant(cutoff)
+        sessions, unknown = _jp_exchange_sessions(calendar_date.fromisoformat(min(r['date'] for r in histories)),
+            limit.astimezone(TZ_JST).date(), _N225_ANALOG_HISTORY.get('calendar', []))
+        if unknown: return []
+        closed = [d for d in sessions if rules._session_close(d) <= limit]
+        changes = _nikkei225_constituent_changes() or {}
+        membership = {d: jp_market_level_map.constituents_on(d, base, _JP_INDEX_PROXY.get('weightsAsOf'), changes)[0]
+                      for d in closed[-10:]}
+        scope = set(base)
+        for members in membership.values(): scope.update(members)
+        rows = argus_earnings_history.read(os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3'),
+            cutoff=cutoff, member_codes=scope)
+        codes = rules.reaction_instruments(sessions=sessions, financial_rows=rows, membership_by_day=membership, cutoff=cutoff)
+        # Rotate within the existing collector; preserve its original 150s budget.
+        prices = _JP_INTERNALS_CACHE.get('prices', {})
+        return sorted(codes, key=lambda code: (str((prices.get(code) or {}).get('receivedAt') or ''), code))[:20]
+    except (ValueError, TypeError, KeyError, OSError, sqlite3.Error):
+        return []  # Original-store failures cannot break sector/registered prices.
+
+
 def _jp_internals_warm():
     """Short daily-bar windows on the existing authenticated collection lane."""
+    import sqlite3
     if not _JP_INTERNALS_REFRESH_LOCK.acquire(blocking=False): return
     try:
         _jp_internals_storage(restore=True)
@@ -40287,7 +40647,8 @@ def _jp_internals_warm():
                     "sector17Code": row["sector17Code"], "sector33Code": row.get("sector33Code"),
                     "effectiveDate": row.get("effectiveDate"), "receivedAt": row.get("receivedAt"),
                     "source": "J-Quants V2 equities/master"}
-        symbols = ["1306", *[r["symbol"] for r in jp_market_internals.SECTORS.values()], *public]
+        sector_symbols = ["1306", *[r["symbol"] for r in jp_market_internals.SECTORS.values()]]
+        symbols = list(dict.fromkeys([*sector_symbols, *public, *_jp_earnings_reaction_codes()]))
         deadline = time.monotonic() + 150; failed = []; updated = []
         start = (datetime.now(TZ_JST) - timedelta(days=100)).date().isoformat()
         for symbol in symbols:
@@ -40316,10 +40677,21 @@ def _jp_internals_warm():
                 if not normalized: raise ValueError("internals_no_adjusted_rows")
                 received = _ai_now_iso()
                 _JP_INTERNALS_CACHE["prices"][symbol] = {"instrumentId": symbol,
-                    "instrumentKind": "ETF" if symbol not in public else "EQUITY",
+                    "instrumentKind": "ETF" if symbol in sector_symbols else "EQUITY",
                     "priceBasis": "JQUANTS_ADJUSTED_CLOSE", "receivedAt": received,
                     "source": "J-Quants V2 equities/bars/daily", "sourceResponseSha256": hashlib.sha256(raw).hexdigest(),
                     "rows": sorted(normalized, key=lambda r: r["date"])}
+                if symbol in {str(n) for n in range(1617, 1634)} and _cost_policy_durable_enabled():
+                    try:
+                        import argus_market_input_backup
+                        argus_market_input_backup.retain_sector(
+                            os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3'),
+                            raw, symbol=symbol, received_at=received)
+                        _JP_INPUT_BACKUP_STATUS['sectorOriginalRetention'] = 'RETAINED'
+                    except (ValueError, TypeError, OSError, sqlite3.Error) as exc:
+                        # A backup failure is separate from a usable quote.
+                        _JP_INPUT_BACKUP_STATUS.update(sectorOriginalRetention='FAILED',
+                            retentionErrorClass=type(exc).__name__)
                 updated.append(symbol)
             except Exception as exc:
                 failed.append(symbol)
@@ -40559,15 +40931,48 @@ def _jp_market_engine_margin_1570_rows(*, fetch=False):
         short_row = sides.get("margin.standardized.short_balance")
         if not long_row or not short_row or short_row["value"] <= 0:
             continue
+        # Both balances must have been available; a later short-side receipt
+        # cannot be used at the earlier long-side timestamp.
+        times = [jp_market_engine._knowledge_time(r) for r in (long_row, short_row)]
+        if any(stamp is None for stamp in times):
+            continue
+        available = max(times).isoformat()
         rows.append({"instrumentId": "1570", "field": "margin_ratio", "date": period,
                      "value": round(long_row["value"] / short_row["value"], 6),
                      "ratioBasis": "STANDARDIZED_MARGIN", "periodEnd": period,
-                     "availableFrom": long_row["availableFrom"],
-                     "observedAt": long_row["observedAt"], "publishedAt": None,
+                     "availableFrom": available,
+                     "observedAt": available, "publishedAt": None,
                      "sourceRef": long_row["sourceRef"],
                      "sourceResponseSha256": long_row["sourceResponseSha256"],
                      "historicalVintageVerified": False})
     return rows
+
+
+def _jp_market_engine_relative_strength_direct():
+    """Direct cash indexes from the existing caches, bounded by availability."""
+    from math import isfinite
+    cutoff = _ai_now_iso()
+    jp, _ = jp_market_engine.point_in_time_rows(
+        (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}).get("data") or [], cutoff)
+    us, _ = jp_market_engine.point_in_time_rows(
+        (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^GSPC") or {}).get("data") or [], cutoff)
+    def positive(rows):
+        return sorted((r for r in rows if type(r.get("close")) in (int, float)
+                       and isfinite(r["close"]) and r["close"] > 0), key=lambda r: r.get("date", ""))
+    jp = positive(jp)
+    if len(jp) < 21:
+        return None
+    day = jp[-1]["date"]
+    # Never pair today's Tokyo close with a later same-date US close.
+    us = positive([r for r in us if r.get("date", "") < day])
+    if len(us) < 21:
+        return None
+    used = [jp[-1], jp[-21], us[-1], us[-21]]
+    known = max(jp_market_engine._knowledge_time(r) for r in used).isoformat()
+    return {"instrumentId": "NIKKEI_225_INDEX", "seriesId": "relative_strength_20d",
+            "date": day, "value": jp[-1]["close"] / jp[-21]["close"] - us[-1]["close"] / us[-21]["close"],
+            "availableFrom": known, "sourceRef": "derived:direct-index-relative-strength-20d",
+            "indexRatio": jp[-1]["close"] / us[-1]["close"], "comparisonDate": us[-1]["date"]}
 
 
 def _jp_market_engine_relative_strength_proxy():
@@ -40620,7 +41025,8 @@ def _jp_market_engine_foreign_flow_rows():
             if (len(period) == 10 and available
                     and isinstance(value, (int, float))
                     and not isinstance(value, bool)):
-                rows.append({"seriesId": "flow.foreign", "periodEnd": period,
+                rows.append({**{key: row[key] for key in ("knownAt", "observedAt", "publishedAt", "unit", "sourceRef") if key in row},
+                             "seriesId": "flow.foreign", "periodEnd": period,
                              "availableFrom": available,
                              "value": float(value)})
     except Exception:
@@ -40666,6 +41072,39 @@ _JP_MARKET_ENGINE_STATEMENTS_CACHE = {"rows": [], "fetchedAt": None, "expires": 
                          "source": "cold", "schemaSample": None}
 _JP_MARKET_ENGINE_STATEMENTS_TTL_SEC = 6 * 3600
 _JP_MARKET_ENGINE_STATEMENTS_WINDOW_DAYS = 14
+_JP_EARNINGS_HISTORY_STATUS = {"status": "NOT_ACQUIRED", "goodEarningsRuleDefined": False}
+
+
+def _jp_earnings_history_retain(rows, *, member_codes=None, query_date=None, query_code=None):
+    """Keep already-fetched forecasts, without a second provider call or store."""
+    import argus_earnings_history
+    import sqlite3
+    if not _cost_policy_durable_enabled():
+        _JP_EARNINGS_HISTORY_STATUS.update(status="PERSISTENCE_UNAVAILABLE")
+        return
+    members = set(member_codes or ((_JP_INDEX_PROXY.get("factors") or {}).get("factors") or {}))
+    changes = _nikkei225_constituent_changes() or {}
+    for change in changes.get("rows") or []:
+        members.update(change.get("removed") or [])
+        members.update(change.get("added") or [])
+    if not members:
+        _JP_EARNINGS_HISTORY_STATUS.update(status="MEMBER_SCOPE_UNAVAILABLE")
+        return
+    try:
+        scope = None
+        if query_date and len((_JP_INDEX_PROXY.get('factors') or {}).get('factors') or {}) == 225:
+            import jp_market_level_map
+            scope, _ = jp_market_level_map.constituents_on(query_date,
+                (_JP_INDEX_PROXY.get('factors') or {}).get('factors') or {},
+                _JP_INDEX_PROXY.get('weightsAsOf'), changes)
+        result = argus_earnings_history.retain(
+            os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3"),
+            rows, received_at=_ai_now_iso(), member_codes=sorted(members), query_date=query_date,
+            complete_scope=scope, query_code=query_code)
+        _JP_EARNINGS_HISTORY_STATUS.clear()
+        _JP_EARNINGS_HISTORY_STATUS.update(result)
+    except (ValueError, TypeError, OSError, sqlite3.Error) as exc:
+        _JP_EARNINGS_HISTORY_STATUS.update(status="PERSIST_FAILED", errorClass=type(exc).__name__)
 
 
 def _stmt_field(row, *names):
@@ -40699,6 +41138,7 @@ def _jp_market_engine_statements_rows(*, warm=False):
                 rows = _jquants_paginated("/fins/summary", {"date": day})
             except RuntimeError:
                 continue
+            _jp_earnings_history_retain(rows, query_date=day)
             for row in rows or []:
                 if not isinstance(row, dict):
                     continue
@@ -41128,6 +41568,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     if warm:
         _jq_margin_history_backfill()
     rs_proxy = _jp_market_engine_relative_strength_proxy()
+    rs_direct = _jp_market_engine_relative_strength_direct()
     flow_rows = _jp_market_engine_foreign_flow_rows()
     _jp_market_engine_statements_rows(warm=warm)
     earnings_event, earnings_source = _jp_market_engine_earnings_event()
@@ -41140,13 +41581,13 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         _jp_market_feature_history_warm()
     data = {
         "creditRows": credit_rows, "margin1570Rows": margin_rows,
-        "rsProxy": rs_proxy, "flowRows": flow_rows,
+        "rsProxy": rs_proxy, "rsDirect": rs_direct, "flowRows": flow_rows,
         "vixRows": vix_rows, "nikkeiRows": nikkei_rows,
         "earningsEvent": earnings_event, "earningsBars": earnings_bars,
         "sourceStatus": {
             "credit": "csv_ledger" if credit_rows else "missing",
             "margin1570": "jquants_weekly" if margin_rows else "cold_cache",
-            "relativeStrength": "etf_proxy_20d" if rs_proxy else "cold_cache",
+            "relativeStrength": "direct_index_20d" if rs_direct else "etf_proxy_20d" if rs_proxy else "cold_cache",
             "foreignFlow": "market_ledger" if flow_rows else "missing",
             "vix": vix_source,
             "nikkei": "yahoo_ohlcv" if nikkei_rows else "cold_cache",
@@ -41156,7 +41597,97 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     memo["ts"], memo["data"] = now, data
     if warm:
         _index_research_warm()
+        _jp_market_inputs_backup_schedule()
     return data
+
+
+def _jp_warning_performance(inputs, cutoff):
+    """Current four defined warning rules; cached inputs and no legacy grades."""
+    try:
+        from datetime import date as calendar_date
+        from argus_warning_history import warning_event_study
+        rows = _N225_ANALOG_HISTORY.get("data") or inputs.get("nikkeiRows") or []
+        if not rows:
+            return None
+        # Preserve the price source's explicit availability at the read cutoff.
+        visible, _ = jp_market_engine.point_in_time_rows(rows, cutoff)
+        closes = {str(r.get("date") or r.get("periodEnd")): r.get("close") for r in visible}
+        days = sorted(closes)
+        if not days:
+            return None
+        sessions, unknown = _jp_exchange_sessions(calendar_date.fromisoformat(days[0]),
+            calendar_date.fromisoformat(days[-1]), _N225_ANALOG_HISTORY.get("calendar", []))
+        if unknown:
+            return None
+        return warning_event_study(credit_rows=inputs.get("creditRows") or [],
+            # The display adapter is ratio-only. The event study requires
+            # both original standardized balances, not the old total ratio.
+            margin_rows=((_JQ_MARGIN_CACHE.get("1570") or {}).get("sourceSnapshot") or {}).get("rows") or [],
+            foreign_rows=inputs.get("flowRows") or [],
+            vix_features=[r for r in _JP_MARKET_FEATURE_HISTORY.get("features", [])
+                          if r.get("seriesId") == "vix.macd_histogram"],
+            closes=closes, session_dates=sessions, cutoff=cutoff)
+    except (ValueError, TypeError, KeyError, OverflowError):
+        # Missing/admission-failed studies remain UNVALIDATED with zero count.
+        return None
+
+
+def _jp_adopted_warning_rules(inputs, cutoff):
+    """Cached-only owner-adopted rules, using existing source stores and scope."""
+    from datetime import date as calendar_date
+    import sqlite3
+    import argus_warning_candidates as rules
+    import argus_earnings_history
+    import jp_market_level_map
+    histories = _N225_ANALOG_HISTORY.get('data') or inputs.get('nikkeiRows') or []
+    limit = jp_market_engine._instant(cutoff)
+    if not histories or limit is None:
+        return None
+    try:
+        first = min(r['date'] for r in histories)
+        sessions, unknown = _jp_exchange_sessions(calendar_date.fromisoformat(first),
+            limit.astimezone(TZ_JST).date(), _N225_ANALOG_HISTORY.get('calendar', []))
+        if unknown:
+            return None
+        base = ((_JP_INDEX_PROXY.get('factors') or {}).get('factors')) or {}
+        changes = _nikkei225_constituent_changes() or {}
+        closed = [d for d in sessions if rules._session_close(d) <= limit]
+        membership = {d: jp_market_level_map.constituents_on(d, base,
+            _JP_INDEX_PROXY.get('weightsAsOf'), changes)[0] for d in closed[-10:]}
+        scope = set(base)
+        for change in changes.get('rows') or []:
+            scope.update(change.get('added') or [])
+            scope.update(change.get('removed') or [])
+        path = os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3') \
+            if _cost_policy_durable_enabled() else None
+        financial_error = False
+        try:
+            financial = argus_earnings_history.read(path, cutoff=cutoff, member_codes=scope) if path and scope else []
+            coverage = argus_earnings_history.read_coverage(path, cutoff=cutoff) if path else {}
+        except (ValueError, TypeError, OSError, sqlite3.Error):
+            # One damaged original store must not hide independently usable
+            # cash-index and same-basis EPS conditions.
+            financial, coverage, financial_error = [], {}, True
+        stocks = {code: [{**r, 'instrumentId':code, 'priceBasis': source.get('priceBasis'),
+                          'knownAt': source.get('receivedAt'), 'availableFrom':r.get('closeAt')}
+                        for r in source.get('rows') or []]
+                  for code,source in _JP_INTERNALS_CACHE.get('prices', {}).items()}
+        cache = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get('^GSPC') or {}
+        sp500 = [{**r, 'receivedAt':cache.get('acquiredAt')} for r in cache.get('data') or []]
+        results = {
+            'D03': rules.ratio_rule(sessions=sessions, nikkei_rows=histories, sp500_rows=sp500, cutoff=cutoff),
+            'D04': rules.eps_rule(sessions=sessions, eps_rows=list(_level_map_admitted_eps().values()), cutoff=cutoff),
+            'D07': rules.earnings_rule(sessions=sessions, financial_rows=financial, membership_by_day=membership,
+                stock_bars=stocks, topix_rows=_TOPIX_HIST_CACHE.get('data') or [],
+                coverage_by_day=coverage, cutoff=cutoff)}
+        if financial_error:
+            results['D07']['reasonJa'] = '営業利益予想の保存原本を検証できません'
+        from argus_warning_candidates_history import study
+        performance=study(sessions=sessions,nikkei_rows=histories,sp500_rows=sp500,
+            eps_rows=list(_level_map_admitted_eps().values()),cutoff=cutoff)
+        return rules.seal_candidates(cutoff=cutoff, results=results, performance=performance)
+    except (ValueError, TypeError, KeyError, OSError, sqlite3.Error):
+        return None
 
 
 def _jp_market_engine_market_view():
@@ -41179,6 +41710,7 @@ def _jp_market_engine_market_view():
             nikkei_current_estimate=_level_map_current_valuation(cutoff, nikkei_rows=inputs["nikkeiRows"]),
             margin_1570_rows=inputs["margin1570Rows"],
             relative_strength_proxy=inputs["rsProxy"],
+            relative_strength_direct=inputs.get("rsDirect"),
             foreign_flow_rows=inputs["flowRows"],
             vix_rows=inputs["vixRows"],
             earnings_event=inputs.get("earningsEvent"),
@@ -41189,7 +41721,9 @@ def _jp_market_engine_market_view():
             downside_background="MIXED",
             nikkei_rows=inputs["nikkeiRows"], vix_rows=inputs["vixRows"])
         projection = jp_market_engine.project_today_sda_safe(
-            cutoff=cutoff, evidence=evidence, reversal=reversal)
+            cutoff=cutoff, evidence=evidence, reversal=reversal,
+            warning_performance=_jp_warning_performance(inputs, cutoff),
+            adopted_warning_rules=_jp_adopted_warning_rules(inputs, cutoff))
         view = {
             "schemaVersion": "argus-jp-market-engine-market-view-v1",
             "informationCutoff": cutoff,
@@ -41200,6 +41734,7 @@ def _jp_market_engine_market_view():
             "internals": _jp_market_internals_cached(),
             "marketFeatures": _JP_MARKET_FEATURE_HISTORY.get("latest"),
             "marketFeatureStatus": _JP_MARKET_FEATURE_HISTORY.get("status"),
+            "earningsInputStatus": dict(_JP_EARNINGS_HISTORY_STATUS),
             "actionAuthority": False,
             "automaticAiCalls": 0,
         }
@@ -41512,7 +42047,9 @@ def _jquants_paginated(
             raise RuntimeError("jquants_invalid_schema")
         rows.extend(x for x in page if isinstance(x, dict))
         next_cursor = body.get("pagination_key")
-        if not next_cursor or next_cursor == cursor:
+        if next_cursor and next_cursor == cursor:
+            raise RuntimeError('jquants_repeated_pagination_cursor')
+        if not next_cursor:
             return rows
         cursor = str(next_cursor)
     raise RuntimeError("jquants_pagination_limit")
@@ -49583,10 +50120,49 @@ def _jp_owner_quote_warm_tick(*, now_monotonic=None):
         return {"status": "failed", "errorClass": type(exc).__name__}
 
 
+_NIKKEI_CLOSE_REFRESH = {"lastSlot": None, "status": "NOT_RUN"}
+
+
+def _nikkei_close_refresh_tick():
+    now = _ai_now_iso()
+    completed = _level_map_completed_bars(_nikkei_chart_rows(), now)
+    close_day = completed[-1]["date"] if completed else None
+    eps = _level_map_admitted_eps()
+    plan = jp_market_close_refresh.due(now, last_slot=_NIKKEI_CLOSE_REFRESH.get("lastSlot"),
+        close_date=close_day, eps_date=close_day if close_day in eps else None)
+    if plan is None:
+        return {"status": "not_due"}
+    _NIKKEI_CLOSE_REFRESH.update(lastSlot=plan["slot"], lastAttemptAt=now, status="RUNNING")
+    try:
+        if plan["price"]:
+            cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225")
+            if cached:
+                cached["expires"] = 0
+            _yahoo_index_ohlcv("^N225", "NIKKEI_225_INDEX", fetch=True, available_hour_utc=7)
+        rows = _nikkei_chart_rows()
+        completed = _level_map_completed_bars(rows, _ai_now_iso())
+        close_day = completed[-1]["date"] if completed else None
+        # Price publication is independent of the later valuation input.
+        # One current date only: no ten-year backfill in this resident slot.
+        if plan["valuation"] and close_day == plan["session"]:
+            _level_map_warm(rows, current_only=True)
+        eps_ready = plan["session"] in _level_map_admitted_eps()
+        _NIKKEI_CLOSE_REFRESH.update(status="AVAILABLE" if close_day == plan["session"] and eps_ready
+            else "WAITING_FOR_VALUATION" if close_day == plan["session"] else "WAITING_FOR_CLOSE",
+            priceDate=close_day, epsDate=plan["session"] if eps_ready else None,
+            completedAt=_ai_now_iso())
+        return {"status": _NIKKEI_CLOSE_REFRESH["status"]}
+    except Exception as exc:
+        _NIKKEI_CLOSE_REFRESH.update(status="FAILED", errorClass=type(exc).__name__)
+        return {"status": "failed", "errorClass": type(exc).__name__}
+
+
 def run_scheduler():
     add_log("⏰ Scheduler started", echo=True)
     while True:
         now = datetime.now(TZ_JST)
+        threading.Thread(target=_heavy_tick, daemon=True, name="nikkei-close-refresh",
+                         args=("nikkei_close_refresh", _nikkei_close_refresh_tick)).start()
         # Resident AI + intel tick (v10.191) — replaces the unreliable GitHub */15
         # cron. Spawn on 5-min boundaries; the tick self-throttles (intel ≤10min,
         # AI via the run gate's 14-min interval), so a double spawn is harmless.

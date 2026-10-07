@@ -51,8 +51,14 @@ jobs:
       - name: Install browser for index identity regression
         working-directory: web
         run: npx playwright install --with-deps chromium
+      - name: 検査画面の応答本文を追加通信なしで確認
+        run: node web/scripts/browser-rate-limit-context.test.mjs
       - name: Check index chart subject isolation
         run: node web/scripts/index-chart-isolation.test.mjs
+      - name: ページ移動の保存表示と追加取得を実ブラウザで確認
+        run: cd web && node scripts/navigation-cache-browser.test.mjs
+      - name: 通常復帰で認証と一斉取得を繰り返さない
+        run: node web/scripts/app-resume-browser.test.mjs
       - name: Check news presentation hierarchy
         run: node web/scripts/news-presentation.test.mjs
       - name: チャートの指操作と価格表示

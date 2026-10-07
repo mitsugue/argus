@@ -35,7 +35,12 @@ export function warningDistanceJa(row: import('./marketSignals').MarketSignalRow
   if (d.atBoundary) return d.boundaryCounts ? '基準ちょうど・成立中' : '基準ちょうど・まだ成立していません';
   const delta = Math.abs(d.signedFromBoundary);
   const compact = (value: number) => value.toLocaleString('ja-JP', { maximumSignificantDigits: 6 });
+  if (d.unit === 'CASES' && row.state === 'CLEAR')
+    return `最低件数まであと${compact(delta)}件（5件以上で株価反応を判定）`;
   const amount = d.unit === 'JPY' ? delta >= 1e8 ? `${compact(delta / 1e8)}億円` : `${compact(delta)}円`
+    : d.unit === 'JPY_EPS' ? `${compact(delta)}円`
+    : d.unit === 'INDEX_RATIO' ? `指数比の差 ${compact(delta)}`
+    : d.unit === 'FRACTION' ? `${compact(delta * 100)}ポイント`
     : d.unit === 'RATIO' ? `${compact(delta)}倍` : `MACDの差 ${compact(delta)}`;
   const side = d.signedFromBoundary > 0 ? '高い' : '低い';
   return row.state === 'ACTIVE' ? `基準より${amount}${side}・成立中`

@@ -1,3 +1,4 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { deauthorizeFlowRecords, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
@@ -153,20 +154,20 @@ const flowAttributionStore = createSharedPollingStore<ListState>(
     if (retained.authority === 'fresh') {
       accept({ asOf: retained.asOf ?? undefined, records: retained.records });
     }
-    const interval = window.setInterval(() => {
+    const interval = scheduleVisibleInterval(() => {
       if (!isPageVisible()) return;
       void acquire(load);
     }, POLL_MS);
     const onVisible = () => { if (!document.hidden) void acquire(load); };
-    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
     void acquire(load);
     return () => {
       alive = false;
       cancelExpiries();
       for (const controller of controllers) controller.abort();
       controllers.clear();
-      window.clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisible);
+      interval();
+      stopInitialOnVisible();
     };
   },
 );

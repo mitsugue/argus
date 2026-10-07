@@ -1,5 +1,6 @@
 .argus-editorial{color:#dfe8ed;padding:8px 0 20px;max-width:980px;margin:auto}
-.argus-editorial__edition{display:flex;justify-content:space-between;gap:16px;color:#92bbce;font-size:13px;letter-spacing:.04em}
+.argus-editorial__edition{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;color:#92bbce;font-size:13px;letter-spacing:.04em}
+.argus-editorial__edition time,.argus-editorial__edition [role="status"]{white-space:nowrap}
 .argus-editorial__edition time,.argus-editorial__period{color:#8e9ba5;font-size:12px}
 .argus-editorial__period{margin:10px 0 30px}
 .argus-editorial__retained--update{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin:4px 0 10px;color:#9eabb5;font-size:12px;line-height:1.6}

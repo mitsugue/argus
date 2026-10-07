@@ -110,9 +110,10 @@ def test_market_brief_route_is_cached_only_and_public_safe(monkeypatch):
     def _forbid_llm(*a, **k):
         raise AssertionError("public GET must never call the LLM")
     monkeypatch.setattr(scanner, "_openai_prose", _forbid_llm)
-    scanner._MARKET_BRIEF["data"] = None
-    scanner._MARKET_BRIEF["composedAt"] = 0.0
-    scanner._MARKET_BRIEF["aiFactsHash"] = None
+    # Composer runs on the background lane; this GET only reads its saved output.
+    monkeypatch.setattr(scanner, "_MARKET_BRIEF", {
+        "data":scanner._compose_market_brief(), "composedAt":0.0, "historyRestoreAttempted":True})
+    monkeypatch.setattr(scanner, "_compose_market_brief", _forbid_llm)
     try:
         response = scanner.app.test_client().get("/api/argus/market-brief")
         body = response.get_json()

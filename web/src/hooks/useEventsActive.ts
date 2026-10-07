@@ -1,3 +1,4 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore } from '../lib/sharedPollingStore';
 import { WATCHLIST_VISIBLE_MS } from '../lib/pollingPolicy';
@@ -36,8 +37,8 @@ interface EventsActiveState {
 
 // Asset intelligence is mounted in more than one surface. One shared lifecycle
 // prevents duplicate reads, and pausing while the page is backgrounded avoids
-// paying for a 15-second read that cannot be seen. Returning to the tab fetches
-// immediately, so the event view never waits for the next scheduled interval.
+// paying for a read that cannot be seen. App switches retain the view;
+// periodic visible-page acquisition and the deferred initial read stay active.
 const eventsActiveStore = createSharedPollingStore<EventsActiveState>(
   { events: [], status: null, loading: true },
   (setState) => {
@@ -72,14 +73,14 @@ const eventsActiveStore = createSharedPollingStore<EventsActiveState>(
     }
 
     const onVisible = () => { if (!document.hidden) void load(); };
-    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
     void load();
-    const timer = window.setInterval(() => void load(), WATCHLIST_VISIBLE_MS);
+    const timer = scheduleVisibleInterval(() => void load(), WATCHLIST_VISIBLE_MS);
     return () => {
       cancelled = true;
       controller?.abort();
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisible);
+      timer();
+      stopInitialOnVisible();
     };
   },
 );

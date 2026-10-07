@@ -175,7 +175,7 @@ def test_migrated_features_present():
     assert not os.path.exists(os.path.join(WEB, "components", "assetDesk", "AssetPositionPanel.tsx"))
     # 旧Todayカードのセクション
     why = _read("components", "assetDesk", "AssetWhyPanel.tsx")
-    assert "TIMELINE" in why and why.count("<AiExplanationBlock") == 1
+    assert "値動きの経緯" in why and "c.timeline.map" in why and why.count("<AiExplanationBlock") == 1
     assert "CauseStackCard" not in why
     flow = _read("components", "assetDesk", "AssetFlowPanel.tsx")
     assert "InstitutionalView" in flow and "逆日歩 未取得" in flow

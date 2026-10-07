@@ -1,3 +1,4 @@
+import { subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChartIntelligencePayload } from '../types/chartIntelligence';
 import {
@@ -354,7 +355,8 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
   }, [expectation, legacyState, view.state, expectedKey]);
 
   useEffect(() => {
-    if (options.enabled === false || document.visibilityState === 'hidden') return;
+    if (options.enabled === false) return;
+    if (document.visibilityState === 'hidden') { visibilityBlocked.current = true; return; }
     if (!expectation || !verifiedUrl) return;
     const requestSequence = ++sequence.current;
     const controller = new AbortController();
@@ -509,10 +511,10 @@ export function useChartIntelligence(options: ChartIntelligenceOptions) {
   useEffect(() => {
     const visible = () => {
       if (document.visibilityState !== 'visible') return;
-      // Verified market views retain SWR-on-return. Asset charts only resume
-      // when a request was actually blocked by a hidden document; a normal
-      // visibilitychange never causes an extra legacy request.
-      if (expectation || visibilityBlocked.current) {
+      setAuthorityRevision((value) => value + 1); // age retained authority without HTTP
+      // Resume only a request blocked by the hidden document, retaining both
+      // verified market and asset charts on an ordinary app switch.
+      if (visibilityBlocked.current) {
         visibilityBlocked.current = false;
         setRefreshToken((value) => value + 1);
       }
@@ -649,6 +651,7 @@ export function useIndexChart(index: IndexChartKey | null, timeframe: 'daily' | 
       } }));
     }
     const load = async () => {
+      if (document.visibilityState !== 'visible') return;
       try {
         const response = await fetch(`${backend.replace(/\/$/, '')}/api/argus/index-chart?index=${index}&timeframe=${timeframe}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -669,8 +672,8 @@ export function useIndexChart(index: IndexChartKey | null, timeframe: 'daily' | 
     };
     if (!fresh) void load();
     const onVisible = () => { if (!document.hidden) void load(); };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); };
+    const stopInitialRead = subscribeInitialVisibleRead(onVisible);
+    return () => { cancelled = true; stopInitialRead(); };
   }, [index, timeframe, backend, key]);
   // Effects run after a render. A different subject must never borrow the
   // previous render's series while its own response is still pending.

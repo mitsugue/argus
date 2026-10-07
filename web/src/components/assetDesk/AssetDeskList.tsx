@@ -12,6 +12,7 @@ import type { AssetIntel } from '../../hooks/useAssetIntel';
 import { useCatalysts } from '../../hooks/useCatalysts';
 import { fundNavForAsset } from '../../hooks/useFundNav';
 import { coingeckoIdOf } from '../../lib/cryptoIds';
+import { cryptoDisplayForAsset } from '../../domain/cryptoPriceDisplay';
 import { deriveStrategy, type QuoteLite } from '../../lib/assetStrategy';
 import { GENRES, genreOf, type AssetItem } from '../../types/assetItem';
 import type { ActionLabel } from '../../types/actionLabels';
@@ -164,7 +165,7 @@ export const AssetDeskList: React.FC<Props> = ({
   // ── カードデータ束の組み立て(表示専用・判断は生成しない) ──
   const rows = useMemo(() => {
     const aiBySym = new Map((intel.aiJ.data?.labels ?? []).map((l) => [l.symbol.toUpperCase(), l]));
-    const sdBySym = new Map(intel.sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
+    const sdBySym = new Map(intel.sdSignals.map((s) => [`${s.market.toUpperCase()}:${s.symbol.toUpperCase()}`, s]));
     const apBySym = new Map(intel.apItems.map((it) => [it.symbol, it]));
     const scBySym = new Map(intel.scenarioSets.map((s) => [s.symbol, s]));
     const plBySym = new Map(intel.positionPlans.map((p) => [p.symbol, p]));
@@ -231,9 +232,12 @@ export const AssetDeskList: React.FC<Props> = ({
       const d: DeskCardData = {
         asset: a, genre, rank,
         card, decision, strat, quote,
+        cryptoDisplayQuote: genre === 'crypto'
+          ? cryptoDisplayForAsset(a, intel.cryptoWatch.displayById) : undefined,
+        cryptoRefreshFailed: intel.cryptoWatch.authority === 'refresh_failed',
         liveName: quote?.name ?? null,
         incident,
-        sdg: sdBySym.get(sym),
+        sdg: sdBySym.get(`${a.market}:${sym}`),
         apx,
         scn: scBySym.get(sym),
         ppl: plBySym.get(sym),
@@ -248,7 +252,7 @@ export const AssetDeskList: React.FC<Props> = ({
     });
   }, [assets, maps, intel.cardBySym, intel.decisionBySym, intel.sdaBySymbol, intel.aiJ.data, intel.sdSignals,
       intel.apItems, intel.scenarioSets, intel.positionPlans,
-      intel.aiMeta, eventTagsBySym, mountTs]);
+      intel.aiMeta, intel.cryptoWatch.displayById, intel.cryptoWatch.authority, eventTagsBySym, mountTs]);
 
   const riskCount = useMemo(() => rows.filter((r) => !!r.d.incident).length, [rows]);
   const keep = (r: { d: DeskCardData }) => filter === 'all' ? true

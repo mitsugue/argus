@@ -31,6 +31,9 @@ export interface MarketSignalRow {
   knowledgeTime?: string | null;
   sourcePeriodEnd?: string | null;
   distance?: { signedFromBoundary: number; unit: string; operator: string; atBoundary: boolean; boundaryCounts: boolean } | null;
+  performance?: { ruleId: string; status: string; evaluated: number;
+    availabilityBasis?: string;
+    horizons?: Record<string, { evaluated: number; falls: number; baselineFallShare: number | null }> };
 }
 
 export interface MarketSignalsProjection {
@@ -51,6 +54,7 @@ export interface MarketSignalsProjection {
     ruleId?: string; lineage?: string; reasonJa?: string; value?: number;
     knowledgeTime?: string | null; sourcePeriodEnd?: string | null;
     distance?: MarketSignalRow['distance'];
+    performance?: MarketSignalRow['performance'];
   }>;
 }
 
@@ -126,20 +130,24 @@ export function marketSignalsView(
   if (projection.warningSignals != null) {
     const warning = projection.warningSignals;
     const candidates = warning.signals;
+    const adoptedVersion = warning.schemaVersion === 'jp-warning-conditions-v3';
+    const expectedRule = (family: string) => `${adoptedVersion && ['D03', 'D04', 'D07'].includes(family)
+      ? 'jp-warning-conditions-v3' : 'jp-warning-conditions-v2'}.${family}`;
     const valid = typeof warning.informationCutoff === 'string' && /T.*(?:Z|[+-]\d{2}:\d{2})$/.test(warning.informationCutoff)
-      && Number.isFinite(Date.parse(warning.informationCutoff)) && warning.schemaVersion === 'jp-warning-conditions-v2'
+      && Number.isFinite(Date.parse(warning.informationCutoff)) && (adoptedVersion || warning.schemaVersion === 'jp-warning-conditions-v2')
       && warning.countPredictsCrash === false && warning.actionAuthority === false
       && warning.rejectedEvidence === false
       && warning.informationCutoff === projection.informationCutoff
       && Array.isArray(candidates) && candidates.length === 7
       && MARKET_SIGNAL_DEFINITIONS.every(def => candidates.filter(row => row.id === def.id.replace('SIG-', 'WARN-')
-        && row.family === def.family && row.ruleId === `jp-warning-conditions-v2.${def.family}`).length === 1);
+        && row.family === def.family && row.ruleId === expectedRule(def.family)).length === 1);
     const names = ['信用売り残が少ない', '日経レバの制度信用倍率', '日本株の優位性低下', '推計EPSの下方修正',
       '海外投資家の売り越し', 'VIXのMACDが上向き', '好決算でも株価下落'];
     const rows = MARKET_SIGNAL_DEFINITIONS.map((def, index): MarketSignalRow => {
       const raw = valid ? candidates?.find(row => row.family === def.family) : null;
       let state: MarketSignalState = raw && STATES.has(String(raw.state)) ? raw.state as MarketSignalState : 'UNAVAILABLE';
-      if ([2, 3, 6].includes(index) && (state === 'ACTIVE' || state === 'CLEAR')) state = 'DATA_GATED';
+      if ([2, 3, 6].includes(index) && (!adoptedVersion || raw?.lineage !== 'ARGUS_VALIDATION_RULE')
+        && (state === 'ACTIVE' || state === 'CLEAR')) state = 'DATA_GATED';
       if (raw?.ruleStatus === 'RULE_NOT_DEFINED' && (state === 'ACTIVE' || state === 'CLEAR')) state = 'DATA_GATED';
       if ((state === 'ACTIVE' || state === 'CLEAR') && (raw?.status !== 'AVAILABLE'
         || raw.conditionMet !== (state === 'ACTIVE')
@@ -152,7 +160,8 @@ export function marketSignalsView(
         knowledgeTime: raw?.knowledgeTime, sourcePeriodEnd: raw?.sourcePeriodEnd,
         distance: state === 'ACTIVE' || state === 'CLEAR' ? raw?.distance : null,
         gateNoteJa: raw?.reasonJa ?? (valid ? null : '警戒条件の版・根拠・時点を確認できません'),
-        factNoteJa: raw?.factNoteJa, valuationBasis: raw?.valuationBasis };
+        factNoteJa: raw?.factNoteJa, valuationBasis: raw?.valuationBasis,
+        performance: raw && raw.performance?.ruleId === raw.ruleId ? raw.performance : undefined };
     });
     const activeCount = rows.filter(row => row.state === 'ACTIVE').length;
     return { label: 'MARKET SIGNALS', total: 7, activeCount, countLabel: `${activeCount} / 7`,

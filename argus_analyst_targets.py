@@ -30,11 +30,14 @@ def parse_financial_data(symbol: str, payload: Mapping[str, Any], *, fetched_at:
         data = payload["quoteSummary"]["result"][0]["financialData"]
     except (KeyError, IndexError, TypeError):
         return None
+    if not isinstance(data, Mapping):
+        return None
     mean = _raw(data.get("targetMeanPrice"))
     count = _raw(data.get("numberOfAnalystOpinions"))
-    if mean is None or mean <= 0 or not count:
+    if mean is None or mean <= 0 or count is None or count < 1 or not count.is_integer():
         return None
     price = _raw(data.get("currentPrice"))
+    price = price if price is not None and price > 0 else None
     return {"symbol": symbol, "mean": round(mean, 2), "median": _raw(data.get("targetMedianPrice")),
             "high": _raw(data.get("targetHighPrice")), "low": _raw(data.get("targetLowPrice")),
             "analysts": int(count), "currency": str(data.get("financialCurrency") or "")[:3] or None,
@@ -54,4 +57,15 @@ def yahoo_symbol(market: str, symbol: str) -> Optional[str]:
 
 def due(row: Optional[Mapping[str, Any]], today_jst: str) -> bool:
     """Once a day (JST): a row fetched today is kept as it is."""
-    return not row or str(row.get("fetchedDayJst") or "") != today_jst
+    return not row or str(row.get("attemptDayJst") or row.get("fetchedDayJst") or "") != today_jst
+
+
+def attempt_result(previous, row, *, market, symbol, today, at, status):
+    """Retain the last valid target across a failed daily acquisition."""
+    meta = {"market": market, "symbol": symbol, "attemptDayJst": today,
+            "lastAttemptAt": at, "acquisitionStatus": status}
+    if row:
+        return {**row, **meta, "fetchedDayJst": today}
+    if isinstance(previous, Mapping) and _raw(previous.get("mean")) is not None and previous["mean"] > 0:
+        return {**previous, **meta}
+    return {**meta, "unavailable": True, "fetchedDayJst": today}

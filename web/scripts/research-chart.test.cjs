@@ -6,7 +6,8 @@ function load(file, requireModule = require) {
     compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true,target:ts.ScriptTarget.ES2022}
   }).outputText, ctx);return ctx.exports;
 }
-const lib = load('src/lib/researchChart.ts');
+const levelLib = load('src/lib/levelMap.ts');
+const lib = load('src/lib/researchChart.ts', name => name === './levelMap' ? levelLib : require(name));
 const chart = {schemaVersion:'jp-market-chart-layers-v1',today:'2026-10-05',start:'2026-04-04',end:'2027-01-05',
  points:[{date:'2026-10-01',close:68957,eps:3900,epsDate:'2026-09-30'}, {date:'2026-10-02',close:68309,eps:null,epsDate:null}],
  current:{morningOf:'2026-10-05',eps:3932.61,epsDate:'2026-10-02',previousClose:68309,previousSession:'2026-10-02',atr14:1235},
@@ -49,7 +50,8 @@ const components=load('src/components/chart/NikkeiResearchChart.tsx',name=>name.
 const html=renderToStaticMarkup(React.createElement(components.NikkeiResearchChartView,{chart,future}));
 assert.ok(html.includes('PER18 70,787円'));
 assert.ok(html.includes('参考予測（未検証）'));
-assert.ok(html.includes('ARGUS推計（公式値ではない）'));
+assert.ok(html.includes('決算データから計算したARGUS推計'));
+assert.ok(html.includes('公式は日経の予想利益') && html.includes('公式PERから引いた線ではありません'));
 assert.ok(html.includes('1 谷')&&html.includes('2 底'));
 assert.ok(html.includes('EPSがない日はPER線を途切れさせています'));
 assert.ok(html.includes('aria-label="拡大"')&&html.includes('今日へ戻る'));
@@ -60,3 +62,10 @@ assert.ok(html.includes('10/1の山は未確定'),'高値・安値は初期状�
 assert.ok(!html.includes('aria-label="チャートに重ねる情報"'),'不要な線の切り替えは出さない');
 assert.ok(html.includes('今日10/5の現在値は、この図には含まれていません'));
 console.log('研究チャートの日付・水準・欠測・未検証表示 PASS');
+
+const latestClose = {...chart,points:[...chart.points,{date:'2026-10-05',close:70000,eps:3932.61,epsDate:'2026-10-02'}]};
+const closeHtml = renderToStaticMarkup(React.createElement(components.NikkeiResearchChartView,{chart:latestClose,future}));
+assert.ok(closeHtml.includes('当日終値 70,000円'));
+assert.ok(!closeHtml.includes('前日終値 68,309円'));
+assert.ok(closeHtml.includes('当日終値より下'));
+assert.ok(!closeHtml.includes('今日10/5の現在値は'));

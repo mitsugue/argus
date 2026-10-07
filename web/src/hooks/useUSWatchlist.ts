@@ -1,6 +1,6 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
-import { WATCHLIST_VISIBLE_MS } from '../lib/pollingPolicy';
 import type { USWatchlistSnapshot, USStockQuote } from '../types/watch';
 import {
   normalizeUSWatchSnapshot,
@@ -43,12 +43,12 @@ const MAX_ATTEMPTS = 3;
 const ATTEMPT_TIMEOUT_MS = 8_000;
 const RETRY_DELAYS_MS = [3_000, 6_000];
 
-// Auto-refresh: refetch once when the tab becomes visible, then on the relaxed
-// visible-page cadence (pollingPolicy, owner-approved 2026-09-28); hidden tabs
+// Auto-refresh: read initially, then on the relaxed
+// visible-page cadence (pollingPolicy); hidden tabs
 // never poll. Silent — keeps showing the last good data on a failed refresh
 // instead of flashing back to "connecting"/mock. 2 endpoints per cycle stay far
 // inside the per-IP heavy-endpoint limit (30/min).
-const REFRESH_INTERVAL_MS = WATCHLIST_VISIBLE_MS;  // visible-page cadence (was 15s)
+const REFRESH_INTERVAL_MS = 30_000;  // cached US price read; no provider or AI call
 
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
@@ -198,16 +198,15 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
         });
       }
     }
-    const refreshTimer = window.setInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
-    // Returning to the tab after a while → refresh immediately, don't wait out
-    // the remainder of the interval.
+    const refreshTimer = scheduleVisibleInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
+    // Age the retained quote on return without an extra network acquisition.
     const onVisible = () => {
       if (!document.hidden) {
         revalidateCurrent();
-        void acquire(refresh);
       }
     };
     document.addEventListener('visibilitychange', onVisible);
+    const stopInitialRead = subscribeInitialVisibleRead(() => { void acquire(refresh); });
 
     if (getState().data) revalidateCurrent();
     void acquire(run);
@@ -216,8 +215,9 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
       cancelExpiry();
       for (const controller of controllers) controller.abort();
       controllers.clear();
-      window.clearInterval(refreshTimer);
+      refreshTimer();
       document.removeEventListener('visibilitychange', onVisible);
+      stopInitialRead();
     };
   });
   usWatchlistStores.set(symKey, store);
@@ -225,8 +225,8 @@ function usWatchlistStore(symKey: string): SharedPollingStore<State> {
 }
 
 export function useUSWatchlist(symbols?: string[]): State {
-  // Dynamic mode: pass the user's actual US assets (capped at 8 server-side to
-  // stay within Twelve Data's free 8-credits/min). Empty/absent → curated.
+  // Dynamic reads cover the authorized universe. Provider batches rotate
+  // independently; an eighth-request cap never truncates this card read.
   const symKey = symbols && symbols.length ? symbols.slice().sort().join(',') : '';
   const store = usWatchlistStore(symKey);
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);

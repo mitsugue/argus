@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { partialFeedReasonCodes } from '../domain/dataShortfalls';
 import { useAIJudgment } from './useAIJudgment';
 import { useActionLabels } from './useActionLabels';
 import { useCryptoWatchlist } from './useCryptoWatchlist';
@@ -125,6 +126,7 @@ export interface AssetIntel {
    * only — never a claim that the owner failed to supply something.
    */
   partialReasonCodes: string[];
+  dataQualityDetailLinesJa: string[];
   /** v13.5.60: informational notes that are NOT shortfalls (closed-session previous values). */
   dataQualityNotes: string[];
   /**
@@ -373,7 +375,7 @@ export function useAssetIntel(opts: {
     peJp.data, peUs.data, fundNav.funds, cw.byId]);
   // v11.12.0: ACTION PRIORITY — 登録銘柄の市場材料を「今日これを見る」に統合。
   const apItems: APItem[] = useMemo(() => {
-    const sdBySym = new Map(sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
+    const sdBySym = new Map(sdSignals.map((s) => [`${s.market.toUpperCase()}:${s.symbol.toUpperCase()}`, s]));
     const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r]));
     const regLabel = regime.data?.regime?.label ?? null;
     const riskOff = regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT';
@@ -395,7 +397,7 @@ export function useAssetIntel(opts: {
     }
     const items = assets.map((a) => {
       const sym = a.symbol.toUpperCase();
-      const sd = sdBySym.get(sym);
+      const sd = sdBySym.get(`${a.market}:${sym}`);
       const fl = flowBySym.get(sym);
       const missing: string[] = [];
       if (!fl) missing.push('フロー未取得');
@@ -453,7 +455,7 @@ export function useAssetIntel(opts: {
   // v11.17.0: SCENARIOS — 条件付きの分岐(端末内合成)。単一予測ではなく
   // ベース/強気/弱気/踏み上げ失速/イベント待ちを全レイヤーから決定論合成。帯のみ。
   const scenarioSets: LocalScenarioSet[] = useMemo(() => {
-    const sdBySym = new Map(sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
+    const sdBySym = new Map(sdSignals.map((s) => [`${s.market.toUpperCase()}:${s.symbol.toUpperCase()}`, s]));
     const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r]));
     const regLabel = regime.data?.regime?.label ?? null;
     const riskOff = regLabel === 'RISK_OFF' || regLabel === 'EVENT_WAIT';
@@ -467,7 +469,7 @@ export function useAssetIntel(opts: {
     }
     const sets = assets.map((a) => {
       const sym = a.symbol.toUpperCase();
-      const sd = sdBySym.get(sym);
+      const sd = sdBySym.get(`${a.market}:${sym}`);
       const fl = flowBySym.get(sym);
       return buildScenarioSet({
         symbol: sym, market: a.market, assetName: a.displayNameJa || a.displayName,
@@ -499,7 +501,7 @@ export function useAssetIntel(opts: {
   // v11.18.0: POSITION PLAN — 「入っていいか/買い増しか/利確検討か/持ち越しか」を
   // 条件として合成(端末内・数量なし)。売買指示ではない。
   const positionPlans: LocalPlan[] = useMemo(() => {
-    const sdBySym = new Map(sdSignals.map((s) => [s.symbol.toUpperCase(), s]));
+    const sdBySym = new Map(sdSignals.map((s) => [`${s.market.toUpperCase()}:${s.symbol.toUpperCase()}`, s]));
     const flowBySym = new Map(flowRecords.map((r) => [r.symbol.toUpperCase(), r]));
     const scBySym = new Map(scenarioSets.map((s) => [s.symbol, s]));
     const apBySym = new Map(apItems.map((it) => [it.symbol, it]));
@@ -514,7 +516,7 @@ export function useAssetIntel(opts: {
     }
     const plans = assets.map((a) => {
       const sym = a.symbol.toUpperCase();
-      const sd = sdBySym.get(sym);
+      const sd = sdBySym.get(`${a.market}:${sym}`);
       const fl = flowBySym.get(sym);
       return buildPlan({
         symbol: sym, market: a.market, assetName: a.displayNameJa || a.displayName,
@@ -604,7 +606,8 @@ export function useAssetIntel(opts: {
     supplyPreviousValue ? 'supply_previous_value_closed_session' : null,
   ].filter((code): code is string => code !== null);
   const partialReasonCodes = [
-    phase === 'partial' ? 'watchlist_polling_partial' : null,
+    ...partialFeedReasonCodes({ actionLabels: al.phase, marketRegime: regime.phase, eventRadar: ev.phase,
+      jpQuotes: peJp.phase, usQuotes: peUs.phase, hasJpAssets: jpSyms.length > 0, hasUsAssets: usSyms.length > 0 }),
     importantEventsUnknown ? 'important_events_unread' : null,
     downsideUnknown ? 'downside_unread' : null,
     flowState.authority !== 'fresh' && !flowPreviousValue && !flowEmptyFresh ? 'flow_authority_stale' : null,
@@ -622,6 +625,20 @@ export function useAssetIntel(opts: {
     .filter((v): v is number => typeof v === 'number');
   const cappedConf = capCandidates.length ? Math.min(...capCandidates) : baseConf;
   const visLimited = !!guard && guard.visibilityLevel !== 'full';
+  const missingQuotes = assets.filter(asset => (asset.market === 'JP' || asset.market === 'US')
+    && !priceBySymbol.has(asset.symbol.toUpperCase()));
+  const timeJa = (value: string | null | undefined) => {
+    const at = value ? Date.parse(value) : NaN;
+    return Number.isFinite(at) ? new Date(at).toLocaleString('ja-JP', {timeZone:'Asia/Tokyo'}) : '未確認';
+  };
+  const dataQualityDetailLinesJa = [
+    ...missingQuotes.map(asset => {
+      const rows = asset.market === 'JP' ? peJp.data?.stocks : peUs.data?.stocks;
+      const quote = rows?.find(row => row.symbol.toUpperCase() === asset.symbol.toUpperCase())?.quoteTruth;
+      return `${asset.symbol}：判断に使える価格が未確認（価格時刻 ${timeJa(quote?.sourceTimestamp)}・受信 ${timeJa(quote?.receivedAt)}）`;
+    }),
+    ...(visLimited ? guard.warnings.map(warning => warning.messageJa) : []),
+  ];
 
   // Watchlist alerts do not depend on an archived quantity or cost basis.
   const positionRisk = useMemo(() => {
@@ -871,7 +888,7 @@ export function useAssetIntel(opts: {
     cardGroups, cardBySym, ownerCritical,
     apItems, sessionBrief, scenarioSets,
     positionPlans,
-    phase, judgment, overlay, isPartial, partialReasonCodes, dataQualityNotes, visLimited, cappedConf,
+    phase, judgment, overlay, isPartial, partialReasonCodes, dataQualityDetailLinesJa, dataQualityNotes, visLimited, cappedConf,
     importantEventsUnknown,
     positionRisk,
     aiMeta, decisionBySym, sdaBySymbol, sdaLedgerBindingBySymbol,

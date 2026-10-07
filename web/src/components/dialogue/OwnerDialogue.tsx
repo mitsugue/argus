@@ -37,7 +37,7 @@ function dialogueChoices(job: Job | null) {
   return Object.keys(labels).map(id=>({id,placement:'support',emphasis:'normal',purposeJa:''}));
 }
 
-export function OwnerAnswerBody({job}:{job:Job}) {
+export function OwnerAnswerBody({job,compact=false}:{job:Job;compact?:boolean}) {
   const answer=job.result?.answer;
   if(!answer)return null;
   return <div className="argus-editorial owner-dialogue__answer">
@@ -50,7 +50,7 @@ export function OwnerAnswerBody({job}:{job:Job}) {
         const content=<><p className="argus-editorial__text">{answer.sections[choice.id].textJa}</p>
           {answer.sections[choice.id].kind==='UNKNOWN'&&<small>確認できていない範囲</small>}</>;
         const className=`argus-editorial__element is-${choice.emphasis} placement-${choice.placement} element-${choice.id}`;
-        return choice.placement==='detail'?<details className={className} key={choice.id}><summary>{labels[choice.id]}</summary>{content}</details>
+        return choice.placement==='detail'||compact&&['reasons','changes','next'].includes(choice.id)?<details className={className} key={choice.id}><summary>{labels[choice.id]}</summary>{content}</details>
           :<section className={className} key={choice.id}><h2>{labels[choice.id]}</h2>{content}</section>;
       })}
     {job.context.retrievalRecord?.policyVersion==='owner-edition-retrieval-v1'&&<details className="argus-editorial__element is-quiet placement-detail">

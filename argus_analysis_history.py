@@ -376,7 +376,11 @@ _LEVEL_MAP_TABLES = '''CREATE TABLE IF NOT EXISTS level_map_eps(session TEXT PRI
       recorded_at TEXT NOT NULL, body TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS future_map_outcomes(outcome_id TEXT PRIMARY KEY,
       record_id TEXT NOT NULL REFERENCES future_map_versions(record_id),
-      recorded_at TEXT NOT NULL, body TEXT NOT NULL);'''
+      recorded_at TEXT NOT NULL, body TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS level_map_eps_corrections(correction_id TEXT PRIMARY KEY,
+      session TEXT NOT NULL, recorded_at TEXT NOT NULL, original_sha256 TEXT NOT NULL, body TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS level_map_morning_corrections(correction_id TEXT PRIMARY KEY,
+      morning_of TEXT NOT NULL, created_at TEXT NOT NULL, original_sha256 TEXT NOT NULL, body TEXT NOT NULL);'''
 
 
 def _append_once(path, table, key_column, key, values):
@@ -406,6 +410,83 @@ def append_level_map_eps(path, record):
                         (session, str(record.get('recordedAt') or ''), _json(record)))
 
 
+def append_level_map_eps_correction(path, record):
+    """Append a complete replacement for a known partial input, keep its original.
+
+    This never changes a morning map or a valid first estimate. The receipt
+    ordering and original digest are part of the immutable correction.
+    """
+    import jp_market_level_map as levels
+    session = str(record.get('date') or '')
+    datetime.fromisoformat(session)
+    received = _instant(str(record.get('recordedAt') or ''))
+    if record.get('basis') != levels.EPS_BASIS or not levels.estimate_input_usable(record, strict=True):
+        raise ValueError('level_map_eps_complete_correction_required')
+    conn = _connect(path)
+    try:
+        conn.executescript(_LEVEL_MAP_TABLES);conn.execute('BEGIN IMMEDIATE')
+        old = conn.execute('SELECT body FROM level_map_eps WHERE session=?',(session,)).fetchone()
+        if old is None or levels.estimate_input_usable(json.loads(old[0])):
+            raise ValueError('level_map_eps_incomplete_original_required')
+        original = json.loads(old[0])
+        if original.get('basis') != record.get('basis') or received <= _instant(original['recordedAt']):
+            raise ValueError('level_map_eps_correction_receipt_order')
+        digest = hashlib.sha256(old[0].encode()).hexdigest();body = _json(record)
+        identity = hashlib.sha256(_json([session,digest,record]).encode()).hexdigest()
+        inserted = conn.execute('INSERT OR IGNORE INTO level_map_eps_corrections VALUES(?,?,?,?,?)',
+            (identity,session,record['recordedAt'],digest,body)).rowcount
+        conn.execute('COMMIT')
+        return {'inserted':bool(inserted),'conflict':False,'correctionId':identity}
+    except Exception:
+        if conn.in_transaction:conn.execute('ROLLBACK')
+        raise
+    finally:conn.close()
+
+
+def append_level_map_morning_correction(path, record):
+    """Correct only a known partial future morning, before its market open."""
+    import jp_market_level_map as levels
+    day=str(record.get('morningOf') or '');datetime.fromisoformat(day)
+    created=_instant(str(record.get('createdAt') or ''))
+    if (not str(record.get('recordId') or '').startswith('lm-')
+            or not levels.estimate_input_usable({'coverage':record.get('epsCoverage')},strict=True)
+            or created >= _instant(day+'T00:00:00Z')):
+        raise ValueError('level_map_complete_preopen_correction_required')
+    conn=_connect(path)
+    try:
+        conn.executescript(_LEVEL_MAP_TABLES);conn.execute('BEGIN IMMEDIATE')
+        old=conn.execute('SELECT body FROM level_map_mornings WHERE morning_of=?',(day,)).fetchone()
+        if old is None or levels.morning_input_usable(json.loads(old[0])):
+            raise ValueError('level_map_incomplete_original_required')
+        original=json.loads(old[0])
+        if (original.get('epsBasis')!=record.get('epsBasis')
+                or created <= _instant(original['createdAt'])):
+            raise ValueError('level_map_correction_receipt_order')
+        digest=hashlib.sha256(old[0].encode()).hexdigest();body=_json(record)
+        identity=hashlib.sha256(_json([day,digest,record]).encode()).hexdigest()
+        inserted=conn.execute('INSERT OR IGNORE INTO level_map_morning_corrections VALUES(?,?,?,?,?)',
+            (identity,day,record['createdAt'],digest,body)).rowcount
+        conn.execute('COMMIT')
+        return {'inserted':bool(inserted),'conflict':False,'correctionId':identity}
+    except Exception:
+        if conn.in_transaction:conn.execute('ROLLBACK')
+        raise
+    finally:conn.close()
+
+
+def read_level_map_eps_originals(path, *, morning=False):
+    conn = _connect(path, True)
+    try:
+        names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        table,column=('level_map_mornings','morning_of') if morning else ('level_map_eps','session')
+        correction_table='level_map_morning_corrections' if morning else 'level_map_eps_corrections'
+        originals = {r[0]:json.loads(r[1]) for r in conn.execute(f'SELECT {column},body FROM {table} ORDER BY {column}')} if table in names else {}
+        corrections = [{'correctionId':r[0],'date':r[1],'recordedAt':r[2],'originalSha256':r[3],'record':json.loads(r[4])}
+            for r in conn.execute(f'SELECT * FROM {correction_table} ORDER BY {column},'+('created_at' if morning else 'recorded_at')+',correction_id')] if correction_table in names else []
+        return originals,corrections
+    finally:conn.close()
+
+
 def append_level_map(path, record):
     morning = str(record.get('morningOf') or '')
     datetime.fromisoformat(morning)
@@ -424,10 +505,18 @@ def read_level_map_state(path):
         if 'level_map_eps' in names:
             eps = {row[0]: json.loads(row[1]) for row in conn.execute(
                 'SELECT session, body FROM level_map_eps ORDER BY session')}
+        if 'level_map_eps_corrections' in names:
+            for session,body in sorted(conn.execute('SELECT session,body FROM level_map_eps_corrections'),key=lambda row:_instant(json.loads(row[1])['recordedAt'])):
+                eps[session]=json.loads(body)
         mornings = []
         if 'level_map_mornings' in names:
             mornings = [json.loads(row[0]) for row in conn.execute(
                 'SELECT body FROM level_map_mornings ORDER BY morning_of')]
+        if 'level_map_morning_corrections' in names:
+            corrected={m['morningOf']:m for m in mornings}
+            for body, in sorted(conn.execute('SELECT body FROM level_map_morning_corrections'),key=lambda row:_instant(json.loads(row[0])['createdAt'])):
+                row=json.loads(body);corrected[row['morningOf']]=row
+            mornings=[corrected[day] for day in sorted(corrected)]
         return {'eps': eps, 'mornings': mornings}
     finally: conn.close()
 
