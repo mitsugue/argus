@@ -12,6 +12,7 @@ def _row(code, fdiv2q="40.0", fdivfy="50.0", disc="2026-08-07"):
 
 
 def _reset(monkeypatch, tmp_path):
+    monkeypatch.setattr(scanner, "_JP_EARNINGS_BACKFILL_ATTEMPTS", {})
     scanner._JP_DIVIDEND_STORE.update(rows={}, fetchedAt={}, closes=None, restoreAttempted=False, lastError=None, requestsLastWarm=0)
     path = str(tmp_path / "jp_dividend_forecasts.json")
     monkeypatch.setattr(scanner, "_jp_dividend_path", lambda: path)
