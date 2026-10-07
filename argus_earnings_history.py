@@ -17,6 +17,33 @@ FIELDS = ('Code', 'DiscDate', 'DiscTime', 'DiscNo', 'DocType', 'CurPerType',
 MAX_ROWS = 30000
 
 
+def acquisition_members(current_members, changes, *, through):
+    """Collect current/former constituents, without certifying a dated cohort."""
+    end = date.fromisoformat(through)
+    members = set(current_members)
+    if len(members) != 225 or any(not isinstance(c, str) or not re.fullmatch(r'[0-9A-Z]{4}', c) for c in members):
+        raise ValueError('financial_member_scope_required')
+    if not isinstance(changes, dict) or changes.get('schemaVersion') != 'nikkei225-constituent-changes-v1':
+        raise ValueError('financial_membership_history_required')
+    rows = changes.get('rows')
+    if not isinstance(rows, list) or len(rows) > 400:
+        raise ValueError('financial_membership_history_required')
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError('financial_membership_history_required')
+        effective = date.fromisoformat(row.get('effective', ''))
+        if not date(2016, 10, 3) <= effective <= end:
+            continue
+        for field in ('removed', 'added'):
+            codes = row.get(field)
+            if not isinstance(codes, list) or any(not isinstance(c, str) or not re.fullmatch(r'[0-9A-Z]{4}', c) for c in codes):
+                raise ValueError('financial_membership_history_required')
+            members.update(codes)
+    if len(members) > 400:
+        raise ValueError('financial_member_scope_required')
+    return sorted(members)
+
+
 def _compact(row):
     if not isinstance(row, dict):
         raise ValueError('financial_row_required')

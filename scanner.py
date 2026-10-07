@@ -39155,6 +39155,14 @@ def _jp_dividend_persist():
 
 def _jp_dividend_warm(member_codes):
     """A bounded batch of per-company /fins/summary reads; newest disclosure kept."""
+    current_members = set(member_codes)
+    # Reuse this acquisition lane for the adopted ten-year earnings study.
+    # Former constituents need their original forecasts too; the current
+    # weight table alone cannot cover the dated historical 225-member sets.
+    if len(current_members) == 225 and _cost_policy_durable_enabled():
+        from argus_earnings_history import acquisition_members
+        member_codes = acquisition_members(current_members,
+            _nikkei225_constituent_changes(), through=datetime.now(TZ_JST).date().isoformat())
     store = _JP_DIVIDEND_STORE
     if not store["restoreAttempted"]:
         _jp_dividend_restore()
@@ -39177,7 +39185,8 @@ def _jp_dividend_warm(member_codes):
                   if (now - store["fetchedAt"].get(code, 0.0) >= _JP_DIVIDEND_REFRESH_SECONDS
                       or code not in completed)
                   and now - _JP_EARNINGS_BACKFILL_ATTEMPTS.get(code, 0.0) >= 300),
-                 key=lambda code: (code in completed, store["fetchedAt"].get(code, 0.0)))[:_JP_DIVIDEND_PER_WARM]
+                 key=lambda code: (code in completed, code not in current_members,
+                                   store["fetchedAt"].get(code, 0.0)))[:_JP_DIVIDEND_PER_WARM]
     deadline = time.monotonic() + 150
     for old_code in set(_JP_EARNINGS_BACKFILL_ATTEMPTS) - set(member_codes):
         _JP_EARNINGS_BACKFILL_ATTEMPTS.pop(old_code, None)
