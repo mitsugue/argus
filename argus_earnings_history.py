@@ -209,7 +209,8 @@ def completed_codes(path, *, cutoff, member_codes):
                 raise ValueError('financial_company_receipt_integrity')
             source = db.execute('SELECT raw,sha256,received_at FROM raw_sources WHERE id=?', (row.get('rawId'),)).fetchone()
             if (not source or hashlib.sha256(source[0]).hexdigest() != source[1]
-                    or source[1] != row.get('sourceResponseSha256') or source[2] != row.get('receivedAt')):
+                    or source[1] != row.get('sourceResponseSha256')
+                    or sources._time(source[2]) > sources._time(row.get('receivedAt'))):
                 raise ValueError('financial_company_receipt_integrity')
             if row.get('complete') is True and sources._time(row['receivedAt']) <= limit:
                 output.add(code)
