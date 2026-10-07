@@ -12,6 +12,7 @@ import type { AssetIntel } from '../../hooks/useAssetIntel';
 import { useCatalysts } from '../../hooks/useCatalysts';
 import { fundNavForAsset } from '../../hooks/useFundNav';
 import { coingeckoIdOf } from '../../lib/cryptoIds';
+import { cryptoDisplayForAsset } from '../../domain/cryptoPriceDisplay';
 import { deriveStrategy, type QuoteLite } from '../../lib/assetStrategy';
 import { GENRES, genreOf, type AssetItem } from '../../types/assetItem';
 import type { ActionLabel } from '../../types/actionLabels';
@@ -231,6 +232,9 @@ export const AssetDeskList: React.FC<Props> = ({
       const d: DeskCardData = {
         asset: a, genre, rank,
         card, decision, strat, quote,
+        cryptoDisplayQuote: genre === 'crypto'
+          ? cryptoDisplayForAsset(a, intel.cryptoWatch.displayById) : undefined,
+        cryptoRefreshFailed: intel.cryptoWatch.authority === 'refresh_failed',
         liveName: quote?.name ?? null,
         incident,
         sdg: sdBySym.get(`${a.market}:${sym}`),
@@ -248,7 +252,7 @@ export const AssetDeskList: React.FC<Props> = ({
     });
   }, [assets, maps, intel.cardBySym, intel.decisionBySym, intel.sdaBySymbol, intel.aiJ.data, intel.sdSignals,
       intel.apItems, intel.scenarioSets, intel.positionPlans,
-      intel.aiMeta, eventTagsBySym, mountTs]);
+      intel.aiMeta, intel.cryptoWatch.displayById, intel.cryptoWatch.authority, eventTagsBySym, mountTs]);
 
   const riskCount = useMemo(() => rows.filter((r) => !!r.d.incident).length, [rows]);
   const keep = (r: { d: DeskCardData }) => filter === 'all' ? true

@@ -7,6 +7,8 @@ import { quoteAsOf, quoteFreshnessJa } from '../../domain/liveQuote';
 import { useAnalystTargetState } from '../../hooks/useAnalystTargets';
 import { AssetEarningsDate } from './AssetEarnings';
 import { AssetOutlookSummary } from './AssetOutlookSummary';
+import { cryptoPriceDisplay } from '../../domain/cryptoPriceDisplay';
+import { fmtPrice } from './deskFormat';
 
 // 登録銘柄の事実を先に表示する。旧保有判断は内部の制限・履歴に残す。
 
@@ -26,7 +28,8 @@ export const AssetDecisionSummary: React.FC<{
   }, [liveDocument?.displayApproved]);
   // Display projection only: decisionFirst, its evidence and actions stay unchanged.
   const live = d.genre === 'jp' ? tachibanaCurrentRows(liveDocument, Math.max(now, Date.now())).get(view.symbol.toUpperCase()) : null;
-  const shownChange = live?.changePct ?? view.changePct;
+  const crypto = d.genre === 'crypto' ? cryptoPriceDisplay(d.cryptoDisplayQuote) : null;
+  const shownChange = crypto ? crypto.changePct : live?.changePct ?? view.changePct;
   const targetKey = `${d.asset.market}:${view.symbol.toUpperCase()}`;
   const currentPrice = live?.price ?? (d.strat.status === 'mock' ? null : d.strat.price ?? d.card?.price ?? null);
 
@@ -36,7 +39,7 @@ export const AssetDecisionSummary: React.FC<{
         <span className="ad-sym">{view.symbol}</span>
         <span className="ad-name">{view.name}</span>
         <span className="ad-mkt">{GENRE_TAG[d.genre]}</span>
-        <span className="ad-price">{live ? `${formatJpy(live.price)}円` : view.priceText === '—' ? '価格未取得' : view.priceText}</span>
+        <span className="ad-price">{crypto ? fmtPrice('CRYPTO', crypto.priceUsd) : live ? `${formatJpy(live.price)}円` : view.priceText === '—' ? '価格未取得' : view.priceText}</span>
         <span className="ad-chg">{shownChange == null ? '—'
           : <SignedValue value={shownChange} suffix="%" arrow={false} />}</span>
         {interactive && <span className="ad-chevron" aria-hidden>{open ? '−' : '+'}</span>}
@@ -48,10 +51,13 @@ export const AssetDecisionSummary: React.FC<{
               : `${view.pnlPct >= 0 ? '+' : ''}${view.pnlPct.toFixed(1)}%`}`
             : ''}
         </span>
-        <span className="ad-data">{view.dataStatus}</span>
+        <span className="ad-data">{crypto ? d.cryptoRefreshFailed ? '更新失敗・保存価格' : crypto.label : view.dataStatus}</span>
       </span>
       {live && <span className="ad-quote-meta"><mark data-delay="LIVE">リアルタイム</mark><span>立花証券 · {new Date(live.sourceTimestamp!).toLocaleTimeString('ja-JP')}</span></span>}
-      {!live && view.quoteTruth && <span className="ad-quote-meta" data-instrument-type={view.quoteTruth.instrumentType}>
+      {crypto && <span className="ad-quote-meta" data-instrument-type="CRYPTO">
+        <span title={crypto.title}>{crypto.detail}</span>
+      </span>}
+      {!live && !crypto && view.quoteTruth && <span className="ad-quote-meta" data-instrument-type={view.quoteTruth.instrumentType}>
 
         <mark data-delay={view.quoteTruth.delayClass}>{{ LIVE: 'リアルタイム', '15m': '15分遅延', '20m': '20分遅延', EOD: '終値', 'T-1': '前日', UNKNOWN: '時刻未確認', OFFLINE: '未取得' }[view.quoteTruth.delayClass]}</mark>
         {/* v13.5.62: one plain freshness line (kind · provider · as of); the exact
