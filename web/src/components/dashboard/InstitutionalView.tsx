@@ -59,7 +59,7 @@ export const InstitutionalView: React.FC<{ symbol: string }> = ({ symbol }) => {
   if (!items || items.length === 0) return null;
   return (
     <div className="uac-sec">
-      <div className="uac-sec-t">INSTITUTIONAL VIEW</div>
+      <div className="uac-sec-t">機関の公開見解・アナリストの変更</div>
       {items.slice(0, 3).map((it, i) => (
         <div className="iv-row" key={i}>
           <div className="iv-l1">

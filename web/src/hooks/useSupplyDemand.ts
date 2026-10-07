@@ -1,3 +1,4 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { deauthorizeSupplySignals, liveAuthorityState,
   scheduleLiveAuthorityExpiry, type LiveAuthorityState } from '../domain/liveAuthority';
@@ -38,15 +39,13 @@ export interface SupplyDemandSignal {
   missingEvidence: string[];
   sourceLimitNote: string;
   complianceNote: string;
+  sourceDates?: { weeklyMargin?: string | null; previousWeeklyMargin?: string | null; jsfDaily?: string | null };
+  ratios?: { margin?: number | null; jsf?: number | null; usedSource?: 'MARGIN' | 'JSF' | null };
 }
 
 // v12.0.4 (owner request): C/Unknownがmuted/faintで「かなり暗い」— 全ランクを
 // ダーク背景で読める明色に固定(状態の意味は不変・色だけ)。
-export const RANK_TONE: Record<string, string> = {
-  S: '#34d399', A: '#6ee7b7', B: '#67e8f9',
-  C: '#e2e8f0', D: '#fbbf24', E: '#f87171',
-  Unknown: '#94a3b8',
-};
+export { SUPPLY_RANK_TONE as RANK_TONE } from '../domain/assetOutlook';
 
 interface State {
   signals: SupplyDemandSignal[];
@@ -156,20 +155,20 @@ function supplyStore(extraSymbols: string): SharedPollingStore<State> {
       if (retained.authority === 'fresh') {
         accept({ asOf: retained.asOf ?? undefined, signals: retained.signals });
       }
-      const interval = window.setInterval(() => {
+      const interval = scheduleVisibleInterval(() => {
         if (!isPageVisible()) return;
         void acquire(load);
       }, POLL_MS);
       const onVisible = () => { if (!document.hidden) void acquire(load); };
-      document.addEventListener('visibilitychange', onVisible);
+      const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
       void acquire(load);
       return () => {
         alive = false;
         cancelExpiries();
         for (const controller of controllers) controller.abort();
         controllers.clear();
-        window.clearInterval(interval);
-        document.removeEventListener('visibilitychange', onVisible);
+        interval();
+        stopInitialOnVisible();
       };
     },
   );

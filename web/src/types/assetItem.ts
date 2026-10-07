@@ -1,7 +1,7 @@
 // Unified asset model (v9.2.0). One model for JP/US equities, core/manual funds,
 // and crypto — replacing the fixed JP/US split. User config (add/remove/reorder/
-// enabled) is persisted in localStorage (per browser/device; no cross-device
-// sync yet). Distinct from the legacy types/asset.ts (old bubble tree).
+// enabled) is cached locally and synchronized through the owner session.
+// Unknown archived fields survive recovery without entering the product projection. Distinct from the legacy types/asset.ts (old bubble tree).
 
 export type AssetMarket = 'JP' | 'US' | 'CRYPTO' | 'FUND' | 'CORE' | 'MANUAL';
 export type AssetType =

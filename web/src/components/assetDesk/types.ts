@@ -13,6 +13,7 @@ import type { LocalScenarioSet } from '../../domain/scenario';
 import type { LocalPlan } from '../../domain/positionPlan';
 import type { AIJudgmentLabel } from '../../types/aiJudgment';
 import type { DecisionFirstView, DeskGenre } from '../../domain/assetDesk';
+import type { CryptoDisplayQuote } from '../../domain/cryptoPriceDisplay';
 
 export interface DeskEventTag { code: string; countdown: string; impact: string }
 
@@ -26,6 +27,9 @@ export interface DeskCardData {
   decision?: AssetDecisionView;
   strat: AssetStrategy;
   quote?: QuoteLite;
+  /** Display only; never replaces quote/strat/decisionFirst evidence. */
+  cryptoDisplayQuote?: CryptoDisplayQuote;
+  cryptoRefreshFailed?: boolean;
   liveName?: string | null;
   incident?: DownsideIncident;
   pn?: PositionNote;
@@ -62,7 +66,7 @@ export const DESK_TABS = [
 export type DeskTab = (typeof DESK_TABS)[number];
 
 export function tabForDeskSection(section?: string | null): DeskTab {
-  if (section === 'technical' || section === 'chart') return 'chart';
+  if (section === 'technical' || section === 'chart' || section === 'scenarios') return 'chart';
   if (section === 'why-downside' || section === 'flow-supply'
       || section === 'events' || section === 'evidence') return 'evidence';
   if (section === 'owner-position' || section === 'position') return 'decision';

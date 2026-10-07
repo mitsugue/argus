@@ -11,6 +11,7 @@ import { restoreBackup, assertBackupHistoryReadable, BACKUP_KEYS, type BackupFil
 import { mergeAssets, loadTombstones, saveTombstones, type Tombstones } from './assetMerge';
 import type { AssetItem } from '../types/assetItem';
 import { buildRecoveryDurability, type RecoveryDurability } from '../domain/recoveryDurability';
+import { OWNER_AUTH_REQUIRED } from './ownerSession';
 
 const PASS_KEY = 'argus.vaultPass.v1';
 const LAST_KEY = 'argus.lastCloudBackup.v1';
@@ -210,12 +211,12 @@ export async function cloudSyncNow(opts: { rawFallback?: boolean } = {}): Promis
       remoteProto = payload.syncProtocolVersion ?? 1;
       const remoteTsRaw = Date.parse(payload.exportedAt || '') || 0;
       legacy = remoteProto < 2 && remoteTsRaw > Date.now() - 48 * 3600_000;
-      // 1) watchlist: per-item merge — always safe, runs on every cycle.
+      // 本人認証の登録共有が正本。旧暗号化保存の自動復元で戻さない。
       const rawRemote = payload.data['argus.assets.v1'];
       const remoteAssets = Array.isArray(rawRemote) ? (rawRemote as AssetItem[]) : [];
       const rawTombs = payload.data['argus.assetTombstones.v1'];
       const remoteTombs = (rawTombs && typeof rawTombs === 'object' ? rawTombs : {}) as Tombstones;
-      if (remoteAssets.length > 0 || Object.keys(remoteTombs).length > 0) {
+      if (!OWNER_AUTH_REQUIRED && (remoteAssets.length > 0 || Object.keys(remoteTombs).length > 0)) {
         let localAssets: AssetItem[] = [];
         try { localAssets = JSON.parse(localStorage.getItem('argus.assets.v1') || '[]') as AssetItem[]; }
         catch { localAssets = []; }

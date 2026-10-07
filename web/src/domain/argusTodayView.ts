@@ -1,4 +1,5 @@
 import type { DataQuality } from './actionLevel';
+import { eventTitleJa } from './eventTitleJa';
 import type { MarketCalendarState } from '../types/marketLedger';
 import type { ChartBar, PriceZone } from '../types/chartIntelligence';
 import {
@@ -187,6 +188,7 @@ export interface ArgusTodayInput {
    * freshness/authority states. Never a claim about owner-supplied input.
    */
   dataQualityReasonCodes?: string[];
+  dataQualityDetailLinesJa?: string[];
   /** v13.5.60: informational notes (closed-session previous values), never shortfalls. */
   dataQualityNotes?: string[];
   globalRisk?: string | null;
@@ -231,6 +233,7 @@ export interface ArgusTodayView {
   dataStatus: { code: DataQuality; label: string; tone: 'ok' | 'warn' | 'bad' };
   /** v13.5.54: the specific reasons behind a non-LIVE dataStatus. */
   dataQualityReasonCodes: string[];
+  dataQualityDetailLinesJa: string[];
   /** v13.5.60: closed-session previous-value notes (not shortfalls). */
   dataQualityNotes: string[];
   globalRisk: string | null;
@@ -267,6 +270,7 @@ export interface ArgusTodayView {
   systemStatus: { data: string; backup: string; rule: string };
   canonicalDecision: SingleDecisionAuthorityResultV2;
   footerText: string;
+  footerEvent: { name: string; when: string; remaining: string | null } | null;
 }
 
 const OPEN_JP = new Set(['MORNING_SESSION', 'AFTERNOON_SESSION']);
@@ -416,7 +420,11 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
       short: 'HIGH', macro: 'MEDIUM', replay: projection ? 'HIGH' : 'LOW' }
     : { overall: 'MEDIUM' as const, price: 'HIGH', breadth: 'MEDIUM', flow: 'LOW',
       short: 'NONE', macro: 'HIGH', replay: projection ? 'HIGH' : 'LOW' };
-  const eventTag = nextEvent ? `${nextEvent.code} ${formatEventTime(nextEvent.at, nextEvent.dateOnly)}` : `DATA ${dataStatus(input.dataQuality).label}`;
+  // The fixed bar is a calendar reference, independent of legacy action labels.
+  const footerEvent = nextEvent ? nextEventContext(nextEvent, input.now) : null;
+  const footerText = footerEvent
+    ? `次: ${footerEvent.name} · ${footerEvent.when}${footerEvent.remaining ? ` · ${footerEvent.remaining}` : ''}`
+    : input.eventsAuthorityUnknown ? '次のイベント: 日程を確認できません' : '次のイベント: 予定なし';
   return {
     selectedMarket, selectionMode: input.selectionMode,
     sessionLamps: [
@@ -438,6 +446,7 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
     dataStatus: dataStatus(input.dataQuality),
     dataQualityReasonCodes: input.dataQuality === 'LIVE'
       ? [] : [...(input.dataQualityReasonCodes ?? [])],
+    dataQualityDetailLinesJa: input.dataQuality === 'LIVE' ? [] : [...(input.dataQualityDetailLinesJa ?? [])],
     dataQualityNotes: [...(input.dataQualityNotes ?? [])],
     globalRisk: input.globalRisk && input.globalRisk !== 'normal'
       ? input.globalRisk.toUpperCase() : null,
@@ -484,8 +493,7 @@ export function buildArgusTodayView(input: ArgusTodayInput): ArgusTodayView {
     holdingsReview: dedupeHoldings(input.holdings ?? []),
     systemStatus: input.systemStatus ?? { data: dataStatus(input.dataQuality).label, backup: '確認', rule: 'DETERMINISTIC' },
     canonicalDecision: canonical,
-    footerText: `${canonicalAction} · ${canonical.status === 'DATA_GATED'
-      ? '判断に必要なデータを確認中' : '確認済みの根拠に基づく判断'} · ${eventTag}`,
+    footerText, footerEvent,
   };
 }
 
@@ -821,6 +829,21 @@ export function waitKindJa(decision: { status: string; primaryAction: PrimaryAct
     return `評価済み: リスク制約（${ja[constraint] ?? constraint}）により見送り`;
   }
   return '評価済み: 買い条件が未成立（BUY は検証未完了のため構造的に無効）';
+}
+
+/** Date-only placeholders never become precise countdowns. No provider reads. */
+export function nextEventContext(event: TodayEventInput, now: Date): NonNullable<ArgusTodayView['footerEvent']> {
+  const at = eventEpoch(event);
+  const formatted = formatEventWhenJa(event.at, event.dateOnly, now);
+  let remaining = formatted.relativeJa;
+  if (!event.dateOnly && at != null && at >= now.getTime() && at - now.getTime() < 86_400_000) {
+    const minutes = Math.ceil((at - now.getTime()) / 60_000);
+    remaining = minutes === 0 ? 'まもなく' : minutes < 60 ? `あと${minutes}分`
+      : `あと${Math.floor(minutes / 60)}時間${minutes % 60 ? `${minutes % 60}分` : ''}`;
+  }
+  return { name: eventTitleJa(event.code, event.title) || event.code || '重要イベント',
+    when: event.dateOnly ? formatEventTime(event.at, true) || '日時未確認' : formatted.whenJa,
+    remaining };
 }
 
 export function formatEventTime(value: string | null, dateOnly = false): string {

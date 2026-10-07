@@ -1,3 +1,4 @@
+import { installBrowserRateLimitProof } from './browser-rate-limit-proof.mjs';
 import { createBrowserOwner, isOwnerCeremony, verifiedStoreFingerprint } from './owner-browser-acceptance.mjs';
 import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
@@ -128,7 +129,7 @@ async function screenshot(page, name, fullPage = false) {
   });
 }
 
-function observe(page, evidence) {
+function observe(page, evidence, contextKind) {
   page.on('console', (message) => {
     const location = message.location().url || '';
     const isIntentionallyBlockedSupportGet = location.includes('/api/argus/')
@@ -167,13 +168,43 @@ function observe(page, evidence) {
       if (url.pathname !== '/api/argus/chart-intelligence') return;
       if (response.status() === 429) {
         let body = null;
-        try { body = await response.json(); } catch { /* invalid contract is recorded below */ }
-        const contractValid = body?.error === 'rate_limited'
-          && typeof body?.message === 'string';
+        let bodyRead = 'JSON';
+        let browserProof = null;
+        let bodyReadError = 'NONE';
+        try { body = await response.json(); } catch (error) {
+          bodyRead = error instanceof SyntaxError ? 'INVALID_JSON' : 'BODY_READ_FAILED';
+          const detail = String(error?.message || '');
+          bodyReadError = /No data found|No resource with given identifier/i.test(detail) ? 'CDP_RESOURCE_UNAVAILABLE'
+            : /Target.*closed|has been closed/i.test(detail) ? 'TARGET_CLOSED' : 'OTHER';
+          // A body retrieval failure must still prove the SAME real response.
+          // This isolated reader receives no fixture body/expected values.
+          if (bodyRead === 'BODY_READ_FAILED') {
+            await page.waitForFunction((url) => window.__argusAcceptanceRateLimitReads?.has(url),
+              response.url(), { timeout: 2_000 }).catch(() => {});
+            browserProof = await page.evaluate(async (url) =>
+              await window.__argusAcceptanceRateLimitReads?.get(url) ?? null,
+            response.url()).catch(() => null);
+          }
+        }
+        const contractValid = (body?.error === 'rate_limited' && typeof body?.message === 'string')
+          || (bodyRead === 'BODY_READ_FAILED' && browserProof?.status === 429
+            && browserProof?.bodyRead === 'JSON' && browserProof?.errorField === 'RATE_LIMITED'
+            && browserProof?.messageIsString === true);
         evidence.rateLimits.push({
           url: response.url(), status: response.status(),
           retryAfter: response.headers()['retry-after'] ?? null,
           contractValid,
+          bodyRead, bodyReadError, browserProof, contextKind,
+          browserProofInstalled: await page.evaluate(() => window.__argusAcceptanceRateLimitReads instanceof Map).catch(() => false),
+          corsOriginMatches: response.headers()['access-control-allow-origin'] === new URL(page.url()).origin,
+          requestFailed: response.request().failure() !== null,
+          method: ['GET', 'OPTIONS'].includes(response.request().method())
+            ? response.request().method() : 'OTHER',
+          contentType: String(response.headers()['content-type'] || '').startsWith('application/json')
+            ? 'JSON' : String(response.headers()['content-type'] || '').startsWith('text/html') ? 'HTML' : 'OTHER',
+          errorField: body?.error === 'rate_limited' ? 'RATE_LIMITED'
+            : body?.error === 'try_later' ? 'TRY_LATER' : 'OTHER_OR_MISSING',
+          messageIsString: typeof body?.message === 'string',
         });
         if (!contractValid) evidence.failures.push('rate-limit-response-contract');
         return;
@@ -465,7 +496,8 @@ async function run() {
   });
   await isolateChartReads(context, evidence);
   const page = await context.newPage();
-  observe(page, evidence);
+  await context.addInitScript(installBrowserRateLimitProof);
+  observe(page, evidence, 'MAIN');
   const initialRequestsAt = evidence.network.length;
   await page.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(page);
@@ -761,7 +793,8 @@ async function run() {
   await warm.route('**/api/argus/chart-intelligence?*',
     (route) => fulfillCapturedSnapshot(route, evidence, 0));
   const warmPage = await warm.newPage();
-  observe(warmPage, evidence);
+  await warm.addInitScript(installBrowserRateLimitProof);
+  observe(warmPage, evidence, 'WARM');
   await warmPage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(warmPage);
   await selectCanonicalControls(warmPage);
@@ -873,8 +906,9 @@ async function run() {
   await isolateChartReads(rateLimitContext, evidence);
   await rateLimitContext.route('**/api/argus/chart-intelligence?*',
     (route) => fulfillCapturedSnapshot(route, evidence, 0));
+  await rateLimitContext.addInitScript(installBrowserRateLimitProof);
   const rateLimitPage = await rateLimitContext.newPage();
-  observe(rateLimitPage, evidence);
+  observe(rateLimitPage, evidence, 'CONTROLLED_429');
   await rateLimitPage.goto(TODAY_URL, {
     waitUntil: 'domcontentloaded', timeout: 30_000,
   });
@@ -882,6 +916,10 @@ async function run() {
   await selectCanonicalControls(rateLimitPage);
   const rateLimitSeedSnapshotId = await rateLimitPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .getAttribute('data-canonical-snapshot-id');
+  // Complete the seed session before installing the failure fixture: reads
+  // being cancelled by logout must not become the controlled reload response.
+  await drainResponseTasks(evidence);
+  await owner.logout(rateLimitPage);
   await rateLimitContext.unroute('**/api/argus/chart-intelligence?*');
   let controlled429Calls = 0;
   await rateLimitContext.route('**/api/argus/chart-intelligence?*', (route) => {
@@ -892,7 +930,13 @@ async function run() {
       body: '{"error":"rate_limited","message":"controlled acceptance limit"}',
     });
   });
-  await owner.logout(rateLimitPage);
+  const controlledResponsePromise = rateLimitPage.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/api/argus/chart-intelligence'
+      && response.request().method() === 'GET' && response.status() === 429,
+  { timeout: 30_000 });
+  // Keep an early timeout handled until the semantic wait reaches this same
+  // promise; awaiting it below still rejects and fails the gate.
+  void controlledResponsePromise.catch(() => {});
   await rateLimitPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(rateLimitPage); await waitForTodayChart(rateLimitPage);
   const rateLimitedSnapshotId = await rateLimitPage.locator(CANONICAL_SNAPSHOT_SELECTOR)
@@ -911,6 +955,9 @@ async function run() {
       cachedSnapshotId: rateLimitSeedSnapshotId,
       acceptedResponseSnapshotId: null,
     });
+  const controlledResponse = await controlledResponsePromise;
+  if (await controlledResponse.finished()) evidence.failures.push('rate-limit-response-incomplete');
+  await drainResponseTasks(evidence);
   await rateLimitContext.unroute('**/api/argus/chart-intelligence?*');
   // v13.5.0: only the SELECTED instrument loads its heavy verified snapshot;
   // the other three come from the compact headline bootstrap. A reload with a
@@ -987,7 +1034,8 @@ async function run() {
     return route.abort('blockedbyclient');
   });
   const headlinePage = await headlineContext.newPage();
-  observe(headlinePage, evidence);
+  await headlineContext.addInitScript(installBrowserRateLimitProof);
+  observe(headlinePage, evidence, 'HEADLINE');
   await headlinePage.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(headlinePage);
   try {
@@ -1089,6 +1137,17 @@ async function run() {
     try { where = item.location ? new URL(item.location).pathname : ''; } catch { where = 'unparsed'; }
     const text = owner.redact(String(item.message ?? '')).replace(/[^A-Za-z0-9 :._/()-]/g, '').slice(0, 160);
     console.error(`mobile-today-acceptance console-error: ${item.type} ${where} ${text}`);
+  }
+  // Fixed classifications only. Never emit the response body, request URL,
+  // nonce, credential, registered instrument or owner's saved snapshot.
+  for (const row of evidence.rateLimits.filter((item) => !item.contractValid).slice(0, 10)) {
+    console.error(`mobile-today-acceptance rate-limit-invalid: ${JSON.stringify({
+      contextKind: row.contextKind, browserProofInstalled: row.browserProofInstalled,
+      corsOriginMatches: row.corsOriginMatches, requestFailed: row.requestFailed,
+      method: row.method, bodyRead: row.bodyRead, bodyReadError: row.bodyReadError,
+      browserProof: row.browserProof, contentType: row.contentType,
+      errorField: row.errorField, messageIsString: row.messageIsString,
+    })}`);
   }
   for (const item of evidence.notReady.slice(0, 12)) {
     console.error(`mobile-today-acceptance snapshot-not-ready: ${item}`);

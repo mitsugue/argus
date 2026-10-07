@@ -1,5 +1,5 @@
 const assert=require('node:assert/strict'),Module=require('node:module'),path=require('node:path'),esbuild=require('esbuild');
-const entry=path.resolve('src/lib/vault.ts');const code=esbuild.buildSync({entryPoints:[entry],bundle:true,write:false,platform:'node',format:'cjs',define:{__APP_VERSION__:'"test"','import.meta.env':'{"VITE_ARGUS_BACKEND_URL":"https://local.test"}'},logLevel:'silent'}).outputFiles[0].text;
+const entry=path.resolve('src/lib/vault.ts');const code=esbuild.buildSync({entryPoints:[entry],bundle:true,write:false,platform:'node',format:'cjs',define:{__APP_VERSION__:'"test"','import.meta.env':'{"VITE_ARGUS_BACKEND_URL":"https://local.test","VITE_ARGUS_OWNER_AUTH_REQUIRED":"1"}'},logLevel:'silent'}).outputFiles[0].text;
 const mod=new Module(entry,module);mod.filename=entry;mod.paths=module.paths;mod._compile(code,entry);const api=mod.exports;
 const values=new Map([['argus.vaultPass.v1','pass']]);global.localStorage={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)};global.window=new EventTarget();
 (async()=>{let calls=0;global.fetch=async()=>{calls++;return{ok:false}};
@@ -12,5 +12,20 @@ const values=new Map([['argus.vaultPass.v1','pass']]);global.localStorage={getIt
  values.set('argus.locale.v1','"ja"');let guarded=false;
  await assert.rejects(api.cloudRestore('pass',async()=>{guarded=true;throw new Error('current edits are not preserved')}),/not preserved/);
  assert.equal(guarded,true);assert.equal(values.get('argus.locale.v1'),'"ja"');
+ values.delete('argus.ownerVaultAutoSave.v1');
+ values.delete('argus.ownerVaultReceipt.v1');
+ const current=[{id:'jp-1234',symbol:'1234',market:'JP',enabled:true,sortOrder:0,updatedAt:2}];
+ values.set('argus.assets.v1',JSON.stringify(current));
+ values.set('argus.lastLocalEditAt.v1','1');
+ const old=[{id:'jp-9999',symbol:'9999',market:'JP',enabled:true,sortOrder:0,updatedAt:3}];
+ const oldBlob=await api.encryptBackup('pass',{app:'argus',exportedAt:new Date().toISOString(),data:{'argus.assets.v1':old,'argus.locale.v1':'en'}});
+ global.fetch=async()=>({ok:true,json:async()=>({blob:oldBlob})});
+ await api.cloudSyncNow();
+ assert.deepEqual(JSON.parse(values.get('argus.assets.v1')),current,'old automatic backup cannot overwrite the account registry');
+ assert.equal(values.get('argus.locale.v1'),'"en"','non-registration recovery is retained');
+ await api.cloudRestore('pass');
+ const restored=JSON.parse(values.get('argus.assets.v1'));
+ assert.deepEqual(restored.map(({updatedAt,...rest})=>rest),old.map(({updatedAt,...rest})=>rest),'explicit legacy recovery remains available');
+ assert.ok(restored[0].updatedAt>3,'explicit restore is a new local edit');
  console.log('Owner snapshot isolation: no old auto import, opt-in during fetch, explicit old restore retained PASS');
 })().catch(e=>{console.error(e);process.exit(1)});

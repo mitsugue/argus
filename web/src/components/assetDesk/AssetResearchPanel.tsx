@@ -17,7 +17,7 @@ export const AssetResearchPanel: React.FC<{
   return (
     <>
       <div className="asset-detail__note">
-        <span className="asset-detail__k">📝 銘柄メモ（端末内に保存。保護には完全バックアップJSONを書き出してください）</span>
+        <span className="asset-detail__k">銘柄メモ · この端末に保存</span>
         <textarea
           className="asset-detail__note-area"
           value={note}
@@ -28,13 +28,15 @@ export const AssetResearchPanel: React.FC<{
         {noteSaved && <span className="asset-detail__note-saved">✓ 保存</span>}
       </div>
 
+      <p className="ad-detail-note">メモは端末内の保存です。別端末へ移すときはSettingsの完全バックアップを使います。</p>
+
       {/* v12.1.0: マルチエージェントOSINT(計画→収集→Gemini/GPT→検証→統合) */}
       <OsintDeepDive symbol={d.asset.symbol} market={d.asset.market} held={!!d.pn?.held} />
 
-      {/* DECISION HISTORY (v11.11.0) — 端末内記録の答え合わせ */}
+      {/* 過去の記録・答え合わせ (v11.11.0) — 端末内記録の答え合わせ */}
       {hist.length > 0 && (
         <div className="uac-sec">
-          <div className="uac-sec-t">DECISION HISTORY</div>
+          <div className="uac-sec-t">過去の記録・答え合わせ</div>
           {(() => { const pl = pastPatternLineJa(d.asset.symbol);
             return pl ? <p className="uac-next" style={{ marginBottom: 2, color: 'var(--text-faint)' }}>{pl}</p> : null; })()}
           {hist.map((h) => (
@@ -43,7 +45,7 @@ export const AssetResearchPanel: React.FC<{
               <span style={{ marginLeft: 5 }}>[{h.decisionContext}]</span>
               {h.outcome?.outcomeReturn5d != null && (
                 <span style={{ marginLeft: 5, color: h.outcome.outcomeReturn5d >= 0 ? 'var(--value-positive)' : 'var(--value-negative)' }}>
-                  5d {h.outcome.outcomeReturn5d >= 0 ? '+' : ''}{h.outcome.outcomeReturn5d.toFixed(1)}%
+                  5営業日後 {h.outcome.outcomeReturn5d >= 0 ? '+' : ''}{h.outcome.outcomeReturn5d.toFixed(1)}%
                 </span>
               )}
               {h.outcome?.outcomeReadableJa && (
@@ -56,8 +58,8 @@ export const AssetResearchPanel: React.FC<{
       )}
 
       <p className="uac-next" style={{ margin: '6px 0 0' }}>
-        <button className="asset-mini asset-mini--danger" aria-label={`Remove ${d.asset.symbol}`}
-                onClick={() => onRemove(d.asset.id)}>Remove(登録解除)</button>
+        <button className="asset-mini asset-mini--danger" aria-label={`${d.asset.symbol}を登録から外す`}
+                onClick={() => onRemove(d.asset.id)}>登録から外す</button>
       </p>
     </>
   );

@@ -354,3 +354,45 @@ class TenYearIndexHistoryTest(unittest.TestCase):
                                return_value=_Resp(self._chart(["2026-09-30", "2026-10-01"]))):
             again = scanner._yahoo_index_ohlcv("^GSPC", "SP500_INDEX", fetch=True, next_day_available=True)
         self.assertEqual([r["date"] for r in again], ["2017-01-03", "2020-06-01", "2026-09-30", "2026-10-01"])
+
+
+    def test_fresh_two_year_cache_does_not_satisfy_ten_year_warm(self):
+        seen = []
+        def get(url, params=None, **kwargs):
+            seen.append(params['range'])
+            return _Resp(self._chart(['2017-01-03', '2026-10-02'] if params['range'] == '10y'
+                                     else ['2024-10-03', '2026-10-02']))
+        with mock.patch.object(scanner.requests, 'get', side_effect=get):
+            scanner._yahoo_index_ohlcv('^GSPC', 'SP500_INDEX', fetch=True, next_day_available=True)
+            # Reading, including a requested longer scope, never fetches.
+            short = scanner._yahoo_index_ohlcv('^GSPC', 'SP500_INDEX', range_='10y')
+            self.assertEqual(short[0]['date'], '2024-10-03')
+            long = scanner._yahoo_index_ohlcv('^GSPC', 'SP500_INDEX', fetch=True,
+                                             next_day_available=True, range_='10y')
+            scanner._yahoo_index_ohlcv('^GSPC', 'SP500_INDEX', fetch=True,
+                                      next_day_available=True, range_='10y')
+        self.assertEqual(seen, ['2y', '10y'])
+        self.assertEqual(long[0]['date'], '2017-01-03')
+
+    def test_failed_scope_upgrade_keeps_short_history_and_retry_delay(self):
+        with mock.patch.object(scanner.requests, 'get', return_value=_Resp(self._chart(['2024-10-03', '2026-10-02']))):
+            previous = scanner._yahoo_index_ohlcv('^GSPC', 'SP500_INDEX', fetch=True, next_day_available=True)
+        with mock.patch.object(scanner.requests, 'get', side_effect=RuntimeError('synthetic_failure')) as get:
+            retained = scanner._yahoo_index_ohlcv('^GSPC', 'SP500_INDEX', fetch=True,
+                                                 next_day_available=True, range_='10y')
+            scanner._yahoo_index_ohlcv('^GSPC', 'SP500_INDEX', fetch=True,
+                                      next_day_available=True, range_='10y')
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(retained, previous)
+        self.assertEqual(scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE['^GSPC']['lastFetchStatus'], 'FAILED')
+
+    def test_legacy_scope_is_upgraded_once_without_discarding_prior_rows(self):
+        scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE['^GSPC'] = {
+            'data': [{'date':'2016-10-03', 'close':1.5}], 'expires':scanner.time.time() + 1800}
+        with mock.patch.object(scanner.requests, 'get', return_value=_Resp(self._chart(['2026-10-02']))) as get:
+            rows = scanner._yahoo_index_ohlcv('^GSPC', 'SP500_INDEX', fetch=True,
+                                            next_day_available=True, range_='10y')
+            scanner._yahoo_index_ohlcv('^GSPC', 'SP500_INDEX', fetch=True,
+                                      next_day_available=True, range_='10y')
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(rows[0]['date'], '2016-10-03')

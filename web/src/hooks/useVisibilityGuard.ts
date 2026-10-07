@@ -1,3 +1,4 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { useSyncExternalStore } from 'react';
 import { deauthorizeVisibilityGuard, liveAuthorityState,
   scheduleLiveAuthorityExpiry } from '../domain/liveAuthority';
@@ -5,7 +6,7 @@ import { createSharedPollingStore } from '../lib/sharedPollingStore';
 import { GUARD_VISIBLE_MS } from '../lib/pollingPolicy';
 
 // Visibility Risk Guard (v10.195) — GET /api/argus/visibility-guard, refreshed on
-// visibility and on the visible-page cadence (pollingPolicy GUARD_VISIBLE_MS).
+// initial display and on the visible-page cadence (pollingPolicy GUARD_VISIBLE_MS).
 // Tells the UI what ARGUS can't see, whether to cap confidence / block ENTER, and
 // carries a calm "検知≠安全" coverage line. Structural gaps are context; only
 // situational degradation drops the level.
@@ -102,17 +103,17 @@ const visibilityGuardStore = createSharedPollingStore<State>(
 
     const retained = getState();
     if (retained.authority === 'fresh') accept(retained.data);
-    const interval = window.setInterval(() => void acquire(load), GUARD_VISIBLE_MS);
+    const interval = scheduleVisibleInterval(() => void acquire(load), GUARD_VISIBLE_MS);
     const onVisible = () => { if (!document.hidden) void acquire(load); };
-    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible);
     void acquire(load);
     return () => {
       alive = false;
       cancelExpiry();
       for (const controller of controllers) controller.abort();
       controllers.clear();
-      window.clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisible);
+      interval();
+      stopInitialOnVisible();
     };
   },
 );

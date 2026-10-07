@@ -5,7 +5,7 @@ import json
 import re
 import threading
 import uuid
-from flask import jsonify, request
+from flask import jsonify, request, g, current_app
 import argus_owner_dialogue as dialogue
 import argus_owner_dialogue_store as store
 import argus_ai_usage_view
@@ -374,8 +374,12 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         except (ValueError,UnicodeError): return response({'error':'invalid_json'},400)
         if not isinstance(body,dict) or not isinstance(body.get('ownerToken',''),str):
             return response({'error':'invalid_request'},400)
-        ok, error, code = authorize(body.get('ownerToken'))
-        if not ok: return response(error,code)
+        auth = current_app.extensions.get('argus_owner_auth')
+        session_read = (body.get('action') == 'overview' and registered_subjects is not None
+            and auth is not None and auth.enabled and getattr(g, 'owner_session_verified', False))
+        if not session_read:
+            ok, error, code = authorize(body.get('ownerToken'))
+            if not ok: return response(error,code)
         if body.get('action') == 'vault':
             if not vault_service: return response({'error':'vault_unavailable'},503)
             try: return response(vault_service.handle(body))
@@ -429,6 +433,14 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                         raise ValueError('subject_invalid')
                     if type(horizon) is not int or horizon not in dialogue.HORIZONS:
                         raise ValueError('horizon_invalid')
+                    if session_read and (market, symbol) != ('JP', 'N225'):
+                        members = registered_subjects()
+                        allowed = isinstance(members, list) and any(
+                            isinstance(item, dict) and item.get('market') == market
+                            and item.get('symbol') == symbol and item.get('enabled', True)
+                            for item in members)
+                        if not allowed:
+                            return response({'error':'subject_not_registered'},403)
                     previous=store.latest_subject_overview(path,boot_id,
                         symbol=symbol,market=market,horizon=horizon)
                     if previous and previous['context'].get('ownerInputPolicy') == 'WATCHLIST_ONLY_V1':

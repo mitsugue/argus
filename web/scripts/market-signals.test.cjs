@@ -167,8 +167,41 @@ assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:{...warni
 const corrupted=structuredClone(warningSignals);corrupted.signals[2].state='ACTIVE';corrupted.signals[2].conditionMet=true;corrupted.signals[2].ruleStatus='DEFINED';
 corrupted.signals[4].knowledgeTime='2026-10-06T00:00:01Z';
 assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:corrupted}).activeCount,3);
+const adopted=structuredClone(warningSignals);adopted.schemaVersion='jp-warning-conditions-v3';
+for (const r of adopted.signals.filter(r=>['D03','D04','D07'].includes(r.family))) {
+  r.ruleId=`jp-warning-conditions-v3.${r.family}`;r.lineage='ARGUS_VALIDATION_RULE';
+  r.ruleStatus='DEFINED';r.state='CLEAR';r.status='AVAILABLE';r.conditionMet=false;
+  r.value=100;r.knowledgeTime=at;
+  r.performance={ruleId:r.ruleId,status:'UNVALIDATED',evaluated:0};
+}
+const adoptedView=ms.marketSignalsView({informationCutoff:at,warningSignals:adopted});
+assert.equal(adoptedView.measurableCount,7);
+assert.equal(adoptedView.signals[3].lineage,'ARGUS_VALIDATION_RULE');
+assert.equal(adoptedView.signals[3].performance.evaluated,0);
+const wrongLineage=structuredClone(adopted);wrongLineage.signals[3].lineage='ORIGINAL_DIRECTION';
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:wrongLineage}).signals[3].state,'DATA_GATED');
+const staleGrade=structuredClone(adopted);staleGrade.signals[3].performance.ruleId='jp-warning-conditions-v2.D04';
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:staleGrade}).signals[3].performance,undefined);
 assert.equal(reading.warningDistanceJa({...view.signals[0],state:'CLEAR',distance:{signedFromBoundary:0,unit:'JPY',operator:'<',atBoundary:true,boundaryCounts:false}}),'基準ちょうど・まだ成立していません');
 assert.equal(reading.warningDistanceJa({...view.signals[1],state:'CLEAR',distance:{signedFromBoundary:-.25,unit:'RATIO',operator:'>=',atBoundary:false,boundaryCounts:true}}),'成立まであと0.25倍の上昇');
 assert.equal(reading.warningDistanceJa({...view.signals[1],state:'STALE'}),null);
+assert.equal(reading.warningDistanceJa({...view.signals[3],state:'CLEAR',distance:{signedFromBoundary:12.5,unit:'JPY_EPS',operator:'<',atBoundary:false,boundaryCounts:false}}),'基準まであと12.5円（下回ると成立）');
+assert.equal(reading.warningDistanceJa({...view.signals[2],state:'ACTIVE',distance:{signedFromBoundary:-.01,unit:'INDEX_RATIO',operator:'<',atBoundary:false,boundaryCounts:false}}),'基準より指数比の差 0.01低い・成立中');
+assert.equal(reading.warningDistanceJa({...view.signals[6],state:'CLEAR',distance:{signedFromBoundary:-.1,unit:'FRACTION',operator:'>=',atBoundary:false,boundaryCounts:true}}),'成立まであと10ポイントの上昇');
 assert.match(reading.warningDistanceJa({...view.signals[5],state:'CLEAR',distance:{signedFromBoundary:-1e-10,unit:'MACD_GAP',operator:'>',atBoundary:false,boundaryCounts:false}}),/0.0000000001/);
 console.log('警戒v2：旧支持規則の非流用・版/時点/重複/未定義拒否・距離境界 PASS');
+
+require.extensions['.tsx']=(mod,filename)=>mod._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'),{
+ compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX},fileName:filename}).outputText,filename);
+const React=require('react');
+const {renderToStaticMarkup}=require('react-dom/server');
+const {WarningConditionsDetails}=require(path.join(src,'components/today/WarningConditionsDetails.tsx'));
+const html=renderToStaticMarkup(React.createElement(WarningConditionsDetails,{view}));
+assert.match(html,/基準未確定/);
+assert.match(html,/条件の計算が動くことと、下落を予測できることは別/);
+assert.match(html,/時間がたつだけで検証済みにはなりません/);
+assert.match(html,/測定できる条件 4件/);
+assert.match(html,/成績：まだ採点できる記録がありません/);
+assert.match(html,/3・4・7番は判定基準の確定待ち/);
+
+assert.equal(reading.warningDistanceJa({...view.signals[6],state:'CLEAR',distance:{signedFromBoundary:-1,unit:'CASES',operator:'>=',atBoundary:false,boundaryCounts:true}}),'最低件数まであと1件（5件以上で株価反応を判定）');

@@ -83,6 +83,26 @@ class LevelMapError(ValueError):
     pass
 
 
+def estimate_input_usable(record, *, strict=False):
+    """Reject known missing constituent valuations; new inputs need coverage.
+
+    Legacy records without this metadata retain their unknown coverage. They
+    are not a means to admit a newly collected partial day.
+    """
+    if not isinstance(record, dict):
+        return False
+    coverage = record.get('coverage')
+    if coverage is None:
+        return not strict
+    return (isinstance(coverage, dict) and type(coverage.get('members')) is int
+            and coverage['members'] > 0 and type(coverage.get('missingMarketCap')) is int
+            and coverage['missingMarketCap'] == 0)
+
+
+def morning_input_usable(record):
+    return isinstance(record,dict) and estimate_input_usable({'coverage':record.get('epsCoverage')})
+
+
 def _finite(value: Any) -> Optional[float]:
     if isinstance(value, bool) or value is None:
         return None

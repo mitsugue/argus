@@ -155,6 +155,10 @@ def _glue(monkeypatch, tmp_path, now):
                                                      "factors": {"factors": {"1111": 1.0, "2222": 1.0}},
                                                      "weightsAsOf": "2026-08-31"})
     monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "test-only")
+    # This fixture contains two synthetic members, not the production 225.
+    # Keep its dated membership equally synthetic when checking completeness.
+    monkeypatch.setattr(scanner, '_nikkei225_constituent_changes', lambda:{'rows':[
+        {'effective':'2026-10-01','added':[],'removed':[]}]})
     monkeypatch.setattr(scanner, "_ai_now_iso", lambda: now)
     monkeypatch.setattr(scanner, "_level_map_remote", lambda: None)
     calls = []
@@ -166,6 +170,63 @@ def _glue(monkeypatch, tmp_path, now):
     for bar in bars([60000 * (1 + 0.01 * ((i % 12) - 6) / 6) for i in range(200)], start=date(2026, 1, 5)):
         rows.append({**bar, "availableFrom": bar["date"] + "T07:00:00Z"})
     return scanner, path, rows, calls
+
+
+def test_partial_current_day_cannot_freeze_eps_and_complete_receipt_corrects_originals(monkeypatch,tmp_path):
+    import argus_analysis_history as history
+    import argus_level_map_backup as backup
+    scanner,path,rows,_=_glue(monkeypatch,tmp_path,'2026-10-07T07:35:00Z')
+    rows=[r for r in rows if r['date']<='2026-10-07']
+    partial=lambda day,headers:{'1111':{'MktCap':1000,'FwdPER':20}}
+    monkeypatch.setattr(scanner,'_jq_valuation_for_date',partial)
+    monkeypatch.setattr(scanner,'_candidates_warm',lambda *a:None)
+    monkeypatch.setattr(scanner,'_JQ_VALUATION_DAY_CACHE',{'2026-10-07':partial(None,None)})
+    scanner._level_map_warm(rows,current_only=True)
+    assert history.read_level_map_state(path)['eps']=={}
+    assert scanner._LEVEL_MAP['status']=='WAITING_FOR_CURRENT_ESTIMATE'
+    assert '2026-10-07' not in scanner._JQ_VALUATION_DAY_CACHE
+    # Simulate the preserved legacy 25-of-225 receipt and its future map.
+    bad={'date':'2026-10-07','eps':4549.812,'basis':m.EPS_BASIS,'recordedAt':'2026-10-07T06:51:26Z',
+         'coverage':{'members':225,'missingMarketCap':200}}
+    history.append_level_map_eps(path,bad)
+    bad_morning=m.morning_map('2026-10-08',rows,{'2026-10-07':bad['eps']},
+                             eps_records={'2026-10-07':bad},created_at='2026-10-07T06:51:27Z')
+    history.append_level_map(path,bad_morning)
+    scanner._LEVEL_MAP['loaded']=False
+    complete=lambda day,headers:{'1111':{'MktCap':1000,'FwdPER':20},'2222':{'MktCap':1000,'FwdPER':16}}
+    monkeypatch.setattr(scanner,'_jq_valuation_for_date',complete)
+    scanner._level_map_warm(rows,current_only=True)
+    state=history.read_level_map_state(path)
+    assert state['eps']['2026-10-07']['coverage']['missingMarketCap']==0
+    assert state['mornings'][0]['epsCoverage']['missingMarketCap']==0
+    originals,corrections=history.read_level_map_eps_originals(path)
+    assert originals['2026-10-07']==bad and len(corrections)==1
+    original_mornings,corrections=history.read_level_map_eps_originals(path,morning=True)
+    assert original_mornings['2026-10-08']==bad_morning and len(corrections)==1
+    # The old objects and later corrected receipts both survive remote restore.
+    remote=_FakeRemote();assert backup.synchronize(path,remote)['status']=='VERIFIED'
+    fresh=tmp_path/'restored.sqlite3';history.initialize(fresh)
+    assert backup.restore(fresh,remote)['restored']==4
+    assert history.read_level_map_state(fresh)==state
+    assert history.read_level_map_eps_originals(fresh)[0]['2026-10-07']==bad
+    puts=remote.puts;assert backup.synchronize(path,remote)['written']==0 and remote.puts==puts
+
+
+def test_valid_first_eps_and_opened_morning_cannot_be_rewritten(tmp_path):
+    import argus_analysis_history as history
+    path=tmp_path/'history.sqlite3';history.initialize(path)
+    complete={'date':'2026-10-07','eps':4000,'basis':m.EPS_BASIS,'recordedAt':'2026-10-07T07:35:00Z',
+              'coverage':{'members':225,'missingMarketCap':0}}
+    history.append_level_map_eps(path,complete)
+    with pytest.raises(ValueError,match='incomplete_original'):
+        history.append_level_map_eps_correction(path,{**complete,'eps':4100,'recordedAt':'2026-10-07T08:05:00Z'})
+    bad={'morningOf':'2026-10-08','recordId':'lm-'+'a'*32,'createdAt':'2026-10-07T07:00:00Z',
+         'epsBasis':m.EPS_BASIS,'epsCoverage':{'members':225,'missingMarketCap':200}}
+    history.append_level_map(path,bad)
+    with pytest.raises(ValueError,match='preopen'):
+        history.append_level_map_morning_correction(path,{**bad,'recordId':'lm-'+'b'*32,
+            'epsCoverage':complete['coverage'],'createdAt':'2026-10-08T00:00:00Z'})
+    assert history.read_level_map_state(path)=={'eps':{'2026-10-07':complete},'mornings':[bad]}
 
 
 def test_glue_stores_the_estimate_and_one_morning_map_before_the_open(monkeypatch, tmp_path):

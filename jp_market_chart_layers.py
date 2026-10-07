@@ -7,6 +7,14 @@ import argus_market_clock as clock
 import jp_market_level_map as levels
 
 
+def _available_by(value, now):
+    try:
+        received = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        return received.tzinfo is not None and received <= now
+    except (TypeError, ValueError):
+        return False
+
+
 def _number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
 
@@ -50,14 +58,14 @@ def _deadline(entry):
 
 def valuation_history(eps_records, morning, price_rows):
     """同じ方式で再計算した過去との位置比較。到達・反転の予測ではない。"""
-    if not morning or not _number(morning.get('eps')) or not _number(morning.get('previousClose')):
+    if not levels.morning_input_usable(morning) or not _number(morning.get('eps')) or not _number(morning.get('previousClose')):
         return None
     cutoff = morning.get('epsDate')
     if not isinstance(cutoff, str):
         return None
     records = []
     for day, record in eps_records.items():
-        if (not isinstance(record, dict) or record.get('basis') != levels.EPS_BASIS
+        if (not levels.estimate_input_usable(record) or record.get('basis') != levels.EPS_BASIS
                 or record.get('date') != day or day > cutoff or not _number(record.get('per'))):
             continue
         try:
@@ -87,6 +95,44 @@ def valuation_history(eps_records, morning, price_rows):
             'retrospective': True, 'actionAuthority': False}
 
 
+def closing_map(bars, eps_records, morning, *, now_iso):
+    """現在表示の投影。朝の事前記録を変更せず、新しい終値を先に出す。"""
+    now = datetime.fromisoformat(now_iso.replace('Z', '+00:00'))
+    if now.tzinfo is None or not bars or not levels.morning_input_usable(morning):
+        return None
+    last = bars[-1]
+    previous = str(morning.get('previousSession') or '')
+    # Once tomorrow's fixed map exists, today's closing display still uses
+    # today's date. The immutable next-morning record is kept separately.
+    if last['date'] < previous or (last['date'] == previous
+            and last['date'] != now.astimezone(timezone(timedelta(hours=9))).date().isoformat()):
+        return None
+    known = {}
+    for day, record in eps_records.items():
+        try:
+            received = datetime.fromisoformat(str(record.get('recordedAt')).replace('Z', '+00:00')) if isinstance(record, dict) else None
+        except (ValueError, TypeError):
+            received = None
+        if (levels.estimate_input_usable(record) and record.get('date') == day and day <= last['date']
+                and record.get('basis') == levels.EPS_BASIS and _number(record.get('eps'))
+                and received is not None and received.tzinfo is not None and received <= now):
+            known[day] = record['eps']
+    # The morning's already admitted input remains visibly dated while the
+    # new valuation is not available. It is never labelled today's EPS.
+    if (_number(morning.get('eps')) and isinstance(morning.get('epsDate'), str)
+            and morning['epsDate'] <= last['date']):
+        known.setdefault(morning['epsDate'], morning['eps'])
+    try:
+        following = date.fromisoformat(last['date']) + timedelta(days=1)
+        projection = levels.morning_map(following.isoformat(), bars, known,
+                                       eps_records=eps_records, created_at=now_iso)
+    except (levels.LevelMapError, ValueError, TypeError):
+        return None
+    projection.update(displayOnly=True, asOf=last['date'],
+                      valuationPending=projection['epsDate'] != last['date'])
+    return projection
+
+
 def snapshot(rows, eps_records, morning, candidates, *, now_iso):
     """公開用。日付を厳密に守り、個別銘柄・研究原本は返さない。"""
     now = datetime.fromisoformat(now_iso.replace('Z', '+00:00'))
@@ -94,12 +140,13 @@ def snapshot(rows, eps_records, morning, candidates, *, now_iso):
     start = (today - timedelta(days=184)).isoformat()
     end = (today + timedelta(days=92)).isoformat()
     today_s = today.isoformat()
+    morning = morning if levels.morning_input_usable(morning) else None
     # 当日の未確定足は使わない。寄付前から見える値は前営業日終値。
     bars = sorted([r for r in rows if isinstance(r, dict) and str(r.get('date', '')) <= today_s
                    and all(_number(r.get(k)) for k in ('close', 'high', 'low'))
-                   and (r.get('availableFrom') <= now_iso if r.get('availableFrom') else r.get('date') < today_s)],
+                   and (_available_by(r.get('availableFrom'), now) if r.get('availableFrom') else r.get('date') < today_s)],
                   key=lambda r: r['date'])[-3000:]
-    eps = {d: v['eps'] for d, v in eps_records.items() if isinstance(v, dict) and _number(v.get('eps'))}
+    eps = {d: v['eps'] for d, v in eps_records.items() if levels.estimate_input_usable(v) and _number(v.get('eps'))}
     points = []
     for bar in bars:
         if bar['date'] < start: continue
@@ -135,16 +182,24 @@ def snapshot(rows, eps_records, morning, candidates, *, now_iso):
         open_records.append({'id': record.get('recordId'), 'label': record.get('candidate'),
                              'start': entry, 'end': deadline, 'target': target, 'stop': stop,
                              'movingTarget': moving})
+    display = closing_map(bars, eps_records, morning, now_iso=now_iso)
+    shown = display or current
     nearest = []
-    if current and _number(current.get('atr14')) and _number(current.get('previousClose')):
-        ratio = current['previousClose'] / current['eps']
+    if shown and _number(shown.get('atr14')) and _number(shown.get('previousClose')):
+        ratio = shown['previousClose'] / shown['eps']
         for side, multiple in (('UP', math.floor(ratio) + 1), ('DOWN', math.ceil(ratio) - 1)):
-            price = current['eps'] * multiple
-            # 朝の地図と同じ距離の表を使う。線の種類による予測力とはしない。
-            stats = levels.reach(side, abs(price - current['previousClose']) / current['atr14'])
-            nearest.append({'side': side, 'multiple': multiple, 'price': round(price, 2), **stats})
+            price = shown['eps'] * multiple
+            # 表示中の終値・EPS・ATRから、同じ距離の表を選ぶ。線の種類による予測力とはしない。
+            stats = levels.reach(side, abs(price - shown['previousClose']) / shown['atr14'])
+            nearest.append({'side': side, 'multiple': multiple, 'price': round(price, 2),
+                            'distancePct': round((price / shown['previousClose'] - 1) * 100, 3),
+                            'distanceAtr': round((price - shown['previousClose']) / shown['atr14'], 3), **stats})
+    local = now.astimezone(timezone(timedelta(hours=9)))
+    close_pending = (clock.is_trading_day(clock.JP_EQUITY, today) and (local.hour, local.minute) >= (15, 30)
+                     and (not bars or bars[-1]['date'] < today_s))
     return {'schemaVersion': 'jp-market-chart-layers-v1', 'today': today_s, 'start': start, 'end': end,
-            'points': points, 'current': current, 'pivots': turns, 'pending': pending,
-            'valuationHistory': valuation_history(eps_records, morning, bars) if current else None,
+            'points': points, 'current': current, 'displayMap': display, 'closePending': close_pending,
+            'pivots': turns, 'pending': pending,
+            'valuationHistory': valuation_history(eps_records, shown, bars) if shown else None,
             'candidates': open_records[-30:], 'nearest': nearest, 'epsBasis': levels.EPS_BASIS,
             'actionAuthority': False, 'automaticAiCalls': 0}

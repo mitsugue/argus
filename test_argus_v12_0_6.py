@@ -176,8 +176,8 @@ def test_fe_investigate_button_outside_details():
     # v12.2.12: 銘柄カードはAsset Desk(AssetWhyPanel)へ移設 — ガード意図は不変。
     src = _read("components", "assetDesk", "AssetWhyPanel.tsx")
     btn = src.index("AiExplanationBlock symbol=")
-    details = src.index("詳細データ(値動き・原因分析)を見る")
-    assert btn < details, "即時調査ボタンは詳細データ折りたたみの外(前)に出す"
+    details = src.index("保存した経緯・分析の内訳")
+    assert btn < details, "保存された原因の説明は、経緯・内訳の折りたたみより先に出す"
 
 
 def test_fe_institutional_view_japanese_first():
