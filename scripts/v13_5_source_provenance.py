@@ -36,9 +36,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     # 信用環境の公式入力・保存・表示を確認した正確な内容。
-    'argus_credit_conditions.py': 'b83afdb277f677e90f7fc8fa59dea122e2ba0a85',
-    'docs/operations/credit-conditions.md': 'ea6ecacc852fe9f1da225e4b43b1a64a9cb2981e',
-    'test_argus_credit_conditions.py': '1bf4bd01d0a0815f09c654d8de0dc07a782a9a36',
+    'argus_credit_conditions.py': 'ebb7be0ef7a37e9cc44f0787a85a9464dd28a9f6',
+    'docs/operations/credit-conditions.md': '6805d3ca72cd2af0e4fed9905ad29a5228b7eaee',
+    'test_argus_credit_conditions.py': '561f43c9b4c5bb1006c012ba322c0c951765aa75',
     'web/scripts/credit-conditions.test.cjs': '5508850dc2c89ec0e44ee0fcf9a08a8adb768dbc',
     'web/src/components/today/CreditConditionsDetails.css': 'cd4c4e8e641c1dc909b5d834370919174c4a88f7',
     'web/src/components/today/CreditConditionsDetails.tsx': '4da98e02589d0d800e5b240853b19bd38bdba7ac',
