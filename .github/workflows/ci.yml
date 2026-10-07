@@ -55,6 +55,8 @@ jobs:
         run: node web/scripts/browser-rate-limit-context.test.mjs
       - name: Check index chart subject isolation
         run: node web/scripts/index-chart-isolation.test.mjs
+      - name: ページ移動の保存表示と追加取得を実ブラウザで確認
+        run: cd web && node scripts/navigation-cache-browser.test.mjs
       - name: 通常復帰で認証と一斉取得を繰り返さない
         run: node web/scripts/app-resume-browser.test.mjs
       - name: Check news presentation hierarchy

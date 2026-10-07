@@ -12,6 +12,7 @@ import {useMarketBrief} from './src/hooks/useMarketBrief';
 function Screen(){const {brief,loading}=useMarketBrief();useEffect(()=>{window.mounts=(window.mounts||0)+1},[]);return <section><input aria-label="画面の状態"/><p data-testid="brief">{brief?.unifiedSummary?.sections.view.textJa||'未取得'}</p><p data-testid="loading">{String(loading)}</p></section>}
 function Fixture(){const [page,setPage]=useState('today');return <><button onClick={()=>setPage('asset')}>銘柄を開く</button><button onClick={()=>setPage('today')}>トップへ戻る</button><AppShell sidebar={null} lastUpdated={new Date()} pageKey={page}><Screen/></AppShell></>}
 createRoot(document.getElementById('root')).render(<Fixture/>);`,resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,loader:{'.css':'empty'},define:{'import.meta.env.VITE_ARGUS_BACKEND_URL':'"https://nav-api.test"','__PRODUCT_VERSION__':'"13.8.79"','__BUILD_ID__':'"test"','__BUILD_TIME__':'"test"','__GIT_SHA__':'"test"','process.env.NODE_ENV':'"production"'}});
+if(process.argv.includes('--compile-only')){console.log('画面移動のブラウザ検査をコンパイル済み（実行はCIのブラウザ準備後）');process.exit(0)}
 const browser=await chromium.launch({headless:true});
 try{const page=await browser.newPage({viewport:{width:390,height:844}});let requests=0;const errors=[];
 page.on('pageerror',err=>errors.push(err.message));
