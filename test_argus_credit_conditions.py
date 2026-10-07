@@ -112,24 +112,27 @@ def test_private_backup_restores_all_credit_revisions_without_owner_fields(tmp_p
     assert credit.read(restored,cutoff=LATER)['snapshotId']==credit.read(path,cutoff=LATER)['snapshotId']
     writes=remote.writes;assert backup.synchronize(path,remote)==result and remote.writes==writes
 
-def test_live_routes_read_saved_projection_without_external_acquisition(monkeypatch,tmp_path):
+@pytest.mark.parametrize('read_at,effective_date',[(AT,'2026-10-08'),('2026-10-08T23:00:00Z','2026-10-09')])
+def test_live_routes_read_saved_projection_without_external_acquisition(monkeypatch,tmp_path,read_at,effective_date):
     import scanner
     doc=credit.read(retained(tmp_path),cutoff=AT)
     monkeypatch.setattr(scanner,'_CREDIT_CONDITIONS_CACHE',{'document':doc,'restoreAttempted':True,'status':'SAVED','errorClass':None})
-    monkeypatch.setattr(scanner,'_ai_now_iso',lambda:AT)
+    monkeypatch.setattr(scanner,'_ai_now_iso',lambda:read_at)
     def forbidden(*args,**kwargs):raise AssertionError('screen cannot collect')
     monkeypatch.setattr(credit,'refresh',forbidden)
     monkeypatch.setattr(scanner.requests,'get',forbidden)
     monkeypatch.setattr(scanner,'_INTEL_STORE',[])
     monkeypatch.setattr(scanner,'_news_ja_restore_once',lambda:None)
-    monkeypatch.setattr(scanner,'_JQ_MASTER_CACHE',{'data':[{'code4':'1001','sector33Code':'7050','effectiveDate':'2026-10-08','receivedAt':AT},
-        {'code4':'1002','sector33Code':'8050','effectiveDate':'2026-10-08','receivedAt':AT}]})
+    monkeypatch.setattr(scanner,'_JQ_MASTER_CACHE',{'data':[{'code4':'1001','sector33Code':'7050','effectiveDate':effective_date,'receivedAt':read_at},
+        {'code4':'1002','sector33Code':'8050','effectiveDate':effective_date,'receivedAt':read_at},
+        {'code4':'1003','sector33Code':'7050','effectiveDate':'2026-10-10','receivedAt':read_at}]})
     client=scanner.app.test_client()
     for _ in range(2):assert client.get('/api/argus/credit-conditions').get_json()['snapshotId']==doc['snapshotId']
     for symbol in ('1001','1002'):
         body=client.get('/api/argus/events/'+symbol+'/institutional-intelligence').get_json()
         assert body['creditImpact']['sources'] and body['creditImpact']['actionAuthority'] is False
     assert client.get('/api/argus/events/UNCLASSIFIED/institutional-intelligence').get_json()['creditImpact'] is None
+    assert client.get('/api/argus/events/1003/institutional-intelligence').get_json()['creditImpact'] is None
 
 
 def test_brief_numbers_remain_verified_and_context_is_small(tmp_path):

@@ -9524,7 +9524,7 @@ def api_argus_event_intel(symbol):
     classification_known = bool(meta.get("receivedAt") and meta.get("effectiveDate")
         and argus_news_freshness.age_hours(meta["receivedAt"], move) is not None
         and 0 <= argus_news_freshness.age_hours(meta["receivedAt"], move) <= 48
-        and str(meta["effectiveDate"]) <= move[:10])
+        and str(meta["effectiveDate"]) <= datetime.fromisoformat(move.replace("Z", "+00:00")).astimezone(TZ_JST).date().isoformat())
     credit_impact = argus_credit_conditions.asset_impact(_credit_conditions_document(),
         sector_code=meta.get("sector33Code")) if classification_known else None
     return jsonify({"symbol": symu, "count": len(out), "items": out[:8], "creditImpact": credit_impact,
