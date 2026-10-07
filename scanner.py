@@ -40278,6 +40278,42 @@ def _jp_market_comparison_calculate(horizon):
 _JP_INTERNALS_CACHE = {"prices": {}, "classifications": {}, "restoreAttempted": False}
 _JP_INTERNALS_ACQUISITION = {"status": "NOT_RUN", "lastAttemptAt": None, "lastSuccessfulAcquisitionAt": None}
 _JP_INTERNALS_REFRESH_LOCK = threading.Lock()
+_JP_INPUT_BACKUP_LOCK = threading.Lock()
+_JP_INPUT_BACKUP_STATUS = {'status': 'NOT_RUN'}
+
+
+def _jp_market_inputs_backup_schedule():
+    """Reuse the private backup connection; only called by the warm lane."""
+    if not _cost_policy_durable_enabled():
+        return False
+    stamp = _JP_INPUT_BACKUP_STATUS.get('lastAttemptMonotonic')
+    if stamp is not None and time.monotonic() - stamp < 3600:
+        return False
+    if not _JP_INPUT_BACKUP_LOCK.acquire(blocking=False):
+        return False
+    def worker():
+        try:
+            import argus_market_input_backup
+            remote = _level_map_remote()
+            if remote is None:
+                _JP_INPUT_BACKUP_STATUS.update(status='NOT_CONFIGURED')
+                return
+            path = os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3')
+            result = argus_market_input_backup.synchronize(path, remote)
+            _JP_INPUT_BACKUP_STATUS.update(result, verifiedAt=_ai_now_iso())
+        except Exception as exc:
+            _JP_INPUT_BACKUP_STATUS.update(status='FAILED', errorClass=type(exc).__name__)
+        finally:
+            _JP_INPUT_BACKUP_LOCK.release()
+    _JP_INPUT_BACKUP_STATUS.update(status='RUNNING', lastAttemptAt=_ai_now_iso(),
+        lastAttemptMonotonic=time.monotonic())
+    try:
+        threading.Thread(target=worker, name='market-input-private-backup', daemon=True).start()
+    except Exception:
+        _JP_INPUT_BACKUP_LOCK.release()
+        _JP_INPUT_BACKUP_STATUS.update(status='FAILED', errorClass='WorkerStartFailed')
+        return False
+    return True
 
 
 _JP_SECTOR_HEATMAP = None
@@ -40417,6 +40453,7 @@ def _jp_earnings_reaction_codes():
 
 def _jp_internals_warm():
     """Short daily-bar windows on the existing authenticated collection lane."""
+    import sqlite3
     if not _JP_INTERNALS_REFRESH_LOCK.acquire(blocking=False): return
     try:
         _jp_internals_storage(restore=True)
@@ -40467,6 +40504,17 @@ def _jp_internals_warm():
                     "priceBasis": "JQUANTS_ADJUSTED_CLOSE", "receivedAt": received,
                     "source": "J-Quants V2 equities/bars/daily", "sourceResponseSha256": hashlib.sha256(raw).hexdigest(),
                     "rows": sorted(normalized, key=lambda r: r["date"])}
+                if symbol in {str(n) for n in range(1617, 1634)} and _cost_policy_durable_enabled():
+                    try:
+                        import argus_market_input_backup
+                        argus_market_input_backup.retain_sector(
+                            os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3'),
+                            raw, symbol=symbol, received_at=received)
+                        _JP_INPUT_BACKUP_STATUS['sectorOriginalRetention'] = 'RETAINED'
+                    except (ValueError, TypeError, OSError, sqlite3.Error) as exc:
+                        # A backup failure is separate from a usable quote.
+                        _JP_INPUT_BACKUP_STATUS.update(sectorOriginalRetention='FAILED',
+                            retentionErrorClass=type(exc).__name__)
                 updated.append(symbol)
             except Exception as exc:
                 failed.append(symbol)
@@ -41371,6 +41419,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     memo["ts"], memo["data"] = now, data
     if warm:
         _index_research_warm()
+        _jp_market_inputs_backup_schedule()
     return data
 
 
