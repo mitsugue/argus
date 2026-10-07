@@ -39092,6 +39092,7 @@ def _jp_index_proxy_compact(proxy):
 # warm, and kept on the durable disk; the estimate itself is arithmetic.
 _JP_DIVIDEND_STORE = {"rows": {}, "fetchedAt": {}, "closes": None, "restoreAttempted": False,
                       "lastError": None, "requestsLastWarm": 0}
+_JP_EARNINGS_BACKFILL_ATTEMPTS = {}
 _JP_DIVIDEND_PER_WARM = 20
 _JP_DIVIDEND_REFRESH_SECONDS = 7 * 86400
 _JP_DIVIDEND_KEEP = ("Code", "DiscDate", "DiscTime", "DocType", "CurPerType", "CurFYEn",
@@ -39144,10 +39145,24 @@ def _jp_dividend_warm(member_codes):
     if not _JQUANTS_API_KEY or not member_codes:
         return
     now = time.time()
+    completed = set(member_codes)  # No durable original destination: do not add acquisition.
+    if _cost_policy_durable_enabled():
+        import argus_earnings_history
+        import sqlite3
+        try:
+            completed = argus_earnings_history.completed_codes(
+                os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3"),
+                cutoff=_ai_now_iso(), member_codes=member_codes)
+        except (ValueError, TypeError, OSError, sqlite3.Error) as exc:
+            # Broken proof is a visible store failure, not 225 new requests.
+            _JP_EARNINGS_HISTORY_STATUS.update(status="PERSIST_FAILED", errorClass=type(exc).__name__)
     due = sorted((code for code in member_codes
-                  if now - store["fetchedAt"].get(code, 0.0) >= _JP_DIVIDEND_REFRESH_SECONDS),
-                 key=lambda code: store["fetchedAt"].get(code, 0.0))[:_JP_DIVIDEND_PER_WARM]
+                  if (now - store["fetchedAt"].get(code, 0.0) >= _JP_DIVIDEND_REFRESH_SECONDS
+                      or code not in completed)
+                  and now - _JP_EARNINGS_BACKFILL_ATTEMPTS.get(code, 0.0) >= 300),
+                 key=lambda code: (code in completed, store["fetchedAt"].get(code, 0.0)))[:_JP_DIVIDEND_PER_WARM]
     for code in due:
+        _JP_EARNINGS_BACKFILL_ATTEMPTS[code] = now
         try:
             rows = _jquants_paginated("/fins/summary", {"code": code}, max_pages=3, request_timeout=15)
             store["requestsLastWarm"] += 1
@@ -39156,7 +39171,7 @@ def _jp_dividend_warm(member_codes):
             store["requestsLastWarm"] += 1
             continue
         latest = argus_ex_dividend.latest_disclosures(rows).get(code)
-        _jp_earnings_history_retain(rows, member_codes=member_codes)
+        _jp_earnings_history_retain(rows, member_codes=member_codes, query_code=code)
         store["fetchedAt"][code] = now
         if latest:
             store["rows"][code] = {k: latest.get(k) for k in _JP_DIVIDEND_KEEP if latest.get(k) not in (None,)}
@@ -40798,7 +40813,7 @@ _JP_MARKET_ENGINE_STATEMENTS_WINDOW_DAYS = 14
 _JP_EARNINGS_HISTORY_STATUS = {"status": "NOT_ACQUIRED", "goodEarningsRuleDefined": False}
 
 
-def _jp_earnings_history_retain(rows, *, member_codes=None, query_date=None):
+def _jp_earnings_history_retain(rows, *, member_codes=None, query_date=None, query_code=None):
     """Keep already-fetched forecasts, without a second provider call or store."""
     import argus_earnings_history
     import sqlite3
@@ -40823,7 +40838,7 @@ def _jp_earnings_history_retain(rows, *, member_codes=None, query_date=None):
         result = argus_earnings_history.retain(
             os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3"),
             rows, received_at=_ai_now_iso(), member_codes=sorted(members), query_date=query_date,
-            complete_scope=scope)
+            complete_scope=scope, query_code=query_code)
         _JP_EARNINGS_HISTORY_STATUS.clear()
         _JP_EARNINGS_HISTORY_STATUS.update(result)
     except (ValueError, TypeError, OSError, sqlite3.Error) as exc:
