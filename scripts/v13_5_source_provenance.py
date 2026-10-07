@@ -36,12 +36,12 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     # 信用環境の公式入力・保存・表示を確認した正確な内容。
-    'argus_credit_conditions.py': 'ebb7be0ef7a37e9cc44f0787a85a9464dd28a9f6',
-    'docs/operations/credit-conditions.md': '6805d3ca72cd2af0e4fed9905ad29a5228b7eaee',
-    'test_argus_credit_conditions.py': '561f43c9b4c5bb1006c012ba322c0c951765aa75',
-    'web/scripts/credit-conditions.test.cjs': '5508850dc2c89ec0e44ee0fcf9a08a8adb768dbc',
+    'argus_credit_conditions.py': 'a17c75bfb12cbff2a94957b30e17d0a9ae959371',
+    'docs/operations/credit-conditions.md': '78b9b57cdb053883459331786dedfae9299375b6',
+    'test_argus_credit_conditions.py': 'cfa7d7049adaa819880378a626a5973878b36c89',
+    'web/scripts/credit-conditions.test.cjs': '89282743304a94f6af7e7c5391e03ccc135f1043',
     'web/src/components/today/CreditConditionsDetails.css': 'cd4c4e8e641c1dc909b5d834370919174c4a88f7',
-    'web/src/components/today/CreditConditionsDetails.tsx': '4da98e02589d0d800e5b240853b19bd38bdba7ac',
+    'web/src/components/today/CreditConditionsDetails.tsx': '101c9a3ec4a136c10a0c8acdccfa1a49995fcb9f',
     'web/src/components/today/WarningConditionsDetails.tsx': 'dad40e37c1843bf507e169cc42022443347f396e',
     'test_argus_warning_conditions.py': 'f5e93fb949d11721829e0f00930d9c72aa0da84a',
     'argus_warning_conditions.py': '18ef85b018b329895d25a66673e3f77057db817d',
@@ -146,7 +146,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'a671d172d270126b225c5d80c87533c144b8fde8',
+    'web/scripts/owner-today-https.mjs': 'abe66d313f42087f5d8059ed4e0c50e53f034e9d',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
