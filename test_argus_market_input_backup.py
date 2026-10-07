@@ -108,3 +108,46 @@ def test_schedule_reuses_existing_connection_bounded_and_not_inline(monkeypatch,
     assert calls==[str(tmp_path/'jp_market_source_history.sqlite3')]
     assert scanner._JP_INPUT_BACKUP_STATUS['status']=='VERIFIED'
     assert scanner._jp_market_inputs_backup_schedule() is False
+
+
+def test_backup_deadline_prevents_outbound_body(monkeypatch,tmp_path):
+    path=originals(tmp_path);remote=Remote(); ticks=iter([0,backup.MAX_SYNC_SECONDS])
+    monkeypatch.setattr(backup.time,'monotonic',lambda:next(ticks))
+    with pytest.raises(ValueError,match='deadline'): backup.synchronize(path,remote)
+    assert remote.writes==0
+
+
+def test_sector_retention_failure_keeps_quotes_and_does_not_fetch_again(monkeypatch,tmp_path):
+    import scanner
+    import threading
+    calls=[];retentions=[]
+    class Response:
+        status_code=200
+        def __init__(self,symbol): self.symbol=symbol
+        def __enter__(self): return self
+        def __exit__(self,*args): pass
+        def iter_content(self,size):
+            yield sources._json({'data':[{'Code':self.symbol+'0','Date':'2026-10-06','AdjC':100,'Vo':10}]}).encode()
+    def get(url,**kwargs):
+        calls.append(kwargs['params']['code']);return Response(calls[-1])
+    def fail(*args,**kwargs):
+        retentions.append(kwargs['symbol']);raise OSError('synthetic')
+    monkeypatch.setattr(scanner,'_JP_INTERNALS_CACHE',{'prices':{},'classifications':{}})
+    monkeypatch.setattr(scanner,'_JP_INTERNALS_ACQUISITION',{'status':'NOT_RUN'})
+    monkeypatch.setattr(scanner,'_JP_INTERNALS_REFRESH_LOCK',threading.Lock())
+    monkeypatch.setattr(scanner,'_JP_INPUT_BACKUP_STATUS',{'status':'NOT_RUN'})
+    monkeypatch.setattr(scanner,'_JP_MARKET_ENGINE_MARKET_VIEW_MEMO',{'ts':1})
+    monkeypatch.setattr(scanner,'_JP_WATCHLIST',[])
+    monkeypatch.setattr(scanner.jp_market_internals,'SECTORS',{'synthetic':{'symbol':'1617'}})
+    monkeypatch.setattr(scanner,'_jq_master',lambda:[])
+    monkeypatch.setattr(scanner,'_JQUANTS_API_KEY','synthetic')
+    monkeypatch.setattr(scanner,'_cost_policy_durable_enabled',lambda:True)
+    monkeypatch.setattr(scanner,'_DURABILITY_PATHS',{'root':str(tmp_path)})
+    monkeypatch.setattr(scanner,'_jp_internals_storage',lambda **kwargs:None)
+    monkeypatch.setattr(scanner.requests,'get',get)
+    monkeypatch.setattr(backup,'retain_sector',fail)
+    scanner._jp_internals_warm()
+    assert calls==['1306','1617'] and retentions==['1617']
+    assert scanner._JP_INTERNALS_CACHE['prices']['1617']['rows'][0]['close']==100
+    assert scanner._JP_INTERNALS_ACQUISITION['status']=='AVAILABLE'
+    assert scanner._JP_INPUT_BACKUP_STATUS['sectorOriginalRetention']=='FAILED'

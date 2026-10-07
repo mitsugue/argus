@@ -664,6 +664,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "web/scripts/browser-rate-limit-context.test.mjs",
     "web/scripts/browser-rate-limit-proof.test.cjs",
     "web/scripts/browser-rate-limit-proof.mjs",
+    "test_argus_market_input_backup.py",
+    "argus_market_input_backup.py",
     "test_argus_warning_candidates_history.py",
     "test_argus_warning_candidates_glue.py",
     "test_argus_warning_candidates.py",
