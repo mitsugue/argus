@@ -22,7 +22,14 @@ PREFIX='market-analysis/source-inputs/v1'
 SCHEMA='argus-private-market-inputs-v1'
 SECTOR_CODES={str(n) for n in range(1617,1634)}
 BAR_FIELDS={'Date','Code','O','H','L','C','Vo','Va','AdjFactor','AdjO','AdjH','AdjL','AdjC','AdjVo',
-            'MO','MH','ML','MC','MVo','MVa','AO','AH','AL','AC','AVo','AVa'}
+            'UL','LL','MO','MH','ML','MC','MUL','MLL','MVo','MVa',
+            'MAdjO','MAdjH','MAdjL','MAdjC','MAdjVo',
+            'AO','AH','AL','AC','AUL','ALL','AVo','AVa',
+            'AAdjO','AAdjH','AAdjL','AAdjC','AAdjVo',
+            # Official V2 daily columns plus these two scalar fields observed
+            # in the authenticated daily response on 2026-10-07. Unknown fields
+            # still abort export; never strip fields from retained originals.
+            'ExRT','MktCap'}
 
 
 def _hash(raw):return hashlib.sha256(raw).hexdigest()

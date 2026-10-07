@@ -38682,7 +38682,15 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
     cache still serves (its rows carry their own PIT stamps)."""
     now = time.time()
     cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(yahoo_symbol)
-    if cached and (not fetch or now < cached["expires"]):
+    # A fresh short-history result is not a successful wider-scope request.
+    # Reading remains cache-only; only the existing warm lane may expand it.
+    scope_years = {"2y": 2, "10y": 10}
+    wider_scope = bool(cached and yahoo_symbol != "^N225"
+        and scope_years.get(range_, 0) > scope_years.get(cached.get("historyRange"), 0))
+    failed_scope_backoff = bool(cached and cached.get("lastFetchStatus") == "FAILED"
+        and cached.get("lastAttemptRange") == range_)
+    if cached and (not fetch or (now < cached["expires"]
+            and (not wider_scope or failed_scope_backoff))):
         return cached["data"]
     if not fetch:
         return []
@@ -38761,10 +38769,16 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
             except Exception: pass
     if not rows and cached and cached.get("data"):
         cached.update(expires=now+300, lastFetchStatus="FAILED", lastAttemptAt=_ai_now_iso(),
-                      lastErrorClass=fetch_error or "EmptyIndexHistory")
+                      lastAttemptRange=range_, lastErrorClass=fetch_error or "EmptyIndexHistory")
         return cached["data"]
     _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE[yahoo_symbol] = {
         "data": rows, "sourceResponseSha256": source_hash if rows else None,
+        # This is the requested acquisition scope, not a claim that every
+        # historical session was returned. Actual coverage is measured below.
+        "historyRange": (cached.get("historyRange") if cached
+            and scope_years.get(cached.get("historyRange"), 0) > scope_years.get(range_, 0)
+            else range_) if rows else None,
+        "lastAttemptRange": range_,
         "lastFetchStatus": "AVAILABLE" if rows else "FAILED", "lastAttemptAt": _ai_now_iso(),
         "acquiredAt": datetime.now(pytz.utc).isoformat() if rows else None,
         "expires": now + (_JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC if rows else 300)}

@@ -28,6 +28,28 @@ def originals(tmp_path):
     return path
 
 
+def test_daily_limit_flags_and_provider_scalar_extensions_survive_private_readback(tmp_path):
+    raw=sector(UL='0',LL='0',ExRT=1.0,MktCap=123000,
+               MUL='0',MLL='0',MAdjC=99,AUL='0',ALL='0',AAdjVo=10)
+    path=tmp_path/'source.sqlite3';remote=Remote()
+    backup.retain_sector(path,raw,symbol='1617',received_at=AT)
+    result=backup.synchronize(path,remote)
+    assert result['status']=='VERIFIED' and result['counts']['sector17']==1
+    manifest=json.loads(remote.files[backup.PREFIX+'/manifests/'+result['manifestSha256']+'.json'])
+    content=b''.join(remote.files[backup.PREFIX+'/chunks/'+c['sha256']+'.bin'] for c in manifest['chunks'])
+    entries=[json.loads(line) for line in content.splitlines()]
+    assert [base64.b64decode(r['dataBase64']) for r in entries if r.get('kind')=='raw']==[raw]
+
+
+@pytest.mark.parametrize('extra',[{'Unexpected':'do-not-export'},{'ExRT':{'owner':'excluded'}},
+                                  {'MktCap':[123]}])
+def test_extended_daily_schema_still_rejects_unknown_or_nested_values_before_export(tmp_path,extra):
+    path=tmp_path/'source.sqlite3'
+    with pytest.raises(ValueError,match='fields'):
+        backup.retain_sector(path,sector(**extra),symbol='1617',received_at=AT)
+    assert not path.exists()
+
+
 def test_originals_and_corrections_retained_and_private_backup_reuses_immutable_chunks(tmp_path):
     path=originals(tmp_path);remote=Remote()
     result=backup.synchronize(path,remote)
