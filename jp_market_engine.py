@@ -2759,7 +2759,8 @@ def project_today_sda_safe(*, cutoff: str,
                            target_ladder: Optional[Mapping[str, Any]] = None,
                            direct_index: Optional[Mapping[str, Any]] = None,
                            stock_lens: Optional[Mapping[str, Any]] = None,
-                           warning_performance: Optional[Mapping[str, Any]] = None) \
+                           warning_performance: Optional[Mapping[str, Any]] = None,
+                           adopted_warning_rules: Optional[Mapping[str, Any]] = None) \
         -> Dict[str, Any]:
     """Project compact read-only evidence for Today/SDA consumers.
 
@@ -2855,7 +2856,8 @@ def project_today_sda_safe(*, cutoff: str,
         "marketSignals": argus_market_signals.project_market_signals(
             family_projection),
         "warningSignals": project_warning_conditions(admitted.get("evidence"), cutoff=cutoff,
-                                                      performance=warning_performance),
+                                                      performance=warning_performance,
+                                                      adopted_rules=adopted_warning_rules),
         "reversal": reversal_projection,
         "targetZones": target_projection,
         "indexIdentity": identity_projection,

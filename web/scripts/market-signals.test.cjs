@@ -167,6 +167,21 @@ assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:{...warni
 const corrupted=structuredClone(warningSignals);corrupted.signals[2].state='ACTIVE';corrupted.signals[2].conditionMet=true;corrupted.signals[2].ruleStatus='DEFINED';
 corrupted.signals[4].knowledgeTime='2026-10-06T00:00:01Z';
 assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:corrupted}).activeCount,3);
+const adopted=structuredClone(warningSignals);adopted.schemaVersion='jp-warning-conditions-v3';
+for (const r of adopted.signals.filter(r=>['D03','D04','D07'].includes(r.family))) {
+  r.ruleId=`jp-warning-conditions-v3.${r.family}`;r.lineage='ARGUS_VALIDATION_RULE';
+  r.ruleStatus='DEFINED';r.state='CLEAR';r.status='AVAILABLE';r.conditionMet=false;
+  r.value=100;r.knowledgeTime=at;
+  r.performance={ruleId:r.ruleId,status:'UNVALIDATED',evaluated:0};
+}
+const adoptedView=ms.marketSignalsView({informationCutoff:at,warningSignals:adopted});
+assert.equal(adoptedView.measurableCount,7);
+assert.equal(adoptedView.signals[3].lineage,'ARGUS_VALIDATION_RULE');
+assert.equal(adoptedView.signals[3].performance.evaluated,0);
+const wrongLineage=structuredClone(adopted);wrongLineage.signals[3].lineage='ORIGINAL_DIRECTION';
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:wrongLineage}).signals[3].state,'DATA_GATED');
+const staleGrade=structuredClone(adopted);staleGrade.signals[3].performance.ruleId='jp-warning-conditions-v2.D04';
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:staleGrade}).signals[3].performance,undefined);
 assert.equal(reading.warningDistanceJa({...view.signals[0],state:'CLEAR',distance:{signedFromBoundary:0,unit:'JPY',operator:'<',atBoundary:true,boundaryCounts:false}}),'基準ちょうど・まだ成立していません');
 assert.equal(reading.warningDistanceJa({...view.signals[1],state:'CLEAR',distance:{signedFromBoundary:-.25,unit:'RATIO',operator:'>=',atBoundary:false,boundaryCounts:true}}),'成立まであと0.25倍の上昇');
 assert.equal(reading.warningDistanceJa({...view.signals[1],state:'STALE'}),null);

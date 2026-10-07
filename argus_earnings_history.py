@@ -41,7 +41,7 @@ def _published(row):
     return None
 
 
-def retain(path, rows, *, received_at, member_codes, query_date=None):
+def retain(path, rows, *, received_at, member_codes, query_date=None, complete_scope=None):
     receipt = sources._time(received_at)
     if not isinstance(rows, list) or len(rows) > MAX_ROWS:
         raise ValueError('financial_response_bound')
@@ -92,6 +92,18 @@ def retain(path, rows, *, received_at, member_codes, query_date=None):
             if query_date is not None:
                 if date.fromisoformat(query_date).isoformat() != query_date:
                     raise ValueError('financial_query_date_required')
+                # A complete date query is different from per-company reads.
+                scope=sorted(set(complete_scope or ()))
+                complete=(len(scope)==225 and set(scope)<=set(members) and rejected==0
+                          and all(r['DiscDate']==query_date for r in selected))
+                status.update(complete=complete, memberCodes=scope if complete else [],
+                              knownAt=received_at, rawId=raw_id, sourceResponseSha256=digest)
+                status['coverageSha256']=hashlib.sha256(sources._json(status).encode()).hexdigest()
+                # Keep each corrected coverage receipt, not just the newest
+                # cursor. An old cutoff must still recover its earlier scope.
+                db.execute('INSERT OR IGNORE INTO metadata VALUES(?,?)',
+                           ('financial-summary-date:' + query_date + ':revision:' + status['coverageSha256'],
+                            sources._json(status)))
                 # Empty successful date responses are distinct from failed reads.
                 db.execute('INSERT OR REPLACE INTO metadata VALUES(?,?)',
                            ('financial-summary-date:' + query_date, sources._json(status)))
@@ -136,3 +148,31 @@ def read(path, *, cutoff, member_codes):
         return result
     finally:
         db.close()
+
+
+def read_coverage(path, *, cutoff):
+    from pathlib import Path
+    import sqlite3
+    location=Path(path); limit=sources._time(cutoff)
+    if not location.exists():return {}
+    if location.is_symlink() or not location.is_file():raise ValueError('financial_store_regular_file_required')
+    db=sqlite3.connect(location.resolve().as_uri()+'?mode=ro',uri=True)
+    output={}
+    try:
+        for key,raw in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-date:%'"):
+            row=json.loads(raw); digest=row.pop('coverageSha256',None)
+            if digest is None:continue  # Older receipts did not certify a 225-member scope.
+            if hashlib.sha256(sources._json(row).encode()).hexdigest()!=digest:
+                raise ValueError('financial_coverage_integrity')
+            source=db.execute('SELECT raw,sha256 FROM raw_sources WHERE id=?',(row.get('rawId'),)).fetchone()
+            if not source or hashlib.sha256(source[0]).hexdigest()!=source[1] or source[1]!=row.get('sourceResponseSha256'):
+                raise ValueError('financial_coverage_integrity')
+            if sources._time(row['receivedAt'])<=limit and sources._time(row['knownAt'])<=limit:
+                day=row.get('queryDate')
+                if not day or key.split(':',2)[1]!=day:
+                    raise ValueError('financial_coverage_integrity')
+                old=output.get(day)
+                if old is None or sources._time(row['knownAt'])>sources._time(old['knownAt']):
+                    output[day]={**row,'coverageSha256':digest}
+        return output
+    finally:db.close()

@@ -40814,9 +40814,16 @@ def _jp_earnings_history_retain(rows, *, member_codes=None, query_date=None):
         _JP_EARNINGS_HISTORY_STATUS.update(status="MEMBER_SCOPE_UNAVAILABLE")
         return
     try:
+        scope = None
+        if query_date and len((_JP_INDEX_PROXY.get('factors') or {}).get('factors') or {}) == 225:
+            import jp_market_level_map
+            scope, _ = jp_market_level_map.constituents_on(query_date,
+                (_JP_INDEX_PROXY.get('factors') or {}).get('factors') or {},
+                _JP_INDEX_PROXY.get('weightsAsOf'), changes)
         result = argus_earnings_history.retain(
             os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3"),
-            rows, received_at=_ai_now_iso(), member_codes=sorted(members), query_date=query_date)
+            rows, received_at=_ai_now_iso(), member_codes=sorted(members), query_date=query_date,
+            complete_scope=scope)
         _JP_EARNINGS_HISTORY_STATUS.clear()
         _JP_EARNINGS_HISTORY_STATUS.update(result)
     except (ValueError, TypeError, OSError, sqlite3.Error) as exc:
@@ -41346,6 +41353,64 @@ def _jp_warning_performance(inputs, cutoff):
         return None
 
 
+def _jp_adopted_warning_rules(inputs, cutoff):
+    """Cached-only owner-adopted rules, using existing source stores and scope."""
+    from datetime import date as calendar_date
+    import sqlite3
+    import argus_warning_candidates as rules
+    import argus_earnings_history
+    import jp_market_level_map
+    histories = _N225_ANALOG_HISTORY.get('data') or inputs.get('nikkeiRows') or []
+    limit = jp_market_engine._instant(cutoff)
+    if not histories or limit is None:
+        return None
+    try:
+        first = min(r['date'] for r in histories)
+        sessions, unknown = _jp_exchange_sessions(calendar_date.fromisoformat(first),
+            limit.astimezone(TZ_JST).date(), _N225_ANALOG_HISTORY.get('calendar', []))
+        if unknown:
+            return None
+        base = ((_JP_INDEX_PROXY.get('factors') or {}).get('factors')) or {}
+        changes = _nikkei225_constituent_changes() or {}
+        closed = [d for d in sessions if rules._session_close(d) <= limit]
+        membership = {d: jp_market_level_map.constituents_on(d, base,
+            _JP_INDEX_PROXY.get('weightsAsOf'), changes)[0] for d in closed[-10:]}
+        scope = set(base)
+        for change in changes.get('rows') or []:
+            scope.update(change.get('added') or [])
+            scope.update(change.get('removed') or [])
+        path = os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3') \
+            if _cost_policy_durable_enabled() else None
+        financial_error = False
+        try:
+            financial = argus_earnings_history.read(path, cutoff=cutoff, member_codes=scope) if path and scope else []
+            coverage = argus_earnings_history.read_coverage(path, cutoff=cutoff) if path else {}
+        except (ValueError, TypeError, OSError, sqlite3.Error):
+            # One damaged original store must not hide independently usable
+            # cash-index and same-basis EPS conditions.
+            financial, coverage, financial_error = [], {}, True
+        stocks = {code: [{**r, 'instrumentId':code, 'priceBasis': source.get('priceBasis'),
+                          'knownAt': source.get('receivedAt'), 'availableFrom':r.get('closeAt')}
+                        for r in source.get('rows') or []]
+                  for code,source in _JP_INTERNALS_CACHE.get('prices', {}).items()}
+        cache = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get('^GSPC') or {}
+        sp500 = [{**r, 'receivedAt':cache.get('acquiredAt')} for r in cache.get('data') or []]
+        results = {
+            'D03': rules.ratio_rule(sessions=sessions, nikkei_rows=histories, sp500_rows=sp500, cutoff=cutoff),
+            'D04': rules.eps_rule(sessions=sessions, eps_rows=list((_LEVEL_MAP.get('eps') or {}).values()), cutoff=cutoff),
+            'D07': rules.earnings_rule(sessions=sessions, financial_rows=financial, membership_by_day=membership,
+                stock_bars=stocks, topix_rows=_TOPIX_HIST_CACHE.get('data') or [],
+                coverage_by_day=coverage, cutoff=cutoff)}
+        if financial_error:
+            results['D07']['reasonJa'] = '営業利益予想の保存原本を検証できません'
+        from argus_warning_candidates_history import study
+        performance=study(sessions=sessions,nikkei_rows=histories,sp500_rows=sp500,
+            eps_rows=list((_LEVEL_MAP.get('eps') or {}).values()),cutoff=cutoff)
+        return rules.seal_candidates(cutoff=cutoff, results=results, performance=performance)
+    except (ValueError, TypeError, KeyError, OSError, sqlite3.Error):
+        return None
+
+
 def _jp_market_engine_market_view():
     """Document-level JP_MARKET_ENGINE MARKET VIEW projection (external review item A).
 
@@ -41378,7 +41443,8 @@ def _jp_market_engine_market_view():
             nikkei_rows=inputs["nikkeiRows"], vix_rows=inputs["vixRows"])
         projection = jp_market_engine.project_today_sda_safe(
             cutoff=cutoff, evidence=evidence, reversal=reversal,
-            warning_performance=_jp_warning_performance(inputs, cutoff))
+            warning_performance=_jp_warning_performance(inputs, cutoff),
+            adopted_warning_rules=_jp_adopted_warning_rules(inputs, cutoff))
         view = {
             "schemaVersion": "argus-jp-market-engine-market-view-v1",
             "informationCutoff": cutoff,
@@ -41702,7 +41768,9 @@ def _jquants_paginated(
             raise RuntimeError("jquants_invalid_schema")
         rows.extend(x for x in page if isinstance(x, dict))
         next_cursor = body.get("pagination_key")
-        if not next_cursor or next_cursor == cursor:
+        if next_cursor and next_cursor == cursor:
+            raise RuntimeError('jquants_repeated_pagination_cursor')
+        if not next_cursor:
             return rows
         cursor = str(next_cursor)
     raise RuntimeError("jquants_pagination_limit")

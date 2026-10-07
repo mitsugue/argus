@@ -25,7 +25,7 @@ def _mapping(value):
     return value if isinstance(value, Mapping) else {}
 
 
-def project_warning_conditions(evidence, *, cutoff, performance=None):
+def project_warning_conditions(evidence, *, cutoff, performance=None, adopted_rules=None):
     # Imported at the seam to avoid a module cycle. The admitted sealed input,
     # not compact legacy counts or retrospective event-study results, is used.
     from jp_market_engine import (_content_id_valid, _cutoff, _instant, fact_note_ja,
@@ -35,6 +35,8 @@ def project_warning_conditions(evidence, *, cutoff, performance=None):
                 and evidence.get("canonicalRfcSha256") == CANONICAL_JP_MARKET_ENGINE_RFC_SHA256
                 and _content_id_valid(evidence, "jp-market-engine-evidence-"))
     families = _mapping(evidence.get("families")) if admitted else {}
+    from argus_warning_candidates import admitted_results, RULE_VERSION as ADOPTED_VERSION
+    adopted = admitted_results(adopted_rules, cutoff) if admitted else None
     output = []
     for n, name in enumerate(NAMES, 1):
         family = f"D{n:02}"
@@ -103,12 +105,20 @@ def project_warning_conditions(evidence, *, cutoff, performance=None):
             result = performance_for(performance, family, cutoff)
             if result is not None:
                 row["performance"] = deepcopy(result)
+        if adopted and family in adopted:
+            row.update(deepcopy(adopted[family]))
+            # A new rule never inherits a legacy/support or v2 grade.
+            row['performance']={'ruleId':row['ruleId'],'status':'UNVALIDATED','evaluated':0}
+            from argus_warning_candidates_history import performance_for as adopted_performance_for
+            study_result = adopted_performance_for(adopted_rules.get('performanceStudy'),family,cutoff)
+            if study_result is not None: row['performance']=deepcopy(study_result)
         output.append(row)
     support = [{"family": family, "legacyRuleId": f"legacy-v1.{family}", "conditionMet": source.get("conditionMet"),
                 "status": source.get("status"), "performanceReusedForWarning": False}
                for family in ("D03", "D05", "D06", "D07")
                if isinstance((source := families.get(family)), Mapping)]
-    return {"schemaVersion": RULE_VERSION, "informationCutoff": cutoff,
+    return {"schemaVersion": ADOPTED_VERSION if adopted else RULE_VERSION, "informationCutoff": cutoff,
+            "adoptedRulesArtifactId": adopted_rules.get('artifactId') if adopted else None,
             "sourceArtifactId": evidence.get("artifactId") if admitted else None, "rejectedEvidence": not admitted,
             "signals": output, "activeCount": sum(row["state"] == "ACTIVE" for row in output),
             "measurableCount": sum(row["state"] in ("ACTIVE", "CLEAR") for row in output), "total": 7,

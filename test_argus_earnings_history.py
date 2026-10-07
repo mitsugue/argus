@@ -85,3 +85,16 @@ def test_existing_dividend_acquisition_is_shared_without_extra_requests(monkeypa
     assert len(history.read(tmp_path/'jp_market_source_history.sqlite3', cutoff=AT, member_codes=['1000'])) == 2
     scanner._jp_dividend_warm(['1000'])
     assert len(calls) == 1
+
+
+def test_complete_date_scope_needs_225_members_and_original_receipt(tmp_path):
+    path=tmp_path/'shared.sqlite3';members=[str(1000+i) for i in range(225)]
+    history.retain(path,[],received_at=AT,member_codes=members,query_date='2026-10-06')
+    assert history.read_coverage(path,cutoff=AT)['2026-10-06']['complete'] is False
+    history.retain(path,[],received_at=LATER,member_codes=members,query_date='2026-10-06',complete_scope=members)
+    assert history.read_coverage(path,cutoff=LATER)['2026-10-06']['complete'] is True
+    assert history.read_coverage(path,cutoff=AT)['2026-10-06']['complete'] is False
+    db=sources.connect(path)
+    db.execute("UPDATE metadata SET value=replace(value,'225','224')")
+    db.commit();db.close()
+    with pytest.raises(ValueError,match='integrity'):history.read_coverage(path,cutoff=LATER)
