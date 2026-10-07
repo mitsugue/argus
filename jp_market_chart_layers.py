@@ -58,14 +58,14 @@ def _deadline(entry):
 
 def valuation_history(eps_records, morning, price_rows):
     """同じ方式で再計算した過去との位置比較。到達・反転の予測ではない。"""
-    if not morning or not _number(morning.get('eps')) or not _number(morning.get('previousClose')):
+    if not levels.morning_input_usable(morning) or not _number(morning.get('eps')) or not _number(morning.get('previousClose')):
         return None
     cutoff = morning.get('epsDate')
     if not isinstance(cutoff, str):
         return None
     records = []
     for day, record in eps_records.items():
-        if (not isinstance(record, dict) or record.get('basis') != levels.EPS_BASIS
+        if (not levels.estimate_input_usable(record) or record.get('basis') != levels.EPS_BASIS
                 or record.get('date') != day or day > cutoff or not _number(record.get('per'))):
             continue
         try:
@@ -98,7 +98,7 @@ def valuation_history(eps_records, morning, price_rows):
 def closing_map(bars, eps_records, morning, *, now_iso):
     """現在表示の投影。朝の事前記録を変更せず、新しい終値を先に出す。"""
     now = datetime.fromisoformat(now_iso.replace('Z', '+00:00'))
-    if now.tzinfo is None or not bars or not morning:
+    if now.tzinfo is None or not bars or not levels.morning_input_usable(morning):
         return None
     last = bars[-1]
     previous = str(morning.get('previousSession') or '')
@@ -113,7 +113,7 @@ def closing_map(bars, eps_records, morning, *, now_iso):
             received = datetime.fromisoformat(str(record.get('recordedAt')).replace('Z', '+00:00')) if isinstance(record, dict) else None
         except (ValueError, TypeError):
             received = None
-        if (isinstance(record, dict) and record.get('date') == day and day <= last['date']
+        if (levels.estimate_input_usable(record) and record.get('date') == day and day <= last['date']
                 and record.get('basis') == levels.EPS_BASIS and _number(record.get('eps'))
                 and received is not None and received.tzinfo is not None and received <= now):
             known[day] = record['eps']
@@ -140,12 +140,13 @@ def snapshot(rows, eps_records, morning, candidates, *, now_iso):
     start = (today - timedelta(days=184)).isoformat()
     end = (today + timedelta(days=92)).isoformat()
     today_s = today.isoformat()
+    morning = morning if levels.morning_input_usable(morning) else None
     # 当日の未確定足は使わない。寄付前から見える値は前営業日終値。
     bars = sorted([r for r in rows if isinstance(r, dict) and str(r.get('date', '')) <= today_s
                    and all(_number(r.get(k)) for k in ('close', 'high', 'low'))
                    and (_available_by(r.get('availableFrom'), now) if r.get('availableFrom') else r.get('date') < today_s)],
                   key=lambda r: r['date'])[-3000:]
-    eps = {d: v['eps'] for d, v in eps_records.items() if isinstance(v, dict) and _number(v.get('eps'))}
+    eps = {d: v['eps'] for d, v in eps_records.items() if levels.estimate_input_usable(v) and _number(v.get('eps'))}
     points = []
     for bar in bars:
         if bar['date'] < start: continue

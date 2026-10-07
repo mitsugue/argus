@@ -149,3 +149,28 @@ def test_evening_display_history_remains_available_with_next_morning_record():
     assert result['displayMap']['asOf'] == '2026-10-06'
     assert result['valuationHistory']['lastDate'] == '2026-10-06'
     assert result['valuationHistory']['count'] == 1
+
+
+def test_known_partial_eps_is_excluded_from_display_history_and_prior_lines():
+    from copy import deepcopy
+    rows=[bar((date(2026,8,24)+timedelta(days=i)).isoformat(),68000+i*10)
+          for i in range(43) if (date(2026,8,24)+timedelta(days=i)).weekday()<5]
+    complete={'date':'2026-10-05','eps':4000,'per':17,'basis':levels.EPS_BASIS,
+              'recordedAt':'2026-10-05T08:00:00Z','coverage':{'members':225,'missingMarketCap':0}}
+    morning=levels.morning_map('2026-10-06',rows,{'2026-10-05':4000},
+                              eps_records={'2026-10-05':complete},created_at='2026-10-05T09:00:00Z')
+    rows.append({**bar('2026-10-06',70000),'availableFrom':'2026-10-06T06:31:00Z'})
+    partial={**complete,'date':'2026-10-06','eps':4549,'per':15.4,
+             'recordedAt':'2026-10-06T06:51:00Z','coverage':{'members':225,'missingMarketCap':200}}
+    eps={'2026-10-05':complete,'2026-10-06':partial}
+    saved=deepcopy(morning)
+    result=chart.snapshot(rows,eps,morning,[],now_iso='2026-10-06T08:00:00Z')
+    assert result['displayMap']['previousClose']==70000
+    assert result['displayMap']['eps']==4000 and result['displayMap']['valuationPending']
+    assert result['valuationHistory']['count']==1 and result['valuationHistory']['lastDate']=='2026-10-05'
+    rows.append(bar('2026-10-07',70100))
+    bad_morning={**morning,'morningOf':'2026-10-07','eps':4549,'epsCoverage':partial['coverage']}
+    after=chart.snapshot(rows,eps,bad_morning,[],now_iso='2026-10-08T00:00:00Z')
+    assert after['points'][-1]['eps'] is None
+    assert after['current'] is None and after['displayMap'] is None and after['nearest']==[]
+    assert morning==saved and eps['2026-10-06']==partial

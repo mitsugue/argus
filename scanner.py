@@ -38900,7 +38900,10 @@ def _jq_valuation_for_date(date_str, headers, max_pages=40):
     """All-stocks valuation for one date → {code: {FwdEPS, EPS, MktCap, FwdPER,
     PER, PBR, BPS}}; {} on error. The level map (2026-10-04) reads the same
     day; a complete day is kept for the rest of the warm."""
-    if date_str in _JQ_VALUATION_DAY_CACHE:
+    current_time = datetime.now(TZ_JST)
+    early_today = (date_str == current_time.date().isoformat()
+                   and (current_time.hour, current_time.minute) < (16, 35))
+    if date_str in _JQ_VALUATION_DAY_CACHE and not early_today:
         return _JQ_VALUATION_DAY_CACHE[date_str]
     out, params, pages = {}, {"date": date_str}, 0
     try:
@@ -38922,7 +38925,7 @@ def _jq_valuation_for_date(date_str, headers, max_pages=40):
                     out[key] = {field: row.get(field) for field in _JQ_VALUATION_FIELDS}
             pk = body.get("pagination_key")
             if not pk:
-                if out:
+                if out and not early_today:
                     _JQ_VALUATION_DAY_CACHE[date_str] = out
                     for stale in sorted(_JQ_VALUATION_DAY_CACHE)[:-2]:
                         del _JQ_VALUATION_DAY_CACHE[stale]
@@ -39361,6 +39364,11 @@ def _level_map_next_session(after_day):
     return None
 
 
+def _level_map_admitted_eps():
+    return {day:row for day,row in (_LEVEL_MAP.get('eps') or {}).items()
+            if jp_market_level_map.estimate_input_usable(row)}
+
+
 def _level_map_warm(nikkei_rows, *, current_only=False):
     if not _LEVEL_MAP_LOCK.acquire(blocking=False):
         return
@@ -39383,6 +39391,11 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                     except Exception as exc:
                         _LEVEL_MAP["remoteRestore"] = {"status": "FAILED", "errorClass": type(exc).__name__}
             _LEVEL_MAP.update(eps=state["eps"], mornings=state["mornings"], loaded=True)
+        # Keep incomplete originals on disk, but neither display nor grade
+        # them as completed inputs. A later complete receipt appends a
+        # correction instead of changing the original or an issued morning.
+        _LEVEL_MAP['eps'] = _level_map_admitted_eps()
+        _LEVEL_MAP['mornings'] = [m for m in _LEVEL_MAP['mornings'] if jp_market_level_map.morning_input_usable(m)]
         bars = _level_map_completed_bars(nikkei_rows, now)
         if len(bars) < 30:
             _LEVEL_MAP.update(status="PRICES_COLD", lastErrorReason="nikkei_history_not_ready")
@@ -39421,13 +39434,23 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                     estimate = jp_market_level_map.weighted_eps(
                         values, members, index_close=float(close_by_day[day]), date=day,
                         constituents_as_of=members_label)
+                    if not jp_market_level_map.estimate_input_usable(estimate, strict=True):
+                        _JQ_VALUATION_DAY_CACHE.pop(day, None)
+                        if day == sessions[-1]:
+                            _LEVEL_MAP.update(lastErrorReason='constituent_valuation_incomplete',
+                                             pendingEstimateDate=day, pendingEstimateCoverage=estimate['coverage'])
+                        continue
                 except jp_market_level_map.LevelMapError:
                     continue
                 estimate["recordedAt"] = _ai_now_iso()
                 stored = argus_analysis_history.append_level_map_eps(path, estimate)
+                if stored.get('conflict'):
+                    stored = argus_analysis_history.append_level_map_eps_correction(path, estimate)
                 if stored["inserted"]:
                     _LEVEL_MAP["eps"][day] = estimate
                     _LEVEL_MAP["estimatesLastWarm"] += 1
+                    if _LEVEL_MAP.get('pendingEstimateDate') == day:
+                        _LEVEL_MAP.pop('pendingEstimateDate',None);_LEVEL_MAP.pop('pendingEstimateCoverage',None)
         # Provider collection may cross the open; the morning record must
         # be admitted against completion time, never the warm's start time.
         now = _ai_now_iso()
@@ -39446,6 +39469,8 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                     morning, bars, eps_series, eps_records=_LEVEL_MAP["eps"], created_at=now)
                 argus_product_naming.require_allowed(record)
                 result = argus_analysis_history.append_level_map(path, record)
+                if result.get('conflict'):
+                    result=argus_analysis_history.append_level_map_morning_correction(path,record)
                 if result["inserted"]:
                     _LEVEL_MAP["mornings"].append(record)
                     _LEVEL_MAP["lastCreatedAt"] = now
@@ -39481,8 +39506,10 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                 _LEVEL_MAP["remoteBackup"] = {**argus_level_map_backup.synchronize(path, remote), "at": now}
             except Exception as exc:
                 _LEVEL_MAP["remoteBackup"] = {"status": "FAILED", "errorClass": type(exc).__name__, "at": now}
-        _LEVEL_MAP.update(status="AVAILABLE" if _LEVEL_MAP["mornings"] else "WAITING_FOR_ESTIMATE",
-                          lastError=None, lastErrorReason=None)
+        pending_current = _LEVEL_MAP.get('pendingEstimateDate') == latest and latest not in _LEVEL_MAP['eps']
+        _LEVEL_MAP.update(status='WAITING_FOR_CURRENT_ESTIMATE' if pending_current else
+                          "AVAILABLE" if _LEVEL_MAP["mornings"] else "WAITING_FOR_ESTIMATE",
+                          lastError=None, lastErrorReason='constituent_valuation_incomplete' if pending_current else None)
     except Exception as exc:
         _LEVEL_MAP.update(status="FAILED", lastError=type(exc).__name__, lastErrorReason=str(exc)[:80])
     finally:
@@ -39908,7 +39935,7 @@ def _level_map_current_valuation(cutoff, *, nikkei_rows=None):
     if not visible:
         return {}
     last = max(visible, key=lambda bar: bar["date"])
-    row = (_LEVEL_MAP.get("eps") or {}).get(last["date"])
+    row = _level_map_admitted_eps().get(last["date"])
     if not isinstance(row, dict):
         return {}
     # A copied projection carries the store's existing acquisition time.
@@ -39939,9 +39966,9 @@ def _nikkei_chart_rows():
 
 def _level_map_public():
     """The latest stored morning map and the estimate lane's state (no per-member values)."""
-    eps = _LEVEL_MAP.get("eps") or {}
+    eps = _level_map_admitted_eps()
     latest_eps = eps[max(eps)] if eps else None
-    mornings = _LEVEL_MAP.get("mornings") or []
+    mornings = [m for m in _LEVEL_MAP.get("mornings") or [] if jp_market_level_map.morning_input_usable(m)]
     chart_rows = _nikkei_chart_rows()
     chart, chart_error = None, None
     try:
@@ -41512,7 +41539,7 @@ def _jp_adopted_warning_rules(inputs, cutoff):
         sp500 = [{**r, 'receivedAt':cache.get('acquiredAt')} for r in cache.get('data') or []]
         results = {
             'D03': rules.ratio_rule(sessions=sessions, nikkei_rows=histories, sp500_rows=sp500, cutoff=cutoff),
-            'D04': rules.eps_rule(sessions=sessions, eps_rows=list((_LEVEL_MAP.get('eps') or {}).values()), cutoff=cutoff),
+            'D04': rules.eps_rule(sessions=sessions, eps_rows=list(_level_map_admitted_eps().values()), cutoff=cutoff),
             'D07': rules.earnings_rule(sessions=sessions, financial_rows=financial, membership_by_day=membership,
                 stock_bars=stocks, topix_rows=_TOPIX_HIST_CACHE.get('data') or [],
                 coverage_by_day=coverage, cutoff=cutoff)}
@@ -41520,7 +41547,7 @@ def _jp_adopted_warning_rules(inputs, cutoff):
             results['D07']['reasonJa'] = '営業利益予想の保存原本を検証できません'
         from argus_warning_candidates_history import study
         performance=study(sessions=sessions,nikkei_rows=histories,sp500_rows=sp500,
-            eps_rows=list((_LEVEL_MAP.get('eps') or {}).values()),cutoff=cutoff)
+            eps_rows=list(_level_map_admitted_eps().values()),cutoff=cutoff)
         return rules.seal_candidates(cutoff=cutoff, results=results, performance=performance)
     except (ValueError, TypeError, KeyError, OSError, sqlite3.Error):
         return None
@@ -49963,7 +49990,7 @@ def _nikkei_close_refresh_tick():
     now = _ai_now_iso()
     completed = _level_map_completed_bars(_nikkei_chart_rows(), now)
     close_day = completed[-1]["date"] if completed else None
-    eps = _LEVEL_MAP.get("eps") or {}
+    eps = _level_map_admitted_eps()
     plan = jp_market_close_refresh.due(now, last_slot=_NIKKEI_CLOSE_REFRESH.get("lastSlot"),
         close_date=close_day, eps_date=close_day if close_day in eps else None)
     if plan is None:
@@ -49982,7 +50009,7 @@ def _nikkei_close_refresh_tick():
         # One current date only: no ten-year backfill in this resident slot.
         if plan["valuation"] and close_day == plan["session"]:
             _level_map_warm(rows, current_only=True)
-        eps_ready = plan["session"] in (_LEVEL_MAP.get("eps") or {})
+        eps_ready = plan["session"] in _level_map_admitted_eps()
         _NIKKEI_CLOSE_REFRESH.update(status="AVAILABLE" if close_day == plan["session"] and eps_ready
             else "WAITING_FOR_VALUATION" if close_day == plan["session"] else "WAITING_FOR_CLOSE",
             priceDate=close_day, epsDate=plan["session"] if eps_ready else None,
