@@ -131,6 +131,28 @@ def snapshot(path,directory):
                 if not source or row.get('sourceResponseSha256')!=source[0]:raise ValueError('private_coverage_integrity')
                 sources._time(row['knownAt']);sources._time(row['receivedAt'])
                 write({'kind':'coverage','key':key,'body':row});counts['coverageReceipts']+=1
+            company_allowed={'code','complete','receivedAt','rawId','sourceResponseSha256','retainedRows','receiptSha256'}
+            for key,body in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-code:%' ORDER BY key"):
+                row=json.loads(body)
+                if set(row)-company_allowed:raise ValueError('private_company_receipt_fields')
+                checksum=row.pop('receiptSha256',None);code=row.get('code')
+                if (not isinstance(code,str) or not re.fullmatch(r'[0-9A-Z]{4}',code)
+                        or checksum!=_hash(sources._json(row).encode())
+                        or key!='financial-summary-code:'+code+':revision:'+str(checksum)
+                        or type(row.get('complete')) is not bool
+                        or type(row.get('retainedRows')) is not int):
+                    raise ValueError('private_company_receipt_integrity')
+                original=db.execute('SELECT raw,url,sha256,received_at FROM raw_sources WHERE id=?',(row.get('rawId'),)).fetchone()
+                if (not original or row.get('rawId') not in ids or original[1]!=earnings.URL
+                        or row.get('sourceResponseSha256')!=original[2]
+                        or sources._time(original[3])>sources._time(row['receivedAt'])):
+                    raise ValueError('private_company_receipt_integrity')
+                payload=json.loads(original[0])['data']
+                if (row['retainedRows']!=len(payload)
+                        or (row['complete'] and any(r.get('Code')!=code for r in payload))):
+                    raise ValueError('private_company_receipt_integrity')
+                write({'kind':'coverage','key':key,'body':{**row,'receiptSha256':checksum}})
+                counts['coverageReceipts']+=1
         db.execute('COMMIT')
     finally:db.close()
     chunks=[];total=0;digest=hashlib.sha256()

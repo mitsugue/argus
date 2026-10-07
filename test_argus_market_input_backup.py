@@ -173,3 +173,39 @@ def test_sector_retention_failure_keeps_quotes_and_does_not_fetch_again(monkeypa
     assert scanner._JP_INTERNALS_CACHE['prices']['1617']['rows'][0]['close']==100
     assert scanner._JP_INTERNALS_ACQUISITION['status']=='AVAILABLE'
     assert scanner._JP_INPUT_BACKUP_STATUS['sectorOriginalRetention']=='FAILED'
+
+
+def test_company_receipts_survive_private_restore_and_identical_response_reuse(tmp_path):
+    path=tmp_path/'source.sqlite3';remote=Remote()
+    for at in (AT,LATER):
+        earnings.retain(path,[row()],received_at=at,member_codes=['1000'],query_code='1000')
+    earnings.retain(path,[],received_at=LATER,member_codes=['1001'],query_code='1001')
+    result=backup.synchronize(path,remote)
+    assert result['counts']['coverageReceipts']==3
+    manifest=json.loads(remote.files[backup.PREFIX+'/manifests/'+result['manifestSha256']+'.json'])
+    content=b''.join(remote.files[backup.PREFIX+'/chunks/'+c['sha256']+'.bin'] for c in manifest['chunks'])
+    restored=tmp_path/'restored.sqlite3';db=sources.connect(restored)
+    for entry in [json.loads(line) for line in content.splitlines()][1:]:
+        if entry['kind']=='raw':
+            db.execute('INSERT INTO raw_sources VALUES(?,?,?,?,?)',(entry['id'],entry['url'],entry['sha256'],entry['receivedAt'],base64.b64decode(entry['dataBase64'])))
+        elif entry['kind']=='coverage':
+            db.execute('INSERT INTO metadata VALUES(?,?)',(entry['key'],sources._json(entry['body'])))
+    db.commit();db.close()
+    assert earnings.completed_codes(restored,cutoff=LATER,member_codes=['1000','1001'])=={'1000','1001'}
+    assert earnings.completed_codes(restored,cutoff=AT,member_codes=['1000','1001'])=={'1000'}
+
+
+@pytest.mark.parametrize('change',[{'OwnerSecret':'excluded'},{'retainedRows':999},
+                                   {'receivedAt':'2020-01-01T00:00:00Z'}])
+def test_company_receipt_fields_counts_and_future_original_rejected_before_send(tmp_path,change):
+    path=tmp_path/'source.sqlite3';remote=Remote()
+    earnings.retain(path,[row()],received_at=AT,member_codes=['1000'],query_code='1000')
+    db=sources.connect(path);key,raw=db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-code:%'").fetchone()
+    body=json.loads(raw);body.pop('receiptSha256');body.update(change)
+    body['receiptSha256']=backup._hash(sources._json(body).encode())
+    db.execute('DELETE FROM metadata WHERE key=?',(key,))
+    db.execute('INSERT INTO metadata VALUES(?,?)',('financial-summary-code:1000:revision:'+body['receiptSha256'],sources._json(body)))
+    db.commit();db.close()
+    with pytest.raises(ValueError,match='company_receipt'):
+        backup.synchronize(path,remote)
+    assert remote.writes==0
