@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.79"
+PRODUCT_VERSION = "v13.8.80"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -139,7 +139,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'de9498ee975853ceb0e3c62c6fe8d4c8adc3dade',
+    'web/scripts/owner-today-https.mjs': 'e5ebd79e6891c0a4047c14ab1acb02e2e02ec366',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -356,7 +356,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_jp_market_internals.py': 'be93cb202d784d879f3c5bdc878810edd65b233d',
     'web/scripts/pwa-recovery.test.mjs': 'd2fc2ff86480cb685328e1341e61d4415285d8a6',
     'web/scripts/shared-market-context.test.cjs': '6ba958105e283011e25af76c3ce538e14833c75b',
-    'web/src/components/assetDesk/AssetMarketContext.tsx': '6fc8341a6547faacb02ad5948eabc468e31dc737',
+    'web/src/components/assetDesk/AssetMarketContext.tsx': '5417dfa8b80f81bf7c9d1c62ca80bea5a196d555',
     'web/src/components/dialogue/OwnerDialogue.css': '99f542e0fc1391a58a1cb60ac1c5bec249fe9a28',
     'web/src/components/dialogue/OwnerDialogue.tsx': 'ee84e0b33570373650bb69c2208bafae960eae8e',
     'web/src/components/today/MarketBriefCard.tsx': '74e9c218f3282f91b3e9db9f991f1868695000b0',
