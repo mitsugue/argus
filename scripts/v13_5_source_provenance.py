@@ -162,9 +162,9 @@ REVIEWED_EXTENSION_BLOBS = {
     '.github/actions/warm-profile-seed/action.yml': 'eda05275ed6f5f0eb86d866c15022535194cd5bb',
     '.github/actions/warm-profile-consumer/action.yml': '12934bafbf41522ba487c3b26328f74276dfc732',
     # Exact opt-in owner authentication, UI, backup and regression candidate.
-    'argus_owner_auth.py': '1556a85b442acd859676abc7ca1bea48cd922007',
+    'argus_owner_auth.py': 'c169069eee7d55c71136f5cd7a66a1ee01c0a684',
     'docs/ops/owner-server-auth.md': 'd745850b1c9bb742783be9f230261cee5b9d782f',
-    'scripts/owner_auth_backup.py': '55b2d8f41918c9ae5880c7ae23a764e5e1506e8a',
+    'scripts/owner_auth_backup.py': '115ab7ae987d97bb26c5f77629e637c8a9598379',
     'test_argus_owner_auth.py': '46048a6639688e01c8d3b89f23b98815fa91ce00',
     'web/scripts/owner-session.test.cjs': '41807096eb60b2258739bd998afb151657a3c109',
     'web/src/components/OwnerAccess.css': '711268ba1b8478611e939f7cfecfd822c012ff44',
@@ -661,6 +661,9 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_account_watchlist.py",
+    "docs/operations/account-watchlist-sync.md",
+    "argus_account_watchlist.py",
     "web/src/components/dashboard/InstitutionalView.tsx",
     "web/src/components/assetDesk/detailReading.ts",
     "web/src/components/assetDesk/AssetWhyPanel.tsx",
