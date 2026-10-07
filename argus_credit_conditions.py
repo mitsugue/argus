@@ -99,11 +99,12 @@ def api_url(group, now_iso):
 
 
 def approved_url(url):
+    if not isinstance(url,str) or len(url)>2048:return False
     parsed=urlparse(url)
     if parsed.username or parsed.password or parsed.fragment or parsed.scheme!='https':return False
     if parsed.netloc=='www.stat-search.boj.or.jp' and parsed.path=='/api/v1/getDataCode':
         q=parse_qs(parsed.query)
-        return (set(q)=={'format','lang','db','code','startDate','endDate'} and
+        return (set(q)=={'format','lang','db','code','startDate','endDate'} and all(len(v)==1 for v in q.values()) and
             q['format']==['json'] and q['lang']==['en'] and
             any(q['db']==[m['db']] and q['code']==[','.join(m['metrics'])] for m in GROUPS.values()) and
             all(re.fullmatch(r'\d{6}',q[k][0]) for k in ('startDate','endDate')))

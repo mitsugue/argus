@@ -181,3 +181,11 @@ def test_stale_projection_has_new_identity_and_cannot_drive_asset_impact(tmp_pat
     aged=credit.current_projection(doc,cutoff='2027-10-08T01:00:00Z')
     assert aged['snapshotId']!=doc['snapshotId'] and aged['futureMapResearch']['snapshotId']==aged['snapshotId']
     assert credit.asset_impact(aged,sector_code='7050') is None
+
+
+def test_source_url_cannot_hide_extra_fields_or_repeated_parameters():
+    url=credit.api_url('cost',AT)
+    assert credit.approved_url(url)
+    assert not credit.approved_url(url+'&startDate=202501')
+    assert not credit.approved_url(url+'&ownerRecord=not-allowed')
+    assert not credit.approved_url(url+'&endDate='+('1'*2100))
