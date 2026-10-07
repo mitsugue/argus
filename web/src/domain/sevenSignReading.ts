@@ -36,6 +36,9 @@ export function warningDistanceJa(row: import('./marketSignals').MarketSignalRow
   const delta = Math.abs(d.signedFromBoundary);
   const compact = (value: number) => value.toLocaleString('ja-JP', { maximumSignificantDigits: 6 });
   const amount = d.unit === 'JPY' ? delta >= 1e8 ? `${compact(delta / 1e8)}億円` : `${compact(delta)}円`
+    : d.unit === 'JPY_EPS' ? `${compact(delta)}円`
+    : d.unit === 'INDEX_RATIO' ? `指数比の差 ${compact(delta)}`
+    : d.unit === 'FRACTION' ? `${compact(delta * 100)}ポイント`
     : d.unit === 'RATIO' ? `${compact(delta)}倍` : `MACDの差 ${compact(delta)}`;
   const side = d.signedFromBoundary > 0 ? '高い' : '低い';
   return row.state === 'ACTIVE' ? `基準より${amount}${side}・成立中`

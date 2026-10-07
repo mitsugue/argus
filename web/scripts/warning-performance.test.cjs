@@ -15,13 +15,15 @@ signals[4].performance={ruleId:signals[4].ruleId,status:'NOT_ABOVE_BASELINE',eva
 const projection={informationCutoff:at,warningSignals:{schemaVersion:'jp-warning-conditions-v2',informationCutoff:at,
   rejectedEvidence:false,countPredictsCrash:false,actionAuthority:false,signals}};
 const render=()=>renderToStaticMarkup(React.createElement(WarningConditionsDetails,{view:marketSignalsView(projection)}));
-assert.ok(render().includes('25件中12件下落・通常時より予測が優れるとは確認できません'));
+assert.ok(render().includes('25件中12件下落・未検証・通常時より予測が優れるとは確認できません'));
 assert.ok(render().includes('測定規則の確定後に検査します'));
 assert.ok(render().includes('成立件数から暴落の確率は出しません'));
 signals[4].performance.ruleId='legacy-v1.D05';
 assert.ok(!render().includes('25件中12件'));
 signals[4].performance={ruleId:signals[4].ruleId,status:'INSUFFICIENT_SAMPLE',evaluated:3,horizons:{'5':{evaluated:3,falls:2}}};
-assert.ok(render().includes('3件中2件下落・件数不足'));
+assert.ok(render().includes('3件中2件下落・未検証・件数不足'));
+signals[4].performance.availabilityBasis='RECONSTRUCTED_PUBLICATION_18JST_NOT_ARCHIVED_VINTAGE';
+assert.ok(render().includes('過去データを復元した検査：3件中2件下落・未検証・件数不足'));
 signals[4].performance.horizons['5'].falls=4;
 assert.ok(!render().includes('3件中4件'));
 const coverage=warningCoverageJa(marketSignalsView(projection));

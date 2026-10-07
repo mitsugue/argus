@@ -39092,6 +39092,7 @@ def _jp_index_proxy_compact(proxy):
 # warm, and kept on the durable disk; the estimate itself is arithmetic.
 _JP_DIVIDEND_STORE = {"rows": {}, "fetchedAt": {}, "closes": None, "restoreAttempted": False,
                       "lastError": None, "requestsLastWarm": 0}
+_JP_EARNINGS_BACKFILL_ATTEMPTS = {}
 _JP_DIVIDEND_PER_WARM = 20
 _JP_DIVIDEND_REFRESH_SECONDS = 7 * 86400
 _JP_DIVIDEND_KEEP = ("Code", "DiscDate", "DiscTime", "DocType", "CurPerType", "CurFYEn",
@@ -39144,10 +39145,28 @@ def _jp_dividend_warm(member_codes):
     if not _JQUANTS_API_KEY or not member_codes:
         return
     now = time.time()
+    completed = set(member_codes)  # No durable original destination: do not add acquisition.
+    if _cost_policy_durable_enabled():
+        import argus_earnings_history
+        import sqlite3
+        try:
+            completed = argus_earnings_history.completed_codes(
+                os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3"),
+                cutoff=_ai_now_iso(), member_codes=member_codes)
+        except (ValueError, TypeError, OSError, sqlite3.Error) as exc:
+            # Broken proof is a visible store failure, not 225 new requests.
+            _JP_EARNINGS_HISTORY_STATUS.update(status="PERSIST_FAILED", errorClass=type(exc).__name__)
     due = sorted((code for code in member_codes
-                  if now - store["fetchedAt"].get(code, 0.0) >= _JP_DIVIDEND_REFRESH_SECONDS),
-                 key=lambda code: store["fetchedAt"].get(code, 0.0))[:_JP_DIVIDEND_PER_WARM]
+                  if (now - store["fetchedAt"].get(code, 0.0) >= _JP_DIVIDEND_REFRESH_SECONDS
+                      or code not in completed)
+                  and now - _JP_EARNINGS_BACKFILL_ATTEMPTS.get(code, 0.0) >= 300),
+                 key=lambda code: (code in completed, store["fetchedAt"].get(code, 0.0)))[:_JP_DIVIDEND_PER_WARM]
+    deadline = time.monotonic() + 150
+    for old_code in set(_JP_EARNINGS_BACKFILL_ATTEMPTS) - set(member_codes):
+        _JP_EARNINGS_BACKFILL_ATTEMPTS.pop(old_code, None)
     for code in due:
+        if time.monotonic() >= deadline: break
+        _JP_EARNINGS_BACKFILL_ATTEMPTS[code] = now
         try:
             rows = _jquants_paginated("/fins/summary", {"code": code}, max_pages=3, request_timeout=15)
             store["requestsLastWarm"] += 1
@@ -39156,7 +39175,7 @@ def _jp_dividend_warm(member_codes):
             store["requestsLastWarm"] += 1
             continue
         latest = argus_ex_dividend.latest_disclosures(rows).get(code)
-        _jp_earnings_history_retain(rows, member_codes=member_codes)
+        _jp_earnings_history_retain(rows, member_codes=member_codes, query_code=code)
         store["fetchedAt"][code] = now
         if latest:
             store["rows"][code] = {k: latest.get(k) for k in _JP_DIVIDEND_KEEP if latest.get(k) not in (None,)}
@@ -40259,6 +40278,42 @@ def _jp_market_comparison_calculate(horizon):
 _JP_INTERNALS_CACHE = {"prices": {}, "classifications": {}, "restoreAttempted": False}
 _JP_INTERNALS_ACQUISITION = {"status": "NOT_RUN", "lastAttemptAt": None, "lastSuccessfulAcquisitionAt": None}
 _JP_INTERNALS_REFRESH_LOCK = threading.Lock()
+_JP_INPUT_BACKUP_LOCK = threading.Lock()
+_JP_INPUT_BACKUP_STATUS = {'status': 'NOT_RUN'}
+
+
+def _jp_market_inputs_backup_schedule():
+    """Reuse the private backup connection; only called by the warm lane."""
+    if not _cost_policy_durable_enabled():
+        return False
+    stamp = _JP_INPUT_BACKUP_STATUS.get('lastAttemptMonotonic')
+    if stamp is not None and time.monotonic() - stamp < 3600:
+        return False
+    if not _JP_INPUT_BACKUP_LOCK.acquire(blocking=False):
+        return False
+    def worker():
+        try:
+            import argus_market_input_backup
+            remote = _level_map_remote()
+            if remote is None:
+                _JP_INPUT_BACKUP_STATUS.update(status='NOT_CONFIGURED')
+                return
+            path = os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3')
+            result = argus_market_input_backup.synchronize(path, remote)
+            _JP_INPUT_BACKUP_STATUS.update(result, verifiedAt=_ai_now_iso())
+        except Exception as exc:
+            _JP_INPUT_BACKUP_STATUS.update(status='FAILED', errorClass=type(exc).__name__)
+        finally:
+            _JP_INPUT_BACKUP_LOCK.release()
+    _JP_INPUT_BACKUP_STATUS.update(status='RUNNING', lastAttemptAt=_ai_now_iso(),
+        lastAttemptMonotonic=time.monotonic())
+    try:
+        threading.Thread(target=worker, name='market-input-private-backup', daemon=True).start()
+    except Exception:
+        _JP_INPUT_BACKUP_LOCK.release()
+        _JP_INPUT_BACKUP_STATUS.update(status='FAILED', errorClass='WorkerStartFailed')
+        return False
+    return True
 
 
 _JP_SECTOR_HEATMAP = None
@@ -40364,8 +40419,41 @@ def _jp_internals_close_row(day, close, *, volume=None, adjusted=None):
             "completed": True, "volume": volume, "adjusted": adjusted}
 
 
+def _jp_earnings_reaction_codes():
+    """Read retained public forecasts for the dated Nikkei cohort, never fetch here."""
+    import argus_earnings_history
+    import argus_warning_candidates as rules
+    import jp_market_level_map
+    import sqlite3
+    from datetime import date as calendar_date
+    if not _cost_policy_durable_enabled(): return []
+    base = ((_JP_INDEX_PROXY.get('factors') or {}).get('factors')) or {}
+    histories = _N225_ANALOG_HISTORY.get('data') or []
+    if len(base) != 225 or not histories: return []
+    try:
+        cutoff = _ai_now_iso(); limit = jp_market_engine._instant(cutoff)
+        sessions, unknown = _jp_exchange_sessions(calendar_date.fromisoformat(min(r['date'] for r in histories)),
+            limit.astimezone(TZ_JST).date(), _N225_ANALOG_HISTORY.get('calendar', []))
+        if unknown: return []
+        closed = [d for d in sessions if rules._session_close(d) <= limit]
+        changes = _nikkei225_constituent_changes() or {}
+        membership = {d: jp_market_level_map.constituents_on(d, base, _JP_INDEX_PROXY.get('weightsAsOf'), changes)[0]
+                      for d in closed[-10:]}
+        scope = set(base)
+        for members in membership.values(): scope.update(members)
+        rows = argus_earnings_history.read(os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3'),
+            cutoff=cutoff, member_codes=scope)
+        codes = rules.reaction_instruments(sessions=sessions, financial_rows=rows, membership_by_day=membership, cutoff=cutoff)
+        # Rotate within the existing collector; preserve its original 150s budget.
+        prices = _JP_INTERNALS_CACHE.get('prices', {})
+        return sorted(codes, key=lambda code: (str((prices.get(code) or {}).get('receivedAt') or ''), code))[:20]
+    except (ValueError, TypeError, KeyError, OSError, sqlite3.Error):
+        return []  # Original-store failures cannot break sector/registered prices.
+
+
 def _jp_internals_warm():
     """Short daily-bar windows on the existing authenticated collection lane."""
+    import sqlite3
     if not _JP_INTERNALS_REFRESH_LOCK.acquire(blocking=False): return
     try:
         _jp_internals_storage(restore=True)
@@ -40382,7 +40470,8 @@ def _jp_internals_warm():
                     "sector17Code": row["sector17Code"], "sector33Code": row.get("sector33Code"),
                     "effectiveDate": row.get("effectiveDate"), "receivedAt": row.get("receivedAt"),
                     "source": "J-Quants V2 equities/master"}
-        symbols = ["1306", *[r["symbol"] for r in jp_market_internals.SECTORS.values()], *public]
+        sector_symbols = ["1306", *[r["symbol"] for r in jp_market_internals.SECTORS.values()]]
+        symbols = list(dict.fromkeys([*sector_symbols, *public, *_jp_earnings_reaction_codes()]))
         deadline = time.monotonic() + 150; failed = []; updated = []
         start = (datetime.now(TZ_JST) - timedelta(days=100)).date().isoformat()
         for symbol in symbols:
@@ -40411,10 +40500,21 @@ def _jp_internals_warm():
                 if not normalized: raise ValueError("internals_no_adjusted_rows")
                 received = _ai_now_iso()
                 _JP_INTERNALS_CACHE["prices"][symbol] = {"instrumentId": symbol,
-                    "instrumentKind": "ETF" if symbol not in public else "EQUITY",
+                    "instrumentKind": "ETF" if symbol in sector_symbols else "EQUITY",
                     "priceBasis": "JQUANTS_ADJUSTED_CLOSE", "receivedAt": received,
                     "source": "J-Quants V2 equities/bars/daily", "sourceResponseSha256": hashlib.sha256(raw).hexdigest(),
                     "rows": sorted(normalized, key=lambda r: r["date"])}
+                if symbol in {str(n) for n in range(1617, 1634)} and _cost_policy_durable_enabled():
+                    try:
+                        import argus_market_input_backup
+                        argus_market_input_backup.retain_sector(
+                            os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3'),
+                            raw, symbol=symbol, received_at=received)
+                        _JP_INPUT_BACKUP_STATUS['sectorOriginalRetention'] = 'RETAINED'
+                    except (ValueError, TypeError, OSError, sqlite3.Error) as exc:
+                        # A backup failure is separate from a usable quote.
+                        _JP_INPUT_BACKUP_STATUS.update(sectorOriginalRetention='FAILED',
+                            retentionErrorClass=type(exc).__name__)
                 updated.append(symbol)
             except Exception as exc:
                 failed.append(symbol)
@@ -40798,7 +40898,7 @@ _JP_MARKET_ENGINE_STATEMENTS_WINDOW_DAYS = 14
 _JP_EARNINGS_HISTORY_STATUS = {"status": "NOT_ACQUIRED", "goodEarningsRuleDefined": False}
 
 
-def _jp_earnings_history_retain(rows, *, member_codes=None, query_date=None):
+def _jp_earnings_history_retain(rows, *, member_codes=None, query_date=None, query_code=None):
     """Keep already-fetched forecasts, without a second provider call or store."""
     import argus_earnings_history
     import sqlite3
@@ -40814,9 +40914,16 @@ def _jp_earnings_history_retain(rows, *, member_codes=None, query_date=None):
         _JP_EARNINGS_HISTORY_STATUS.update(status="MEMBER_SCOPE_UNAVAILABLE")
         return
     try:
+        scope = None
+        if query_date and len((_JP_INDEX_PROXY.get('factors') or {}).get('factors') or {}) == 225:
+            import jp_market_level_map
+            scope, _ = jp_market_level_map.constituents_on(query_date,
+                (_JP_INDEX_PROXY.get('factors') or {}).get('factors') or {},
+                _JP_INDEX_PROXY.get('weightsAsOf'), changes)
         result = argus_earnings_history.retain(
             os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3"),
-            rows, received_at=_ai_now_iso(), member_codes=sorted(members), query_date=query_date)
+            rows, received_at=_ai_now_iso(), member_codes=sorted(members), query_date=query_date,
+            complete_scope=scope, query_code=query_code)
         _JP_EARNINGS_HISTORY_STATUS.clear()
         _JP_EARNINGS_HISTORY_STATUS.update(result)
     except (ValueError, TypeError, OSError, sqlite3.Error) as exc:
@@ -41312,6 +41419,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     memo["ts"], memo["data"] = now, data
     if warm:
         _index_research_warm()
+        _jp_market_inputs_backup_schedule()
     return data
 
 
@@ -41343,6 +41451,64 @@ def _jp_warning_performance(inputs, cutoff):
             closes=closes, session_dates=sessions, cutoff=cutoff)
     except (ValueError, TypeError, KeyError, OverflowError):
         # Missing/admission-failed studies remain UNVALIDATED with zero count.
+        return None
+
+
+def _jp_adopted_warning_rules(inputs, cutoff):
+    """Cached-only owner-adopted rules, using existing source stores and scope."""
+    from datetime import date as calendar_date
+    import sqlite3
+    import argus_warning_candidates as rules
+    import argus_earnings_history
+    import jp_market_level_map
+    histories = _N225_ANALOG_HISTORY.get('data') or inputs.get('nikkeiRows') or []
+    limit = jp_market_engine._instant(cutoff)
+    if not histories or limit is None:
+        return None
+    try:
+        first = min(r['date'] for r in histories)
+        sessions, unknown = _jp_exchange_sessions(calendar_date.fromisoformat(first),
+            limit.astimezone(TZ_JST).date(), _N225_ANALOG_HISTORY.get('calendar', []))
+        if unknown:
+            return None
+        base = ((_JP_INDEX_PROXY.get('factors') or {}).get('factors')) or {}
+        changes = _nikkei225_constituent_changes() or {}
+        closed = [d for d in sessions if rules._session_close(d) <= limit]
+        membership = {d: jp_market_level_map.constituents_on(d, base,
+            _JP_INDEX_PROXY.get('weightsAsOf'), changes)[0] for d in closed[-10:]}
+        scope = set(base)
+        for change in changes.get('rows') or []:
+            scope.update(change.get('added') or [])
+            scope.update(change.get('removed') or [])
+        path = os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3') \
+            if _cost_policy_durable_enabled() else None
+        financial_error = False
+        try:
+            financial = argus_earnings_history.read(path, cutoff=cutoff, member_codes=scope) if path and scope else []
+            coverage = argus_earnings_history.read_coverage(path, cutoff=cutoff) if path else {}
+        except (ValueError, TypeError, OSError, sqlite3.Error):
+            # One damaged original store must not hide independently usable
+            # cash-index and same-basis EPS conditions.
+            financial, coverage, financial_error = [], {}, True
+        stocks = {code: [{**r, 'instrumentId':code, 'priceBasis': source.get('priceBasis'),
+                          'knownAt': source.get('receivedAt'), 'availableFrom':r.get('closeAt')}
+                        for r in source.get('rows') or []]
+                  for code,source in _JP_INTERNALS_CACHE.get('prices', {}).items()}
+        cache = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get('^GSPC') or {}
+        sp500 = [{**r, 'receivedAt':cache.get('acquiredAt')} for r in cache.get('data') or []]
+        results = {
+            'D03': rules.ratio_rule(sessions=sessions, nikkei_rows=histories, sp500_rows=sp500, cutoff=cutoff),
+            'D04': rules.eps_rule(sessions=sessions, eps_rows=list((_LEVEL_MAP.get('eps') or {}).values()), cutoff=cutoff),
+            'D07': rules.earnings_rule(sessions=sessions, financial_rows=financial, membership_by_day=membership,
+                stock_bars=stocks, topix_rows=_TOPIX_HIST_CACHE.get('data') or [],
+                coverage_by_day=coverage, cutoff=cutoff)}
+        if financial_error:
+            results['D07']['reasonJa'] = '営業利益予想の保存原本を検証できません'
+        from argus_warning_candidates_history import study
+        performance=study(sessions=sessions,nikkei_rows=histories,sp500_rows=sp500,
+            eps_rows=list((_LEVEL_MAP.get('eps') or {}).values()),cutoff=cutoff)
+        return rules.seal_candidates(cutoff=cutoff, results=results, performance=performance)
+    except (ValueError, TypeError, KeyError, OSError, sqlite3.Error):
         return None
 
 
@@ -41378,7 +41544,8 @@ def _jp_market_engine_market_view():
             nikkei_rows=inputs["nikkeiRows"], vix_rows=inputs["vixRows"])
         projection = jp_market_engine.project_today_sda_safe(
             cutoff=cutoff, evidence=evidence, reversal=reversal,
-            warning_performance=_jp_warning_performance(inputs, cutoff))
+            warning_performance=_jp_warning_performance(inputs, cutoff),
+            adopted_warning_rules=_jp_adopted_warning_rules(inputs, cutoff))
         view = {
             "schemaVersion": "argus-jp-market-engine-market-view-v1",
             "informationCutoff": cutoff,
@@ -41702,7 +41869,9 @@ def _jquants_paginated(
             raise RuntimeError("jquants_invalid_schema")
         rows.extend(x for x in page if isinstance(x, dict))
         next_cursor = body.get("pagination_key")
-        if not next_cursor or next_cursor == cursor:
+        if next_cursor and next_cursor == cursor:
+            raise RuntimeError('jquants_repeated_pagination_cursor')
+        if not next_cursor:
             return rows
         cursor = str(next_cursor)
     raise RuntimeError("jquants_pagination_limit")

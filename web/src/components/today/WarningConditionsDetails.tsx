@@ -9,7 +9,9 @@ export function warningPerformanceJa(row: MarketSignalsView['signals'][number]) 
     return '成績：まだ採点できる記録がありません';
   const grade = p.status === 'NOT_ABOVE_BASELINE' ? '通常時より予測が優れるとは確認できません'
     : p.status === 'INSUFFICIENT_SAMPLE' ? '件数不足' : '予測力は未検証';
-  return `過去の成立後5営業日：${five.evaluated}件中${five.falls}件下落・${grade}`;
+  const source = p.availabilityBasis === 'RECONSTRUCTED_PUBLICATION_18JST_NOT_ARCHIVED_VINTAGE'
+    ? '過去データを復元した検査' : '過去の成立後5営業日';
+  return `${source}：${five.evaluated}件中${five.falls}件下落・未検証・${grade}`;
 }
 
 export function warningCoverageJa(view: MarketSignalsView) {
@@ -36,7 +38,8 @@ export function WarningConditionsDetails({ view }: { view: MarketSignalsView }) 
         <span className="at-seven-condition">{Number(row.id.slice(-2))} · {row.nameJa}</span>
         <b>{row.state === 'ACTIVE' ? '成立' : row.state === 'CLEAR' ? '未成立' : row.ruleStatus === 'RULE_NOT_DEFINED' ? '基準未確定' : row.stateJa}</b>
         <span className="at-seven-direction" data-direction="warning">{row.ruleStatus === 'RULE_NOT_DEFINED'
-          ? '警戒の判定基準は未定義' : row.lineage === 'ARGUS_CANDIDATE' ? '警戒条件・ARGUSの計算候補' : '警戒条件'}</span>
+          ? '警戒の判定基準は未定義' : row.lineage === 'ARGUS_VALIDATION_RULE' ? 'ARGUSの検証用規則'
+            : row.lineage === 'ARGUS_CANDIDATE' ? '警戒条件・ARGUSの計算候補' : '警戒条件'}</span>
         {row.conditionRuleJa && <small className="at-seven-rule">{row.conditionRuleJa}</small>}
         {row.factNoteJa && <small className="at-seven-fact">{row.factNoteJa}</small>}
         {warningDistanceJa(row) && <strong className="at-seven-distance">{warningDistanceJa(row)}</strong>}

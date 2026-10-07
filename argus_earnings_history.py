@@ -41,13 +41,15 @@ def _published(row):
     return None
 
 
-def retain(path, rows, *, received_at, member_codes, query_date=None):
+def retain(path, rows, *, received_at, member_codes, query_date=None, complete_scope=None, query_code=None):
     receipt = sources._time(received_at)
     if not isinstance(rows, list) or len(rows) > MAX_ROWS:
         raise ValueError('financial_response_bound')
     members = sorted(set(member_codes))
     if not members or len(members) > 400 or any(not re.fullmatch(r'[0-9A-Z]{4}', code) for code in members):
         raise ValueError('financial_member_scope_required')
+    if query_code is not None and (query_code not in members or not re.fullmatch(r"[0-9A-Z]{4}", query_code)):
+        raise ValueError("financial_query_code_required")
     selected, rejected = [], 0
     for row in rows:
         if not isinstance(row, dict) or str(row.get('Code') or '')[:4] not in members:
@@ -89,9 +91,29 @@ def retain(path, rows, *, received_at, member_codes, query_date=None):
                       'newObservations': inserted, 'rejectedRows': rejected, 'receivedAt': received_at,
                       'memberCount': len(members), 'queryDate': query_date,
                       'goodEarningsRuleDefined': False, 'actionAuthority': False}
+            if query_code is not None:
+                complete = rejected == 0 and all(isinstance(r, dict) and str(r.get('Code') or '')[:4] == query_code for r in rows)
+                receipt_body = {'code': query_code, 'complete': complete, 'receivedAt': received_at,
+                                'rawId': raw_id, 'sourceResponseSha256': digest, 'retainedRows': len(selected)}
+                receipt_hash = hashlib.sha256(sources._json(receipt_body).encode()).hexdigest()
+                receipt_body['receiptSha256'] = receipt_hash
+                db.execute('INSERT OR IGNORE INTO metadata VALUES(?,?)',
+                           ('financial-summary-code:' + query_code + ':revision:' + receipt_hash, sources._json(receipt_body)))
             if query_date is not None:
                 if date.fromisoformat(query_date).isoformat() != query_date:
                     raise ValueError('financial_query_date_required')
+                # A complete date query is different from per-company reads.
+                scope=sorted(set(complete_scope or ()))
+                complete=(len(scope)==225 and set(scope)<=set(members) and rejected==0
+                          and all(r['DiscDate']==query_date for r in selected))
+                status.update(complete=complete, memberCodes=scope if complete else [],
+                              knownAt=received_at, rawId=raw_id, sourceResponseSha256=digest)
+                status['coverageSha256']=hashlib.sha256(sources._json(status).encode()).hexdigest()
+                # Keep each corrected coverage receipt, not just the newest
+                # cursor. An old cutoff must still recover its earlier scope.
+                db.execute('INSERT OR IGNORE INTO metadata VALUES(?,?)',
+                           ('financial-summary-date:' + query_date + ':revision:' + status['coverageSha256'],
+                            sources._json(status)))
                 # Empty successful date responses are distinct from failed reads.
                 db.execute('INSERT OR REPLACE INTO metadata VALUES(?,?)',
                            ('financial-summary-date:' + query_date, sources._json(status)))
@@ -136,3 +158,60 @@ def read(path, *, cutoff, member_codes):
         return result
     finally:
         db.close()
+
+
+def read_coverage(path, *, cutoff):
+    from pathlib import Path
+    import sqlite3
+    location=Path(path); limit=sources._time(cutoff)
+    if not location.exists():return {}
+    if location.is_symlink() or not location.is_file():raise ValueError('financial_store_regular_file_required')
+    db=sqlite3.connect(location.resolve().as_uri()+'?mode=ro',uri=True)
+    output={}
+    try:
+        for key,raw in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-date:%'"):
+            row=json.loads(raw); digest=row.pop('coverageSha256',None)
+            if digest is None:continue  # Older receipts did not certify a 225-member scope.
+            if hashlib.sha256(sources._json(row).encode()).hexdigest()!=digest:
+                raise ValueError('financial_coverage_integrity')
+            source=db.execute('SELECT raw,sha256 FROM raw_sources WHERE id=?',(row.get('rawId'),)).fetchone()
+            if not source or hashlib.sha256(source[0]).hexdigest()!=source[1] or source[1]!=row.get('sourceResponseSha256'):
+                raise ValueError('financial_coverage_integrity')
+            if sources._time(row['receivedAt'])<=limit and sources._time(row['knownAt'])<=limit:
+                day=row.get('queryDate')
+                if not day or key.split(':',2)[1]!=day:
+                    raise ValueError('financial_coverage_integrity')
+                old=output.get(day)
+                if old is None or sources._time(row['knownAt'])>sources._time(old['knownAt']):
+                    output[day]={**row,'coverageSha256':digest}
+        return output
+    finally:db.close()
+
+
+def completed_codes(path, *, cutoff, member_codes):
+    """Successful whole-company responses, including empty ones; no inferred date coverage."""
+    from pathlib import Path
+    import sqlite3
+    location = Path(path); limit = sources._time(cutoff); members = set(member_codes)
+    if len(members) > 400 or any(not re.fullmatch(r'[0-9A-Z]{4}', c) for c in members):
+        raise ValueError('financial_member_scope_required')
+    if not location.exists(): return set()
+    if location.is_symlink() or not location.is_file(): raise ValueError('financial_store_regular_file_required')
+    db = sqlite3.connect(location.resolve().as_uri() + '?mode=ro', uri=True)
+    output = set()
+    try:
+        for key, raw in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-code:%'"):
+            row = json.loads(raw); digest = row.pop('receiptSha256', None)
+            code = row.get('code')
+            if code not in members: continue
+            if (hashlib.sha256(sources._json(row).encode()).hexdigest() != digest
+                    or key != 'financial-summary-code:' + code + ':revision:' + str(digest)):
+                raise ValueError('financial_company_receipt_integrity')
+            source = db.execute('SELECT raw,sha256,received_at FROM raw_sources WHERE id=?', (row.get('rawId'),)).fetchone()
+            if (not source or hashlib.sha256(source[0]).hexdigest() != source[1]
+                    or source[1] != row.get('sourceResponseSha256') or source[2] != row.get('receivedAt')):
+                raise ValueError('financial_company_receipt_integrity')
+            if row.get('complete') is True and sources._time(row['receivedAt']) <= limit:
+                output.add(code)
+        return output
+    finally: db.close()
