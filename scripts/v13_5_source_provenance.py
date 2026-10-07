@@ -661,6 +661,11 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/domain/assetEarnings.ts",
+    "web/src/components/assetDesk/AssetEarnings.tsx",
+    "web/scripts/asset-earnings.test.cjs",
+    "test_argus_asset_earnings.py",
+    "argus_asset_earnings.py",
     "test_argus_warning_earnings_study.py",
     "argus_warning_earnings_study.py",
     "web/scripts/browser-rate-limit-context.test.mjs",
