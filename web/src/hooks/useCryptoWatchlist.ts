@@ -4,11 +4,13 @@ import { cryptoQuoteDecisionUsable, scheduleLiveAuthorityExpiry } from '../domai
 import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
 import { GUARD_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
 import type { CryptoQuote, CryptoWatchlistSnapshot } from '../types/crypto';
+import { acceptCryptoDisplay, retainCryptoDisplay, type CryptoDisplayQuotes } from '../domain/cryptoPriceDisplay';
 
 export type CryptoPhase = 'connecting' | 'live' | 'partial' | 'mock';
 
 interface State {
   byId: Record<string, CryptoQuote>;
+  displayById: CryptoDisplayQuotes;
   phase: CryptoPhase;
   asOf: string | null;
   diagnosticById: Record<string, CryptoQuote>;
@@ -23,17 +25,17 @@ function cryptoStore(key: string): SharedPollingStore<State> {
   const existing = cryptoStores.get(key);
   if (existing) return existing;
   const store = createSharedPollingStore<State>(
-    { byId: {}, diagnosticById: {}, phase: 'connecting', asOf: null,
+    { byId: {}, displayById: {}, diagnosticById: {}, phase: 'connecting', asOf: null,
       error: null, authority: 'unavailable' },
     (setState, getState) => {
       if (!key) {
-        setState({ byId: {}, diagnosticById: {}, phase: 'live', asOf: null,
+        setState({ byId: {}, displayById: {}, diagnosticById: {}, phase: 'live', asOf: null,
           error: null, authority: 'unavailable' });
         return () => {};
       }
       const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
       if (!backend) {
-        setState({ byId: {}, diagnosticById: {}, phase: 'mock', asOf: null,
+        setState({ byId: {}, displayById: {}, diagnosticById: {}, phase: 'mock', asOf: null,
           error: null, authority: 'unavailable' });
         return () => {};
       }
@@ -56,7 +58,8 @@ function cryptoStore(key: string): SharedPollingStore<State> {
       function expire() {
         const current = getState();
         cancelExpiries();
-        setState({ ...current, byId: {}, phase: 'partial', authority: 'expired' });
+        setState({ ...current, byId: {}, displayById: retainCryptoDisplay(current.displayById),
+          phase: 'partial', authority: 'expired' });
       }
 
       function accept(data: CryptoWatchlistSnapshot) {
@@ -71,6 +74,7 @@ function cryptoStore(key: string): SharedPollingStore<State> {
         }
         const allRequestedUsable = Object.keys(byId).length === key.split(',').length;
         setState({ byId, diagnosticById,
+          displayById: acceptCryptoDisplay(getState().displayById, data, key.split(',')),
           phase: allRequestedUsable ? 'live' : Object.keys(diagnosticById).length ? 'partial' : 'mock',
           asOf: Object.values(byId).map((quote) => quote.sourceTimestamp ?? '')
             .sort().at(-1) || null,
@@ -85,7 +89,8 @@ function cryptoStore(key: string): SharedPollingStore<State> {
       function fail(message: string) {
         const current = getState();
         cancelExpiries();
-        setState({ ...current, byId: {}, phase: 'partial', error: message,
+        setState({ ...current, byId: {}, displayById: retainCryptoDisplay(current.displayById),
+          phase: 'partial', error: message,
           authority: 'refresh_failed' });
       }
 
@@ -136,7 +141,8 @@ function cryptoStore(key: string): SharedPollingStore<State> {
  * Live USD quotes for the watched crypto assets via the backend
  * `/api/argus/crypto-watchlist?ids=…` (CoinGecko, keyless). `ids` are
  * CoinGecko ids (from each asset's `coingecko:<id>` memo). No mock prices on
- * failure — callers render the honest "not connected" placeholder instead.
+ * failure. `byId` is fresh decision evidence; `displayById` separately retains
+ * real fallback/saved prices with their original times for price viewing only.
  */
 export function useCryptoWatchlist(ids: string[]): State {
   const key = ids.slice().sort().join(',');

@@ -13,6 +13,7 @@ import type { LocalScenarioSet } from '../../domain/scenario';
 import type { LocalPlan } from '../../domain/positionPlan';
 import type { AIJudgmentLabel } from '../../types/aiJudgment';
 import type { DecisionFirstView, DeskGenre } from '../../domain/assetDesk';
+import type { CryptoDisplayQuote } from '../../domain/cryptoPriceDisplay';
 
 export interface DeskEventTag { code: string; countdown: string; impact: string }
 
@@ -26,6 +27,9 @@ export interface DeskCardData {
   decision?: AssetDecisionView;
   strat: AssetStrategy;
   quote?: QuoteLite;
+  /** Display only; never replaces quote/strat/decisionFirst evidence. */
+  cryptoDisplayQuote?: CryptoDisplayQuote;
+  cryptoRefreshFailed?: boolean;
   liveName?: string | null;
   incident?: DownsideIncident;
   pn?: PositionNote;

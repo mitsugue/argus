@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.81"
+PRODUCT_VERSION = "v13.8.82"
 ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
 ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -115,7 +115,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # contents; cadence constants live in web/src/lib/pollingPolicy.ts.
     'web/src/hooks/useAIJudgment.ts': 'caeddb01dfb89832a26e628fced7d7c49fea0396',
     'web/src/hooks/useActionLabels.ts': '9db3b9c72d2357a84ea314eea385bcbe4873e62b',
-    'web/src/hooks/useCryptoWatchlist.ts': '666cf8f60ca9b482b2d714616acb2acd3e1e41dc',
+    'web/src/hooks/useCryptoWatchlist.ts': '02eecb6c0348fd333db35a9524886c6ececb1a0f',
     'web/src/hooks/useDownsideIncidents.ts': '96b14d1816603db7e978abba6178599a7e0b8df5',
     'web/src/hooks/useEventRadar.ts': '48857482a399f20fff704a2eaf4c0c24d9a2c769',
     'web/src/hooks/useFlowAttribution.ts': 'b751448153d40813c83541525bc31d7ca400bada',
@@ -139,7 +139,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '8579e30516fbf7baf575f2440e619404f2f1c62a',
+    'web/scripts/owner-today-https.mjs': '5dce3edbf61b7303ae494c46cc056c7e21c04416',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -661,6 +661,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/domain/cryptoPriceDisplay.ts",
+    "web/scripts/crypto-price-display.test.cjs",
     "web/src/lib/savedOverviewCache.ts",
     "web/src/lib/marketBriefCache.ts",
     "web/scripts/saved-read-cache.test.cjs",
