@@ -187,19 +187,30 @@ def earnings_rule(*, sessions, financial_rows, membership_by_day, stock_bars, to
         s=row['summary']; code=str(s['Code'])[:4]; day=s['DiscDate']; fy=s.get('CurFYEn')
         forecasts=[(fy,s.get('FOP'),'consolidated'),(fy,s.get('FNCOP'),'nonconsolidated'),
                    (s.get('NxtFYEn'),s.get('NxFOP'),'consolidated'),(s.get('NxtFYEn'),s.get('NxFNCOP'),'nonconsolidated')]
-        revised=False; used_known=known; compared=False; has_forecast=False
+        revised=False; used_known=known; compared=False; has_forecast=False; ambiguous_comparison=False
+        in_scope = day in window and code in (membership_by_day.get(day) or ())
         for fiscal, raw, lane in forecasts:
             value=_forecast(raw)
             # Consolidated/non-consolidated forecasts remain distinct.
             if not fiscal or value is None: continue
             has_forecast=True
             key=(code,fiscal,lane); prior=prior_by_code_fy.get(key)
-            if prior and prior[2]==published and value!=prior[0]:
-                return {**out,'reasonJa':'同じ公表時刻の営業利益予想が矛盾しています'}
-            if prior and prior[2]<published and value>prior[0]:
+            if prior and prior[2]==published and (prior[0] is None or value!=prior[0]):
+                if in_scope:
+                    return {**out,'reasonJa':'同じ公表時刻の営業利益予想が矛盾しています'}
+                # An unrelated historical conflict cannot gate every later
+                # window. Keep its unknown value until a later disclosure
+                # replaces it; never choose a conflicting variant by order.
+                prior_by_code_fy[key]=(None,max(known,prior[1]),published)
+                continue
+            if prior and prior[2]<published and prior[0] is None:
+                ambiguous_comparison=True
+            if prior and prior[2]<published and prior[0] is not None and value>prior[0]:
                 revised=True; used_known=max(used_known,prior[1])
-            if prior and prior[2]<published: compared=True
+            if prior and prior[2]<published and prior[0] is not None: compared=True
             prior_by_code_fy[key]=(value,known,published)
+        if in_scope and ambiguous_comparison:
+            return {**out,'reasonJa':'修正前の同じ公表時刻の営業利益予想が矛盾しています'}
         if day in window and has_forecast and compared and code in (membership_by_day.get(day) or ()):
             comparison_known.append(used_known)
         if day in window and has_forecast and not compared and code in (membership_by_day.get(day) or ()):
