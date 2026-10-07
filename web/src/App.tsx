@@ -199,16 +199,18 @@ const App: React.FC = () => {
         onNavigateToSettings={navigateToSettings} />
     </div>
   );
+  const [watchlistMounted, setWatchlistMounted] = React.useState(route === 'watchlist');
+  React.useEffect(() => { if (route === 'watchlist') setWatchlistMounted(true); }, [route]);
   const content = <>
     {todayContent}
-    {route === 'watchlist' && (
-      <Watchlist
+    {(watchlistMounted || route === 'watchlist') && (
+      <div hidden={route !== 'watchlist'} className="route-keepalive"><Watchlist
         assetFocus={assetFocus}
         assetDetail={!!location.asset}
         initialPortfolioOpen={!!location.portfolioOpen}
         onNavigateToAsset={navigateToAsset}
         onBackToHoldings={() => handleNavSelect('watchlist')}
-      />
+      /></div>
     )}
     {route === 'settings'
       && <Settings settingsSection={location.settingsSection} />}

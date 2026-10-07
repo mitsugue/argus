@@ -17680,10 +17680,15 @@ def api_argus_market_brief():
         except Exception as exc:
             return jsonify({"status": "UNAVAILABLE", "reason": type(exc).__name__}), 503
     try:
-        if _MARKET_BRIEF["data"] is None or \
-                time.time() - _MARKET_BRIEF["composedAt"] > _MARKET_BRIEF_TTL_SEC:
-            _market_brief_refresh(allow_ai=False)
-        return jsonify({**_MARKET_BRIEF["data"], "generationWorker": {
+        if _MARKET_BRIEF['data'] is None:
+            _market_brief_history_restore()
+        cached = (_MARKET_BRIEF['data'] or _MARKET_BRIEF.get('lastSuccessful')
+                  or _MARKET_BRIEF.get('lastPresentation'))
+        if cached is None:
+            return jsonify({'schemaVersion': argus_market_brief.BRIEF_SCHEMA,
+                'status': 'unavailable', 'reason': 'edition_not_yet_available',
+                'sdaAuthority': False, 'automaticAiCalls': 0}), 503
+        return jsonify({**cached, "generationWorker": {
             key: value for key, value in _MARKET_BRIEF_WORKER.items()
             if key != "lastAttemptMonotonic"},
             "generationGate": _market_brief_generation_gate()})

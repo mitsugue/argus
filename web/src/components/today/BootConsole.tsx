@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import { useTodayHeadline } from '../../hooks/useTodayHeadline';
 import { useImportantEvents } from '../../hooks/useImportantEvents';
+import { readableBriefEdition } from '../../lib/presentationIntent';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
 import { useAIJudgment } from '../../hooks/useAIJudgment';
 import { useFutureMapLoad } from '../../hooks/useFutureMap';
@@ -82,8 +83,10 @@ export function useBootLanes(inputs: BootConsoleInputs): BootLane[] {
       : inputs.news.data ? 'ready' : 'unavailable';
     const intel: BootLaneStatus = inputs.newsIntel.status === 'loading' ? 'loading'
       : inputs.newsIntel.status === 'data' ? 'ready' : 'unavailable';
-    const briefStatus: BootLaneStatus = brief.loading && !brief.brief ? 'loading'
-      : brief.brief ? 'ready' : 'unavailable';
+    const readable = readableBriefEdition(brief.brief);
+    const briefStatus: BootLaneStatus = readable
+      ? (readable !== brief.brief || brief.error || brief.loading ? 'cached' : 'ready')
+      : brief.loading ? 'loading' : 'unavailable';
     // The integrated outlook is a stored judgment by design: the product does
     // not run the AI on every page load. Reserving 'ready' for a live run
     // therefore left this lane reading 'cached' on every first load, as if
@@ -98,7 +101,7 @@ export function useBootLanes(inputs: BootConsoleInputs): BootLane[] {
     // Lanes follow the Today screen from top to bottom (owner, 2026-10-04).
     return [
       { id: 'outlook', label: 'Today outlook', detail: 'integrated AI · market position',
-        status: combine(briefStatus, judgmentStatus) },
+        status: briefStatus === 'unavailable' ? 'unavailable' : combine(briefStatus, judgmentStatus) },
       { id: 'future-map', label: 'FUTURE MAP', detail: 'external views table',
         status: futureMap },
       { id: 'nikkei', label: 'Nikkei 225 & analogs', detail: 'verified calc · index · market headline',
@@ -151,8 +154,9 @@ export const BootConsole: React.FC<{ inputs: BootConsoleInputs }> = ({ inputs })
 
   if (phase === 'closed' || dismissed || typeof document === 'undefined') return null;
 
+  const unavailable = lanes.filter(lane => lane.status === 'unavailable').length;
   const summary = complete
-    ? `Market context ready · ${total} of ${total}`
+    ? `Reads completed · ${total} of ${total}${unavailable ? ` · ${unavailable} unavailable` : ''}`
     : `Loading market context · ${done} of ${total}`;
 
   return createPortal(
@@ -160,7 +164,7 @@ export const BootConsole: React.FC<{ inputs: BootConsoleInputs }> = ({ inputs })
       role="status" aria-live="polite" aria-label={summary}>
       <div className="boot-console__head">
         <TriangleStepLoader compact label="" />
-        <span className="boot-console__title">{complete ? 'READY' : 'SCANNING'}</span>
+        <span className="boot-console__title">{complete ? (unavailable ? 'INCOMPLETE' : 'READ') : 'SCANNING'}</span>
         <span className="boot-console__percent">{percent}%</span>
         <button type="button" className="boot-console__dismiss" aria-label="Dismiss"
           onClick={() => setDismissed(true)}>×</button>

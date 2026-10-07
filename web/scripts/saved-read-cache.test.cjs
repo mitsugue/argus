@@ -1,0 +1,12 @@
+const fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript'),assert=require('node:assert/strict');
+const exportsValue={};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/lib/savedOverviewCache.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,{exports:exportsValue,Map,Date});
+const cache=exportsValue.createSavedReadCache(2);
+cache.put('owner-session:JP:7203:5:context1','日本株',300000,1000);
+assert.equal(cache.get('owner-session:JP:7203:5:context1',1001),'日本株');
+for(const key of ['other-session:JP:7203:5:context1','owner-session:US:7203:5:context1','owner-session:JP:7203:20:context1','owner-session:JP:7203:5:context2']) assert.equal(cache.get(key,1001),undefined);
+assert.equal(cache.get('owner-session:JP:7203:5:context1',301000),undefined,'期限後は再読取する');
+cache.put('a','a',300000,1000);cache.put('b','b',300000,1000);cache.put('c','c',300000,1000);
+assert.equal(cache.get('a',1001),undefined,'銘柄数が増えても上限を守る');
+assert.equal(cache.get('b',1001),'b');cache.clear();assert.equal(cache.get('c',1001),undefined,'認証変更時に全消去できる');
+console.log('銘柄説明: 認証・市場・銘柄・期間・根拠の分離、5分期限、件数上限、消去 PASS');

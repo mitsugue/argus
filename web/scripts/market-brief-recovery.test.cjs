@@ -11,7 +11,9 @@ const saved = { schemaVersion: 'argus-market-brief-v1', generatedAt: '2026-10-05
         textJa: '保存済みの見立てです。', kind: ['changes', 'impact'].includes(key) ? 'UNKNOWN' : 'INFERENCE',
         evidenceIds: ['changes', 'impact'].includes(key) ? [] : [factId] }])) } };
 const response = (value, status = 200) => ({ ok: status === 200, status, json: async () => structuredClone(value) });
-function setup(first, historyValid = true) {
+function setup(first, historyValid = true, cached = null) {
+  const sessionValues = new Map(cached ? [["argus.marketBrief.session.v1", JSON.stringify(cached)]] : []);
+  const sessionStorage = { getItem: key => sessionValues.get(key) || null, setItem: (key,value) => sessionValues.set(key,value), removeItem: key => sessionValues.delete(key) };
   let subscriber, interval; const calls = [], timers = new Map(), modules = new Map();
   let now = Date.parse('2026-10-06T13:00:00Z');
   class ClockDate extends Date { static now() { return now; } }
@@ -25,7 +27,7 @@ function setup(first, historyValid = true) {
   function module(path) {
     if (modules.has(path)) return modules.get(path);
     const exports = {}; modules.set(path, exports);
-    const sandbox = { exports, Date: ClockDate, Set, URL, AbortController, fetch, document: { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} },
+    const sandbox = { exports, sessionStorage, Date: ClockDate, Set, URL, AbortController, fetch, document: { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} },
       window: { setTimeout(fn) { const id = timers.size + 1; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); },
         setInterval(fn) { interval = fn; return 1; }, clearInterval() {} },
       require(name) {
@@ -40,7 +42,7 @@ function setup(first, historyValid = true) {
   }
   const hook = module(require('node:path').resolve('src/hooks/useMarketBrief.ts'));
   hook.useMarketBrief(); const stop = subscriber(() => {});
-  return { hook, calls, timers, stop, get: () => hook.useMarketBrief(), interval, advance(ms) { now += ms; interval(); } };
+  return { hook, calls, timers, stop, sessionValues, get: () => hook.useMarketBrief(), interval, advance(ms) { now += ms; interval(); } };
 }
 const settle = async () => { for (let n = 0; n < 20; n++) await Promise.resolve(); };
 (async () => {
@@ -54,6 +56,13 @@ const settle = async () => { for (let n = 0; n < 20; n++) await Promise.resolve(
     assert.equal(result.loading, false); assert.equal(test.calls.length, 3);
     test.stop();
   }
+  const cached = setup(({signal})=>new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(new Error('timeout')))),true,saved);
+  assert.equal(cached.get().brief.generatedAt,saved.generatedAt,'通信を待たず保存した完全な見立てを表示');
+  assert.equal(cached.get().loading,true);cached.stop();await settle();
+  const deniedCache=setup(()=>response({},401),true,saved);await settle();
+  assert.equal(deniedCache.get().brief,null);assert.equal(deniedCache.sessionValues.size,0,'認証拒否時は画面用保存版も消去');deniedCache.stop();
+  const ownerCache=setup(()=>response({},401),true,{...saved,unifiedSummary:{...saved.unifiedSummary,ownerContextAvailable:true}});
+  assert.equal(ownerCache.get().brief,null,'所有者情報を含む説明を画面用の保存へ受け入れない');await settle();ownerCache.stop();
   const timeout = setup(({ signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('timeout')))));
   [...timeout.timers.values()][0](); await settle();
   assert.equal(timeout.get().brief.generatedAt, saved.generatedAt, 'current timeout cannot cancel saved-history recovery');

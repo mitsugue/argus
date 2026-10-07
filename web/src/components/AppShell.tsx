@@ -70,15 +70,18 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, over
   const topNavRef = useRef<HTMLDivElement>(null);
   const botNavRef = useRef<HTMLDivElement>(null);
   const pullRef = useRef(0);   // signed armed-progress at release time
-  // Page-enter animation: re-keyed whenever the visible page changes.
-  const [animTick, setAnimTick] = useState(0);
+  // Animate the existing node; changing its React key destroys every cached screen.
   const [animDir, setAnimDir] = useState<1 | -1>(1);
   const prevPageKey = useRef(pageKey);
   useEffect(() => {
     if (pageKey !== prevPageKey.current) {
       prevPageKey.current = pageKey;
       setAnimDir(pageDirection);
-      setAnimTick((t) => t + 1);
+      const page = pageRef.current;
+      if (page && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        page.animate([{ transform: `translateY(${pageDirection > 0 ? '100vh' : '-100vh'})` },
+          { transform: 'translateY(0)' }], { duration: 660, easing: 'cubic-bezier(0.22, 0.61, 0.31, 1)' });
+      }
     }
   }, [pageKey, pageDirection]);
 
@@ -233,7 +236,6 @@ export const AppShell: React.FC<Props> = ({ sidebar, children, lastUpdated, over
             <div ref={topNavRef} className="shell__pullnav shell__pullnav--top" style={{ opacity: 0 }} aria-hidden />
           )}
           <div
-            key={animTick}
             ref={pageRef}
             className={`shell__page shell__page--${animDir > 0 ? 'next' : 'prev'}`}
           >
