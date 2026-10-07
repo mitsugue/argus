@@ -65,7 +65,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   </span> : null) : loading ? <p className="at-brief__update"><TriangleStepLoader label="見立てを読み込んでいます" /></p>
     : error ? <p role="status" className="at-brief__update">見立てを取得できません。<button type="button" onClick={retry}>再読込</button></p> : null;
   if (!brief) return <div className="at-brief" aria-label="ARGUSの今日の見立て">
-    {updateState ?? <p role="status">見立てはまだありません。</p>}<MarketAnalysisHistory key="saved-history" /></div>;
+    {updateState ?? <p role="status">見立てはまだありません。</p>}<CreditConditionsDetails /><MarketAnalysisHistory key="saved-history" /></div>;
   const edition = editorial ? editorialEdition(brief) : null;
   const gateNote = gateNoteJa(responseBrief ?? brief);
   if (edition) return <ArgusEditorialSurface brief={edition} updateState={updateState} retained={edition !== brief}

@@ -244,3 +244,15 @@ def test_store_open_failure_is_distinct_and_never_fetches(monkeypatch):
         credit.refresh('unused',now_iso=AT,get=lambda *a,**kw:pytest.fail('no request'),clock=lambda:AT)
     assert failed.value.diagnostic=={'stage':'OPEN_STORE','sqliteCode':14,'kind':'CANNOT_OPEN'}
     assert 'private' not in str(failed.value)
+
+
+def test_failed_worker_is_visible_without_changing_saved_observations(tmp_path):
+    doc=credit.read(retained(tmp_path),cutoff=AT)
+    healthy=credit.context_reference(doc)
+    doc['worker']={'status':'FAILED','errorClass':'CreditStoreError'}
+    failed=credit.context_reference(doc)
+    assert failed['collectionStatus']=='FAILED'
+    assert failed['snapshotId']==healthy['snapshotId'] and failed['evidence']==healthy['evidence']
+    assert failed['dimensions']==healthy['dimensions']
+    assert failed['sourceHealth'][0]['status']=='DEGRADED'
+    assert doc['sourceHealth'][0]['status']=='AVAILABLE'

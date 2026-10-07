@@ -147,7 +147,7 @@ export default defineConfig({
             // shock/news) must never be painted from a 12 h Cache-Storage body
             // as if current; the hooks own freshness (asOf/generatedAt) and
             // refresh on mount / visibility / online.
-            urlPattern: /^https:\/\/argus-backend-[a-z0-9]+\.onrender\.com\/api\/argus\/(?:important-events|dashboard-events|news-intelligence|market-news|market-shock|index-chart)(?:\?.*)?$/i,
+            urlPattern: /^https:\/\/argus-backend-[a-z0-9]+\.onrender\.com\/api\/argus\/(?:important-events|dashboard-events|news-intelligence|market-news|market-shock|index-chart|credit-conditions)(?:\?.*)?$/i,
             handler: 'NetworkOnly',
           },
           {
