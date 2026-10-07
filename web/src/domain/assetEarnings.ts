@@ -2,8 +2,8 @@ export type AssetEarnings = {
   symbol: string; market: 'JP' | 'US'; source: string; fetchedAt: string; currency: string | null;
   actionAuthority: false; acquisitionStatus?: string; companyStatus?: string;
   next: { from: string; to: string; certainty: 'PROVIDER_ESTIMATE'; timezone: string } | null;
-  previous: { periodEnd: string; epsActual: number; epsEstimate: number | null; surprisePct: number | null } | null;
-  estimate: { periodEnd: string; eps: number | null; epsLow: number | null; epsHigh: number | null;
+  previous: { currency?: string | null; periodEnd: string; epsActual: number; epsEstimate: number | null; surprisePct: number | null } | null;
+  estimate: { epsCurrency?: string | null; revenueCurrency?: string | null; periodEnd: string; eps: number | null; epsLow: number | null; epsHigh: number | null;
     analysts: number | null; epsGrowthPct: number | null; revenue: number | null; revenueAnalysts: number | null;
     revenueGrowthPct: number | null; eps30DaysAgo: number | null } | null;
   company?: { disclosedDate: string; periodEnd: string | null; periodType: string; fiscalYearEnd: string | null;
@@ -12,6 +12,7 @@ export type AssetEarnings = {
 };
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const optionalNumber = (value: unknown) => value === null || finite(value);
+const unit = (value: unknown) => value === undefined || value === null || typeof value === 'string' && /^[A-Z]{3}$/.test(value);
 const count = (value: unknown) => value === null || finite(value) && Number.isInteger(value) && value >= 1;
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 100;
 export const validEarningsDay = (value: unknown): value is string => typeof value === 'string' &&
@@ -26,8 +27,8 @@ export function validAssetEarnings(value: unknown, key: string): value is AssetE
   if (n !== null && (!n || !validEarningsDay(n.from) || !validEarningsDay(n.to) || n.from > n.to ||
     n.certainty !== 'PROVIDER_ESTIMATE' || n.timezone !== (row.market === 'JP' ? 'Asia/Tokyo' : 'America/New_York'))) return false;
   if (p !== null && (!p || !validEarningsDay(p.periodEnd) || !finite(p.epsActual) ||
-    !optionalNumber(p.epsEstimate) || !optionalNumber(p.surprisePct))) return false;
-  if (e !== null && (!e || !validEarningsDay(e.periodEnd) || !count(e.analysts) || !count(e.revenueAnalysts) ||
+    !unit(p.currency) || !optionalNumber(p.epsEstimate) || !optionalNumber(p.surprisePct))) return false;
+  if (e !== null && (!e || !validEarningsDay(e.periodEnd) || !unit(e.epsCurrency) || !unit(e.revenueCurrency) || !count(e.analysts) || !count(e.revenueAnalysts) ||
     ![e.eps, e.epsLow, e.epsHigh, e.epsGrowthPct, e.revenue, e.revenueGrowthPct, e.eps30DaysAgo].every(optionalNumber) ||
     e.eps !== null && e.analysts === null || e.revenue !== null && e.revenueAnalysts === null)) return false;
   if (c !== undefined && (!c || row.market !== 'JP' || !validEarningsDay(c.disclosedDate) ||
