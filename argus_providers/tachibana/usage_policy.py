@@ -43,6 +43,7 @@ class UsagePolicy:
         self.count = 0
         self.blocked = False
         self.acquired = False
+        self.initial_usage_unknown = False
 
     def acquire(self):
         self.lease.acquire()
@@ -57,8 +58,11 @@ class UsagePolicy:
                 if type(row["count"]) is not int or not 0 <= row["count"] <= 6 or type(row["blocked"]) is not bool:
                     raise ValueError("invalid_policy")
                 self.day, self.count, self.blocked = row["day"], row["count"], row["blocked"]
+                if 'initialUsageUnknown' in row and type(row['initialUsageUnknown']) is not bool:
+                    raise ValueError('invalid_policy')
                 if row.get('initialUsageUnknown') is True and (not self.blocked or self.count != 6):
                     raise ValueError('unknown_usage_must_be_blocked')
+                self.initial_usage_unknown = row.get('initialUsageUnknown', False)
             self.acquired = True
         except Exception:
             self.lease.release()
@@ -79,6 +83,7 @@ class UsagePolicy:
             raise TachibanaError(ErrorClass.CLOCK_SKEW)
         if self.day != day:
             self.day, self.count, self.blocked = day, 0, False
+            self.initial_usage_unknown = False
         if self.blocked or login and self.count >= 6:
             raise TachibanaError(ErrorClass.DISABLED)
         if login:
@@ -95,7 +100,10 @@ class UsagePolicy:
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w") as stream:
-            json.dump({"day": self.day, "count": self.count, "blocked": self.blocked}, stream)
+            row = {"day": self.day, "count": self.count, "blocked": self.blocked}
+            if self.initial_usage_unknown:
+                row['initialUsageUnknown'] = True
+            json.dump(row, stream)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, self.path)
