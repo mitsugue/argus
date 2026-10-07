@@ -185,6 +185,9 @@ assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:staleGrad
 assert.equal(reading.warningDistanceJa({...view.signals[0],state:'CLEAR',distance:{signedFromBoundary:0,unit:'JPY',operator:'<',atBoundary:true,boundaryCounts:false}}),'基準ちょうど・まだ成立していません');
 assert.equal(reading.warningDistanceJa({...view.signals[1],state:'CLEAR',distance:{signedFromBoundary:-.25,unit:'RATIO',operator:'>=',atBoundary:false,boundaryCounts:true}}),'成立まであと0.25倍の上昇');
 assert.equal(reading.warningDistanceJa({...view.signals[1],state:'STALE'}),null);
+assert.equal(reading.warningDistanceJa({...view.signals[3],state:'CLEAR',distance:{signedFromBoundary:12.5,unit:'JPY_EPS',operator:'<',atBoundary:false,boundaryCounts:false}}),'基準まであと12.5円（下回ると成立）');
+assert.equal(reading.warningDistanceJa({...view.signals[2],state:'ACTIVE',distance:{signedFromBoundary:-.01,unit:'INDEX_RATIO',operator:'<',atBoundary:false,boundaryCounts:false}}),'基準より指数比の差 0.01低い・成立中');
+assert.equal(reading.warningDistanceJa({...view.signals[6],state:'CLEAR',distance:{signedFromBoundary:-.1,unit:'FRACTION',operator:'>=',atBoundary:false,boundaryCounts:true}}),'成立まであと10ポイントの上昇');
 assert.match(reading.warningDistanceJa({...view.signals[5],state:'CLEAR',distance:{signedFromBoundary:-1e-10,unit:'MACD_GAP',operator:'>',atBoundary:false,boundaryCounts:false}}),/0.0000000001/);
 console.log('警戒v2：旧支持規則の非流用・版/時点/重複/未定義拒否・距離境界 PASS');
 
