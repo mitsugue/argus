@@ -372,6 +372,11 @@ _LEVEL_MAP_TABLES = '''CREATE TABLE IF NOT EXISTS level_map_eps(session TEXT PRI
       created_at TEXT NOT NULL, body TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS candidate_records(record_key TEXT PRIMARY KEY, record_id TEXT NOT NULL UNIQUE,
       recorded_at TEXT NOT NULL, body TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS future_map_versions(record_id TEXT PRIMARY KEY,
+      recorded_at TEXT NOT NULL, body TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS future_map_outcomes(outcome_id TEXT PRIMARY KEY,
+      record_id TEXT NOT NULL REFERENCES future_map_versions(record_id),
+      recorded_at TEXT NOT NULL, body TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS level_map_eps_corrections(correction_id TEXT PRIMARY KEY,
       session TEXT NOT NULL, recorded_at TEXT NOT NULL, original_sha256 TEXT NOT NULL, body TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS level_map_morning_corrections(correction_id TEXT PRIMARY KEY,
@@ -534,4 +539,58 @@ def read_candidate_records(path):
         if 'candidate_records' not in names:
             return []
         return [json.loads(row[0]) for row in conn.execute('SELECT body FROM candidate_records ORDER BY record_key')]
+    finally: conn.close()
+
+
+def _validate_future_map_version(record):
+    from argus_future_map_scoring import registration
+    if registration(record['row'], received_at=record['recordedAt']) != record:
+        raise ValueError('future_map_registration_integrity')
+    require_allowed(record)
+
+
+def append_future_map_version(path, record):
+    _validate_future_map_version(record)
+    return _append_once(path, 'future_map_versions', 'record_id', record['recordId'],
+                        (record['recordId'], record['recordedAt'], _json(record)))
+
+
+def _validate_future_map_outcome(outcome):
+    from argus_future_map_scoring import digest, instant, METHOD
+    instant(outcome['scoredAt'])
+    body = {key: value for key, value in outcome.items() if key not in ('scoredAt', 'outcomeId')}
+    if (outcome.get('schemaVersion') != METHOD or outcome.get('status') != 'SCORED'
+            or outcome.get('result') not in ('reached', 'missed')
+            or outcome.get('actionAuthority') is not False
+            or outcome.get('turningPointValidated') is not False
+            or outcome.get('probability') is not None
+            or outcome.get('outcomeId') != 'fmo-' + digest(body)):
+        raise ValueError('future_map_outcome_integrity')
+    require_allowed(outcome)
+
+
+def append_future_map_outcome(path, outcome):
+    _validate_future_map_outcome(outcome)
+    return _append_once(path, 'future_map_outcomes', 'outcome_id', outcome['outcomeId'],
+                        (outcome['outcomeId'], outcome['recordId'], outcome['scoredAt'], _json(outcome)))
+
+
+def read_future_map_state(path):
+    conn = _connect(path, True)
+    try:
+        names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        versions = ([json.loads(row[0]) for row in conn.execute(
+            'SELECT body FROM future_map_versions ORDER BY recorded_at, rowid')]
+            if 'future_map_versions' in names else [])
+        outcomes = ([json.loads(row[0]) for row in conn.execute(
+            'SELECT body FROM future_map_outcomes ORDER BY rowid')]
+            if 'future_map_outcomes' in names else [])
+        for record in versions:
+            _validate_future_map_version(record)
+        ids = {record['recordId'] for record in versions}
+        for outcome in outcomes:
+            _validate_future_map_outcome(outcome)
+            if outcome['recordId'] not in ids:
+                raise ValueError('future_map_outcome_registration_missing')
+        return {'versions': versions, 'outcomes': outcomes}
     finally: conn.close()

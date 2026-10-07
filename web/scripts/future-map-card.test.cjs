@@ -23,16 +23,16 @@ const doc = { schemaVersion: 'argus-future-map-public-v1', updatedAt: '2026-10-0
     row('g', '1月〜', '見立てなし', '―', { agree: 0 })],
   record: { scored: 0, reached: 0 }, argusValidated: false, actionAuthority: false };
 const html = renderToStaticMarkup(React.createElement(FutureMapView, { doc }));
-assert.ok(html.includes('FUTURE MAP') && html.includes('外部の見立て') && html.includes('ARGUS未検証') && html.includes('10/4更新'));
+assert.ok(html.includes('FUTURE MAP') && html.includes('外部の見立て') && html.includes('予測が当たるかは未検証') && html.includes('10/4更新'));
 assert.ok(html.includes('いまの位置') && html.includes('天井圏') && html.includes('10/14 米CPI') && html.includes('10/30ごろ'));
 assert.ok(html.includes('いまここ') && html.includes('●●') && html.includes('69,700〜72,000'));
 assert.ok(html.includes('AI投資の反動') && html.includes('別の見方: 選挙後は上がる') === false, 'only four rows at first');
 assert.ok(html.includes('すべて表示（残り3件・12/25前後 クリスマスが底まで）'));
-assert.ok(html.includes('見立ての成績: 10/5から採点') && html.includes('●の数 = 同じことを言っている見立ての数'));
+assert.ok(html.includes('答え合わせ: 0件（まだ成績なし）') && html.includes('●の数 = 同じことを言っている見立ての数'));
 for (const word of ['src_a', 'src_b', 'BUY', '確率']) assert.ok(!html.includes(word), word);
 assert.equal(renderToStaticMarkup(React.createElement(FutureMapView, { doc: null })), '');
 const scored = renderToStaticMarkup(React.createElement(FutureMapView, { doc: { ...doc, record: { scored: 3, reached: 2 } } }));
-assert.ok(scored.includes('見立ての成績: 3件中2件到達'));
+assert.ok(scored.includes('答え合わせ: 3件中2件到達（件数不足）'));
 const at = stamp => Date.parse(stamp);
 assert.deepEqual(futureMapUpdateAge(doc.updatedAt, at('2026-10-05T11:59:59Z')),
   { days: 0, warning: false, label: '24時間以内の更新' });
