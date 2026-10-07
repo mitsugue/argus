@@ -42,10 +42,13 @@ export const AssetEarningsDetails: React.FC<{ market: string; symbol: string }> 
         {e.eps === e.eps30DaysAgo ? '変化なし' : e.eps > e.eps30DaysAgo ? '上方修正' : '下方修正'}。</>}
       <small> 市場の業績予想であり、ARGUSの株価予測ではありません。</small></p> :
       c?.forecastOperatingProfit !== null && c?.forecastOperatingProfit !== undefined ?
-        <p>{c.fiscalYearEnd ?? '当年度'}の会社予想は営業利益{companyAmount(c.forecastOperatingProfit)}。次の四半期だけの利益予想は未取得です。</p> :
+        <p>{c.fiscalYearEnd ?? '当年度'}の会社予想は営業利益{companyAmount(c.forecastOperatingProfit)}
+          {c.forecastDisclosedDate && <>（{outlookDay(c.forecastDisclosedDate)}発表）</>}。次の四半期だけの利益予想は未取得です。</p> :
         <p>根拠のある業績予想は未取得です。見通しを推測で補いません。</p>}
     {row && <p className="ad-detail-note">{c?.source ?? row.source} · {outlookDay(c?.receivedAt ?? row.fetchedAt)}取得
       {c && (p || e) && <> / 市場予想 {row.source} · {outlookDay(row.fetchedAt)}取得</>}
+      {c?.forecastDisclosedDate && c.forecastDisclosedDate !== c.disclosedDate && <> / 会社予想の訂正 {outlookDay(c.forecastDisclosedDate)}発表
+        {c.forecastReceivedAt && <> · {outlookDay(c.forecastReceivedAt)}取得</>}</>}
       {(state.refreshFailed || row.acquisitionStatus === 'FETCH_FAILED') && ' · 更新未確認・保存値'}</p>}
   </section>;
 };

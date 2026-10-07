@@ -65,6 +65,42 @@ def test_company_latest_result_excludes_forecast_revision_and_preserves_zero_pro
     assert earnings.company_summary([], today=TODAY) is None
 
 
+def test_company_plan_revision_updates_forecast_without_replacing_actual_or_receipt():
+    actual = {'receivedAt': '2026-08-01T00:00:00Z', 'summary': {'Code': '10010',
+        'DocType': '1QFinancialStatements_Consolidated', 'DiscDate': '2026-07-31',
+        'CurPerType': '1Q', 'CurPerEn': '2026-06-30', 'CurFYEn': '2027-03-31', 'OP': '100', 'FOP': '300'}}
+    revision = {'receivedAt': AT, 'summary': {'Code': '10010', 'DocType': 'ForecastRevision',
+        'DiscDate': '2026-10-01', 'CurFYEn': '2027-03-31', 'OP': '9999', 'FOP': '450'}}
+    result = earnings.company_summary([revision, actual], today=TODAY)
+    assert result['operatingProfit'] == 100 and result['disclosedDate'] == '2026-07-31'
+    assert result['receivedAt'] == actual['receivedAt'] and result['periodType'] == '1Q'
+    assert result['forecastOperatingProfit'] == 450 and result['forecastDisclosedDate'] == '2026-10-01'
+    assert result['forecastReceivedAt'] == AT
+
+
+def test_revision_rejects_other_issuer_year_future_and_missing_matching_reporting_field():
+    actual = {'receivedAt': AT, 'summary': {'Code': '10010', 'DocType': 'FinancialStatements_Consolidated',
+        'DiscDate': '2026-07-31', 'CurFYEn': '2027-03-31', 'OP': '100', 'FOP': '300'}}
+    revision = {'receivedAt': AT, 'summary': {'Code': '10010', 'DocType': 'ForecastRevision',
+        'DiscDate': '2026-10-01', 'CurFYEn': '2027-03-31', 'FOP': '450'}}
+    for patch in ({'Code': '99990'}, {'CurFYEn': '2028-03-31'}, {'DiscDate': '2027-01-01'},
+                  {'FOP': '', 'FNCOP': '900'}, {'FOP': 'nan'}):
+        result = earnings.company_summary([actual, {**revision, 'summary': {**revision['summary'], **patch}}], today=TODAY)
+        assert result['forecastOperatingProfit'] == 300 and result['forecastDisclosedDate'] == '2026-07-31'
+
+
+def test_nonconsolidated_plan_uses_its_field_and_conflict_is_not_larger_plan():
+    actual = {'receivedAt': AT, 'summary': {'Code': '10010', 'DocType': 'FinancialStatements_NonConsolidated',
+        'DiscDate': '2026-07-31', 'CurFYEn': '2027-03-31', 'NCOP': '100', 'FNCOP': '300'}}
+    revision = {'receivedAt': AT, 'summary': {'Code': '10010', 'DocType': 'ForecastRevision',
+        'DiscDate': '2026-10-01', 'CurFYEn': '2027-03-31', 'FOP': '9999', 'FNCOP': '0'}}
+    result = earnings.company_summary([actual, revision], today=TODAY)
+    assert result['forecastOperatingProfit'] == 0 and result['consolidated'] is False
+    conflict = {**revision, 'summary': {**revision['summary'], 'FNCOP': '500'}}
+    result = earnings.company_summary([actual, revision, conflict], today=TODAY)
+    assert result['forecastOperatingProfit'] is None and result['operatingProfit'] == 100
+
+
 def test_failed_acquisition_preserves_original_earnings_and_success_empty_clears_old_schedule():
     previous = {'earnings': parse()}
     failed = earnings.attach(previous, {}, earnings=None, success=False)
