@@ -37,3 +37,17 @@ def test_future_receipts_old_basis_and_conflicting_corrections_never_enter_the_s
     assert study(**args)['conditions']['D04']['inputDays']==0
     args=inputs();args['eps_rows'].append({**args['eps_rows'][0],'eps':100})
     with pytest.raises(ValueError,match='ambiguous_eps'):study(**args)
+
+
+def test_known_partial_eps_is_missing_for_study_and_preserved_in_original_digest():
+    args=inputs();args['eps_rows']=[{**r,'coverage':{'members':225,'missingMarketCap':200}} for r in args['eps_rows']]
+    before=deepcopy(args)
+    result=study(**args)
+    assert result['conditions']['D04']['inputDays']==0
+    assert result['conditions']['D04']['evaluated']==0 and args==before
+    complete=[{**r,'coverage':{'members':225,'missingMarketCap':0}} for r in args['eps_rows']]
+    corrected=study(**{**args,'eps_rows':args['eps_rows']+complete})
+    reference=study(**{**args,'eps_rows':complete})
+    assert corrected['conditions']==reference['conditions']
+    assert corrected['sourceDigest']!=reference['sourceDigest']
+    assert corrected['validationStatus']=='UNVALIDATED'

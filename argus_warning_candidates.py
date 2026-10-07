@@ -10,7 +10,7 @@ import re
 from zoneinfo import ZoneInfo
 
 from jp_market_engine import _instant, _sha256
-from jp_market_level_map import EPS_BASIS
+from jp_market_level_map import EPS_BASIS, estimate_input_usable
 
 RULE_VERSION = 'jp-warning-conditions-v3'
 SCHEMA = 'argus-adopted-warning-inputs-v1'
@@ -136,7 +136,8 @@ def eps_rule(*, sessions, eps_rows, cutoff):
         return out
     by_day = {}
     for row in eps_rows:
-        if not isinstance(row, Mapping) or row.get('basis') != EPS_BASIS:
+        if (not isinstance(row, Mapping) or row.get('basis') != EPS_BASIS
+                or not estimate_input_usable(row)):
             continue
         day = row.get('date') or row.get('sessionDate')
         known, eps = _row_time(row), _number(row.get('eps'))

@@ -160,3 +160,16 @@ def test_price_reaction_scope_is_dated_and_is_not_a_warning_or_current_watchlist
     args['financial_rows']=[data['financial_rows'][-1]]
     args['membership_by_day']={}
     assert reaction_instruments(**args)==[]
+
+
+def test_known_incomplete_eps_cannot_light_or_clear_the_rule_before_complete_correction():
+    rows=[dict(date=d,eps=4000,basis=EPS_BASIS,knownAt=AT,
+               coverage={'members':225,'missingMarketCap':0}) for d in DAYS]
+    partial={**rows[-1],'eps':5000,'coverage':{'members':225,'missingMarketCap':200}}
+    before=deepcopy(partial)
+    assert eps_rule(sessions=DAYS,eps_rows=rows[:-1]+[partial],cutoff=AT)['conditionMet'] is None
+    complete={**rows[-1],'eps':3999}
+    result=eps_rule(sessions=DAYS,eps_rows=rows[:-1]+[partial,complete],cutoff=AT)
+    assert result['conditionMet'] is True and partial==before
+    rows[-11]['coverage']['missingMarketCap']=1
+    assert eps_rule(sessions=DAYS,eps_rows=rows[:-1]+[partial,complete],cutoff=AT)['conditionMet'] is None

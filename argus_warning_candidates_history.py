@@ -8,7 +8,7 @@ from datetime import date
 from collections.abc import Mapping
 
 from argus_warning_candidates import RULE_VERSION, _calendar, _closes, _forecast, _row_time
-from jp_market_level_map import EPS_BASIS
+from jp_market_level_map import EPS_BASIS, estimate_input_usable
 from jp_market_engine import _sha256
 from jp_market_sign_event_study import _condition, _empty_condition
 
@@ -22,7 +22,7 @@ def study(*, sessions, nikkei_rows, sp500_rows, eps_rows, cutoff):
     us=_closes(sp500_rows,'SP500_INDEX',limit); us_days=sorted(us)
     eps={}
     for r in eps_rows:
-        if not isinstance(r,Mapping) or r.get('basis')!=EPS_BASIS:continue
+        if not isinstance(r,Mapping) or r.get('basis')!=EPS_BASIS or not estimate_input_usable(r):continue
         known=_row_time(r); value=_forecast(r.get('eps')); day=r.get('date')
         if known is None or known>limit or value is None or value<=0:continue
         old=eps.get(day)
