@@ -36,12 +36,12 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     # 信用環境の公式入力・保存・表示を確認した正確な内容。
-    'argus_credit_conditions.py': '0d058363f86efae404071d3af26b1cd10d81018d',
-    'docs/operations/credit-conditions.md': 'd2f9bf2e98ca2e76866c9c96ef12ccc58884489e',
-    'test_argus_credit_conditions.py': '108bf07071357d407f0e488406f95261222b8249',
-    'web/scripts/credit-conditions.test.cjs': 'eccfd05af2d866eabedfc435ed2599528037f6f3',
+    'argus_credit_conditions.py': '9ee734dabe136e286b203c9d642abff2ea664648',
+    'docs/operations/credit-conditions.md': '255b8f4d95e5c9da2c8022de599ab1e03beae306',
+    'test_argus_credit_conditions.py': 'b52d4d8ec6dca13c9fb04bd681decc5953ea53f4',
+    'web/scripts/credit-conditions.test.cjs': '5508850dc2c89ec0e44ee0fcf9a08a8adb768dbc',
     'web/src/components/today/CreditConditionsDetails.css': 'cd4c4e8e641c1dc909b5d834370919174c4a88f7',
-    'web/src/components/today/CreditConditionsDetails.tsx': '87da133f3ba5b65b3706e6f06858f7717c10c2d8',
+    'web/src/components/today/CreditConditionsDetails.tsx': '5a0265db64119ac7100a5031c28cf2de45536baa',
     'web/src/components/today/WarningConditionsDetails.tsx': 'dad40e37c1843bf507e169cc42022443347f396e',
     'test_argus_warning_conditions.py': 'f5e93fb949d11721829e0f00930d9c72aa0da84a',
     'argus_warning_conditions.py': '18ef85b018b329895d25a66673e3f77057db817d',
