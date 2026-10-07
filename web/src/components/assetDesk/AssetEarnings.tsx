@@ -20,7 +20,7 @@ export const AssetEarningsDetails: React.FC<{ market: string; symbol: string }> 
     {c ? <p>{outlookDay(c.disclosedDate)}発表 · {c.periodEnd ? `${c.periodEnd}までの` : ''}
       {c.periodType === 'FY' ? '通期' : `${c.periodType}累計`} · {c.consolidated ? '連結' : '単体'}。
       営業利益は{companyAmount(c.operatingProfit)}。
-      {c.forecastOperatingProfit !== null && <>会社の通期営業利益予想は{companyAmount(c.forecastOperatingProfit)}。</>}</p> :
+      {c.forecastOperatingProfit !== null && c.forecastOperatingProfit > 0 && <>通期営業利益計画に対する進捗は{(c.operatingProfit / c.forecastOperatingProfit * 100).toFixed(1)}%。</>}</p> :
       p ? <p>{p.periodEnd}期の1株利益（EPS）は{amount(p.epsActual)}。
         {p.epsEstimate !== null && <>市場予想{amount(p.epsEstimate)}に対し、
           {p.surprisePct !== null ? `${earningsPct(p.surprisePct)}の差` : '予想がゼロのため差率は計算できません'}。</>}
@@ -30,11 +30,10 @@ export const AssetEarningsDetails: React.FC<{ market: string; symbol: string }> 
     <p>{e?.eps !== null && e?.eps !== undefined ? <>1株利益が市場予想{amount(e.eps)}（{e.analysts}人）を上回るか。
       {e.revenue !== null && <>売上高が市場予想{amount(e.revenue)}（{e.revenueAnalysts}人{e.revenueGrowthPct !== null && <>・前年同期比{earningsPct(e.revenueGrowthPct)}</>}）に届くか。</>}
       {c?.forecastOperatingProfit !== null && c?.forecastOperatingProfit !== undefined && <>会社の通期利益予想を維持・変更するか。</>}</> :
-      c?.forecastOperatingProfit !== null && c?.forecastOperatingProfit !== undefined ? <>通期営業利益予想{companyAmount(c.forecastOperatingProfit)}に対する進捗と、予想の変更を確認します。</> :
+      c?.forecastOperatingProfit !== null && c?.forecastOperatingProfit !== undefined ? <>通期計画に対する利益の進捗と、会社予想の変更を確認します。</> :
       '比較に使う会社予想・市場予想が未取得のため、銘柄固有の注目点はまだ示せません。'}</p>
     <h4>見通し</h4>
-    {e?.eps !== null && e?.eps !== undefined ? <p>{e.periodEnd}期の市場予想はEPS {amount(e.eps)}
-      {e.epsGrowthPct !== null && <>、前年同期比{earningsPct(e.epsGrowthPct)}</>}。
+    {e?.eps !== null && e?.eps !== undefined ? <p>{e.periodEnd}期のEPS市場予想は{e.epsGrowthPct !== null ? `前年同期比${earningsPct(e.epsGrowthPct)}` : '前年同期比の情報なし'}。
       {e.epsLow !== null && e.epsHigh !== null && e.epsLow <= e.epsHigh && <>予想の幅は{amount(e.epsLow)}〜{amount(e.epsHigh)}。</>}
       {e.eps30DaysAgo !== null && <>30日前の予想{amount(e.eps30DaysAgo)}から
         {e.eps === e.eps30DaysAgo ? '変化なし' : e.eps > e.eps30DaysAgo ? '上方修正' : '下方修正'}。</>}
