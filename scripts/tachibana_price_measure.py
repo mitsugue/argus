@@ -14,6 +14,7 @@ if __package__ in {None, ""}:
 from argus_providers.tachibana.config import TachibanaConfig
 from argus_providers.tachibana.price_runtime import TachibanaPriceRuntime
 from argus_providers.tachibana.models import Freshness
+from argus_providers.tachibana.usage_policy import initialize_blocked_policy
 
 
 def memory_sample():
@@ -62,12 +63,19 @@ def measure_runtime(runtime, *, seconds=300, sleeper=time.sleep, monotonic=time.
 def main():
     parser = argparse.ArgumentParser(description='立花の影測定。結果はローカルだけに保存してください。')
     parser.add_argument('--execute-shadow', action='store_true')
+    parser.add_argument('--initialize-blocked-policy', action='store_true')
     parser.add_argument('--exclusive-owner-session', action='store_true')
     parser.add_argument('--nikkei-confirmed', action='store_true')
     parser.add_argument('--symbols', default='')
     parser.add_argument('--policy-path')
     parser.add_argument('--seconds', type=int, default=300)
     args = parser.parse_args()
+    if args.initialize_blocked_policy:
+        if args.execute_shadow or not args.policy_path or not args.exclusive_owner_session:
+            parser.error('初期化は測定と分け、専有確認と永続保存先を指定してください')
+        result = initialize_blocked_policy(Path(args.policy_path), lambda: datetime.now(timezone.utc))
+        print(json.dumps({**result, 'enabledChanged': False}, ensure_ascii=False))
+        return 0
     if not args.execute_shadow:
         print(json.dumps({'status': 'NOT_RUN', 'networkCalls': 0, 'enabledChanged': False}))
         return 0

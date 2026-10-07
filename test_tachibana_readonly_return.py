@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import pytest
 from argus_providers.tachibana.models import TachibanaError, ErrorClass, Freshness
-from argus_providers.tachibana.usage_policy import UsagePolicy
+from argus_providers.tachibana.usage_policy import UsagePolicy, initialize_blocked_policy
 from argus_providers.tachibana.price_runtime import GuardedTransport, TachibanaPriceRuntime, COLUMNS
 from test_argus_tachibana_sensor import _session, _encrypted_session_response, _success, NOW
 
@@ -24,6 +24,7 @@ def test_quiet_hours_send_nothing_including_login_and_logout(tmp_path):
 
 def test_restart_preserves_six_login_limit_and_first_error_stop(tmp_path):
     now = [NOW]; path = tmp_path / 'policy.json'
+    path.write_text(json.dumps({'day': NOW.astimezone(__import__('zoneinfo').ZoneInfo('Asia/Tokyo')).date().isoformat(), 'count': 0, 'blocked': False}))
     for i in range(6):
         policy = UsagePolicy(path, lambda: now[0]); policy.acquire()
         policy.before_send(login=True); policy.release()
@@ -43,16 +44,20 @@ def test_corrupt_policy_and_duplicate_process_fail_closed(tmp_path):
     path = tmp_path / 'policy.json'; path.write_text('invalid')
     with pytest.raises(TachibanaError): UsagePolicy(path, lambda: NOW).acquire()
     path.unlink()
+    initialize_blocked_policy(path, lambda: NOW)
     first = UsagePolicy(path, lambda: NOW); first.acquire()
     try:
         with pytest.raises(RuntimeError): UsagePolicy(path, lambda: NOW).acquire()
     finally: first.release()
+    path.unlink()
     path.symlink_to(tmp_path / 'absent')
     with pytest.raises(TachibanaError): UsagePolicy(path, lambda: NOW).acquire()
 
 
 def test_network_error_and_yesterday_session_never_retry(tmp_path):
-    now = [NOW]; policy = UsagePolicy(tmp_path / 'policy.json', lambda: now[0])
+    now = [NOW]; path = tmp_path / 'policy.json'
+    path.write_text(json.dumps({'day': NOW.date().isoformat(), 'count': 0, 'blocked': False}))
+    policy = UsagePolicy(path, lambda: now[0]); policy.acquire()
     class Broken:
         calls = 0
         def post_json(self, *args):
@@ -65,6 +70,7 @@ def test_network_error_and_yesterday_session_never_retry(tmp_path):
     now[0] += timedelta(days=1)
     with pytest.raises(TachibanaError): guarded.post_json('synthetic', {'sCLMID': 'CLMMfdsGetMarketPrice'}, 2)
     assert raw.calls == 1
+    policy.release()
 
 
 def price_response(symbols, sequence, *, traded='15:00:10', errno='0'):
@@ -75,6 +81,7 @@ def price_response(symbols, sequence, *, traded='15:00:10', errno='0'):
 
 
 def runtime_fixture(tmp_path, symbols=('101', '6501'), supplier=None):
+    (tmp_path / 'policy.json').write_text(json.dumps({'day': NOW.date().isoformat(), 'count': 0, 'blocked': False}))
     session, transport, key = _session(tmp_path, [])
     login, _ = _encrypted_session_response(key.public_key())
     date = _success('CLMDateZyouhou', 'aCLMDateZyouhou', [{'sDayKey': '001', 'sTheDay': '20260901'}])
@@ -153,3 +160,48 @@ def test_shadow_measure_default_never_loads_credentials_or_connects(monkeypatch,
     monkeypatch.setattr(measure.sys, 'argv', ['measure'])
     assert measure.main() == 0
     assert json.loads(capsys.readouterr().out)['networkCalls'] == 0
+
+
+def test_missing_policy_is_not_assumed_to_have_zero_logins(tmp_path):
+    path = tmp_path / 'absent.json'
+    policy = UsagePolicy(path, lambda: NOW)
+    with pytest.raises(TachibanaError) as failure: policy.acquire()
+    assert failure.value.classification == ErrorClass.CONFIGURATION
+    assert not path.exists()
+    with pytest.raises(TachibanaError): policy.before_send(login=True)
+
+
+def test_unknown_day_bootstrap_stays_blocked_and_does_not_overwrite(tmp_path):
+    path = tmp_path / 'policy.json'; now = [NOW]
+    result = initialize_blocked_policy(path, lambda: now[0])
+    assert result['networkCalls'] == 0 and result['initialUsageUnknown'] is True
+    old = path.read_bytes()
+    with pytest.raises(TachibanaError): initialize_blocked_policy(path, lambda: now[0])
+    assert path.read_bytes() == old
+    policy = UsagePolicy(path, lambda: now[0]); policy.acquire()
+    try:
+        with pytest.raises(TachibanaError): policy.before_send(login=True)
+        assert path.read_bytes() == old
+        now[0] += timedelta(days=1)
+        policy.before_send(login=True)
+        saved = json.loads(path.read_text())
+        assert saved['count'] == 1 and saved['blocked'] is False
+    finally: policy.release()
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_unknown_usage_cannot_be_written_as_unblocked(tmp_path):
+    path=tmp_path/'policy.json'
+    path.write_text(json.dumps({'day': NOW.date().isoformat(), 'count': 0,
+                                'blocked': False, 'initialUsageUnknown': True}))
+    with pytest.raises(TachibanaError): UsagePolicy(path, lambda: NOW).acquire()
+
+
+def test_policy_bootstrap_cli_never_loads_credentials_or_connects(monkeypatch,tmp_path,capsys):
+    from scripts import tachibana_price_measure as measure
+    monkeypatch.setattr(measure, 'TachibanaPriceRuntime', lambda *a, **k: pytest.fail('unexpected_runtime'))
+    monkeypatch.setattr(measure.sys, 'argv', ['measure','--initialize-blocked-policy',
+        '--exclusive-owner-session','--policy-path', str(tmp_path/'policy.json')])
+    assert measure.main() == 0
+    result=json.loads(capsys.readouterr().out)
+    assert result['networkCalls']==0 and result['enabledChanged'] is False
