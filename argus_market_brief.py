@@ -533,6 +533,9 @@ def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, An
         body["researchPackages"] = argus_jp_market_research.context_references(brief["numericalResearch"])
     if isinstance(brief.get("fiscalEnvironment"), Mapping):
         body["fiscalEnvironment"] = dict(brief["fiscalEnvironment"])
+    if isinstance(brief.get("creditConditions"), Mapping):
+        body["creditConditions"] = {k: brief["creditConditions"][k] for k in
+            ("schemaVersion", "snapshotId", "dimensions", "overallState", "actionAuthority") if k in brief["creditConditions"]}
     body["contextId"] = hashlib.sha256(json.dumps(body, ensure_ascii=False,
         sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return body

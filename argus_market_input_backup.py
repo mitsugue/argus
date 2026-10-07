@@ -15,6 +15,7 @@ import time
 
 import argus_earnings_history as earnings
 import jp_market_acquisition as sources
+import argus_credit_conditions as credit
 from argus_analysis_history_backup import CHUNK_BYTES, MAX_ARCHIVE_BYTES, MAX_SYNC_SECONDS
 
 PRIVATE_REPO='mitsugue/argus-l2b-private'
@@ -68,7 +69,9 @@ def retain_sector(path,raw,*,symbol,received_at):
 
 
 def _validate_original(url,raw):
-    if url==earnings.URL:
+    if credit.approved_url(url):
+        credit.validate_original(url,raw)
+    elif url==earnings.URL:
         body=json.loads(raw)
         if set(body)!= {'data'} or not isinstance(body['data'],list) or len(body['data'])>earnings.MAX_ROWS:
             raise ValueError('private_financial_original_schema')
@@ -96,13 +99,24 @@ def snapshot(path,directory):
                 if out.tell()>MAX_ARCHIVE_BYTES:raise ValueError('private_original_backup_bound')
             write({'schemaVersion':SCHEMA,'scope':'PUBLIC_MARKET_INPUTS','ownerRecordsIncluded':False})
             for identity,url,digest,received,raw in db.execute('SELECT id,url,sha256,received_at,raw FROM raw_sources ORDER BY id'):
-                if url!=earnings.URL and not re.fullmatch(r'https://api\.jquants\.com/v2/equities/bars/daily\?code=16(?:1[7-9]|2[0-9]|3[0-3])',url):continue
-                if len(raw)>sources.MAX_BYTES or _hash(raw)!=digest or identity!=_hash((url+':'+digest).encode()):
+                if url!=earnings.URL and not credit.approved_url(url) and not re.fullmatch(r'https://api\.jquants\.com/v2/equities/bars/daily\?code=16(?:1[7-9]|2[0-9]|3[0-3])',url):continue
+                bound=credit.MAX_BYTES if credit.approved_url(url) else sources.MAX_BYTES
+                if len(raw)>bound or _hash(raw)!=digest or identity!=_hash((url+':'+digest).encode()):
                     raise ValueError('private_original_integrity')
                 _validate_original(url,raw);sources._time(received);ids.add(identity)
                 write({'kind':'raw','id':identity,'url':url,'sha256':digest,'receivedAt':received,'dataBase64':base64.b64encode(raw).decode()})
-                counts['financial' if url==earnings.URL else 'sector17']+=1
+                kind='creditConditions' if credit.approved_url(url) else 'financial' if url==earnings.URL else 'sector17'
+                counts[kind]=counts.get(kind,0)+1
             for source_id,session,raw_id,body in db.execute('SELECT source_id,session,raw_id,body FROM observations ORDER BY seq'):
+                if raw_id in ids and source_id.startswith('credit-conditions:'):
+                    row=json.loads(body)
+                    original=db.execute('SELECT url,raw,received_at FROM raw_sources WHERE id=?',(raw_id,)).fetchone()
+                    credit.verify_observation(row,original[1],url=original[0],first_received=original[2])
+                    if source_id!='credit-conditions:'+row['sourceId'] or session!=row['metric']+':'+str(row['observationPeriod'] or row['sourceUrl']):
+                        raise ValueError('private_credit_source_binding')
+                    write({'kind':'observation','sourceId':source_id,'session':session,'rawId':raw_id,'body':row})
+                    counts['observations']+=1
+                    continue
                 if raw_id not in ids or not re.fullmatch(r'financial-summary:[0-9A-Z]{4}',source_id):continue
                 row=json.loads(body)
                 allowed={'summary','receivedAt','knownAt','publishedAt','historicalVintageVerified','sourceRef','sourceResponseSha256','rawId','observationId'}

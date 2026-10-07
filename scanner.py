@@ -37,6 +37,7 @@ import argus_remote_nonce_anchor  # bounded private nonce-authority epochs
 import argus_calibration  # Calibration Ledger v4 foundation: cohorts/epochs/scoring (pure, v10.68)
 import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific forecast clocks (pure, v10.69)
 import argus_jp_fiscal_runtime
+import argus_credit_conditions
 import argus_td_warm  # v13.5.54: Twelve Data Basic-plan warm scheduler core (pure; owner 2026-09-05)
 import argus_market_data_truth  # v13 Round 2A: canonical provider-neutral market truth
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
@@ -9518,7 +9519,15 @@ def api_argus_event_intel(symbol):
                     "canonicalUrl": it.get("canonicalUrl"), "stance": it.get("stance"),
                     "relation": link["causalRole"], "relationLabelJa": link["relationLabelJa"],
                     "isNamedView": link["isNamedView"], "notConfirmed": link["notConfirmed"]})
-    return jsonify({"symbol": symu, "count": len(out), "items": out[:8],
+    # Existing official classification cache only; opening a card never fetches.
+    meta = next((row for row in (_JQ_MASTER_CACHE.get("data") or []) if row.get("code4") == symu), {})
+    classification_known = bool(meta.get("receivedAt") and meta.get("effectiveDate")
+        and argus_news_freshness.age_hours(meta["receivedAt"], move) is not None
+        and 0 <= argus_news_freshness.age_hours(meta["receivedAt"], move) <= 48
+        and str(meta["effectiveDate"]) <= move[:10])
+    credit_impact = argus_credit_conditions.asset_impact(_credit_conditions_document(),
+        sector_code=meta.get("sector33Code")) if classification_known else None
+    return jsonify({"symbol": symu, "count": len(out), "items": out[:8], "creditImpact": credit_impact,
                     "omittedOldCount": omitted_old,
                     "freshnessNoteJa": ("14日より古い記事(または日付を確認できない記事)はこの欄から除外(過去材料を現在の動きの説明に使わない)"
                                         if omitted_old else None)})
@@ -9929,6 +9938,7 @@ def _collect_institutional_intel_and_warm():
         out["jpMarketEngineInputWarm"] = {"error": type(exc).__name__}
     _intel_collect_stage("fiscal_inputs")
     out["jpFiscalEnvironmentWarm"] = _jp_fiscal_environment_warm()
+    out["creditConditionsWarm"] = _credit_conditions_warm()
     return out
 
 
@@ -17133,6 +17143,10 @@ def _compose_market_brief():
     if fiscal.get("id"):
         brief["fiscalEnvironment"] = argus_jp_fiscal_runtime.context_reference(fiscal)
         brief["facts"].extend(argus_jp_fiscal_runtime.explanation_facts(fiscal))
+    credit = _credit_conditions_document()
+    if credit:
+        brief["creditConditions"] = argus_credit_conditions.context_reference(credit)
+        brief["facts"].extend(argus_credit_conditions.explanation_facts(credit))
     try:
         # Past frequencies of the CPI and VIX conditions (2026-10-04): material
         # for the explanation, with their base rates; never a direction.
@@ -40046,6 +40060,12 @@ def api_argus_future_map():
     today = datetime.now(TZ_JST).strftime("%Y-%m-%d")
     body = argus_future_map.for_display({k: v for k, v in public.items() if k != "remoteSha"}, today)
     body = _future_map_scored_display(body)
+    credit = _credit_conditions_document()
+    candidate = argus_credit_conditions.context_reference(credit) if credit else None
+    # Research attachment only; rows, levels, registration and scoring unchanged.
+    if candidate:
+        candidate["futureMapResearch"]["futureMapVersion"] = argus_future_map.SCHEMA
+        body["creditResearchCandidate"] = candidate
     return jsonify({**body, "availability": "AVAILABLE", "lastChangedAt": _FUTURE_MAP.get("lastChangedAt"),
                     "checkedAt": _FUTURE_MAP.get("lastAttemptAt"), "lastReadOkAt": _FUTURE_MAP.get("lastReadOkAt"),
                     "lastTrigger": _FUTURE_MAP.get("lastTrigger"), "lastError": _FUTURE_MAP.get("lastError"),
@@ -40832,6 +40852,60 @@ def _jp_market_internals_cached():
     except Exception as exc:
         return {"schemaVersion": jp_market_internals.SCHEMA, "status": "UNAVAILABLE", "reason": type(exc).__name__,
                 "actionAuthority": False, "automaticAiCalls": 0}
+
+
+_CREDIT_CONDITIONS_LOCK = threading.Lock()
+_CREDIT_CONDITIONS_CACHE = {"document": None, "restoreAttempted": False,
+                            "status": "NOT_RUN", "errorClass": None}
+
+
+def _credit_conditions_path():
+    return os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3") if _DURABILITY_PATHS.get("root") else None
+
+
+def _credit_conditions_document():
+    # Only small cached projections; one local restore, no external fetch/AI.
+    if not _CREDIT_CONDITIONS_CACHE["restoreAttempted"]:
+        _CREDIT_CONDITIONS_CACHE["restoreAttempted"] = True
+        try:
+            path = _credit_conditions_path()
+            if path:
+                _CREDIT_CONDITIONS_CACHE["document"] = argus_credit_conditions.read(path, cutoff=_ai_now_iso())
+        except Exception as exc:
+            _CREDIT_CONDITIONS_CACHE["errorClass"] = type(exc).__name__
+    doc = argus_credit_conditions.current_projection(_CREDIT_CONDITIONS_CACHE["document"], cutoff=_ai_now_iso())
+    if doc:
+        doc["worker"] = {key: _CREDIT_CONDITIONS_CACHE[key] for key in ("status", "errorClass")}
+    return doc
+
+
+def _credit_conditions_warm():
+    if not _credit_conditions_path():
+        return {"status": "PERSISTENCE_UNAVAILABLE"}
+    if not _CREDIT_CONDITIONS_LOCK.acquire(blocking=False):
+        return {"status": "ALREADY_RUNNING"}
+    _CREDIT_CONDITIONS_CACHE.update(status="RUNNING", errorClass=None)
+    def work():
+        try:
+            document = argus_credit_conditions.refresh(_credit_conditions_path(), now_iso=_ai_now_iso(),
+                get=requests.get, clock=_ai_now_iso)
+            _CREDIT_CONDITIONS_CACHE.update(document=document, restoreAttempted=True, status="SAVED")
+        except Exception as exc:
+            _CREDIT_CONDITIONS_CACHE.update(status="FAILED", errorClass=type(exc).__name__)
+        finally:
+            _CREDIT_CONDITIONS_LOCK.release()
+    try:
+        threading.Thread(target=work, name="argus-credit-conditions", daemon=True).start()
+    except Exception as exc:
+        _CREDIT_CONDITIONS_LOCK.release()
+        _CREDIT_CONDITIONS_CACHE.update(status="FAILED", errorClass=type(exc).__name__)
+    return {"status": _CREDIT_CONDITIONS_CACHE["status"], "completed": False}
+
+
+@app.route("/api/argus/credit-conditions", methods=["GET"])
+def api_argus_credit_conditions():
+    return jsonify(_credit_conditions_document() or {"schemaVersion": argus_credit_conditions.VERSION,
+        "overallState": "INSUFFICIENT_DATA", "actionAuthority": False})
 
 
 _JP_FISCAL_REFRESH_LOCK = threading.Lock()

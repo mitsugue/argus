@@ -1,3 +1,4 @@
+import { CreditConditionsDetails } from './CreditConditionsDetails';
 import { NumericalResearchDetails } from './NumericalResearchDetails';
 import { FiscalEnvironmentDetails } from './FiscalEnvironmentDetails';
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
@@ -112,9 +113,9 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
             </div>;
           })}
         </div>)}
-        {editorial && <><NumericalResearchDetails brief={brief} /><FiscalEnvironmentDetails brief={brief} /><MarketAnalysisHistory key="saved-history" /></>}
+        {editorial && <><NumericalResearchDetails brief={brief} /><FiscalEnvironmentDetails brief={brief} /><CreditConditionsDetails brief={brief} /><MarketAnalysisHistory key="saved-history" /></>}
       </details>
-      {!editorial && <><NumericalResearchDetails brief={brief} /><FiscalEnvironmentDetails brief={brief} /><MarketAnalysisHistory key="saved-history" /></>}
+      {!editorial && <><NumericalResearchDetails brief={brief} /><FiscalEnvironmentDetails brief={brief} /><CreditConditionsDetails brief={brief} /><MarketAnalysisHistory key="saved-history" /></>}
     </div>;
   }
   const now = brief.aiText?.nowJa ?? brief.now;
@@ -156,6 +157,6 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
       <span>主リスク <b>{brief.chips.mainRisk}</b></span>
     </div>
     </details>
-    <MarketAnalysisHistory key="saved-history" />
+    <CreditConditionsDetails brief={brief} /><MarketAnalysisHistory key="saved-history" />
   </div>;
 };

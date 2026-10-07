@@ -21,7 +21,7 @@ BRIEF_FIELDS = ('schemaVersion', 'generatedAt', 'facts', 'chips', 'now', 'why', 
     'aiText', 'aiModel', 'aiDiagnostics', 'unifiedContext', 'unifiedSummary',
     'unifiedStatus', 'lastSuccessfulAiAt', 'sdaAuthority', 'noteJa', 'hasCritical',
     'presentationCatalog', 'presentationPlan', 'presentationStatus', 'numericalResearch',
-    'fiscalEnvironment')
+    'fiscalEnvironment', 'creditConditions')
 
 
 def _json(value):
