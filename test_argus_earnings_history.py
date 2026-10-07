@@ -10,6 +10,22 @@ AT = '2026-10-06T10:00:00Z'
 LATER = '2026-10-07T10:00:00Z'
 
 
+def test_acquisition_universe_includes_former_members_but_not_future_changes():
+    current = {str(1000+i) for i in range(225)}
+    changes = {'schemaVersion':'nikkei225-constituent-changes-v1', 'rows':[
+        {'effective':'2016-10-03','removed':['9000'],'added':['1000']},
+        {'effective':'2026-10-01','removed':['9001'],'added':['1001']},
+        {'effective':'2026-10-09','removed':['9002'],'added':['1002']} ]}
+    before = deepcopy(changes)
+    assert set(history.acquisition_members(current,changes,through='2026-10-07')) == current|{'9000','9001'}
+    assert changes == before
+    with pytest.raises(ValueError,match='membership_history'):
+        history.acquisition_members(current,None,through='2026-10-07')
+    changes['rows'][0]['removed']=['../owner']
+    with pytest.raises(ValueError,match='membership_history'):
+        history.acquisition_members(current,changes,through='2026-10-07')
+
+
 def row(**changes):
     return dict(Code='10000', DiscDate='2026-10-06', DiscTime='15:31:00', DiscNo='100',
                 DocType='ForecastRevision', CurPerType='2Q', CurFYEn='2027-03-31',
