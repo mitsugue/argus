@@ -343,7 +343,7 @@ def document(db, *, cutoff):
             'validationStatus':latest.get('validationStatus') if latest else 'UNVERIFIED',
             'stale':stale,'count':len(items),'lastFetchStatus':state.get('status','NOT_RUN'),
             'lastAttemptAt':state.get('lastAttemptAt'),'lastSuccessAt':state.get('lastSuccessAt'),
-            'errorClass':state.get('errorClass'),'nextCheckAt':state.get('nextCheckAt'),
+            'errorClass':state.get('errorClass'),'failure':state.get('failure'),'nextCheckAt':state.get('nextCheckAt'),
             'lastSuccessfulParseAt':state.get('lastSuccessfulParseAt'),'staleThresholdDays':GROUPS.get(group,{}).get('staleDays',220),
             'originalByteLimit':MAX_BYTES,'manualDependency':source.get('manualDependency') or ('NEW_DOCUMENT_REVIEW' if latest and latest.get('manualVerificationRequired') else None)})
     def dimension(metric, labels, growth=False):
@@ -388,9 +388,36 @@ def document(db, *, cutoff):
     return result
 
 
+class CreditStoreError(RuntimeError):
+    """Fixed diagnostics only; never copy SQLite messages, SQL or source bodies."""
+    def __init__(self, stage, exc):
+        super().__init__('credit_store_failed')
+        self.diagnostic = failure_diagnostic(exc, stage=stage)
+
+
+def failure_diagnostic(exc, *, stage):
+    code = getattr(exc, 'sqlite_errorcode', None)
+    return {'stage': stage,
+            'sqliteCode': code if type(code) is int else None,
+            'kind': {5:'BUSY', 6:'LOCKED', 8:'READ_ONLY', 10:'IO_ERROR',
+                     11:'CORRUPT', 13:'FULL', 14:'CANNOT_OPEN'}.get(
+                         code & 255 if type(code) is int else None, 'OTHER')}
+
+
 def refresh(path, *, now_iso, get, clock):
+    try:
+        return _refresh(path, now_iso=now_iso, get=get, clock=clock)
+    except sqlite3.Error as exc:
+        raise CreditStoreError('CONTROL_OR_PROJECTION', exc) from None
+
+
+def _refresh(path, *, now_iso, get, clock):
     """Existing collect caller, bounded official requests; screen reads never call it."""
-    db=store.connect(path);at=store._time(now_iso);requests=0;new=0
+    try:
+        db=store.connect(path)
+    except sqlite3.Error as exc:
+        raise CreditStoreError('OPEN_STORE', exc) from None
+    at=store._time(now_iso);requests=0;new=0
     try:
         saved=db.execute('SELECT value FROM metadata WHERE key=?',(KEY,)).fetchone()
         control=json.loads(saved[0]) if saved else {}
@@ -398,7 +425,7 @@ def refresh(path, *, now_iso, get, clock):
             sid=source['sourceId'];old=control.get(sid,{})
             if source['eligibilityStatus']!='ARGUS_ELIGIBLE':continue
             if old.get('nextCheckAt') and store._time(old['nextCheckAt'])>at:continue
-            state={**old,'lastAttemptAt':now_iso,'errorClass':None};control[sid]=state
+            state={**old,'lastAttemptAt':now_iso,'errorClass':None,'failure':None};control[sid]=state
             try:
                 group=sid.removeprefix('boj_credit_')
                 if group in GROUPS:
@@ -427,7 +454,8 @@ def refresh(path, *, now_iso, get, clock):
                     state.update(url=url,etag=receipt.get('ETag') or old.get('etag'))
                 state.update(status='AVAILABLE',lastSuccessAt=clock())
             except Exception as exc:
-                state.update(status='FAILED',errorClass=type(exc).__name__)
+                state.update(status='FAILED',errorClass=type(exc).__name__,
+                    failure=failure_diagnostic(exc,stage='SOURCE_ACQUISITION_OR_SAVE'))
             # Daily checks only near the regular release window, never hourly.
             window=group in GROUPS and ((group=='cost' and (at.day<=10 or at.day>=25)) or
                 (group=='growth' and at.day<=10) or (group=='stance' and at.month in (1,4,7,10) and at.day<=10))
