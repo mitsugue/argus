@@ -14,11 +14,11 @@ def epoch(day):
 PAYLOAD = {'quoteSummary': {'result': [{
     'financialData': {'financialCurrency': 'JPY'},
     'calendarEvents': {'earnings': {'earningsDate': [{'raw': epoch('2026-11-02T21:00:00')}, {'raw': epoch('2026-11-04T21:00:00')}] }},
-    'earningsHistory': {'history': [{'quarter': {'raw': epoch('2026-06-30T00:00:00')}, 'epsActual': {'raw': -2}, 'epsEstimate': {'raw': -3}}]},
+    'earningsHistory': {'history': [{'quarter': {'raw': epoch('2026-06-30T00:00:00')}, 'currency': 'USD', 'epsActual': {'raw': -2}, 'epsEstimate': {'raw': -3}}]},
     'earningsTrend': {'trend': [{'period': '0q', 'endDate': '2026-09-30',
-        'earningsEstimate': {'avg': {'raw': 2}, 'low': {'raw': 1}, 'high': {'raw': 3}, 'numberOfAnalysts': {'raw': 8}, 'growth': {'raw': .25}},
-        'revenueEstimate': {'avg': {'raw': 123456789}, 'numberOfAnalysts': {'raw': 7}},
-        'epsTrend': {'30daysAgo': {'raw': 1.5}}}]}
+        'earningsEstimate': {'earningsCurrency': 'USD', 'avg': {'raw': 2}, 'low': {'raw': 1}, 'high': {'raw': 3}, 'numberOfAnalysts': {'raw': 8}, 'growth': {'raw': .25}},
+        'revenueEstimate': {'revenueCurrency': 'JPY', 'avg': {'raw': 123456789}, 'numberOfAnalysts': {'raw': 7}},
+        'epsTrend': {'epsTrendCurrency': 'USD', '30daysAgo': {'raw': 1.5}}}]}
 }]}}
 
 def parse(payload=PAYLOAD, market='US'):
@@ -31,6 +31,8 @@ def test_calendar_market_dates_period_end_and_reporting_currency_are_distinct():
     assert parse(market='JP')['next']['from'] == '2026-11-03'
     assert row['previous']['periodEnd'] == '2026-06-30'  # Not June 29 in New York; not an announcement day.
     assert row['previous']['surprisePct'] == pytest.approx(100 / 3)
+    assert row['previous']['currency'] == 'USD' and row['estimate']['epsCurrency'] == 'USD'
+    assert row['estimate']['revenueCurrency'] == 'JPY' and row['estimate']['eps30DaysAgo'] == 1.5
     assert row['currency'] == 'JPY'  # US ADR reporting currency must not become USD.
     assert row['estimate']['eps'] == 2 and row['estimate']['epsGrowthPct'] == 25
     assert row['estimate']['revenueAnalysts'] == 7 and row['actionAuthority'] is False
@@ -110,3 +112,14 @@ def test_company_reporting_scope_comes_from_document_not_amount_presence():
     assert read({'DocType': '1QFinancialStatements_Consolidated_JP'})['consolidated'] is True
     assert read({'DocType': '1QFinancialStatements_Consolidated_JP', 'OP': ''}) is None
     assert read({'DocType': '1QFinancialStatements_Unknown'}) is None
+
+
+def test_missing_or_mismatched_eps_units_never_use_reporting_currency_or_compare_trend():
+    value = copy.deepcopy(PAYLOAD); data = value['quoteSummary']['result'][0]
+    del data['earningsHistory']['history'][0]['currency']
+    del data['earningsTrend']['trend'][0]['earningsEstimate']['earningsCurrency']
+    row = parse(value)
+    assert row['previous']['currency'] is None and row['estimate']['epsCurrency'] is None
+    assert row['estimate']['eps30DaysAgo'] is None and row['currency'] == 'JPY'
+    data['earningsTrend']['trend'][0]['earningsEstimate']['earningsCurrency'] = 'EUR'
+    assert parse(value)['estimate']['eps30DaysAgo'] is None

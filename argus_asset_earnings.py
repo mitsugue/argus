@@ -12,6 +12,10 @@ def number(value):
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
 
 
+def currency(value):
+    return value.upper() if isinstance(value, str) and len(value) == 3 and value.isalpha() else None
+
+
 def day(value, market):
     value = value.get('raw') if isinstance(value, Mapping) else value
     try:
@@ -40,9 +44,7 @@ def parse(symbol, market, payload, *, fetched_at, today):
     block = lambda name: modules.get(name) if isinstance(modules.get(name), Mapping) else {}
     result = {'symbol': symbol, 'market': market, 'source': 'Yahoo Finance', 'fetchedAt': fetched_at,
               'currency': None, 'next': None, 'previous': None, 'estimate': None, 'actionAuthority': False}
-    currency = block('financialData').get('financialCurrency')
-    if isinstance(currency, str) and len(currency) == 3 and currency.isalpha():
-        result['currency'] = currency.upper()  # Reporting unit, including ADRs; never use listing unit here.
+    result['currency'] = currency(block('financialData').get('financialCurrency'))
     calendar = block('calendarEvents').get('earnings')
     calendar = calendar if isinstance(calendar, Mapping) else {}
     dates = calendar.get('earningsDate')
@@ -61,6 +63,7 @@ def parse(symbol, market, payload, *, fetched_at, today):
         actual, expected = number(row.get('epsActual')), number(row.get('epsEstimate'))
         if period and period <= today and actual is not None:
             candidates.append({'periodEnd': period, 'epsActual': actual, 'epsEstimate': expected,
+                               'currency': currency(row.get('currency')),
                                'surprisePct': (actual - expected) / abs(expected) * 100 if expected else None})
     if candidates:
         result['previous'] = max(candidates, key=lambda row: row['periodEnd'])
@@ -76,7 +79,10 @@ def parse(symbol, market, payload, *, fetched_at, today):
         trend = row.get('epsTrend') if isinstance(row.get('epsTrend'), Mapping) else {}
         count = number(eps.get('numberOfAnalysts'))
         revenue_count = number(revenue.get('numberOfAnalysts'))
-        result['estimate'] = {'periodEnd': end,
+        eps_currency = currency(eps.get('earningsCurrency'))
+        trend_currency = currency(trend.get('epsTrendCurrency'))
+        result['estimate'] = {'periodEnd': end, 'epsCurrency': eps_currency,
+            'revenueCurrency': currency(revenue.get('revenueCurrency')),
             'eps': number(eps.get('avg')) if count and count >= 1 and count.is_integer() else None,
             'epsLow': number(eps.get('low')), 'epsHigh': number(eps.get('high')),
             'analysts': int(count) if count and count >= 1 and count.is_integer() else None,
@@ -84,7 +90,7 @@ def parse(symbol, market, payload, *, fetched_at, today):
             'revenue': number(revenue.get('avg')) if revenue_count and revenue_count >= 1 and revenue_count.is_integer() else None,
             'revenueAnalysts': int(revenue_count) if revenue_count and revenue_count >= 1 and revenue_count.is_integer() else None,
             'revenueGrowthPct': number(revenue.get('growth')) * 100 if number(revenue.get('growth')) is not None else None,
-            'eps30DaysAgo': number(trend.get('30daysAgo'))}
+            'eps30DaysAgo': number(trend.get('30daysAgo')) if eps_currency and trend_currency == eps_currency else None}
         break
     if not any(result[key] for key in ('next', 'previous', 'estimate')):
         return None
