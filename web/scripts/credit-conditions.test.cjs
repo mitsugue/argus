@@ -15,3 +15,5 @@ assert.equal(render({...doc,actionAuthority:true}),'');assert.equal(render(undef
 assert.ok(!render({...doc,evidence:[{...doc.evidence[0],sourceUrl:'javascript:alert(1)'}]}).includes('javascript:'));
 assert.ok(!fs.readFileSync('src/components/today/CreditConditionsDetails.tsx','utf8').includes('fetch('));
 console.log('信用環境：不足・古さ・出典・条件付き表示・外部取得なし PASS');
+
+assert.ok(render({...doc,collectionStatus:'FAILED',showToday:false}).includes('信用環境の更新に失敗しました。受領済みの保存値を表示しています。'));

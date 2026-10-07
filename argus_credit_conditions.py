@@ -551,6 +551,13 @@ def context_reference(doc):
     ids={i for d in doc['dimensions'].values() for i in d.get('evidenceIds',[])}
     selected=[r for r in doc['evidence'] if r['observationId'] in ids or r['metric']=='published_analysis'][:12]
     result={k:deepcopy(doc[k]) for k in ('schemaVersion','snapshotId','dimensions','overallState','sourceHealth','bojTransmission','actionAuthority','showToday','noteJa')}
+    worker=doc.get('worker') or {}
+    if worker.get('status')=='FAILED':
+        result['collectionStatus']='FAILED'
+        for health in result['sourceHealth']:
+            if health['eligibilityStatus']=='ARGUS_ELIGIBLE':
+                health['status']='STALE' if health['stale'] else 'DEGRADED'
+        # Saved observations and their knowledge times stay unchanged.
     result['evidence']=selected
     result['futureMapResearch']={**doc['futureMapResearch'],'featureIds':[r['observationId'] for r in selected]}
     return result
