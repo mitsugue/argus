@@ -9,7 +9,7 @@ const doc={schemaVersion:'credit-conditions-v1',snapshotId:'a'.repeat(64),action
  sourceHealth:[{sourceId:'boj_credit_cost',publisher:'日本銀行',status:'STALE',cadence:'MONTHLY',count:2},{sourceId:'joint_data_platform',publisher:'金融庁・日本銀行',status:'NOT_ACQUIRED'}]};
 const render=creditConditions=>renderToStaticMarkup(React.createElement(context.exports.CreditConditionsDetails,{brief:{creditConditions}}));
 const html=render(doc);
-for(const text of ['信用環境：','貸出金利は上昇','比較できる数値が不足','古い値・更新待ち','公表時刻 未確認','受領 2026-10-08','全体の分類は未検証','毎日の売買タイミング','予測の入力・成績は変更していません']) assert.ok(html.includes(text),text);
+for(const text of ['信用環境：','貸出金利は上昇','比較できる数値が不足','古い値・更新待ち','公表時刻 未確認','受領 2026/10/8','全体の分類は未検証','毎日の売買タイミング','予測の入力・成績は変更していません']) assert.ok(html.includes(text),text);
 assert.ok(!render({...doc,showToday:false}).includes('信用環境：'),'unchanged data remains in the evidence drawer');
 assert.equal(render({...doc,actionAuthority:true}),'');assert.equal(render(undefined),'');
 assert.ok(!render({...doc,evidence:[{...doc.evidence[0],sourceUrl:'javascript:alert(1)'}]}).includes('javascript:'));

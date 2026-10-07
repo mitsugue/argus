@@ -89,11 +89,11 @@ def test_failure_is_bounded_and_screen_read_uses_only_saved_values(tmp_path):
     path=retained(tmp_path);calls=[]
     def failed(url,**kw):calls.append(url);raise TimeoutError('do not retain exception text')
     doc=credit.refresh(path,now_iso=LATER,get=failed,clock=lambda:LATER)
-    assert len(calls)==5 and doc['collectionReceipt']['automaticAiCalls']==0
+    assert len(calls)==6 and doc['collectionReceipt']['automaticAiCalls']==0
     assert doc['sourceHealth'][0]['lastFetchStatus']=='FAILED' and doc['dimensions']['borrowingCost']['value']==2
     assert 'do not retain' not in json.dumps(doc)
     later=credit.refresh(path,now_iso=LATER,get=failed,clock=lambda:LATER)
-    assert later['collectionReceipt']['requests']==0 and len(calls)==5
+    assert later['collectionReceipt']['requests']==0 and len(calls)==6
     assert credit.read(path,cutoff=LATER)['snapshotId']==doc['snapshotId']
 
 def test_private_backup_restores_all_credit_revisions_without_owner_fields(tmp_path):
@@ -140,3 +140,44 @@ def test_brief_numbers_remain_verified_and_context_is_small(tmp_path):
     assert all(f['verification']=='VERIFIED' for f in context['facts'])
     assert context['creditConditions']['snapshotId']==doc['snapshotId']
     assert 'evidence' not in context['creditConditions'] and 'sourceHealth' not in context['creditConditions']
+
+
+def npl_xlsx(*, ratio=1.0, label="全国銀行", formula=False):
+    from io import BytesIO
+    import zipfile
+    from xml.sax.saxutils import escape
+    stream=BytesIO();ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    texts=[label,'総与信(億円)','金融再生法開示債権（億円）','不良債権比率(％)','2025年3月期','2025年9月期']
+    with zipfile.ZipFile(stream,'w') as z:
+        z.writestr('xl/workbook.xml',f'<workbook xmlns="{ns}"><sheets><sheet name="表"/></sheets></workbook>')
+        z.writestr('xl/sharedStrings.xml',f'<sst xmlns="{ns}">'+''.join(f'<si><t>{escape(t)}</t><rPh><t>IGNORED_PHONETIC</t></rPh></si>' for t in texts)+'</sst>')
+        labels={'A79':0,'C79':1,'C80':2,'C85':3,'V3':4,'W3':5}
+        cells=''.join(f'<c r="{r}" t="s"><v>{v}</v></c>' for r,v in labels.items())
+        values={'V79':10000,'V80':110,'V85':1.1,'W79':10000,'W80':100,'W85':ratio}
+        cells+=''.join(f'<c r="{r}">'+('<f>UNREVIEWED()</f>' if formula and r=='W85' else '')+f'<v>{v}</v></c>' for r,v in values.items())
+        z.writestr('xl/worksheets/sheet1.xml',f'<worksheet xmlns="{ns}"><sheetData>{cells}</sheetData></worksheet>')
+    return stream.getvalue()
+
+NPL_URL='https://www.fsa.go.jp/status/npl/20260227/01.xlsx'
+
+def test_npl_point_ratio_reconciles_and_stale_quality_is_not_current(tmp_path):
+    raw=npl_xlsx();rows=credit.parse_npl(raw,source_url=NPL_URL,received_at=AT)
+    assert len(rows)==6 and rows[-1]['dataAsOf']=='2025-09-30' and rows[-1]['publicationDate']=='2026-02-27'
+    assert rows[-1]['value']==1.0 and rows[-1]['historicalVintageVerified'] is False
+    path=tmp_path/'npl.sqlite3';db=store.connect(path)
+    credit.retain(db,raw,url=NPL_URL,rows=rows,received_at=AT);doc=credit.document(db,cutoff=AT);db.close()
+    q=doc['dimensions']['creditQuality']
+    assert q['status']=='INSUFFICIENT_DATA' and q['reason']=='STALE' and q['direction']=='IMPROVING' and q['evidenceIds']
+    assert credit.read(path,cutoff='2026-02-28T00:00:00Z')['evidence']==[]
+    assert backup.synchronize(path,Remote())['status']=='VERIFIED'
+    assert all('古い観測' in f['text'] for f in credit.explanation_facts(doc))
+
+@pytest.mark.parametrize('kw',[{'ratio':4.0},{'ratio':float('nan')},{'label':'別の集計'},{'formula':True}])
+def test_npl_ambiguous_layout_units_formula_or_ratio_fail_closed(kw):
+    with pytest.raises(ValueError):credit.parse_npl(npl_xlsx(**kw),source_url=NPL_URL,received_at=AT)
+
+def test_stale_projection_has_new_identity_and_cannot_drive_asset_impact(tmp_path):
+    doc=credit.read(retained(tmp_path),cutoff=AT)
+    aged=credit.current_projection(doc,cutoff='2027-10-08T01:00:00Z')
+    assert aged['snapshotId']!=doc['snapshotId'] and aged['futureMapResearch']['snapshotId']==aged['snapshotId']
+    assert credit.asset_impact(aged,sector_code='7050') is None

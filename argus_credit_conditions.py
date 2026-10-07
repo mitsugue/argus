@@ -13,6 +13,9 @@ import math
 from pathlib import Path
 import re
 import sqlite3
+from io import BytesIO
+import zipfile
+import xml.etree.ElementTree as ET
 from urllib.parse import urljoin, urlparse, parse_qs, urlencode
 
 import jp_market_acquisition as store
@@ -23,6 +26,7 @@ KEY = 'credit-conditions-control-v1'
 API = 'https://www.stat-search.boj.or.jp/api/v1/getDataCode'
 FSA_INDEX = 'https://www.fsa.go.jp/common/about/kaikaku/fsaanalyticalnotes/index.html'
 FSR_INDEX = 'https://www.boj.or.jp/research/brp/fsr/'
+NPL_INDEX = 'https://www.fsa.go.jp/status/npl/index.html'
 MAX_BYTES = 8_000_000
 ACCESS_STATUSES = {'NOT_PUBLIC', 'ANNOUNCED', 'ACCESS_RULES_PUBLISHED',
     'RESEARCH_ACCESS_ONLY', 'DOWNLOAD_AVAILABLE', 'API_AVAILABLE',
@@ -75,6 +79,9 @@ def registry():
         {'sourceId':'boj_fsr','publisher':'日本銀行','sourceUrl':FSR_INDEX,
          'cadence':'SEMIANNUAL','accessStatus':'DOWNLOAD_AVAILABLE',
          'eligibilityStatus':'ARGUS_ELIGIBLE','rights':'COMMERCIAL_REPRODUCTION_CONSULTATION_REQUIRED'},
+        {'sourceId':'fsa_npl','publisher':'金融庁','sourceUrl':NPL_INDEX,
+         'cadence':'SEMIANNUAL','accessStatus':'DOWNLOAD_AVAILABLE',
+         'eligibilityStatus':'ARGUS_ELIGIBLE','rights':'INTERNAL_ANALYSIS_SOURCE_ATTRIBUTION'},
         {'sourceId':'joint_data_platform','publisher':'金融庁・日本銀行',
          'sourceUrl':'https://www.fsa.go.jp/news/r7/sonota/20250801/20250801.html',
          'cadence':'EVENT_DRIVEN','accessStatus':'NOT_PUBLIC','announcementStatus':'ANNOUNCED',
@@ -101,7 +108,8 @@ def approved_url(url):
             any(q['db']==[m['db']] and q['code']==[','.join(m['metrics'])] for m in GROUPS.values()) and
             all(re.fullmatch(r'\d{6}',q[k][0]) for k in ('startDate','endDate')))
     return (not parsed.query and ((parsed.netloc=='www.fsa.go.jp' and
-        re.fullmatch(r'/common/about/kaikaku/fsaanalyticalnotes/\d{8}/(?:\d{8}\.html|0[1-4]\.pdf)',parsed.path)) or
+        (re.fullmatch(r'/common/about/kaikaku/fsaanalyticalnotes/\d{8}/(?:\d{8}\.html|0[1-4]\.pdf)',parsed.path) or
+         re.fullmatch(r'/status/npl/(?:\d{8}\.html|\d{8}/01\.xlsx)',parsed.path))) or
         (parsed.netloc=='www.boj.or.jp' and
         re.fullmatch(r'/research/brp/fsr/(?:fsr\d{6}\.htm|data/fsr\d{6}[ab]\.pdf)',parsed.path))))
 
@@ -112,6 +120,8 @@ def validate_original(url, raw):
     if url.endswith('.pdf'):
         if not raw.startswith(b'%PDF-') or b'%%EOF' not in raw[-2048:]:
             raise ValueError('credit_pdf_incomplete')
+    elif url.endswith('.xlsx'):
+        parse_npl(raw,source_url=url,received_at='9999-12-31T00:00:00Z')
     elif url.startswith(API):
         group=next(g for g in GROUPS if parse_qs(urlparse(url).query)['db']==[GROUPS[g]['db']])
         parse_api(raw,group=group,source_url=url,received_at='9999-12-31T00:00:00Z')
@@ -165,6 +175,72 @@ def parse_api(raw, *, group, source_url, received_at):
                 'revisionStatus':'ORIGINAL_RECEIPT','extractionMethod':'DETERMINISTIC_OFFICIAL_API',
                 'validationStatus':'VERIFIED','sourceHash':checksum,'historicalVintageVerified':False})
     if not result:raise ValueError('credit_api_empty')
+    return result
+
+
+def parse_npl(raw, *, source_url, received_at):
+    """National-bank point observations only; half/full-year losses are not mixed.
+
+    A changed workbook layout fails closed. Phonetic annotations are not labels.
+    Current retrospective columns do not prove their historical receipt vintages.
+    """
+    if not approved_url(source_url) or not re.fullmatch(r'https://www.fsa.go.jp/status/npl/\d{8}/01.xlsx',source_url):
+        raise ValueError('credit_npl_source')
+    publication=date.fromisoformat(re.search(r'/npl/(\d{4})(\d{2})(\d{2})/',source_url).expand(r'\1-\2-\3'))
+    if publication>store._time(received_at).date():raise ValueError('credit_npl_future_publication')
+    if not isinstance(raw,bytes) or not 0<len(raw)<=1_000_000:raise ValueError('credit_npl_bound')
+    ns={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+    with zipfile.ZipFile(BytesIO(raw)) as archive:
+        if len(archive.infolist())>40 or sum(i.file_size for i in archive.infolist())>5_000_000:
+            raise ValueError('credit_npl_archive_bound')
+        def xml(name):
+            body=archive.read(name)
+            if b'<!DOCTYPE' in body.upper() or b'<!ENTITY' in body.upper():raise ValueError('credit_npl_xml')
+            return ET.fromstring(body)
+        sheets=xml('xl/workbook.xml').findall('s:sheets/s:sheet',ns)
+        if len(sheets)!=1:raise ValueError('credit_npl_sheet')
+        strings=[''.join(t.text or '' for t in si.findall('s:t',ns)+si.findall('s:r/s:t',ns))
+            for si in xml('xl/sharedStrings.xml').findall('s:si',ns)]
+        cells={}
+        for cell in xml('xl/worksheets/sheet1.xml').findall('.//s:c',ns):
+            ref=cell.get('r');value=cell.find('s:v',ns)
+            if ref in cells:raise ValueError('credit_npl_duplicate_cell')
+            cells[ref]=(strings[int(value.text)] if cell.get('t')=='s' and value is not None else
+                float(value.text) if cell.get('t') in (None,'n') and value is not None else None,
+                cell.find('s:f',ns) is not None)
+    if any(cells.get(ref,(None,))[0]!=label for ref,label in
+        {'A79':'全国銀行','C79':'総与信(億円)','C80':'金融再生法開示債権（億円）','C85':'不良債権比率(％)'}.items()):
+        raise ValueError('credit_npl_definition')
+    columns=[]
+    for ref,(value,_) in cells.items():
+        if not re.fullmatch(r'[A-Z]+3',str(ref)) or not isinstance(value,str):continue
+        match=re.fullmatch(r'(\d{4})年([39])月期',value)
+        if not match:continue
+        year,month=map(int,match.groups());end=date(year,month,monthrange(year,month)[1])
+        if end>publication:raise ValueError('credit_npl_future_period')
+        columns.append((end,ref[:-1]))
+    columns.sort()
+    if not 2<=len(columns)<=20 or len({d for d,_ in columns})!=len(columns):raise ValueError('credit_npl_periods')
+    result=[];checksum=sha256(raw).hexdigest()
+    for end,column in columns:
+        values=[]
+        for row in (79,80,85):
+            value,formula=cells.get(column+str(row),(None,False))
+            if formula or type(value) not in (int,float) or not math.isfinite(value) or value<0:
+                raise ValueError('credit_npl_number')
+            values.append(value)
+        total,problem,ratio=values
+        if total<=0 or problem>total or not 0<=ratio<=100 or abs(problem/total*100-ratio)>0.06:
+            raise ValueError('credit_npl_ratio_reconciliation')
+        for row,metric,value,unit in ((79,'total_credit',total,'100_MILLION_JPY'),
+            (80,'problem_exposure',problem,'100_MILLION_JPY'),(85,'npl_ratio',ratio,'PERCENT')):
+            result.append({'sourceId':'fsa_npl','sourceUrl':source_url,'publisher':'金融庁',
+                'title':'金融再生法開示債権・全国銀行','publicationAt':None,'publicationDate':publication.isoformat(),
+                'observationPeriod':end.isoformat(),'dataAsOf':end.isoformat(),'retrievedAt':received_at,'knownAt':received_at,
+                'metric':metric,'value':value,'unit':unit,'segment':'NATIONAL_BANKS','geography':'JP',
+                'tablePageFigureRef':f'worksheet 1/{column}{row}・全国銀行',
+                'revisionStatus':'ORIGINAL_RECEIPT','extractionMethod':'DETERMINISTIC_OFFICIAL_XLSX',
+                'validationStatus':'VERIFIED','sourceHash':checksum,'historicalVintageVerified':False})
     return result
 
 
@@ -233,6 +309,11 @@ def saved_rows(db, *, cutoff):
     return [{**r,'supersededBy':successors.get(r['observationId'])} for r in by.values()]
 
 
+def snapshot_id(doc):
+    return digest({k:doc[k] for k in ('schemaVersion','dimensions','overallState','evidence',
+        'actionAuthority','automaticAiCalls','bojTransmission','noteJa')})
+
+
 def document(db, *, cutoff):
     rows=saved_rows(db,cutoff=cutoff);at=store._time(cutoff);metrics={}
     for row in rows:
@@ -257,27 +338,30 @@ def document(db, *, cutoff):
             'stale':stale,'count':len(items),'lastFetchStatus':state.get('status','NOT_RUN'),
             'lastAttemptAt':state.get('lastAttemptAt'),'lastSuccessAt':state.get('lastSuccessAt'),
             'errorClass':state.get('errorClass'),'nextCheckAt':state.get('nextCheckAt'),
-            'lastSuccessfulParseAt':state.get('lastSuccessAt'),'staleThresholdDays':GROUPS.get(group,{}).get('staleDays',220),
+            'lastSuccessfulParseAt':state.get('lastSuccessfulParseAt'),'staleThresholdDays':GROUPS.get(group,{}).get('staleDays',220),
             'originalByteLimit':MAX_BYTES,'manualDependency':source.get('manualDependency') or ('NEW_DOCUMENT_REVIEW' if latest and latest.get('manualVerificationRequired') else None)})
     def dimension(metric, labels, growth=False):
         values=metrics.get(metric,[]);source=next((h for h in health if values and h['sourceId']==values[-1]['sourceId']),{})
-        if not values or source.get('stale') or (not growth and len(values)<2):return {'status':'INSUFFICIENT_DATA','evidenceIds':[]}
+        if not values or (not growth and len(values)<2):return {'status':'INSUFFICIENT_DATA','evidenceIds':[]}
         row=values[-1];previous=values[-2] if len(values)>1 else None
         if not growth:
             months=(date.fromisoformat(row['dataAsOf']).year-date.fromisoformat(previous['dataAsOf']).year)*12+date.fromisoformat(row['dataAsOf']).month-date.fromisoformat(previous['dataAsOf']).month
-            if months!=(3 if metric.startswith('lending_attitude') else 1):return {'status':'INSUFFICIENT_DATA','reason':'NON_CONSECUTIVE_PERIODS','evidenceIds':[]}
+            if months!=(6 if metric=='npl_ratio' else 3 if metric.startswith('lending_attitude') else 1):return {'status':'INSUFFICIENT_DATA','reason':'NON_CONSECUTIVE_PERIODS','evidenceIds':[]}
         change=float(row['value']) if growth else round(float(row['value'])-float(previous['value']),6)
-        return {'status':'OBSERVED','direction':labels[0] if change>0 else labels[1] if change==0 else labels[2],
+        return {'status':'INSUFFICIENT_DATA' if source.get('stale') else 'OBSERVED',
+            'reason':'STALE' if source.get('stale') else None,
+            'direction':labels[0] if change>0 else labels[1] if change==0 else labels[2],
             'value':row['value'],'change':change,'unit':row['unit'],'dataAsOf':row['dataAsOf'],
             'basis':'PUBLISHED_YEAR_ON_YEAR' if growth else 'PREVIOUS_PUBLISHED_PERIOD_CHANGE',
             'evidenceIds':[r['observationId'] for r in (row,previous) if r],
             'predictiveValidation':'UNVALIDATED'}
     dims={'borrowingCost':dimension('new_loan_rate',('RISING','STABLE','FALLING')),
           'creditGrowth':dimension('loan_growth_yoy',('EXPANDING','STABLE','CONTRACTING'),True),
-          'creditQuality':{'status':'INSUFFICIENT_DATA','reason':'VERIFIED_COMPARABLE_CREDIT_QUALITY_NUMBERS_MISSING','evidenceIds':[]},
+          'creditQuality':dimension('npl_ratio',('DETERIORATING','STABLE','IMPROVING')),
           'lendingStance':dimension('lending_attitude_small',('EASING','NEUTRAL','TIGHTENING'))}
     references=sorted(rows,key=lambda r:(str(r.get('dataAsOf') or ''),r['knownAt']),reverse=True)
-    result={'schemaVersion':VERSION,'asOf':cutoff,'dimensions':dims,'overallState':'INSUFFICIENT_DATA',
+    result={'schemaVersion':VERSION,'asOf':cutoff,'dimensions':dims,
+        'overallState':'UNCLASSIFIED' if all(d['status']=='OBSERVED' for d in dims.values()) else 'INSUFFICIENT_DATA',
         'evidence':references,'sourceHealth':health,'actionAuthority':False,'automaticAiCalls':0,
         'bojTransmission':{'status':'OBSERVED_ONLY','policyFreedomClassification':None,'causalValidation':'UNVALIDATED',
             'evidenceIds':[i for d in dims.values() for i in d.get('evidenceIds',[])],
@@ -290,7 +374,7 @@ def document(db, *, cutoff):
             'requiredComparisons':['CURRENT','CURRENT_PLUS_CREDIT','SIMPLE_BASELINE'],
             'requiredMetrics':['direction','firstMove','upperLowerHits','hitOrder','MAE','MFE','pathSimilarity']},
         'noteJa':'月次・四半期の信用環境です。日々の売買タイミングや暴落確率ではありません。'}
-    result['snapshotId']=digest({k:v for k,v in result.items() if k not in ('asOf','sourceHealth','futureMapResearch')})
+    result['snapshotId']=snapshot_id(result)
     result['futureMapResearch']['snapshotId']=result['snapshotId']
     newest=max((r['knownAt'] for r in rows),default=None)
     result['showToday']=bool(newest and 0<=(at-store._time(newest)).total_seconds()<7*86400)
@@ -314,20 +398,25 @@ def refresh(path, *, now_iso, get, clock):
                     url=api_url(group,now_iso);requests+=1;raw,_=_read(get,url,256_000)
                     received=clock();rows=parse_api(raw,group=group,source_url=url,received_at=received)
                     new+=retain(db,raw,url=url,rows=rows,received_at=received)
+                    state['lastSuccessfulParseAt']=received
                 else:
                     requests+=1;index,_=_read(get,source['sourceUrl'],256_000)
                     links=Links(index,source['sourceUrl'])
-                    pages=sorted(u for u in links.urls if approved_url(u) and not u.endswith('.pdf'))
+                    prefix='/status/npl/' if sid=='fsa_npl' else '/common/about/kaikaku/fsaanalyticalnotes/' if sid=='fsa_notes' else '/research/brp/fsr/'
+                    pages=sorted(u for u in links.urls if approved_url(u) and urlparse(u).path.startswith(prefix) and u.endswith(('.html','.htm')))
                     if not pages:raise ValueError('credit_official_document_not_listed')
                     page=pages[-1];requests+=1;html,_=_read(get,page,256_000)
-                    links=Links(html,page);pdfs=sorted(u for u in links.urls if approved_url(u) and u.endswith('.pdf'))
+                    links=Links(html,page);extension='.xlsx' if sid=='fsa_npl' else '.pdf'
+                    pdfs=sorted(u for u in links.urls if approved_url(u) and urlparse(u).path.startswith(prefix) and u.endswith(extension))
                     if not pdfs:raise ValueError('credit_official_pdf_not_listed')
                     url=pdfs[0];headers={'If-None-Match':old['etag']} if old.get('url')==url and old.get('etag') else {}
                     requests+=1;raw,receipt=_read(get,url,MAX_BYTES,headers=headers)
                     if raw is not None:
-                        received=clock();rows=[document_row(raw,url=url,received_at=received,source_id=sid)]
+                        received=clock();rows=parse_npl(raw,source_url=url,received_at=received) if sid=='fsa_npl' else [document_row(raw,url=url,received_at=received,source_id=sid)]
                         new+=retain(db,raw,url=url,rows=rows,received_at=received)
                         state['sourceHash']=sha256(raw).hexdigest()
+                        if all(r['validationStatus']!='UNVERIFIED' for r in rows):state['lastSuccessfulParseAt']=received
+                        else:state['lastSuccessfulParseAt']=None
                     state.update(url=url,etag=receipt.get('ETag') or old.get('etag'))
                 state.update(status='AVAILABLE',lastSuccessAt=clock())
             except Exception as exc:
@@ -360,10 +449,13 @@ def current_projection(saved, *, cutoff):
         age_date=health.get('dataAsOf') if group in GROUPS else health.get('latestPublicationDate')
         if age_date and (at.date()-date.fromisoformat(age_date)).days>GROUPS.get(group,{}).get('staleDays',220):
             health.update(stale=True,status='STALE')
-            dim={'cost':'borrowingCost','growth':'creditGrowth','stance':'lendingStance'}.get(group)
-            if dim:doc['dimensions'][dim]={'status':'INSUFFICIENT_DATA','reason':'STALE','evidenceIds':[]}
+            dim={'cost':'borrowingCost','growth':'creditGrowth','stance':'lendingStance','fsa_npl':'creditQuality'}.get(group)
+            if dim:doc['dimensions'][dim]={**doc['dimensions'][dim],'status':'INSUFFICIENT_DATA','reason':'STALE'}
+    if any(d['status']!='OBSERVED' for d in doc['dimensions'].values()):doc['overallState']='INSUFFICIENT_DATA'
     newest=max((r['knownAt'] for r in doc['evidence']),default=None)
     doc['showToday']=bool(newest and 0<=(at-store._time(newest)).total_seconds()<7*86400)
+    doc['snapshotId']=snapshot_id(doc)
+    doc['futureMapResearch']['snapshotId']=doc['snapshotId']
     return doc
 
 
@@ -376,6 +468,9 @@ def verify_observation(row, raw, *, url, first_received):
     if url.startswith(API):
         group=next(g for g in GROUPS if parse_qs(urlparse(url).query)['db']==[GROUPS[g]['db']])
         expected=next((r for r in parse_api(raw,group=group,source_url=url,received_at=row['retrievedAt'])
+            if r['metric']==row['metric'] and r['observationPeriod']==row['observationPeriod']),None)
+    elif url.endswith('.xlsx'):
+        expected=next((r for r in parse_npl(raw,source_url=url,received_at=row['retrievedAt'])
             if r['metric']==row['metric'] and r['observationPeriod']==row['observationPeriod']),None)
     else:expected=document_row(raw,url=url,received_at=row['retrievedAt'],source_id=row['sourceId'])
     if not expected:raise ValueError('credit_backup_source_row')
@@ -392,7 +487,8 @@ def explanation_facts(doc):
     ids={i for d in doc['dimensions'].values() for i in d.get('evidenceIds',[])}
     for row in doc['evidence']:
         if row['observationId'] not in ids and not row.get('statementJa'):continue
-        text=row.get('statementJa') or f"{row['title']}：{row['value']} {row['unit']}、対象 {row['dataAsOf']}。公表時刻未確認、受領 {row['retrievedAt']}。"
+        stale=any(h['sourceId']==row['sourceId'] and h['stale'] for h in doc['sourceHealth'])
+        text=row.get('statementJa') or f"{'古い観測・現在の状態には使用不可。' if stale else ''}{row['title']}：{row['value']} {row['unit']}、対象 {row['dataAsOf']}。公表日 {row.get('publicationDate') or '未確認'}、公表時刻未確認、受領 {row['retrievedAt']}。"
         selected.append({'text':text[:500],'source':'credit_conditions','priority':'P2' if row.get('statementJa') else 'P1',
             'verification':'VERIFIED','provenance':{'scope':'published_metadata_snapshot',
                 'eventId':row['observationId'],'revision':row['revision'],'sourceLabel':row['publisher'],
@@ -402,7 +498,7 @@ def explanation_facts(doc):
 
 
 def asset_impact(doc, *, sector_code):
-    if not doc or not doc['dimensions']['borrowingCost'].get('evidenceIds'):return None
+    if not doc or doc['dimensions']['borrowingCost']['status']!='OBSERVED' or not doc['dimensions']['borrowingCost'].get('evidenceIds'):return None
     # Official JP sector33 codes, not symbol/name guesses or owner holdings.
     notes={'7050':'銀行の利息収益には貸出金利の転嫁が影響します。一方、資金調達費用と借り手の信用損失も必要な確認点です。',
         '8050':'不動産では借り換え金利と資金調達条件が確認点です。個社の負債・返済期日は、この統計だけでは分かりません。'}

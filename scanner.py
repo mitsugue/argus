@@ -17146,6 +17146,7 @@ def _compose_market_brief():
     credit = _credit_conditions_document()
     if credit:
         brief["creditConditions"] = argus_credit_conditions.context_reference(credit)
+        brief["creditConditions"]["futureMapResearch"]["futureMapVersion"] = argus_future_map.SCHEMA
         brief["facts"].extend(argus_credit_conditions.explanation_facts(credit))
     try:
         # Past frequencies of the CPI and VIX conditions (2026-10-04): material
