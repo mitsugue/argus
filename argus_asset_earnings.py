@@ -107,13 +107,21 @@ def company_summary(observations, *, today):
                 return value if math.isfinite(value) else None
             except (ValueError, KeyError, TypeError):
                 return None
-        consolidated = amount('OP') is not None
-        actual = amount('OP' if consolidated else 'NCOP')
+        document = str(row.get('DocType', ''))
+        if 'NonConsolidated' in document:
+            consolidated = False
+            profit_key = 'OP' if amount('OP') is not None else 'NCOP'
+        elif 'Consolidated' in document:
+            consolidated = True
+            profit_key = 'OP'
+        else:
+            continue  # Do not infer the reporting scope from an amount's presence.
+        actual = amount(profit_key)
         if actual is None:
             continue
         candidates.append({'disclosedDate': disclosed, 'periodEnd': day(row.get('CurPerEn'), 'JP'),
             'periodType': str(row.get('CurPerType') or '対象期')[:8], 'fiscalYearEnd': day(row.get('CurFYEn'), 'JP'),
-            'operatingProfit': actual, 'forecastOperatingProfit': amount('FOP' if consolidated else 'FNCOP'),
+            'operatingProfit': actual, 'forecastOperatingProfit': amount('FOP' if profit_key == 'OP' else 'FNCOP'),
             'consolidated': consolidated, 'source': 'J-Quants 決算短信', 'currency': 'JPY',
             'receivedAt': observation.get('receivedAt')})
     return max(candidates, key=lambda row: (row['disclosedDate'], row.get('receivedAt') or '')) if candidates else None

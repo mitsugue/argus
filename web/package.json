@@ -1,7 +1,7 @@
 {
   "name": "argus-web",
   "private": true,
-  "version": "13.8.77",
+  "version": "13.8.78",
   "type": "module",
   "description": "A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner",
   "scripts": {
