@@ -55,3 +55,11 @@ assert.equal(domain.validAssetEarnings({...official,market:'US'},'US:1001'),fals
 const scheduledHtml = renderToStaticMarkup(React.createElement(AssetEarningsDate,{market:'JP',row:official,refreshFailed:true}));
 assert.ok(scheduledHtml.includes('会社予定') && scheduledHtml.includes('会社が報告') && !scheduledHtml.includes('更新未確認'));
 assert.ok(renderToStaticMarkup(React.createElement(AssetEarningsDate,{market:'JP',row:{...official,scheduleStatus:'FETCH_FAILED'}})).includes('更新未確認'));
+const correctedCompany = {...official,previous:null,estimate:null,company:{disclosedDate:'2026-07-31',periodEnd:'2026-06-30',
+  periodType:'1Q',fiscalYearEnd:'2027-03-31',operatingProfit:100000000,forecastOperatingProfit:450000000,consolidated:true,
+  source:'J-Quants 決算短信',currency:'JPY',receivedAt:'2026-08-01T00:00:00Z',forecastDisclosedDate:'2026-10-01',forecastReceivedAt:row.fetchedAt}};
+assert.ok(domain.validAssetEarnings(correctedCompany,'JP:1001'));
+assert.equal(domain.validAssetEarnings({...correctedCompany,company:{...correctedCompany.company,forecastDisclosedDate:'2026-02-31'}},'JP:1001'),false);
+state={...state,earnings:{'JP:1001':correctedCompany},refreshFailed:false};
+const companyHtml=renderToStaticMarkup(React.createElement(AssetEarningsDetails,{market:'JP',symbol:'1001'}));
+for(const text of ['7/31発表','営業利益は1億円','会社予想は営業利益4.5億円','10/1発表','会社予想の訂正'])assert.ok(companyHtml.includes(text),text);

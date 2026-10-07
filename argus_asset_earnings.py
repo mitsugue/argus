@@ -125,12 +125,41 @@ def company_summary(observations, *, today):
         actual = amount(profit_key)
         if actual is None:
             continue
-        candidates.append({'disclosedDate': disclosed, 'periodEnd': day(row.get('CurPerEn'), 'JP'),
+        candidates.append(({'disclosedDate': disclosed, 'periodEnd': day(row.get('CurPerEn'), 'JP'),
             'periodType': str(row.get('CurPerType') or '対象期')[:8], 'fiscalYearEnd': day(row.get('CurFYEn'), 'JP'),
             'operatingProfit': actual, 'forecastOperatingProfit': amount('FOP' if profit_key == 'OP' else 'FNCOP'),
             'consolidated': consolidated, 'source': 'J-Quants 決算短信', 'currency': 'JPY',
-            'receivedAt': observation.get('receivedAt')})
-    return max(candidates, key=lambda row: (row['disclosedDate'], row.get('receivedAt') or '')) if candidates else None
+            'receivedAt': observation.get('receivedAt')}, row, 'FOP' if profit_key == 'OP' else 'FNCOP'))
+    if not candidates:
+        return None
+    result, original, forecast_key = max(candidates,
+        key=lambda value: (value[0]['disclosedDate'], value[0].get('receivedAt') or ''))
+    # A later plan revision is not a new actual result. Match the issuer,
+    # fiscal year and declared reporting field; preserve both receipt clocks.
+    forecasts = []
+    for observation in observations:
+        row = observation.get('summary', {})
+        if not isinstance(row, Mapping) or 'ForecastRevision' not in str(row.get('DocType', '')):
+            continue
+        disclosed = day(row.get('DiscDate'), 'JP')
+        if (not result['fiscalYearEnd'] or row.get('CurFYEn') != result['fiscalYearEnd'] or
+                not disclosed or not result['disclosedDate'] <= disclosed <= today or
+                str(row.get('Code') or '')[:4] != str(original.get('Code') or '')[:4]):
+            continue
+        try:
+            value = float(row[forecast_key])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if math.isfinite(value):
+            forecasts.append((disclosed, str(row.get('DiscTime') or ''), observation.get('receivedAt') or '', value))
+    result['forecastDisclosedDate'] = result['disclosedDate'] if result['forecastOperatingProfit'] is not None else None
+    result['forecastReceivedAt'] = result['receivedAt'] if result['forecastOperatingProfit'] is not None else None
+    if forecasts:
+        disclosed, stamp, received = max(value[:3] for value in forecasts)
+        values = {value[3] for value in forecasts if value[:3] == (disclosed, stamp, received)}
+        value = values.pop() if len(values) == 1 else None
+        result.update(forecastOperatingProfit=value, forecastDisclosedDate=disclosed, forecastReceivedAt=received)
+    return result
 
 
 def attach(previous, result, *, earnings, success):

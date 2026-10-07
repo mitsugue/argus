@@ -9,6 +9,7 @@ export type AssetEarnings = {
     revenueGrowthPct: number | null; eps30DaysAgo: number | null } | null;
   company?: { disclosedDate: string; periodEnd: string | null; periodType: string; fiscalYearEnd: string | null;
     operatingProfit: number; forecastOperatingProfit: number | null; consolidated: boolean;
+    forecastDisclosedDate?: string | null; forecastReceivedAt?: string | null;
     source: string; currency: 'JPY'; receivedAt: string };
 };
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
@@ -37,7 +38,9 @@ export function validAssetEarnings(value: unknown, key: string): value is AssetE
   if (c !== undefined && (!c || row.market !== 'JP' || !validEarningsDay(c.disclosedDate) ||
     !(c.periodEnd === null || validEarningsDay(c.periodEnd)) || !(c.fiscalYearEnd === null || validEarningsDay(c.fiscalYearEnd)) ||
     !finite(c.operatingProfit) || !optionalNumber(c.forecastOperatingProfit) || typeof c.consolidated !== 'boolean' ||
-    !text(c.periodType) || !text(c.source) || c.currency !== 'JPY' || !text(c.receivedAt) || !Number.isFinite(Date.parse(c.receivedAt)))) return false;
+    !text(c.periodType) || !text(c.source) || c.currency !== 'JPY' || !text(c.receivedAt) || !Number.isFinite(Date.parse(c.receivedAt)) ||
+    !(c.forecastDisclosedDate === undefined || c.forecastDisclosedDate === null || validEarningsDay(c.forecastDisclosedDate)) ||
+    !(c.forecastReceivedAt === undefined || c.forecastReceivedAt === null || text(c.forecastReceivedAt) && Number.isFinite(Date.parse(c.forecastReceivedAt))))) return false;
   return !!(n || p || e || c);
 }
 export function earningsToday(row: AssetEarnings, now = new Date()): string {
