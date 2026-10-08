@@ -1,63 +1,63 @@
 {
  "date": "2026-10-08",
- "asOf": "2026-10-08T07:05:13Z",
+ "asOf": "2026-10-08T14:30:46Z",
  "regime": "CAUTIOUS",
  "groups": [
   {
    "id": "us-growth",
    "label": "US Growth",
    "role": "Risk",
-   "score": 0.341,
+   "score": 0.326,
    "status": "inflow"
   },
   {
    "id": "us-broad",
    "label": "US Broad Risk",
    "role": "Risk",
-   "score": 0.149,
+   "score": 0.137,
    "status": "neutral"
   },
   {
    "id": "small-caps",
    "label": "Small Caps",
    "role": "Risk",
-   "score": -0.185,
+   "score": -0.244,
    "status": "outflow"
   },
   {
    "id": "defensive",
    "label": "Defensive / Gold",
    "role": "Defensive",
-   "score": -0.141,
+   "score": -0.101,
    "status": "neutral"
   },
   {
    "id": "duration",
    "label": "Duration / Bonds",
    "role": "Duration",
-   "score": -0.236,
+   "score": -0.212,
    "status": "outflow"
   },
   {
    "id": "credit",
    "label": "Credit Risk",
    "role": "Risk",
-   "score": -0.084,
+   "score": -0.091,
    "status": "neutral"
   }
  ],
  "topRotations": [
   {
    "direction": "inflow",
-   "evidenceJa": "Defensive / Gold（-0.14）から US Growth（+0.34）へ資金がシフト。",
+   "evidenceJa": "Defensive / Gold（-0.10）から US Growth（+0.33）へ資金がシフト。",
    "label": "Defensive -> Growth",
-   "score": 0.482
+   "score": 0.427
   },
   {
    "direction": "inflow",
-   "evidenceJa": "Duration / Bonds（-0.24）から US Broad Risk（+0.15）へ資金がシフト。",
+   "evidenceJa": "Duration / Bonds（-0.21）から US Broad Risk（+0.14）へ資金がシフト。",
    "label": "Bonds -> Equities",
-   "score": 0.385
+   "score": 0.349
   }
  ]
 }
