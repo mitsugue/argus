@@ -421,10 +421,12 @@ def _refresh(path, *, now_iso, get, clock):
     try:
         saved=db.execute('SELECT value FROM metadata WHERE key=?',(KEY,)).fetchone()
         control=json.loads(saved[0]) if saved else {}
+        control_changed=False
         for source in registry():
             sid=source['sourceId'];old=control.get(sid,{})
             if source['eligibilityStatus']!='ARGUS_ELIGIBLE':continue
             if old.get('nextCheckAt') and store._time(old['nextCheckAt'])>at:continue
+            control_changed=True
             state={**old,'lastAttemptAt':now_iso,'errorClass':None,'failure':None};control[sid]=state
             try:
                 group=sid.removeprefix('boj_credit_')
@@ -461,7 +463,10 @@ def _refresh(path, *, now_iso, get, clock):
                 (group=='growth' and at.day<=10) or (group=='stance' and at.month in (1,4,7,10) and at.day<=10))
             days=1 if state['status']=='FAILED' or window else 7
             state['nextCheckAt']=(at+timedelta(days=days)).isoformat()
-        with db:db.execute('INSERT OR REPLACE INTO metadata VALUES(?,?)',(KEY,store._json(control)))
+        # A not-due visit is a read. Do not contend with existing acquisition
+        # writers merely to replace the identical scheduler control record.
+        if control_changed:
+            with db:db.execute('INSERT OR REPLACE INTO metadata VALUES(?,?)',(KEY,store._json(control)))
         result=document(db,cutoff=clock())
         result['collectionReceipt']={'requests':requests,'newObservations':new,'automaticAiCalls':0}
         return result

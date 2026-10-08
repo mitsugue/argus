@@ -249,6 +249,32 @@ def test_store_open_failure_is_distinct_and_never_fetches(monkeypatch):
     assert 'private' not in str(failed.value)
 
 
+def test_not_due_refresh_keeps_control_and_observations_under_other_writer(tmp_path, monkeypatch):
+    path=retained(tmp_path)
+    db=store.connect(path)
+    control={s['sourceId']:{'nextCheckAt':'2026-10-14T22:35:16Z','status':'AVAILABLE'}
+             for s in credit.registry() if s['eligibilityStatus']=='ARGUS_ELIGIBLE'}
+    with db:db.execute('INSERT INTO metadata VALUES(?,?)',(credit.KEY,store._json(control)))
+    before=db.execute('SELECT value FROM metadata WHERE key=?',(credit.KEY,)).fetchone()[0]
+    db.close()
+    snapshot=credit.read(path,cutoff=AT)['snapshotId']
+    original=store.connect
+    def short_connect(path):
+        db=original(path);db.execute('PRAGMA busy_timeout=1');return db
+    monkeypatch.setattr(store,'connect',short_connect)
+    lock=sqlite3.connect(path);lock.execute('BEGIN IMMEDIATE')
+    try:
+        result=credit.refresh(path,now_iso=AT,
+            get=lambda *a,**kw:pytest.fail('not due: no external request'),clock=lambda:AT)
+        assert result['snapshotId']==snapshot
+        assert result['collectionReceipt']=={'requests':0,'newObservations':0,'automaticAiCalls':0}
+    finally:lock.rollback();lock.close()
+    db=sqlite3.connect(path)
+    assert db.execute('SELECT value FROM metadata WHERE key=?',(credit.KEY,)).fetchone()[0]==before
+    assert db.execute('SELECT count(*) FROM observations').fetchone()[0]==4
+    db.close()
+
+
 def test_failed_worker_is_visible_without_changing_saved_observations(tmp_path):
     doc=credit.read(retained(tmp_path),cutoff=AT)
     healthy=credit.context_reference(doc)
