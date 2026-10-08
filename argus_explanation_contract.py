@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import hashlib
 import json
+import copy
 from typing import Any,Dict,Mapping,Optional
 
 UNIFIED_FACT_LIMIT = 64
@@ -223,3 +224,71 @@ def prompt_references(context, catalog):
     def restore(value): return walk(value, reverse)
     def compact(value): return walk(value, forward)
     return short_context, short_catalog, restore, compact
+
+
+def prompt_fact_reuse(context):
+    """Reference identical prior facts only in the outbound model request.
+
+    The original context, evidence IDs and comparison timestamps remain the
+    validation/storage authority. Changed facts are never folded, even when
+    their IDs match. Ambiguous IDs disable reuse rather than guessing.
+    """
+    result = copy.deepcopy(context)
+    current = context.get("facts")
+    previous = context.get("previousFacts")
+    if not isinstance(current, list) or not isinstance(previous, list):
+        return result
+    by_id = {}
+    for row in current:
+        if not isinstance(row, dict):
+            return result
+        reference = row.get("evidenceId")
+        if not isinstance(reference, str) or not reference or reference in by_id:
+            return result
+        by_id[reference] = row
+    if any(not isinstance(row, dict) or "sameAsCurrentFact" in row for row in previous):
+        return result
+    def exact_json(value):
+        # Unlike Python equality, JSON distinguishes true from 1 and 1 from
+        # 1.0. Never substitute different numeric or verification inputs.
+        return json.dumps(value, sort_keys=True, ensure_ascii=False,
+                          separators=(",", ":"), allow_nan=False)
+    try:
+        encoded = {key: exact_json(row) for key, row in by_id.items()}
+        reused = []
+        for row in previous:
+            reference = row.get("evidenceId")
+            if isinstance(reference, str) and reference in encoded and exact_json(row) == encoded[reference]:
+                reused.append({"sameAsCurrentFact": reference})
+            else:
+                reused.append(copy.deepcopy(row))
+    except (TypeError, ValueError):
+        return result
+    result["previousFacts"] = reused
+    return result
+
+
+def restore_prompt_fact_reuse(context):
+    """Expand request-local fact references for lossless acceptance checks.
+
+    This is not a model-output decoder and cannot create evidence references
+    for an answer. Missing/ambiguous references fail rather than becoming facts.
+    """
+    result = copy.deepcopy(context)
+    by_id = {}
+    for row in context.get("facts", []):
+        reference = row.get("evidenceId") if isinstance(row, dict) else None
+        if not isinstance(reference, str) or not reference or reference in by_id:
+            raise ValueError("ambiguous_current_fact")
+        by_id[reference] = row
+    restored = []
+    for row in context.get("previousFacts", []):
+        if isinstance(row, dict) and "sameAsCurrentFact" in row:
+            reference = row["sameAsCurrentFact"]
+            if set(row) != {"sameAsCurrentFact"} or not isinstance(reference, str) or reference not in by_id:
+                raise ValueError("unknown_current_fact_reference")
+            restored.append(copy.deepcopy(by_id[reference]))
+        else:
+            restored.append(copy.deepcopy(row))
+    result["previousFacts"] = restored
+    return result

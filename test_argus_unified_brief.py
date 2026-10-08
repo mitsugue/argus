@@ -3,6 +3,79 @@ import json
 import pytest
 import argus_market_brief as mb
 import scanner
+from argus_explanation_contract import prompt_fact_reuse, restore_prompt_fact_reuse
+
+
+def test_prior_fact_reuse_keeps_order_dates_provenance_and_exact_original_context():
+    current = mb.unified_context(brief(), previous=brief())
+    unchanged = copy.deepcopy(current['facts'][0])
+    changed = copy.deepcopy(unchanged)
+    changed['text'] = '前回は上昇を未確認。'
+    removed = dict(unchanged, evidenceId='previous-only', text='前回のみの材料。')
+    current['previousFacts'] = [unchanged, changed, removed, copy.deepcopy(unchanged)]
+    current['previousAt'] = '2026-09-11T10:00:00Z'
+    current['facts'][0]['provenance'] = {'receivedAt': '2026-09-12T09:59:00Z', 'sourceRowSha256': 'a' * 64}
+    for index in (0, 3):
+        current['previousFacts'][index] = copy.deepcopy(current['facts'][0])
+    before = copy.deepcopy(current)
+    reused = prompt_fact_reuse(current)
+    assert reused['previousFacts'][0] == {'sameAsCurrentFact': current['facts'][0]['evidenceId']}
+    assert reused['previousFacts'][1:3] == before['previousFacts'][1:3]
+    assert reused['previousFacts'][3] == reused['previousFacts'][0]
+    assert reused['previousAt'] == before['previousAt']
+    assert restore_prompt_fact_reuse(reused) == before == current
+    assert mb.validate_unified_ai(response(current), current) == mb.validate_unified_ai(response(reused), current)
+    reused['facts'][0]['text'] = 'request-only change'
+    assert current == before
+
+
+@pytest.mark.parametrize('field,value', [
+    ('verification', 'UNCONFIRMED'), ('text', '改訂した入力'),
+    ('provenance', {'receivedAt': '2026-09-13T00:00:00Z'}),
+    ('value', True), ('value', 1.0)])
+def test_changed_prior_facts_are_not_folded_even_with_same_id(field, value):
+    row = {'evidenceId': 'same-id', 'text': '実測値', 'value': 1,
+           'verification': 'VERIFIED', 'provenance': {'receivedAt': '2026-09-12T00:00:00Z'}}
+    prior = dict(row, **{field: value})
+    context = {'facts': [row], 'previousFacts': [prior]}
+    assert prompt_fact_reuse(context) == context
+
+
+def test_ambiguous_ids_disable_reuse_and_unknown_expansion_cannot_invent_facts():
+    row = {'evidenceId': 'duplicate', 'text': '根拠'}
+    context = {'facts': [row, copy.deepcopy(row)], 'previousFacts': [copy.deepcopy(row)]}
+    assert prompt_fact_reuse(context) == context
+    with pytest.raises(ValueError, match='ambiguous_current_fact'):
+        restore_prompt_fact_reuse(context)
+    with pytest.raises(ValueError, match='unknown_current_fact_reference'):
+        restore_prompt_fact_reuse({'facts': [row], 'previousFacts': [{'sameAsCurrentFact': 'unknown'}]})
+
+
+def test_brief_provider_receives_reuse_but_storage_and_validation_keep_full_evidence(monkeypatch):
+    b = brief()
+    context = mb.unified_context(b)
+    context['previousFacts'] = copy.deepcopy(context['facts'])
+    context['previousAt'] = '2026-09-11T10:00:00Z'
+    context['changes']['comparisonAvailable'] = True
+    b['unifiedContext'] = context
+    original = copy.deepcopy(context)
+    calls = []
+    def provider(user, **kwargs):
+        short, raw = model_response(user)
+        calls.append(short)
+        assert short['previousFacts'] == [{'sameAsCurrentFact': short['facts'][0]['evidenceId']}]
+        assert '前回の比較時点はpreviousAt' in user
+        kwargs['diagnostic'].update(outcome='ok', estUsd=.01)
+        return raw
+    monkeypatch.setattr(scanner, '_openai_prose', provider)
+    result = scanner._market_brief_ai_polish(b)
+    assert len(calls) == 1
+    assert result['unifiedStatus'] == result['presentationStatus'] == 'GENERATED'
+    assert result['unifiedContext'] == original
+    assert result['unifiedSummary']['contextId'] == original['contextId']
+    metrics = result['aiDiagnostics']['promptFactReuse']
+    assert metrics['previousFactsReused'] == 1 and metrics['contextBytesAfter'] < metrics['contextBytesBefore']
+    assert metrics['requestOnly'] is True and result['aiDiagnostics']['totalEstUsd'] == .01
 
 
 def test_scheduler_brief_is_independent_of_busy_news_intake_and_has_a_cadence(monkeypatch):

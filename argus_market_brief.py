@@ -32,7 +32,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from argus_explanation_contract import (
     UNIFIED_FACT_LIMIT, UNIFIED_SECTIONS, _FORBIDDEN_BRIEF_PATTERNS,
-    _digits_of, validate_unified_ai, calculation_identity, prompt_references, validate_theme_views)
+    _digits_of, validate_unified_ai, calculation_identity, prompt_references,
+    prompt_fact_reuse, validate_theme_views)
 
 BRIEF_SCHEMA = "argus-market-brief-v1"
 BRIEF_FACT_LIMIT = 16
