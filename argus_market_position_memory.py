@@ -292,9 +292,12 @@ def snapshot(memory: Mapping[str, Any], *, now_iso: str,
                 not (row.get("kind") == "RELEASE_REACTION" or
                      (row.get("kind") == "PRICING" and (row.get("ref") or {}).get("source") == "release_baseline"))
                 or (row.get("ref") or {}).get("sourceTimeValidation") == "source-time-v2"]
-        last = rows[-1] if rows else None
+        # AI assessments remain in the append-only history and display, but
+        # cannot refresh source freshness or become their own new evidence.
+        external = [row for row in rows if row.get("kind") != "AI_VIEW"]
+        last = external[-1] if external else None
         last_at = _instant(last["at"]) if last else None
-        status = "EMPTY" if not rows else ("ACTIVE" if last_at and now - last_at <= timedelta(days=ACTIVE_DAYS) else "QUIET")
+        status = "EMPTY" if not external else ("ACTIVE" if last_at and now - last_at <= timedelta(days=ACTIVE_DAYS) else "QUIET")
         pricing = next((r for r in reversed(rows) if r.get("kind") == "PRICING"), None)
         reaction = next((r for r in reversed(rows) if r.get("kind") == "RELEASE_REACTION"), None)
         ai_view = next((r for r in reversed(rows) if r.get("kind") == "AI_VIEW"), None)
@@ -313,6 +316,8 @@ def snapshot(memory: Mapping[str, Any], *, now_iso: str,
             "view": ({**((ai_view.get("measured") or {}).get("view") or {}), "at": ai_view["at"],
                       "contextId": (ai_view.get("ref") or {}).get("contextId"), "kind": (ai_view.get("ref") or {}).get("kind")}
                      if ai_view else None),
+            "externalRecent": [{k: r.get(k) for k in ("entryId", "kind", "at", "textJa", "severity", "ref")}
+                               for r in external[-RECENT_ENTRIES:]][::-1],
         })
     return {"schemaVersion": SCHEMA, "asOf": now_iso, "themes": themes,
             "entryCount": len(memory.get("entries") or []), "actionAuthority": False, "automaticAiCalls": 0}
@@ -331,8 +336,8 @@ def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
         bits = [f"現在位置・{theme['labelJa']}"]
         if theme.get("lastReaction"):
             bits.append(theme["lastReaction"]["textJa"])
-        elif theme.get("recent"):
-            bits.append(theme["recent"][0]["textJa"])
+        elif theme.get("externalRecent"):
+            bits.append(theme["externalRecent"][0]["textJa"])
         if theme.get("pricing") and theme["pricing"].get("ffImpliedRatePct") is not None:
             bits.append(f"政策金利の予想{theme['pricing']['ffImpliedRatePct']:.3f}%")
         if theme.get("nextEvent"):
@@ -340,7 +345,8 @@ def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
         if theme["status"] == "QUIET":
             bits.append("最近の動きなし")
         measured = bool((theme.get("lastReaction") or {}).get("hasComparableMoves") or theme.get("pricing"))
-        latest = theme["recent"][0] if theme.get("recent") else {}
+        recent = theme.get("externalRecent") or []
+        latest = recent[0] if recent else {}
         facts.append({"text": "。".join(bits)[:160], "priority": "P1", "source": "market_position",
                       "verification": "VERIFIED" if measured else "CORROBORATED",
                       # The shape every brief fact's provenance carries (the page
@@ -351,10 +357,28 @@ def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
                                      "eventId": f"market-position-{theme['themeId']}",
                                      "asOf": theme.get("lastUpdatedAt"),
                                      "sourceLabelJa": "ARGUSの市場の現在位置メモ",
-                                     "sourceRowSha256": _digest(theme.get("recent") or []),
+                                     "sourceRowSha256": _digest(recent),
                                      "sourceReceivedAt": theme.get("lastUpdatedAt"),
                                      "latestEntryId": latest.get("entryId")}})
     return facts
+
+
+def generation_inputs(view: Mapping[str, Any]) -> Dict[str, Any]:
+    """Project the display snapshot onto external materials for paid reuse.
+
+    Keep unknown fields significant. Source clocks, eligibility, stale state,
+    pricing, release reactions and schedules remain bound to the digest.
+    """
+    import copy
+    result = copy.deepcopy(view)
+    for key in ("asOf", "entryCount", "persistence"):
+        result.pop(key, None)
+    for theme in result.get("themes") or []:
+        theme.pop("view", None)
+        theme.pop("entryCount", None)
+        if "externalRecent" in theme:
+            theme["recent"] = theme.pop("externalRecent")
+    return result
 
 
 def load(raw: Any) -> Dict[str, Any]:

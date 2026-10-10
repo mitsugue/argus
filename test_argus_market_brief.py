@@ -54,7 +54,7 @@ def test_event_mentions_carry_source_backed_date_time_in_parentheses():
                       "sqDate": "2026-12-11"}],
     )
     assert "FOMC（2026/09/18 03:00（日本時間）・本日）" in brief["now"]
-    assert "メジャーSQ（2026/12/11・予定）" in brief["next"]
+    assert "メジャーSQ（2026/12/11・時刻未公表・予定）" in brief["next"]
     assert "FOMC（2026/09/18 03:00（日本時間））" in brief["chips"]["nextEvent"]
 
 
@@ -182,7 +182,9 @@ def test_market_brief_retains_legacy_text_but_retries_missing_six_part_analysis(
     calls = []
 
     def fake_prose(user, max_out=600, system=None, *, purpose="prose",
-                   event_id="", event_phase="", model=None, diagnostic=None):
+                   event_id="", event_phase="", model=None, diagnostic=None,
+                   cache_prefix_chars=None):
+        assert purpose == "market_brief" and 0 < cache_prefix_chars < len(user)
         calls.append((purpose, model))
         if isinstance(diagnostic, dict):
             diagnostic["requestedModel"] = model or scanner._OPENAI_MODEL

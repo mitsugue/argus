@@ -50,6 +50,7 @@ def make_receipt(*, call_id: str, provider: str, feature: str,
                  requested_model: str | None, returned_model: str | None,
                  outcome: str, input_tokens: int | None = None,
                  output_tokens: int | None = None, cached_input_tokens: int | None = None,
+                 cache_write_input_tokens: int | None = None,
                  estimated_cost_usd: float | None = None, provider_called: bool | None = None,
                  attempt: int | None = None, source_ref: str | None = None,
                  error_class: str | None = None, provider_request_id: str | None = None) -> dict[str, Any]:
@@ -66,12 +67,17 @@ def make_receipt(*, call_id: str, provider: str, feature: str,
     inp, out, cached = map(_tokens, (input_tokens, output_tokens, cached_input_tokens))
     if cached is not None and inp is not None and cached > inp:
         raise ValueError('cached_input_exceeds_input')
+    written = _tokens(cache_write_input_tokens)
+    if written is not None and inp is not None and written > inp:
+        raise ValueError('cache_write_input_exceeds_input')
+    if written is not None and cached is not None and inp is not None and written + cached > inp:
+        raise ValueError('cache_input_components_exceed_input')
     if estimated_cost_usd is not None and (isinstance(estimated_cost_usd, bool) or
             not isinstance(estimated_cost_usd, (float, int)) or
             not math.isfinite(estimated_cost_usd) or estimated_cost_usd < 0):
         raise ValueError('invalid_usage_cost')
     if provider_called is False and (estimated_cost_usd not in (None, 0) or
-                                    any(value not in (None, 0) for value in (inp, out, cached))):
+                                    any(value not in (None, 0) for value in (inp, out, cached, written))):
         raise ValueError('non_call_has_provider_usage')
     if attempt is not None and (isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1):
         raise ValueError('invalid_usage_attempt')
@@ -87,6 +93,9 @@ def make_receipt(*, call_id: str, provider: str, feature: str,
         'sourceRef': _text(source_ref), 'costIsEstimate': True,
     }
     if error_class is not None:result['errorClass'] = _text(error_class, required=True)
+    # Optional extension preserves old receipts/digests without rewriting
+    # history. An absent field in an older or partial receipt means unknown.
+    if written is not None:result['cacheWriteInputTokens'] = written
     if provider_request_id is not None:result['providerRequestId'] = _text(provider_request_id, required=True)
     result['receiptDigest'] = _digest(result)
     return result
@@ -101,6 +110,7 @@ def validate_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
         returned_model=receipt.get('returnedModel'), outcome=receipt.get('outcome'),
         input_tokens=receipt.get('inputTokens'), output_tokens=receipt.get('outputTokens'),
         cached_input_tokens=receipt.get('cachedInputTokens'), estimated_cost_usd=receipt.get('estimatedCostUsd'),
+        cache_write_input_tokens=receipt.get('cacheWriteInputTokens'),
         provider_called=receipt.get('providerCalled'), attempt=receipt.get('attempt'), source_ref=receipt.get('sourceRef'),
         error_class=receipt.get('errorClass'), provider_request_id=receipt.get('providerRequestId'))
     if dict(receipt) != rebuilt:

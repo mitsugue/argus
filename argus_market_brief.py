@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from argus_explanation_contract import (
     UNIFIED_FACT_LIMIT, UNIFIED_SECTIONS, _FORBIDDEN_BRIEF_PATTERNS,
     _digits_of, validate_unified_ai, calculation_identity, prompt_references,
-    prompt_fact_reuse, validate_theme_views)
+    prompt_fact_reuse, validate_theme_views, render_event_references)
 
 BRIEF_SCHEMA = "argus-market-brief-v1"
 BRIEF_FACT_LIMIT = 16
@@ -58,7 +58,7 @@ def _event_when_ja(event: Mapping[str, Any]) -> str:
         except ValueError:
             pass
     date = str(event.get("date") or event.get("sqDate") or "").strip()
-    return date.replace("-", "/") if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) else "日時未確認"
+    return date.replace("-", "/") + "・時刻未公表" if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) else "日時未確認"
 
 # Vocabulary the composer AND the AI polish must never emit (RC discipline:
 # no execution orders, no invented probabilities/targets).
@@ -140,6 +140,12 @@ def _fact(text: str, priority: str, source: str,
            "verification": verification if verification in VERIFICATIONS else "UNCONFIRMED"}
     if origin is not None:
         row["provenance"] = _source_reference(origin)
+    if source == "calendar" and origin:
+        label = str(origin.get("title") or "")[:50] + "（" + _event_when_ja(origin) + "）"
+        # The exact name/time must already occur in the fact; no source or
+        # missing-time guess is introduced by the outbound rendering contract.
+        if label[:-1] in row["text"]:
+            row["eventLabelJa"] = label
     return row
 
 
@@ -513,6 +519,9 @@ def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, An
                 material["provenance"] = page_provenance(fact["provenance"])
             if isinstance(fact.get("validationSubject"), Mapping):
                 material["validationSubject"] = dict(fact["validationSubject"])
+            if (fact.get("source") == "calendar" and isinstance(fact.get("eventLabelJa"), str)
+                    and fact["eventLabelJa"][:-1] in material["text"]):
+                material["eventLabelJa"] = fact["eventLabelJa"]
             if material["source"] in {"market_view", "policy"} or material["priority"] == "P2":
                 material["verification"] = "UNCONFIRMED"
             identity = hashlib.sha256(json.dumps(material, ensure_ascii=False,
@@ -530,6 +539,11 @@ def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, An
             "ownerContextAvailable": False, "historyStatus": "PROCESS_MEMORY_ONLY",
             "sourceTraceScope": "exact_brief_fact_and_available_public_metadata",
             "actionAuthority": False}
+    # Prior interpretation is context, never a newly received source fact.
+    body["priorAssessments"] = [
+        {"themeId": row["themeId"], "assessment": dict(row["view"])}
+        for row in (brief.get("marketPosition") or {}).get("themes", [])
+        if row.get("themeId") and isinstance(row.get("view"), Mapping)]
     if isinstance(brief.get("numericalResearch"), Mapping):
         body["researchPackages"] = argus_jp_market_research.context_references(brief["numericalResearch"])
     if isinstance(brief.get("fiscalEnvironment"), Mapping):
