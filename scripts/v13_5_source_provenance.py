@@ -304,7 +304,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/today/ReadingHierarchy.css': 'a583f3ae076992339e520de0ff67796a1ea7d681',
     'web/src/components/AppShell.tsx': 'f878541421ded7dd09bb38874cd4ceedf4d0216d',
     'web/src/routes/BackupPage.tsx': '7d082a20c08964bb00dc4de227827f7bcfc19abb',
-    'web/src/navigation.ts': '7bbea49bee28dd07ead0273ea84f1092255a3ca3',
+    'web/src/navigation.ts': 'eabaaf57a0b13607a2fcca1cf3cba5d5c4cfb249',
     'web/src/lib/webPush.ts': '87c83b0bf874ecbf453d2af786dde6f502006b6f',
     'web/src/lib/ownerVaultReceipt.ts': 'bdfeb6b79dd52052ae051638869609d6cf74bf4a',
     'web/src/lib/ownerVaultAutoSave.ts': 'd5c382797e024265beb70baba4a9f1aa0df7d97c',
@@ -325,7 +325,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-vault-auto-save.test.cjs': '7181233ba2be7d1cd5111b8c11386b545e511c29',
     'web/scripts/owner-restore-guard.test.cjs': 'a6711358fc81ad10afaab52af2b118f79133d7ce',
     'web/scripts/owner-protection-consistency.test.cjs': 'f6365d9edfda291084bc17ee05e8d2499bc2774b',
-    'web/scripts/lean-surface.test.mjs': '1bfb0d4a10e9d87c378c76f523ad4f95df8c8910',
+    'web/scripts/lean-surface.test.mjs': '0727e21aad761fbd7f9c856e7dce7e474ce984bf',
     'web/scripts/ai-usage-view.test.cjs': '558e8ef36130e5a59e26f8973176ee2ce741db8a',
     'web/public/push-worker.js': '3934f69c999ae680856bf3e6b23a3ba8f97e514d',
     'test_argus_web_push.py': '69118b280db79fae69bcd3d76db20521714056a2',
@@ -470,9 +470,9 @@ REVIEWED_EXTENSION_BLOBS = {
     # route is retired, its navigation position is the read-only 13M link,
     # and legacy notification hashes resolve to Today. These exact product
     # files are pinned; any later surface change requires separate review.
-    "web/scripts/lean-surface.test.mjs": "1bfb0d4a10e9d87c378c76f523ad4f95df8c8910",
-    "web/src/components/NavRail.tsx": "f1a1fef74709852f39d488aaf370428ce2697fe2",
-    "web/src/navigation.ts": "5a29e9dc8a1e1d0ed160288e6bd2e54713b6a725",
+    "web/scripts/lean-surface.test.mjs": "0727e21aad761fbd7f9c856e7dce7e474ce984bf",
+    "web/src/components/NavRail.tsx": "535487582e373291d132cdfa6a550a26aa11e8a4",
+    "web/src/navigation.ts": "eabaaf57a0b13607a2fcca1cf3cba5d5c4cfb249",
     # v13.7.44 regression assertions synchronized with the approved Alerts-to-13M surface.
     "test_argus_v12_2_12.py": "9aef4250a8a68e76dcda4ff8a079d04fed17cf9a",
     "test_argus_v12_rc.py": "d6d462465f7556f748ee0900e3f88820410e284f",
@@ -668,6 +668,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/routes/ThirteenM.tsx",
+    "web/src/routes/ThirteenM.css",
     "web/scripts/return-geometry.test.mjs",
     "docs/operations/13m-return-geometry.md",
     "web/src/hooks/useCreditConditions.ts",
