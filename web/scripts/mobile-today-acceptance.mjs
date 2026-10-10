@@ -452,8 +452,8 @@ async function navigationAudit(page, evidence) {
       direction: index === 0 ? null : 'next',
     });
   }
-  const thirteenM = page.locator('.nav__mobile').getByRole('link', { name: '13Mを開く', exact: true });
-  if (await thirteenM.getAttribute('href') !== 'https://argus-13m-shadow.onrender.com/') {
+  const thirteenM = page.locator('.nav__mobile').getByRole('button', { name: '13Mを開く', exact: true });
+  if (await thirteenM.getAttribute('href') !== null || !(await thirteenM.isEnabled())) {
     evidence.failures.push('13m-navigation-target');
   }
   const mobileOrder = await page.locator('.nav__mobile').locator('button, a').allTextContents();
@@ -476,7 +476,37 @@ async function navigationAudit(page, evidence) {
   if (back !== 'Watchlist' || forward !== 'Settings') {
     evidence.failures.push('history-navigation-active-state');
   }
-  return { records, back, forward, systemVisible: false };
+  // Enter 13M without leaving the installed app's origin/scope. The bounded
+  // fixture serves UI navigation only; it is not authenticated live acceptance.
+  const origin = new URL(page.url()).origin;
+  const frameUrl = origin.includes('127.0.0.1')
+    ? 'http://127.0.0.1:8130/embedded/' : 'https://argus-13m-shadow.onrender.com/embedded/';
+  await page.route(frameUrl, async route => route.fulfill({
+    status: 200, contentType: 'text/html', body: `<!doctype html><html lang="ja"><body>
+    <button id="return">研究から戻る</button><script>
+    parent.postMessage({type:'argus-13m:ready'},${JSON.stringify(origin)});
+    document.querySelector('#return').onclick=()=>parent.postMessage({type:'argus-13m:navigate',hash:'#today'},${JSON.stringify(origin)});
+    </script></body></html>` }));
+  await thirteenM.click();
+  await page.waitForFunction(() => location.hash === '#13m');
+  const iframe = page.locator('iframe[title="13Mの研究と実データ"]');
+  await iframe.waitFor();
+  await page.waitForFunction(() => !document.querySelector('.thirteenm-page__status'));
+  const embedded = await page.evaluate(() => ({
+    origin: location.origin, path: location.pathname,
+    active: document.querySelector('.nav__mobile-btn.is-active')?.textContent,
+    frameBottom: document.querySelector('.thirteenm-page__frame')?.getBoundingClientRect().bottom,
+    navTop: document.querySelector('.nav__mobile')?.getBoundingClientRect().top,
+  }));
+  if (embedded.origin !== origin || embedded.active?.trim() !== '13M'
+    || embedded.frameBottom > embedded.navTop + 1) evidence.failures.push('13m-embedded-scope-or-footer');
+  // A same-page forgery is not a message from the embedded 13M window.
+  await page.evaluate(() => window.postMessage({type:'argus-13m:navigate',hash:'#today'},location.origin));
+  if (new URL(page.url()).hash !== '#13m') evidence.failures.push('13m-message-source-guard');
+  await page.frameLocator('iframe[title="13Mの研究と実データ"]').getByRole('button',{name:'研究から戻る'}).click();
+  await page.waitForFunction(() => location.hash === '#settings');
+  await page.unroute(frameUrl);
+  return { records, back, forward, embedded, systemVisible: false };
 }
 
 async function run() {

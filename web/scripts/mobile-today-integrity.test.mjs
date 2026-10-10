@@ -53,7 +53,7 @@ assert.equal(navigation.pageDirection('settings', 'watchlist'), -1);
 assert.equal(navigation.primaryRouteIndex('settings'), 2);
 
 assert.match(nav, /PRIMARY_NAVIGATION\.slice\(0, 2\)\.map/);
-assert.match(nav, /THIRTEEN_M_NAVIGATION\.href/);
+assert.match(nav, /onSelect\('thirteenm'\)/);
 assert.doesNotMatch(nav, /SYSTEM_NAVIGATION/);
 assert.doesNotMatch(nav, /onClick=\{onReviewLink\}[^]*Review<\/button>/);
 assert.match(app, /window\.addEventListener\('popstate', onLocation\)/);
@@ -188,7 +188,7 @@ assert.doesNotMatch(warmBlock, /waitForTimeout|warmLoader|warmSkeleton/,
   'warm acceptance must use semantic state without sleeps or visual-loader authority');
 assert.match(acceptance, /\['Today', '#today'\], \['Watchlist', '#holdings'\]/);
 assert.match(acceptance, /13m-navigation-target/);
-assert.equal(navigation.THIRTEEN_M_NAVIGATION.href, 'https://argus-13m-shadow.onrender.com/');
+assert.equal(navigation.THIRTEEN_M_NAVIGATION.href, '#13m');
 assert.doesNotMatch(acceptance, /nav__mobile-system|\['Assets', '#assets'\]|\['Review', '#positions'\]/);
 
 assert.match(vite, /cleanupOutdatedCaches:\s*true/);

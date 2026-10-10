@@ -32,11 +32,12 @@ export const NavRail: React.FC<Props> = ({ active, onSelect }) => {
           {item.desktopLabel}
         </button>
         ))}
-        <a className="nav__btn" href={THIRTEEN_M_NAVIGATION.href}
+        <button className={`nav__btn ${active === 'thirteenm' ? 'is-active' : ''}`}
+          onClick={() => onSelect('thirteenm')} aria-current={active === 'thirteenm' ? 'page' : undefined}
           aria-label="13Mを開く">
           <span className="nav__dot" aria-hidden />
           {THIRTEEN_M_NAVIGATION.desktopLabel}
-        </a>
+        </button>
         {PRIMARY_NAVIGATION.slice(2).map((item) => (
         <button
           key={item.route}
@@ -57,11 +58,12 @@ export const NavRail: React.FC<Props> = ({ active, onSelect }) => {
           aria-current={active === item.route ? 'page' : undefined}>
           <span className="nav__mobile-dot" />{item.mobileLabel}
         </button>)}
-        <a className="nav__mobile-btn" href={THIRTEEN_M_NAVIGATION.href}
+        <button className={`nav__mobile-btn ${active === 'thirteenm' ? 'is-active' : ''}`}
+          onClick={() => onSelect('thirteenm')} aria-current={active === 'thirteenm' ? 'page' : undefined}
           aria-label="13Mを開く">
           <span className="nav__mobile-dot" aria-hidden />
           {THIRTEEN_M_NAVIGATION.mobileLabel}
-        </a>
+        </button>
         {PRIMARY_NAVIGATION.slice(2).map((item) => <button key={item.route}
           className={`nav__mobile-btn ${active === item.route ? 'is-active' : ''}`}
           onClick={() => onSelect(item.route)}

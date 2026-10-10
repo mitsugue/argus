@@ -7,6 +7,7 @@ import {
 } from './navigation';
 import { CommandCenter } from './routes/CommandCenter';
 import { Watchlist } from './routes/Watchlist';
+import { ThirteenM } from './routes/ThirteenM';
 import { Settings } from './routes/Settings';
 import { startCloudSync } from './lib/vault';
 import { readDeviceLocalSdaLedger } from './lib/sdaDeviceLocal';
@@ -46,6 +47,7 @@ const applyBoundedMobileSafeBottom = () => {
 const App: React.FC = () => {
   const initial = useMemo(initialLocation, []);
   const [location, setLocation] = useState<ParsedLocation>(initial);
+  const thirteenMReturn = useRef({ location: { route: 'command' } as ParsedLocation, hash: '#today' });
   const routeRef = useRef<RouteKey>(initial.route);
   const historyIndexRef = useRef(readHistoryIndex() ?? 0);
   const historyHashRef = useRef(window.location.hash);
@@ -153,6 +155,9 @@ const App: React.FC = () => {
     canonicalSessionAuthority).marketStatusJa, [canonicalSessionAuthority]);
 
   const commitLocation = (target: ParsedLocation, hash: string) => {
+    if (target.route === 'thirteenm' && location.route !== 'thirteenm') {
+      thirteenMReturn.current = { location, hash: window.location.hash || routeHash(location.route) };
+    }
     setPageEnterDirection(pageDirection(routeRef.current, target.route));
     routeRef.current = target.route;
     setLocation(target);
@@ -205,7 +210,7 @@ const App: React.FC = () => {
   // The keep-mounted command center renders its bottom summary bar through a
   // body portal, which no ancestor can hide. Stamp the active route on <body>
   // so CSS can keep that bar Today-only.
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     document.body.dataset.argusRoute = route;
   }, [route]);
   const todayContent = (todayMounted || route === 'command') && (
@@ -227,6 +232,8 @@ const App: React.FC = () => {
         onBackToHoldings={() => handleNavSelect('watchlist')}
       /></div>
     )}
+    {route === 'thirteenm' && <ThirteenM onBack={() => commitLocation(thirteenMReturn.current.location, thirteenMReturn.current.hash)}
+      onNavigateToAsset={navigateToAsset} onNavigate={handleNavSelect} />}
     {route === 'settings'
       && <Settings settingsSection={location.settingsSection} />}
   </>;

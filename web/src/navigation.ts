@@ -1,7 +1,8 @@
 export type RouteKey =
   | 'command'
   | 'watchlist'
-  | 'settings';
+  | 'settings'
+  | 'thirteenm';
 
 export type PrimaryRouteKey = RouteKey;
 export type SettingsSection = 'status' | 'recovery' | 'help';
@@ -32,13 +33,11 @@ export const NAVIGATION: readonly NavigationDefinition[] = [
     hash: '#settings', swipeOrder: 2 },
 ] as const;
 
-// 13M remains an independently deployed, read-only research application.
-// Keep this as a plain navigation link: ARGUS must not fetch its data, start
-// its jobs, or imply that an unverified candidate is a trading instruction.
+// Stay inside the installed ARGUS scope; 13M keeps its own authenticated runtime.
 export const THIRTEEN_M_NAVIGATION = {
-  desktopLabel: '13M',
-  mobileLabel: '13M',
-  href: 'https://argus-13m-shadow.onrender.com/',
+  desktopLabel: '13M', mobileLabel: '13M', href: '#13m',
+  origin: 'https://argus-13m-shadow.onrender.com',
+  embeddedUrl: 'https://argus-13m-shadow.onrender.com/embedded/',
 } as const;
 
 export const PRIMARY_NAVIGATION = [...NAVIGATION]
@@ -48,6 +47,7 @@ const ROUTE_HASHES: Record<RouteKey, string> = {
   command: '#today',
   watchlist: '#holdings',
   settings: '#settings',
+  thirteenm: '#13m',
 };
 
 // Only canonical surface hashes are routable. Retired Alerts landing links go
@@ -57,6 +57,7 @@ export const HASH_ROUTES: Readonly<Record<string, RouteKey>> = {
   '#holdings': 'watchlist',
   '#notifications': 'command',
   '#settings': 'settings',
+  '#13m': 'thirteenm',
 };
 
 const safeDecode = (value: string) => {
