@@ -361,7 +361,7 @@ async function geometry(page, viewport) {
   // Chromium does not expose iOS env() values, so record the native value and
   // separately prove the runtime guard rejects an oversized installed-web-view
   // value before exercising the exact 34px maximum accepted by the contract.
-  const hostileGeometry = await page.evaluate(async () => {
+  return page.evaluate(async (size) => {
     document.documentElement.style.setProperty('--argus-safe-bottom', '92px');
     const navHeightBeforeRefresh = document.querySelector('.nav')
       ?.getBoundingClientRect().height ?? null;
@@ -370,9 +370,10 @@ async function geometry(page, viewport) {
     const bounded = parseFloat(getComputedStyle(document.documentElement)
       .getPropertyValue('--argus-safe-bottom'));
     document.documentElement.style.setProperty('--argus-safe-bottom', '34px');
-    return { boundedSafeAreaBottom: bounded, navHeightBeforeRefresh };
-  });
-  return page.evaluate((size) => {
+    // Keep the injected 34px fixture and its geometry read in one browser
+    // task. A deferred production remeasure legitimately restores the native
+    // Chromium 0px between separate evaluate calls; that is not a 34px result.
+    const hostileGeometry = { boundedSafeAreaBottom: bounded, navHeightBeforeRefresh };
     const rect = (selector) => {
       const element = document.querySelector(selector);
       if (!element) return null;
@@ -405,8 +406,8 @@ async function geometry(page, viewport) {
       visualViewportWidth: vv?.width ?? null,
       nativeSafeAreaBottom,
       exercisedSafeAreaBottom: 34,
-      hostileSafeAreaBottom: size.hostileGeometry.boundedSafeAreaBottom,
-      hostileNavHeightBeforeRefresh: size.hostileGeometry.navHeightBeforeRefresh,
+      hostileSafeAreaBottom: hostileGeometry.boundedSafeAreaBottom,
+      hostileNavHeightBeforeRefresh: hostileGeometry.navHeightBeforeRefresh,
       navRect, navControlsRect, stickyCommandRect,
       shellRect: rect('.shell'), bodyRect: rect('body'),
       mainRect: rect('.shell__main'),
@@ -430,7 +431,7 @@ async function geometry(page, viewport) {
       navTouchTargets: [...document.querySelectorAll('.nav__mobile > button, .nav__mobile > a, .nav__mobile > details > summary')]
         .map((element) => element.getBoundingClientRect().height),
     };
-  }, { ...viewport, hostileGeometry });
+  }, viewport);
 }
 
 async function navigationAudit(page, evidence) {
