@@ -14,6 +14,7 @@ GENERATION_FILES = (
     'argus_owner_dialogue.py',
     'argus_owner_dialogue_api.py',
     'argus_market_brief.py',
+    'argus_market_position_memory.py',
     'argus_presentation_intent.py',
     'argus_explanation_contract.py',
 )

@@ -14005,7 +14005,9 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
             # Model-currency proof (v13.5.36 → v13.5.63): requested vs served.
             diagnostic.update({"requestedModel": mdl, "returnedModel": returned,
                                "fallbackModel": fallback_used, "completedAt": completed,
-                               "inputTokens": inp, "outputTokens": out_t, "estUsd": billed_cost})
+                               "inputTokens": inp, "outputTokens": out_t,
+                               "cachedInputTokens": argus_ai_usage_runtime.usage(resp, 'openai')['cachedInputTokens'],
+                               "estUsd": billed_cost})
         try:
             _ai_record_prose_cost(returned or used_model, inp, out_t, billed_cost,
                                   purpose=purpose, fallback_used=bool(fallback_used))
@@ -17179,6 +17181,7 @@ def _market_brief_ai_polish(brief):
         "ARGUSとして一人の相手に語る。自分の見立ては『私は〜と見ています』など自然な一人称とし、毎文で名乗らない。"
         "まず source=market_position の根拠(市場の現在位置: 主役のテーマ、測った織り込み、直近の発表の読み、次の予定)で"
         "投資家が今何を期待し何を警戒しているかを把握し、その文脈で他の根拠を読み解く。viewとinvalidationは現在位置を踏まえる。"
+        "priorAssessmentsは過去のAIの見立てです。新しい外部材料や観測済み事実として引用せず、現在の根拠で見直してください。"
         "viewは60字以内の短い結論、reasonsは重要な理由を2文以内、他の項目は各120字以内。"
         "メールの見出しや入力資料を紹介する前置きを避け、市場で何が変わり、何を確認するかを先に述べる。"
         "資料を紹介する代わりに断定を強めてはいけない。報道・予想・公式決定・実測と未確認範囲は明確にする。"
@@ -17187,8 +17190,9 @@ def _market_brief_ai_polish(brief):
         "各項目を {textJa:文字列,evidenceIds:根拠IDの配列,kind:FACTまたはINFERENCEまたはUNKNOWN} とする。"
         "根拠にない数値・割合・確率・価格予測・売買指示は禁止。推論を観測済み事実と呼ばない。"
         "数値・価格は根拠欄と計算済みチャートに表示します。説明文では変化の方向・意味・条件を言葉で伝えてください。"
-        "ただし予定イベントへ言及するときは、入力根拠にある日時を名称の直後へ全角括弧で必ず添えてください。"
-        "時刻が公表されていない日程は日付と『時刻未公表』または『寄付き基準』を添え、時刻を推測しないでください。"
+        "予定イベントは、eventLabelJaがある現在のcalendar根拠の {event:根拠ID} を本文に置き、同じIDをevidenceIdsへ含めてください。"
+        "例:『{event:ref-1}で物価の方向を確認します』。名称と日時はサーバーが確認済み根拠から付けます。"
+        "日時や数値を書き写したり丸めたりしないでください。該当根拠がなければ予定日時は未確認とし、推測しないでください。"
         "根拠IDや資料の時刻に含まれる数字を観測値として文章に転記しないでください。"
         "根拠IDは項目ごとに重複なしで最大6件。FACTはverificationがVERIFIEDの根拠だけを参照できる。"
         "CORROBORATED・UNCONFIRMEDの根拠を含む説明はINFERENCEにする。"
@@ -17211,8 +17215,16 @@ def _market_brief_ai_polish(brief):
     raw = _openai_prose(user, max_out=5200,
                        system=argus_presentation_intent.VOICE,
                        purpose="market_brief", diagnostic=diag)
-    raw = restore_references(raw)
     validation = {}
+    event_renderer = argus_market_brief.render_event_references
+    def render_reply(value, diagnostic):
+        try:
+            return restore_references(event_renderer(value, prompt_context))
+        except ValueError as exc:
+            diagnostic.update(status="REJECTED", reason=str(exc), section="event")
+            return None
+    original_raw = raw
+    raw = render_reply(raw, validation)
     unified = argus_market_brief.validate_unified_ai(
         {key: value for key, value in raw.items() if key not in ("presentation", "position")}, context, diagnostic=validation) if isinstance(raw, dict) else None
     def checked_presentation(value, summary, diagnostic):
@@ -17226,23 +17238,23 @@ def _market_brief_ai_polish(brief):
             return None
     presentation = checked_presentation(raw, unified, validation)
     attempts = [{"provider": copy.deepcopy(diag), "validation": copy.deepcopy(validation)}]
-    if raw and validation.get("reason") in {
+    if original_raw and validation.get("reason") in {
             "unsupported_numeric_tokens", "fact_requires_verified_references",
             "unknown_evidence_reference", "evidence_reference_required", "presentation_invalid",
-            "validation_method_scope_mismatch"}:
+            "validation_method_scope_mismatch", "event_reference_unavailable", "event_reference_malformed"}:
         # One bounded correction, still subject to every original constraint.
         # Provider usage from both calls remains in the existing cost ledger.
         correction = (user + "\n前の回答は検証で却下されました。理由: "
             + json.dumps(validation, ensure_ascii=False)
             + "。数値は根拠欄とチャートに残すので、説明文では新しい数値や丸めた値を使わず、方向と条件を言葉で説明してください。"
             "根拠IDとFACT/INFERENCE/UNKNOWNの条件を守り、全6項目と表示候補を全て含むpresentationを返してください。\n前の回答: "
-            + json.dumps(compact_references(raw), ensure_ascii=False))
+            + json.dumps(compact_references(raw) if raw else original_raw, ensure_ascii=False))
         diag = {}
         raw = _openai_prose(correction, max_out=5200,
             system=argus_presentation_intent.VOICE,
             purpose="market_brief", diagnostic=diag)
-        raw = restore_references(raw)
         validation = {}
+        raw = render_reply(raw, validation)
         unified = argus_market_brief.validate_unified_ai(
             {key: value for key, value in raw.items() if key not in ("presentation", "position")}, context, diagnostic=validation) if isinstance(raw, dict) else None
         presentation = checked_presentation(raw, unified, validation)
@@ -17298,8 +17310,12 @@ def _market_brief_ai_polish(brief):
         brief["unifiedStatus"] = "INVALID_RESPONSE" if raw else "UNAVAILABLE"
     brief["aiDiagnostics"] = {key: diag.get(key) for key in (
         "outcome", "reason", "requestedModel", "returnedModel", "completedAt",
-        "inputTokens", "outputTokens", "estUsd", "errorCode")}
+        "inputTokens", "outputTokens", "cachedInputTokens", "estUsd", "errorCode")}
     brief["aiDiagnostics"]["attempts"] = attempts
+    brief["aiDiagnostics"]["callReduction"] = {
+        "schema": "argus-brief-call-reduction-v1", "eventRendering": "CITED_CURRENT_CALENDAR",
+        "attemptCount": len(attempts), "correctionCalls": len(attempts) - 1,
+        "acceptanceGatesChanged": False}
     brief["aiDiagnostics"]["promptFactReuse"] = {
         "schema": "argus-prompt-fact-reuse-v1", "requestOnly": True,
         "previousFactsReused": reused_previous_facts,
@@ -17332,6 +17348,9 @@ def _market_brief_generation_input_digest(brief, internals):
     if isinstance(brief_inputs.get("numericalResearch"), dict):
         brief_inputs["numericalResearch"] = {key: value for key, value in
             brief_inputs["numericalResearch"].items() if key != "readReceipt"}
+    if isinstance(brief_inputs.get("marketPosition"), dict):
+        brief_inputs["marketPosition"] = argus_market_position_memory.generation_inputs(
+            brief_inputs["marketPosition"])
     if isinstance(brief_inputs.get("creditConditions"), dict):
         # The history keeps the exact cutoff. A fresh read/check timestamp alone
         # cannot invalidate paid explanation reuse for unchanged official facts.
@@ -17350,7 +17369,7 @@ def _market_brief_generation_input_digest(brief, internals):
         "valuationStatus": copy.deepcopy(_JP_INDEX_VALUATION.status),
         "generationPolicy": {**_owner_overview_generation_policy(),
             "purpose": "market_brief", "maxOutputRequest": 5200},
-        "digestSchemaVersion": "market-brief-generation-input-v2",
+        "digestSchemaVersion": "market-brief-generation-input-v3",
     }
     # Future-dated cached records can become eligible without a cache write.
     # Crossing any input timestamp invalidates reuse, even inside the same hour.

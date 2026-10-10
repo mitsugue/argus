@@ -26,6 +26,46 @@ def _digits_of(text: str) -> set:
 UNIFIED_SECTIONS = ("view", "reasons", "changes", "impact", "next", "invalidation")
 
 
+def render_event_references(value: Any, context: Mapping[str, Any]):
+    """Expand request-local event tokens from cited current calendar facts.
+
+    This is a renderer, not an acceptance gate. The complete rendered reply
+    still passes the unchanged reference, number, authority and length checks.
+    Unknown, uncited and malformed tokens fail closed; prose is never repaired
+    by deleting numbers or replacing an unsupported claim.
+    """
+    current = {row.get("evidenceId"): row for row in context.get("facts", [])}
+    text_fields = {"textJa", "expectationJa", "fearJa", "triggerJa"}
+    pattern = re.compile(r"\{event:([^{}]+)\}")
+
+    def walk(item):
+        if isinstance(item, list):
+            return [walk(row) for row in item]
+        if not isinstance(item, dict):
+            return item
+        out = {}
+        for key, original in item.items():
+            if key in text_fields and isinstance(original, str):
+                def replace(match):
+                    ref = match.group(1)
+                    fact = current.get(ref) or {}
+                    label = fact.get("eventLabelJa")
+                    refs = item.get("evidenceIds")
+                    if (not isinstance(refs, list) or ref not in refs or fact.get("source") != "calendar"
+                            or fact.get("verification") != "VERIFIED" or not isinstance(label, str)
+                            or not label or label[:-1] not in fact.get("text", "")):
+                        raise ValueError("event_reference_unavailable")
+                    return label
+                rendered = pattern.sub(replace, original)
+                if "{event" in rendered:
+                    raise ValueError("event_reference_malformed")
+                out[key] = rendered
+            else:
+                out[key] = walk(original)
+        return out
+    return walk(value)
+
+
 def validation_scope_error(text, facts):
     """Bound explicit benchmark claims to the cited method, instrument and horizon.
 

@@ -54,7 +54,7 @@ def test_event_mentions_carry_source_backed_date_time_in_parentheses():
                       "sqDate": "2026-12-11"}],
     )
     assert "FOMC（2026/09/18 03:00（日本時間）・本日）" in brief["now"]
-    assert "メジャーSQ（2026/12/11・予定）" in brief["next"]
+    assert "メジャーSQ（2026/12/11・時刻未公表・予定）" in brief["next"]
     assert "FOMC（2026/09/18 03:00（日本時間））" in brief["chips"]["nextEvent"]
 
 
