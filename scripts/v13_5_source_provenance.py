@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Static-only prompt cache boundary and optional write-usage compatibility.
+    'test_argus_brief_prompt_cache.py': '7bca36de1987fb577ffb1b62e28fb1f84b4881bb',
     # 信用環境の公式入力・保存・表示を確認した正確な内容。
     'argus_credit_conditions.py': '105821dbe9aa30eef2eeca58f86d67eedebba720',
     'docs/operations/credit-conditions.md': '8b0ecf232effff256091c4f0de8f10805e942474',
@@ -337,7 +339,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_web_push.py': 'e6ea726935fb8ceb60bc16deaf1a4b50cb9f8355',
     'argus_owner_vault.py': '9c3d105716b1115a205bc69dbbbd18e3a7356457',
     'argus_ai_usage_view.py': 'cd86138feaaa5f61a305b2eaa4e74f2b8de3b163',
-    'argus_ai_usage_runtime.py': 'f65f5bd3196c162ad1152a1468a5d2be531f778b',
+    'argus_ai_usage_runtime.py': 'a547929955acabfd3ae74d3cbd9224f1448d2862',
     'argus_analysis_history_backup.py': 'ae9013e5b81e9bf743821cd6ef0ea17c1b829ceb',
     'argus_explanation_contract.py': 'f5c906b9c46bf9808c196d7f894924313b9211f3',
     'argus_owner_dialogue.py': '08f98d645f66271cc1de9959703774f5a414b7a4',
@@ -380,7 +382,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/jpy-position.test.cjs': 'b06ad4ed402a187d9d949a0d30aea45ac6a648d7',
     'web/src/components/today/JpyPositionCard.tsx': '38a7da45a161ed0611c39abf57ed275e070b808f',
     # Owner-authorized staged analysis delivery; exact tested file contents only.
-    'argus_ai_usage_receipt.py': 'c0795a8d95ff367d79fe2b14abf5323052fba9c2',
+    'argus_ai_usage_receipt.py': '272e2a780d26a65917210df416e6546eb1c441dc',
     'argus_ai_usage_store.py': 'bc0ccd94eeb2b601da72ecb4a847c8ba3bbf07e1',
     'argus_macro_event_store.py': '0f3bf526a88c83a22576abbf06490bc2861af433',
     'argus_macro_results.py': 'd36a074617ef3ba476bc900a376040192b43a02a',

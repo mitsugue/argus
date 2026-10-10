@@ -11,7 +11,7 @@ import json
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from argus_ai_usage_receipt import summarize
+from argus_ai_usage_receipt import summarize, validate_receipt
 from argus_ai_usage_store import read_page
 
 
@@ -27,6 +27,7 @@ def report(path, start, end):
     if lower >= upper:
         raise ValueError('invalid_window')
     watermark = None
+    cache_groups, seen = {}, set()
     def selected():
         nonlocal watermark
         cursor = 0
@@ -41,13 +42,30 @@ def report(path, start, end):
             if not page['hasMore']:
                 return
             cursor = page['nextAfterSequence']
-    summary = summarize(selected())
+    def measured():
+        for value in selected():
+            row = validate_receipt(value)
+            if row['callId'] not in seen:
+                seen.add(row['callId'])
+                key = (row['requestedModel'], row['returnedModel'])
+                group = cache_groups.setdefault(key, {
+                    'requestedModel': key[0], 'returnedModel': key[1], 'records': 0,
+                    'knownCacheWriteInputTokens': 0, 'unknownCacheWriteRecords': 0})
+                group['records'] += 1
+                if row.get('cacheWriteInputTokens') is None:
+                    group['unknownCacheWriteRecords'] += 1
+                else:
+                    group['knownCacheWriteInputTokens'] += row['cacheWriteInputTokens']
+            yield row
+    summary = summarize(measured())
     return {'schemaVersion':'argus-brief-cost-window-v1', 'startUtc':lower.isoformat(),
             'endUtcExclusive':upper.isoformat(), 'seconds':(upper-lower).total_seconds(),
             'throughSequence':watermark, 'summary':summary,
             'coverage':'all_committed_market_brief_openai_receipts_in_window',
             'status':'RECORDED_USAGE' if summary['uniqueReceipts'] else 'NO_RECORDED_GENERATION',
             'costBasis':'existing_normal_token_price_estimate_excludes_cache_discount_and_extra_charges',
+            'cacheWrites': sorted(cache_groups.values(), key=lambda g: (g['requestedModel'] or '', g['returnedModel'] or '')),
+            'cacheWriteFeeIncludedInEstimate': False,
             'qualityAcceptanceRate':'NOT_AVAILABLE_FROM_PROVIDER_RECEIPTS',
             'invoiceSavingsVerified':False, 'causalReductionVerified':False,
             'additionalAiCalls':0, 'providerFetches':0, 'applicationWrites':0}

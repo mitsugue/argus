@@ -33,6 +33,21 @@ def usage(response, provider):
             'returnedModel':model if isinstance(model,str) and 0<len(model)<=160 else None}
 
 
+def cache_write_tokens(response, provider):
+    """Provider-reported cache writes only; absence is not a zero charge."""
+    if provider != 'openai':
+        return None
+    value = field(response, 'usage')
+    detail = field(value, 'input_tokens_details') or field(value, 'prompt_tokens_details')
+    written = count(field(detail, 'cache_write_tokens'))
+    values = usage(response, provider)
+    inp, cached = values['inputTokens'], values['cachedInputTokens']
+    if written is not None and inp is not None:
+        if written > inp or cached is not None and written + cached > inp:
+            return None
+    return written
+
+
 def observe(invoke, *, provider, feature, requested_model, record, estimate,
             attempt=None, source_ref=None, clock=None, on_record_error=None):
     """One SDK invocation, including its internal retries; no retry is added here.
@@ -57,6 +72,7 @@ def observe(invoke, *, provider, feature, requested_model, record, estimate,
                 completed_at=clock(),requested_model=requested_model,returned_model=values['returnedModel'],
                 outcome=outcome,input_tokens=values['inputTokens'],output_tokens=values['outputTokens'],
                 cached_input_tokens=values['cachedInputTokens'],estimated_cost_usd=cost,provider_called=True,
+                cache_write_input_tokens=cache_write_tokens(response, provider),
                 attempt=attempt,source_ref=source_ref,error_class=error_class,
                 provider_request_id=field(response,'id') if provider=='openai' else field(response,'response_id'))
             record(row)
