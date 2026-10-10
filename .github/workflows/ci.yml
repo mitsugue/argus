@@ -20,13 +20,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Install minimal deps (only what `import scanner` needs)
+      - name: Install minimal deps (scanner and offline SDK serialization)
         run: >-
-          pip install --quiet anthropic flask flask-cors requests pytz
+          pip install --quiet anthropic openai==3.19.2 flask flask-cors requests pytz
           python-dotenv json-repair pytest pytest-xdist==3.8.0 cryptography==49.0.0 pywebpush==2.3.0 webauthn==2.7.1 openpyxl==3.1.5 xlrd==2.0.2
       - name: Syntax check
         run: |
           python -c 'import importlib.metadata as m; assert m.version("cryptography") == "49.0.0"'
+          python -c 'import importlib.metadata as m; assert m.version("openai") == "3.19.2"'
           python -m py_compile scanner.py argus_remote_nonce_anchor.py \
             argus_remote_recovery.py argus_rules.py argus_events.py
       - name: Unit tests (rules + events — whole suite auto-discovered)
