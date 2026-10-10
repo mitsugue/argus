@@ -54,11 +54,11 @@ for (const retired of ['#assets', '#positions', '#quality', '#backup', '#guide',
   assert.equal(navigation.parseLocationHash(retired), undefined);
 }
 assert.deepEqual(Object.keys(navigation.HASH_ROUTES).sort(),
-  ['#holdings', '#notifications', '#settings', '#today']);
+  ['#13m', '#holdings', '#notifications', '#settings', '#today']);
 assert.equal(navigation.assetDetailHash(' nvda ', 'chart'), '#asset/NVDA/chart');
 
 assert.equal(navigation.HASH_ROUTES['#notifications'], 'command');
-assert.equal(navigation.THIRTEEN_M_NAVIGATION.href, 'https://argus-13m-shadow.onrender.com/');
+assert.equal(navigation.THIRTEEN_M_NAVIGATION.href, '#13m');
 assert.doesNotMatch(app, /NotificationsPage/);
 assert.match(app, /<Settings settingsSection=/);
 assert.match(app, /assetDetailHash\(symbol, section\)/);
@@ -145,3 +145,5 @@ assert.match(deferredManifest, /protected stores and background engines remain/)
 assert.doesNotMatch(locales, /Asset Deskで銘柄カード/);
 
 console.log('lean-surface.test: ok (3 internal nav + 13M, contextual detail, disclosure, recovery boundary)');
+
+assert.deepEqual(navigation.parseLocationHash('#13m'), { route: 'thirteenm' });

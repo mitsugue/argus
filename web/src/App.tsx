@@ -7,6 +7,7 @@ import {
 } from './navigation';
 import { CommandCenter } from './routes/CommandCenter';
 import { Watchlist } from './routes/Watchlist';
+import { ThirteenM } from './routes/ThirteenM';
 import { Settings } from './routes/Settings';
 import { startCloudSync } from './lib/vault';
 import { readDeviceLocalSdaLedger } from './lib/sdaDeviceLocal';
@@ -46,6 +47,7 @@ const applyBoundedMobileSafeBottom = () => {
 const App: React.FC = () => {
   const initial = useMemo(initialLocation, []);
   const [location, setLocation] = useState<ParsedLocation>(initial);
+  const thirteenMReturn = useRef({ location: { route: 'command' } as ParsedLocation, hash: '#today' });
   const routeRef = useRef<RouteKey>(initial.route);
   const historyIndexRef = useRef(readHistoryIndex() ?? 0);
   const historyHashRef = useRef(window.location.hash);
@@ -58,13 +60,28 @@ const App: React.FC = () => {
     // this measured value is the production authority for the shared nav,
     // sticky-command, and page-clearance geometry.
     applyBoundedMobileSafeBottom();
-    const refresh = () => applyBoundedMobileSafeBottom();
+    let settleFrame = 0;
+    const refresh = () => {
+      applyBoundedMobileSafeBottom();
+      // BFCache pageshow can precede WebKit's restored safe-area geometry.
+      // Measure again after layout settles; never start data work on return.
+      window.cancelAnimationFrame(settleFrame);
+      settleFrame = window.requestAnimationFrame(() => {
+        settleFrame = window.requestAnimationFrame(applyBoundedMobileSafeBottom);
+      });
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
     window.addEventListener('pageshow', refresh);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('orientationchange', refresh);
     window.addEventListener('resize', refresh);
     window.visualViewport?.addEventListener('resize', refresh);
     return () => {
+      window.cancelAnimationFrame(settleFrame);
       window.removeEventListener('pageshow', refresh);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('orientationchange', refresh);
       window.removeEventListener('resize', refresh);
       window.visualViewport?.removeEventListener('resize', refresh);
@@ -138,6 +155,9 @@ const App: React.FC = () => {
     canonicalSessionAuthority).marketStatusJa, [canonicalSessionAuthority]);
 
   const commitLocation = (target: ParsedLocation, hash: string) => {
+    if (target.route === 'thirteenm' && location.route !== 'thirteenm') {
+      thirteenMReturn.current = { location, hash: window.location.hash || routeHash(location.route) };
+    }
     setPageEnterDirection(pageDirection(routeRef.current, target.route));
     routeRef.current = target.route;
     setLocation(target);
@@ -190,7 +210,7 @@ const App: React.FC = () => {
   // The keep-mounted command center renders its bottom summary bar through a
   // body portal, which no ancestor can hide. Stamp the active route on <body>
   // so CSS can keep that bar Today-only.
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     document.body.dataset.argusRoute = route;
   }, [route]);
   const todayContent = (todayMounted || route === 'command') && (
@@ -212,6 +232,8 @@ const App: React.FC = () => {
         onBackToHoldings={() => handleNavSelect('watchlist')}
       /></div>
     )}
+    {route === 'thirteenm' && <ThirteenM onBack={() => commitLocation(thirteenMReturn.current.location, thirteenMReturn.current.hash)}
+      onNavigateToAsset={navigateToAsset} onNavigate={handleNavSelect} />}
     {route === 'settings'
       && <Settings settingsSection={location.settingsSection} />}
   </>;
