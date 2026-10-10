@@ -6257,15 +6257,15 @@ _JP_MOVERS_TTL   = 6 * 3600
 _JP_MOVER_MIN_PRICE = float(os.environ.get("JP_MOVER_MIN_PRICE") or 300)
 _JP_MOVER_PCT       = float(os.environ.get("JP_MOVER_PCT") or 8.0)
 
-def _jq_all_for_date(date_str, headers, max_pages=40):
+def _jq_all_for_date(date_str, headers, max_pages=40, request_timeout=20):
     """All-stocks daily bars for one date → {code: row}. {} if no data/error."""
     out, params = {}, {"date": date_str}
     try:
         for _ in range(max_pages):
             r = requests.get(f"{_JQUANTS_BASE}/equities/bars/daily",
-                             headers=headers, params=params, timeout=20)
+                             headers=headers, params=params, timeout=request_timeout)
             if r.status_code != 200:
-                break
+                return {}
             body = r.json()
             for row in body.get("data", []):
                 if not isinstance(row, dict) or str(
@@ -6276,11 +6276,13 @@ def _jq_all_for_date(date_str, headers, max_pages=40):
                     out[c] = row
             pk = body.get("pagination_key")
             if not pk:
-                break
+                return out
+            if pk == params.get('pagination_key'):
+                return {}
             params["pagination_key"] = pk
     except Exception:
-        pass
-    return out
+        return {}
+    return {}  # Reaching the page bound is not a complete daily receipt.
 
 def _jq_market_movers():
     """JP whole-market EOD movers (all stocks, vs prev close). Cached."""
@@ -38974,7 +38976,7 @@ def _jq_valuation_for_date(date_str, headers, max_pages=40):
                    and (current_time.hour, current_time.minute) < (16, 35))
     if date_str in _JQ_VALUATION_DAY_CACHE and not early_today:
         return _JQ_VALUATION_DAY_CACHE[date_str]
-    out, params, pages = {}, {"date": date_str}, 0
+    out, params, pages, complete = {}, {"date": date_str}, 0, False
     try:
         for _ in range(max_pages):
             r = requests.get(f"{_JQUANTS_BASE}/equities/valuation",
@@ -38994,16 +38996,19 @@ def _jq_valuation_for_date(date_str, headers, max_pages=40):
                     out[key] = {field: row.get(field) for field in _JQ_VALUATION_FIELDS}
             pk = body.get("pagination_key")
             if not pk:
+                complete = True
                 if out and not early_today:
                     _JQ_VALUATION_DAY_CACHE[date_str] = out
                     for stale in sorted(_JQ_VALUATION_DAY_CACHE)[:-2]:
                         del _JQ_VALUATION_DAY_CACHE[stale]
                 break
+            if pk == params.get('pagination_key'):
+                break
             params["pagination_key"] = pk
     except Exception:
         out = {}
     _JP_INDEX_PROXY["requestsLastWarm"] += pages
-    return out
+    return out if complete else {}
 
 
 def _jp_index_proxy_path():
@@ -39519,12 +39524,14 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                     wanted.append(before[-1])
             if not current_only:
                 wanted += [day for day in reversed(estimate_sessions) if day >= _LEVEL_MAP_EPS_SINCE]
-            pending, seen = [], set()
-            for day in wanted:
-                if day not in seen and day not in _LEVEL_MAP["eps"]:
-                    seen.add(day); pending.append(day)
+            pending = jp_market_level_map.pending_eps_sessions(
+                wanted, _LEVEL_MAP['eps'], limit=1 if current_only else _LEVEL_MAP_EPS_PER_WARM,
+                cursor=None if current_only else _LEVEL_MAP.get('epsBackfillCursor'))
             headers = {"x-api-key": _JQUANTS_API_KEY}
-            for day in pending[:1 if current_only else _LEVEL_MAP_EPS_PER_WARM]:
+            daily_close_attempted = False
+            for day in pending:
+                if not current_only and day != sessions[-1]:
+                    _LEVEL_MAP['epsBackfillCursor'] = day
                 values = _jq_valuation_for_date(day, headers)
                 if not values:
                     continue
@@ -39534,6 +39541,26 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                     estimate = jp_market_level_map.weighted_eps(
                         values, members, index_close=float(close_by_day[day]), date=day,
                         constituents_as_of=members_label)
+                    if (estimate['coverage']['missingEarnings'] > 0
+                            and estimate['coverage']['missingMarketCap'] == 0
+                            and not daily_close_attempted):
+                        # Reuse the existing daily-bar lane, at most one dated
+                        # join per warm. No GET-triggered collection or new
+                        # storage/clock; retain the twenty-date warm bound.
+                        daily_close_attempted = True
+                        daily_bars = _jq_all_for_date(day, headers, max_pages=2, request_timeout=8)
+                        joined, used = jp_market_level_map.valuation_with_daily_closes(
+                            {code: values[code] for code in members if code in values}, daily_bars, date=day)
+                        if used:
+                            estimate = jp_market_level_map.weighted_eps(
+                                joined, members, index_close=float(close_by_day[day]), date=day,
+                                constituents_as_of=members_label)
+                            estimate['dailyCloseSupplement'] = {
+                                'date': day, 'sourceRef': 'jquants:v2:equities/bars/daily:C',
+                                'normalizedInputsSha256': hashlib.sha256(json.dumps(
+                                    used, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest(),
+                                'members': len(used), 'receivedAt': _ai_now_iso(),
+                                'historicalPublicationTimeVerified': False}
                     if not jp_market_level_map.estimate_input_usable(estimate, strict=True):
                         _JQ_VALUATION_DAY_CACHE.pop(day, None)
                         if day == sessions[-1]:

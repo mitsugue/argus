@@ -216,7 +216,7 @@ def test_valid_first_eps_and_opened_morning_cannot_be_rewritten(tmp_path):
     import argus_analysis_history as history
     path=tmp_path/'history.sqlite3';history.initialize(path)
     complete={'date':'2026-10-07','eps':4000,'basis':m.EPS_BASIS,'recordedAt':'2026-10-07T07:35:00Z',
-              'coverage':{'members':225,'missingMarketCap':0}}
+              'coverage':{'members':225,'missingMarketCap':0,'missingEarnings':0,'marketCapShareUsed':1.0}}
     history.append_level_map_eps(path,complete)
     with pytest.raises(ValueError,match='incomplete_original'):
         history.append_level_map_eps_correction(path,{**complete,'eps':4100,'recordedAt':'2026-10-07T08:05:00Z'})
@@ -391,3 +391,93 @@ def test_collection_crossing_the_open_uses_completion_time_and_never_backdates_m
     assert state["eps"]["2026-10-02"]["recordedAt"] == "2026-10-05T00:00:10Z"
     assert state["mornings"] == []
     assert "2026-10-05" in scanner._LEVEL_MAP["missedMornings"]
+
+
+def test_known_missing_earnings_cannot_enter_maps_or_corrections(tmp_path):
+    import argus_analysis_history as history
+    bad = {'date': '2026-10-07', 'eps': 4000, 'basis': m.EPS_BASIS,
+           'recordedAt': '2026-10-07T07:00:00Z',
+           'coverage': {'members': 225, 'missingMarketCap': 0,
+                        'missingEarnings': 1, 'marketCapShareUsed': .999999}}
+    assert not m.estimate_input_usable(bad)
+    assert not m.morning_input_usable({'epsCoverage': bad['coverage']})
+    # Even a share rounded up to 1 cannot conceal an omitted member.
+    assert not m.estimate_input_usable({**bad, 'coverage': {**bad['coverage'], 'marketCapShareUsed': 1}})
+    path = tmp_path / 'history.sqlite3'; history.initialize(path)
+    history.append_level_map_eps(path, bad)
+    corrected = {**bad, 'recordedAt': '2026-10-11T00:00:00Z',
+                 'coverage': {**bad['coverage'], 'missingEarnings': 0, 'marketCapShareUsed': 1}}
+    assert history.append_level_map_eps_correction(path, corrected)['inserted']
+    assert history.read_level_map_eps_originals(path)[0]['2026-10-07'] == bad
+    assert history.read_level_map_state(path)['eps']['2026-10-07'] == corrected
+    assert not m.estimate_input_usable({'coverage': {'members': 225, 'missingMarketCap': 0}}, strict=True)
+    # 224 was the actual composition during the published replacement gap.
+    assert m.estimate_input_usable({**corrected, 'coverage': {**corrected['coverage'], 'members': 224}}, strict=True)
+
+
+def test_daily_close_join_keeps_loss_and_zero_and_rejects_adjusted_wrong_day_or_identity():
+    rows = {'1111': {'MktCap': 1000, 'EPS': -10}, '2222': {'MktCap': 2000, 'FwdPER': 10}}
+    original = {k: dict(v) for k, v in rows.items()}
+    daily = {'11110': {'Code': '11110', 'Date': '2026-10-07', 'C': 100, 'AdjC': 1, 'MktCap': 9999}}
+    joined, used = m.valuation_with_daily_closes(rows, daily, date='2026-10-07')
+    estimate = m.weighted_eps(joined, rows, index_close=1000, date='2026-10-07', constituents_as_of='synthetic')
+    assert rows == original and joined['1111']['MktCap'] == 1000
+    assert used == {'1111': 100} and estimate['coverage']['missingEarnings'] == 0
+    assert estimate['per'] == pytest.approx(3000 / (200 - 100))
+    for bad in [dict(daily['11110'], Date='2026-10-06'), dict(daily['11110'], Code='11111'),
+                dict(daily['11110'], C=None), dict(daily['11110'], C=float('inf'))]:
+        assert m.valuation_with_daily_closes(rows, {'x': bad}, date='2026-10-07')[1] == {}
+    assert m.valuation_with_daily_closes(rows, {'x': daily['11110'], 'y': daily['11110']}, date='2026-10-07')[1] == {}
+    zero = {**rows, '1111': {'MktCap': 1000, 'FwdEPS': 0}}
+    joined, _ = m.valuation_with_daily_closes(zero, daily, date='2026-10-07')
+    assert m.weighted_eps(joined, zero, index_close=1000, date='2026-10-07', constituents_as_of='synthetic')['coverage']['forward'] == 2
+
+
+def test_pending_history_rotates_past_failed_newest_dates_without_expanding_warm():
+    wanted = ['2026-10-09', '2026-10-08', '2026-10-07', '2026-10-06', '2026-10-05']
+    first = m.pending_eps_sessions(wanted, {}, limit=3)
+    second = m.pending_eps_sessions(wanted, {}, limit=3, cursor=first[-1])
+    assert first == wanted[:3] and second == [wanted[0], wanted[3], wanted[4]]
+    assert m.pending_eps_sessions(wanted, {wanted[0]: {}}, limit=3, cursor=wanted[-1]) == wanted[1:4]
+
+
+def test_daily_bar_page_failure_and_page_bound_cannot_supply_partial_closes(monkeypatch):
+    import scanner
+    class R:
+        def __init__(self, status, body): self.status_code, self.body = status, body
+        def json(self): return self.body
+    page = {'data': [{'Date': '2026-10-07', 'Code': '11110', 'C': 100}], 'pagination_key': 'k'}
+    responses = [R(200, page), R(500, {})]
+    monkeypatch.setattr(scanner.requests, 'get', lambda *a, **k: responses.pop(0))
+    assert scanner._jq_all_for_date('2026-10-07', {}) == {}
+    responses[:] = [R(200, page)]
+    assert scanner._jq_all_for_date('2026-10-07', {}, max_pages=1) == {}
+    # The valuation lane must obey the same all-pages admission contract.
+    responses[:] = [R(200, page)]
+    monkeypatch.setattr(scanner, '_JQ_VALUATION_DAY_CACHE', {})
+    assert scanner._jq_valuation_for_date('2026-10-07', {}, max_pages=1) == {}
+
+
+def test_existing_warm_joins_one_price_day_and_preserves_partial_original(monkeypatch, tmp_path):
+    import argus_analysis_history as history
+    scanner, path, rows, _ = _glue(monkeypatch, tmp_path, '2026-10-07T08:00:00Z')
+    rows = [r for r in rows if r['date'] <= '2026-10-07']
+    monkeypatch.setattr(scanner, '_candidates_warm', lambda *a: None)
+    monkeypatch.setattr(scanner, '_jq_valuation_for_date', lambda *a: {
+        '1111': {'MktCap': 1000, 'EPS': -10}, '2222': {'MktCap': 2000, 'FwdPER': 10}})
+    calls = []
+    def prices(day, headers, **bounds):
+        calls.append((day, bounds))
+        return {'11110': {'Code': '11110', 'Date': day, 'C': 100, 'AdjC': 10}}
+    monkeypatch.setattr(scanner, '_jq_all_for_date', prices)
+    bad = {'date': '2026-10-07', 'eps': 6000, 'basis': m.EPS_BASIS, 'recordedAt': '2026-10-07T07:00:00Z',
+           'coverage': {'members': 2, 'missingMarketCap': 0, 'missingEarnings': 1, 'marketCapShareUsed': 2/3}}
+    history.initialize(path); history.append_level_map_eps(path, bad)
+    scanner._level_map_warm(rows)
+    state = history.read_level_map_state(path)
+    assert len(calls) == 1 and calls[0] == ('2026-10-07', {'max_pages': 2, 'request_timeout': 8})
+    fixed = state['eps']['2026-10-07']
+    assert fixed['coverage']['missingEarnings'] == 0 and fixed['dailyCloseSupplement']['members'] == 1
+    assert fixed['dailyCloseSupplement']['historicalPublicationTimeVerified'] is False
+    assert history.read_level_map_eps_originals(path)[0]['2026-10-07'] == bad
+    assert len(state['eps']) == 1  # Other incomplete sessions receive no extra daily-bar requests.
