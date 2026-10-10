@@ -94,9 +94,19 @@ def estimate_input_usable(record, *, strict=False):
     coverage = record.get('coverage')
     if coverage is None:
         return not strict
-    return (isinstance(coverage, dict) and type(coverage.get('members')) is int
+    if not (isinstance(coverage, dict) and type(coverage.get('members')) is int
             and coverage['members'] > 0 and type(coverage.get('missingMarketCap')) is int
-            and coverage['missingMarketCap'] == 0)
+            and coverage['missingMarketCap'] == 0):
+        return False
+    # Older coverage metadata may omit these fields; preserve its unknown
+    # status, but never admit a new receipt or a known partial aggregate.
+    for key, expected in [('missingEarnings', 0), ('marketCapShareUsed', 1.0)]:
+        if key not in coverage:
+            if strict:
+                return False
+        elif isinstance(coverage[key], bool) or coverage[key] != expected:
+            return False
+    return True
 
 
 def morning_input_usable(record):
@@ -127,7 +137,59 @@ def _price(row: Mapping[str, Any]) -> Optional[float]:
     pbr, bps = _finite(row.get("PBR")), _finite(row.get("BPS"))
     if pbr and bps and pbr * bps > 0:
         return pbr * bps
+    # Only the dated daily-bar join below can supply this fallback. Adjusted
+    # prices and the OHLC endpoint's differently defined market cap are not
+    # substitutes for valuation inputs.
+    close = _finite(row.get('unadjustedClose'))
+    if close is not None and close > 0:
+        return close
     return None
+
+
+def valuation_with_daily_closes(valuation, daily_bars, *, date):
+    """Copy rows, adding only same-code/date unadjusted closes when needed.
+
+    Valuation EPS is in that session's share units. Do not borrow AdjC,
+    another date's price, or OHLC MktCap (which includes treasury shares).
+    Duplicate common-share bars are rejected rather than choosing one.
+    """
+    result = {code: dict(row) for code, row in valuation.items()}
+    prices, duplicates = {}, set()
+    for row in daily_bars.values():
+        if not isinstance(row, dict) or row.get('Date') != date:
+            continue
+        code = str(row.get('Code') or '')
+        code = code[:4] if len(code) == 5 and code.endswith('0') else code
+        if code in prices:
+            duplicates.add(code)
+        prices[code] = row.get('C')
+    used = {}
+    for code, row in result.items():
+        if (code in duplicates or _price(row) is not None
+                or (_finite(row.get('EPS')) is None and _finite(row.get('FwdEPS')) is None)):
+            continue
+        price = _finite(prices.get(code))
+        if price is not None and price > 0:
+            row['unadjustedClose'] = price
+            used[code] = price
+    return result, used
+
+
+def pending_eps_sessions(wanted, admitted, *, limit, cursor=None):
+    """Keep the latest session first; rotate historical attempts fairly.
+
+    The cursor is an in-process collection position, not a completion record
+    or a new scheduling clock. Failed newest dates cannot starve older gaps.
+    """
+    pending = list(dict.fromkeys(day for day in wanted if day not in admitted))
+    if not pending or limit <= 0:
+        return []
+    latest = wanted[0] if wanted else None
+    head = [latest] if latest in pending else []
+    rest = sorted((day for day in pending if day != latest), reverse=True)
+    if cursor:
+        rest = [day for day in rest if day < cursor] + [day for day in rest if day >= cursor]
+    return (head + rest)[:limit]
 
 
 def weighted_eps(valuation: Mapping[str, Mapping[str, Any]], constituents: Iterable[str], *,
