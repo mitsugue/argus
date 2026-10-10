@@ -482,7 +482,7 @@ async function navigationAudit(page, evidence) {
   const frameUrl = origin.includes('127.0.0.1')
     ? 'http://127.0.0.1:8130/embedded/' : 'https://argus-13m-shadow.onrender.com/embedded/';
   await page.route(frameUrl, async route => route.fulfill({
-    status: 200, contentType: 'text/html', body: `<!doctype html><html lang="ja"><body>
+    status: 200, contentType: 'text/html; charset=utf-8', body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"></head><body>
     <button id="return">研究から戻る</button><script>
     parent.postMessage({type:'argus-13m:ready'},${JSON.stringify(origin)});
     document.querySelector('#return').onclick=()=>parent.postMessage({type:'argus-13m:navigate',hash:'#today'},${JSON.stringify(origin)});
