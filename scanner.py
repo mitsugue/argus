@@ -41313,6 +41313,29 @@ def _stmt_field(row, *names):
     return None
 
 
+def _jp_market_engine_statements_dates(now):
+    """Prioritize the rule's ten closed sessions inside the existing 14 reads.
+
+    Recent calendar dates fill unused slots, including today's disclosures.
+    Holidays must not push a required session outside the acquisition window.
+    """
+    import argus_warning_candidates
+    today = now.astimezone(TZ_JST).date()
+    sessions, unknown = _jp_exchange_sessions(today - timedelta(days=60), today,
+        _N225_ANALOG_HISTORY.get('calendar') or [])
+    if unknown:
+        return None
+    closed = [day for day in sessions if argus_warning_candidates._session_close(day) <= now]
+    if len(closed) < 10:
+        return None
+    selected = set(closed[-10:])
+    for back in range(_JP_MARKET_ENGINE_STATEMENTS_WINDOW_DAYS):
+        if len(selected) >= _JP_MARKET_ENGINE_STATEMENTS_WINDOW_DAYS:
+            break
+        selected.add((today - timedelta(days=back)).isoformat())
+    return sorted(selected, reverse=True)
+
+
 def _jp_market_engine_statements_rows(*, warm=False):
     """Recent fins/statements rows for the tracked JP universe (cache-only on
     the public path; warm=True refreshes on the collect cron)."""
@@ -41323,12 +41346,14 @@ def _jp_market_engine_statements_rows(*, warm=False):
     if not _JQUANTS_API_KEY:
         cache["source"] = "missing_key"
         return cache["rows"]
+    dates = _jp_market_engine_statements_dates(datetime.now(TZ_JST))
+    if dates is None:
+        cache["source"] = "calendar_unavailable"
+        return cache["rows"]
     universe = {str(s.get("symbol"))[:4] for s in _JP_WATCHLIST}
     fetched = []
     try:
-        for back in range(_JP_MARKET_ENGINE_STATEMENTS_WINDOW_DAYS):
-            day = (datetime.now(TZ_JST) - timedelta(days=back)).strftime(
-                "%Y-%m-%d")
+        for day in dates:
             try:
                 # v13.5.48: J-Quants V2 path (V1 /fins/statements was
                 # discontinued 2026-06-01 and answers 403; the feed had been
