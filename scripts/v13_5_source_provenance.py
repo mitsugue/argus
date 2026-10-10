@@ -816,6 +816,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "argus_macro_frequency.py",
     "test_jp_market_level_map.py",
     "jp_market_level_map.py",
+    # Owner-requested EPS input-gap repair contract; no formula/trade change.
+    "docs/operations/eps-input-completeness.md",
     "test_argus_response_compression.py",
     "ops/calendar/us_policy_dates.json",
     "ops/calendar/jp_index_sq_2027.json",
