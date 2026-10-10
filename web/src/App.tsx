@@ -58,13 +58,28 @@ const App: React.FC = () => {
     // this measured value is the production authority for the shared nav,
     // sticky-command, and page-clearance geometry.
     applyBoundedMobileSafeBottom();
-    const refresh = () => applyBoundedMobileSafeBottom();
+    let settleFrame = 0;
+    const refresh = () => {
+      applyBoundedMobileSafeBottom();
+      // BFCache pageshow can precede WebKit's restored safe-area geometry.
+      // Measure again after layout settles; never start data work on return.
+      window.cancelAnimationFrame(settleFrame);
+      settleFrame = window.requestAnimationFrame(() => {
+        settleFrame = window.requestAnimationFrame(applyBoundedMobileSafeBottom);
+      });
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
     window.addEventListener('pageshow', refresh);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('orientationchange', refresh);
     window.addEventListener('resize', refresh);
     window.visualViewport?.addEventListener('resize', refresh);
     return () => {
+      window.cancelAnimationFrame(settleFrame);
       window.removeEventListener('pageshow', refresh);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('orientationchange', refresh);
       window.removeEventListener('resize', refresh);
       window.visualViewport?.removeEventListener('resize', refresh);
