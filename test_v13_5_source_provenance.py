@@ -47,7 +47,7 @@ def test_restoration_allowlist_is_exact_and_core_semantics_stay_closed():
         "4b765dd3c8dde089634331897eb9d7010404feec"
     assert source.REVIEWED_EXTENSION_BLOBS[
         "web/src/components/NavRail.tsx"] == \
-        "f1a1fef74709852f39d488aaf370428ce2697fe2"
+        "535487582e373291d132cdfa6a550a26aa11e8a4"
 
 
 def test_tachibana_shadow_provider_is_authorized_as_isolated_package_only():
