@@ -41887,10 +41887,11 @@ def _jp_adopted_warning_rules(inputs, cutoff):
         try:
             financial = argus_earnings_history.read(path, cutoff=cutoff, member_codes=scope) if path and scope else []
             coverage = argus_earnings_history.read_coverage(path, cutoff=cutoff) if path else {}
+            company_coverage = argus_earnings_history.read_company_coverage(path, cutoff=cutoff, member_codes=scope) if path and scope else {}
         except (ValueError, TypeError, OSError, sqlite3.Error):
             # One damaged original store must not hide independently usable
             # cash-index and same-basis EPS conditions.
-            financial, coverage, financial_error = [], {}, True
+            financial, coverage, company_coverage, financial_error = [], {}, {}, True
         stocks = {code: [{**r, 'instrumentId':code, 'priceBasis': source.get('priceBasis'),
                           'knownAt': source.get('receivedAt'), 'availableFrom':r.get('closeAt')}
                         for r in source.get('rows') or []]
@@ -41902,7 +41903,7 @@ def _jp_adopted_warning_rules(inputs, cutoff):
             'D04': rules.eps_rule(sessions=sessions, eps_rows=list(_level_map_admitted_eps().values()), cutoff=cutoff),
             'D07': rules.earnings_rule(sessions=sessions, financial_rows=financial, membership_by_day=membership,
                 stock_bars=stocks, topix_rows=_TOPIX_HIST_CACHE.get('data') or [],
-                coverage_by_day=coverage, cutoff=cutoff)}
+                coverage_by_day=coverage, cutoff=cutoff, company_coverage=company_coverage)}
         if financial_error:
             results['D07']['reasonJa'] = '営業利益予想の保存原本を検証できません'
         from argus_warning_candidates_history import study

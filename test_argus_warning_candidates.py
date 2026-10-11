@@ -102,6 +102,57 @@ def test_five_measured_cases_cannot_hide_another_missing_original_forecast():
     assert result['goodEarningsCount']==5 and result['conditionMet'] is None
     assert result['missingComparisonCases']==1
 
+
+def initial_next_year_data():
+    data=cohort();code='1005'
+    previous=dict(summary=dict(Code=code,DiscDate=DAYS[-20],DiscNo='prior-year',
+        CurFYEn='2026-08-31',FOP=100),knownAt=AT,publishedAt=DAYS[-20]+'T07:00:00Z',
+        observationId='synthetic-previous')
+    current=dict(summary=dict(Code=code,DiscDate=DAYS[-3],DiscNo='first-outlook',
+        CurFYEn='2026-08-31',NxtFYEn='2027-08-31',FOP='',NxFOP=110,
+        CurPerType='FY',DocType='FYFinancialStatements_Consolidated_IFRS'),
+        knownAt=AT,publishedAt=DAYS[-3]+'T07:00:00Z',observationId='synthetic-current')
+    data['financial_rows'] += [previous,current]
+    data['company_coverage']={code:dict(complete=True,receivedAt=AT,
+        firstDisclosureDay=DAYS[-20],lastDisclosureDay=DAYS[-3],
+        observationIds=['synthetic-previous','synthetic-current'])}
+    return data
+
+
+def test_first_next_year_outlook_with_full_admitted_company_history_is_not_revision():
+    data=initial_next_year_data();before=deepcopy(data)
+    result=earnings_rule(**data)
+    assert result==earnings_rule(**cohort()) and data==before
+    data['financial_rows']=data['financial_rows'][-2:];data['stock_bars']={};data['topix_rows']=[]
+    result=earnings_rule(**data)
+    assert result['state']=='CLEAR' and result['goodEarningsCount']==0
+    assert result['threshold']=={'value':5,'operator':'>=','unit':'CASES'}
+    assert result['underperformedCount'] is None and result['validationStatus']=='UNVALIDATED'
+
+
+@pytest.mark.parametrize('bad', ['absent','old_receipt','partial','short_span','missing_original','unadmitted_original','revision_document','current_year'])
+def test_initial_outlook_cannot_bypass_missing_prior_without_bound_complete_receipt(bad):
+    data=initial_next_year_data();proof=data['company_coverage']['1005'];s=data['financial_rows'][-1]['summary']
+    if bad=='absent':data['company_coverage']={}
+    if bad=='old_receipt':proof['receivedAt']='2026-08-01T00:00:00Z'
+    if bad=='partial':proof['complete']=False
+    if bad=='short_span':proof['firstDisclosureDay']=DAYS[-3]
+    if bad=='missing_original':proof['observationIds']=['synthetic-previous']
+    if bad=='unadmitted_original':proof['observationIds'].append('not-read')
+    if bad=='revision_document':s['DocType']='ForecastRevision'
+    if bad=='current_year':s['CurFYEn']='2028-08-31';s['NxtFYEn']='2029-08-31';s['FOP']=110;s['NxFOP']=''
+    result=earnings_rule(**data)
+    assert result['state']=='DATA_GATED' and result['missingComparisonCases']==1
+
+
+def test_existing_same_year_prior_still_counts_next_year_revision_and_requires_prices():
+    data=initial_next_year_data()
+    previous=data['financial_rows'][-2]
+    previous['summary'].update(CurFYEn='2027-08-31',FOP=100)
+    result=earnings_rule(**data)
+    assert result['goodEarningsCount']==6 and result['state']=='DATA_GATED'
+    assert '調整済み株価とTOPIX' in result['reasonJa']
+
 def test_same_publication_conflicting_forecasts_are_ambiguous_not_last_row_wins():
     data=cohort()
     data['financial_rows'].append({**data['financial_rows'][1],

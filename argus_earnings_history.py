@@ -217,15 +217,20 @@ def read_coverage(path, *, cutoff):
 
 def completed_codes(path, *, cutoff, member_codes):
     """Successful whole-company responses, including empty ones; no inferred date coverage."""
+    return set(read_company_coverage(path, cutoff=cutoff, member_codes=member_codes))
+
+
+def read_company_coverage(path, *, cutoff, member_codes):
+    """Verified whole-company receipts; only the available response span is certified."""
     from pathlib import Path
     import sqlite3
     location = Path(path); limit = sources._time(cutoff); members = set(member_codes)
     if len(members) > 400 or any(not re.fullmatch(r'[0-9A-Z]{4}', c) for c in members):
         raise ValueError('financial_member_scope_required')
-    if not location.exists(): return set()
+    if not location.exists(): return {}
     if location.is_symlink() or not location.is_file(): raise ValueError('financial_store_regular_file_required')
     db = sqlite3.connect(location.resolve().as_uri() + '?mode=ro', uri=True)
-    output = set()
+    output = {}
     try:
         for key, raw in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-code:%'"):
             row = json.loads(raw); digest = row.pop('receiptSha256', None)
@@ -234,12 +239,26 @@ def completed_codes(path, *, cutoff, member_codes):
             if (hashlib.sha256(sources._json(row).encode()).hexdigest() != digest
                     or key != 'financial-summary-code:' + code + ':revision:' + str(digest)):
                 raise ValueError('financial_company_receipt_integrity')
-            source = db.execute('SELECT raw,sha256,received_at FROM raw_sources WHERE id=?', (row.get('rawId'),)).fetchone()
+            source = db.execute('SELECT raw,sha256,received_at,url FROM raw_sources WHERE id=?', (row.get('rawId'),)).fetchone()
             if (not source or hashlib.sha256(source[0]).hexdigest() != source[1]
                     or source[1] != row.get('sourceResponseSha256')
+                    or source[3] != URL
+                    or row.get('rawId') != hashlib.sha256((URL + ':' + source[1]).encode()).hexdigest()
                     or sources._time(source[2]) > sources._time(row.get('receivedAt'))):
                 raise ValueError('financial_company_receipt_integrity')
             if row.get('complete') is True and sources._time(row['receivedAt']) <= limit:
-                output.add(code)
+                payload = json.loads(source[0])['data']
+                if (not isinstance(payload, list) or len(payload) > MAX_ROWS
+                        or row.get('retainedRows') != len(payload)
+                        or any(_compact(r)['Code'] != code for r in payload)):
+                    raise ValueError('financial_company_receipt_integrity')
+                days = [r['DiscDate'] for r in payload]
+                evidence = {**row, 'receiptSha256': digest,
+                    'firstDisclosureDay': min(days) if days else None,
+                    'lastDisclosureDay': max(days) if days else None,
+                    'observationIds': [hashlib.sha256(sources._json(r).encode()).hexdigest() for r in payload]}
+                old = output.get(code)
+                if old is None or sources._time(row['receivedAt']) > sources._time(old['receivedAt']):
+                    output[code] = evidence
         return output
     finally: db.close()

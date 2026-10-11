@@ -132,6 +132,23 @@ def test_whole_company_receipt_is_separate_from_date_cohort_and_deduplicated(tmp
     with pytest.raises(ValueError,match='integrity'):history.completed_codes(path,cutoff=AT,member_codes=['1000'])
 
 
+def test_company_coverage_reads_original_identities_span_and_latest_receipt_without_writes(tmp_path):
+    import hashlib
+    path=tmp_path/'shared.sqlite3'
+    records=[{**row(),'DiscDate':'2026-07-01','DiscNo':'old'},row()]
+    history.retain(path,records,received_at=AT,member_codes=['1000'],query_code='1000')
+    history.retain(path,records,received_at=LATER,member_codes=['1000'],query_code='1000')
+    before=path.read_bytes()
+    proof=history.read_company_coverage(path,cutoff=LATER,member_codes=['1000'])['1000']
+    assert proof['receivedAt']==LATER and proof['firstDisclosureDay']=='2026-07-01'
+    assert proof['lastDisclosureDay']=='2026-10-06'
+    actual=history.read(path,cutoff=LATER,member_codes=['1000'])
+    assert set(proof['observationIds'])=={r['observationId'] for r in actual}
+    assert path.read_bytes()==before
+    assert history.read_company_coverage(path,cutoff=AT,member_codes=['1000'])['1000']['receivedAt']==AT
+    assert history.read_company_coverage(tmp_path/'absent',cutoff=AT,member_codes=['1000'])=={}
+
+
 def test_wrong_issuer_or_rejected_forecast_is_not_complete_company_history(tmp_path):
     path=tmp_path/'shared.sqlite3'
     history.retain(path,[{**row(),'Code':'99990'}],received_at=AT,member_codes=['1000'],query_code='1000')

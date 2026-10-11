@@ -196,7 +196,7 @@ def _earnings_coverage_gate(out, gaps):
 
 
 def earnings_rule(*, sessions, financial_rows, membership_by_day, stock_bars, topix_rows,
-                  coverage_by_day, cutoff):
+                  coverage_by_day, cutoff, company_coverage=None):
     days, limit = _calendar(sessions, cutoff)
     out = _empty('D07', '日経225全体の予想原本・対象構成・翌営業日の比較が不足')
     if len(days) < 11:
@@ -220,6 +220,7 @@ def earnings_rule(*, sessions, financial_rows, membership_by_day, stock_bars, to
     # Receipt time retains corrections; forecasts with the same disclosure ID
     # are a single event, not duplicate good-earnings cases.
     vintages = {}
+    admitted_ids = {row.get('observationId') for _, _, row in accepted if row.get('observationId')}
     for published, known, row in accepted:
         s = row['summary']; key = (str(s.get('Code'))[:4], s.get('DiscDate'), s.get('DiscNo'))
         if key not in vintages or known > vintages[key][1]:
@@ -255,7 +256,27 @@ def earnings_rule(*, sessions, financial_rows, membership_by_day, stock_bars, to
         if day in window and has_forecast and compared and code in (membership_by_day.get(day) or ()):
             comparison_known.append(used_known)
         if day in window and has_forecast and not compared and code in (membership_by_day.get(day) or ()):
-            missing_comparisons+=1
+            # A first next-year outlook in a full-year statement is not a
+            # revision. Require the current complete company response, its
+            # original identities and an earlier response span before making
+            # that distinction. A date receipt alone cannot establish it.
+            proof = (company_coverage or {}).get(code) or {}
+            receipt = _instant(proof.get('receivedAt'))
+            active = [(f, lane) for f, value, lane in forecasts if f and _forecast(value) is not None]
+            identities = proof.get('observationIds') or []
+            initial_next_year = (s.get('CurPerType') == 'FY'
+                and str(s.get('DocType') or '').startswith('FYFinancialStatements_')
+                and s.get('NxtFYEn') and fy and fy < s['NxtFYEn']
+                and active and all(f == s['NxtFYEn'] for f, _ in active)
+                and proof.get('complete') is True and receipt is not None and known <= receipt <= limit
+                and isinstance(proof.get('firstDisclosureDay'), str) and proof['firstDisclosureDay'] <= fy
+                and isinstance(proof.get('lastDisclosureDay'), str) and proof['lastDisclosureDay'] >= day
+                and isinstance(identities, list) and 0 < len(identities) <= 30000
+                and row.get('observationId') in identities and set(identities) <= admitted_ids)
+            if initial_next_year:
+                comparison_known.append(receipt)
+            else:
+                missing_comparisons+=1
         if day not in window or not revised: continue
         members=membership_by_day.get(day)
         coverage=coverage_by_day.get(day)
