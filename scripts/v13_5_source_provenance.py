@@ -694,6 +694,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "argus_market_input_backup.py",
     "test_argus_warning_candidates_history.py",
     "test_argus_warning_candidates_glue.py",
+    "test_argus_seven_session_collection.py",
     "test_argus_warning_candidates.py",
     "argus_warning_candidates_history.py",
     "argus_warning_candidates.py",

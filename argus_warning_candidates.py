@@ -157,13 +157,54 @@ def eps_rule(*, sessions, eps_rows, cutoff):
             'factNoteJa': f'推計EPS {current[0]:.2f}円・10営業日前 {prior[0]:.2f}円'}
 
 
+def _earnings_coverage_gaps(window, membership_by_day, coverage_by_day, limit):
+    """Date/count diagnostics only; never include company forecasts or receipts."""
+    gaps = {'requiredSessionCount': len(window), 'verifiedSessionCount': 0,
+            'missingMembershipDays': [], 'missingReceiptDays': [],
+            'incompleteReceiptDays': [], 'scopeMismatchDays': [], 'unavailableReceiptDays': []}
+    for day in sorted(window):
+        members, coverage = membership_by_day.get(day), coverage_by_day.get(day)
+        membership_ok = isinstance(members, (list, tuple, set)) and len(set(members)) == 225
+        if not membership_ok:
+            gaps['missingMembershipDays'].append(day)
+        if not isinstance(coverage, Mapping):
+            gaps['missingReceiptDays'].append(day)
+            continue
+        complete = coverage.get('complete') is True
+        if not complete:
+            gaps['incompleteReceiptDays'].append(day)
+        scope_ok = membership_ok and set(coverage.get('memberCodes') or ()) == set(members)
+        if membership_ok and not scope_ok:
+            gaps['scopeMismatchDays'].append(day)
+        stamp = _row_time(coverage)
+        receipt_ok = stamp is not None and stamp <= limit
+        if not receipt_ok:
+            gaps['unavailableReceiptDays'].append(day)
+        if complete and scope_ok and receipt_ok:
+            gaps['verifiedSessionCount'] += 1
+    return gaps
+
+
+def _earnings_coverage_gate(out, gaps):
+    labels = {'missingMembershipDays': '日付別の225構成が不足',
+              'missingReceiptDays': '全体取得の受領記録が不足',
+              'incompleteReceiptDays': '全体取得が未完了',
+              'scopeMismatchDays': '取得範囲と対象構成が不一致',
+              'unavailableReceiptDays': '利用時点までの受領を確認できない'}
+    reasons = [f'{label}（{len(gaps[key])}日）' for key, label in labels.items() if gaps[key]]
+    return {**out, 'inputCoverage': gaps, 'reasonJa': '・'.join(reasons)}
+
+
 def earnings_rule(*, sessions, financial_rows, membership_by_day, stock_bars, topix_rows,
-                  coverage_by_day, cutoff):
+                  coverage_by_day, cutoff, company_coverage=None):
     days, limit = _calendar(sessions, cutoff)
     out = _empty('D07', '日経225全体の予想原本・対象構成・翌営業日の比較が不足')
-    if len(days) < 11 or len(financial_rows) > 30000:
-        return out
+    if len(days) < 11:
+        return {**out, 'reasonJa': '判定対象と比較に必要な営業日履歴が不足'}
+    if len(financial_rows) > 30000:
+        return {**out, 'reasonJa': '営業利益予想の保存原本が読取上限を超えています'}
     window = set(days[-10:]); prior_by_code_fy = {}; events = {}; missed = 0; missing_comparisons = 0
+    coverage_gaps = _earnings_coverage_gaps(window, membership_by_day, coverage_by_day, limit)
     comparison_known = []
     accepted = []
     for row in financial_rows:
@@ -179,6 +220,7 @@ def earnings_rule(*, sessions, financial_rows, membership_by_day, stock_bars, to
     # Receipt time retains corrections; forecasts with the same disclosure ID
     # are a single event, not duplicate good-earnings cases.
     vintages = {}
+    admitted_ids = {row.get('observationId') for _, _, row in accepted if row.get('observationId')}
     for published, known, row in accepted:
         s = row['summary']; key = (str(s.get('Code'))[:4], s.get('DiscDate'), s.get('DiscNo'))
         if key not in vintages or known > vintages[key][1]:
@@ -214,7 +256,27 @@ def earnings_rule(*, sessions, financial_rows, membership_by_day, stock_bars, to
         if day in window and has_forecast and compared and code in (membership_by_day.get(day) or ()):
             comparison_known.append(used_known)
         if day in window and has_forecast and not compared and code in (membership_by_day.get(day) or ()):
-            missing_comparisons+=1
+            # A first next-year outlook in a full-year statement is not a
+            # revision. Require the current complete company response, its
+            # original identities and an earlier response span before making
+            # that distinction. A date receipt alone cannot establish it.
+            proof = (company_coverage or {}).get(code) or {}
+            receipt = _instant(proof.get('receivedAt'))
+            active = [(f, lane) for f, value, lane in forecasts if f and _forecast(value) is not None]
+            identities = proof.get('observationIds') or []
+            initial_next_year = (s.get('CurPerType') == 'FY'
+                and str(s.get('DocType') or '').startswith('FYFinancialStatements_')
+                and s.get('NxtFYEn') and fy and fy < s['NxtFYEn']
+                and active and all(f == s['NxtFYEn'] for f, _ in active)
+                and proof.get('complete') is True and receipt is not None and known <= receipt <= limit
+                and isinstance(proof.get('firstDisclosureDay'), str) and proof['firstDisclosureDay'] <= fy
+                and isinstance(proof.get('lastDisclosureDay'), str) and proof['lastDisclosureDay'] >= day
+                and isinstance(identities, list) and 0 < len(identities) <= 30000
+                and row.get('observationId') in identities and set(identities) <= admitted_ids)
+            if initial_next_year:
+                comparison_known.append(receipt)
+            else:
+                missing_comparisons+=1
         if day not in window or not revised: continue
         members=membership_by_day.get(day)
         coverage=coverage_by_day.get(day)
@@ -227,17 +289,13 @@ def earnings_rule(*, sessions, financial_rows, membership_by_day, stock_bars, to
         if code in members:
             events[(code,day,s.get('DiscNo'))]=(used_known,_row_time(coverage))
     if missed:
-        return {**out,'missingCoverageCases':missed}
+        return {**_earnings_coverage_gate(out, coverage_gaps), 'missingCoverageCases': missed}
     if missing_comparisons:
         return {**out,'goodEarningsCount':len(events),'missingComparisonCases':missing_comparisons,
                 'reasonJa':'同じ年度の修正前の営業利益予想原本が不足'}
     # Every window date needs scope+receipt proof, even when it had no revisions.
-    for day in window:
-        cov=coverage_by_day.get(day); members=membership_by_day.get(day)
-        if not isinstance(cov,Mapping) or cov.get('complete') is not True or not isinstance(members,(list,tuple,set)) \
-                or len(set(members))!=225 or set(cov.get('memberCodes') or ())!=set(members) \
-                or _row_time(cov) is None or _row_time(cov)>limit:
-            return out
+    if coverage_gaps['verifiedSessionCount'] != len(window):
+        return _earnings_coverage_gate(out, coverage_gaps)
     if len(events)<5:
         # With the entire dated cohort and prior forecasts admitted, the
         # adopted minimum of five is not met. This is not missing data, and

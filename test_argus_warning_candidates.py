@@ -102,6 +102,57 @@ def test_five_measured_cases_cannot_hide_another_missing_original_forecast():
     assert result['goodEarningsCount']==5 and result['conditionMet'] is None
     assert result['missingComparisonCases']==1
 
+
+def initial_next_year_data():
+    data=cohort();code='1005'
+    previous=dict(summary=dict(Code=code,DiscDate=DAYS[-20],DiscNo='prior-year',
+        CurFYEn='2026-08-31',FOP=100),knownAt=AT,publishedAt=DAYS[-20]+'T07:00:00Z',
+        observationId='synthetic-previous')
+    current=dict(summary=dict(Code=code,DiscDate=DAYS[-3],DiscNo='first-outlook',
+        CurFYEn='2026-08-31',NxtFYEn='2027-08-31',FOP='',NxFOP=110,
+        CurPerType='FY',DocType='FYFinancialStatements_Consolidated_IFRS'),
+        knownAt=AT,publishedAt=DAYS[-3]+'T07:00:00Z',observationId='synthetic-current')
+    data['financial_rows'] += [previous,current]
+    data['company_coverage']={code:dict(complete=True,receivedAt=AT,
+        firstDisclosureDay=DAYS[-20],lastDisclosureDay=DAYS[-3],
+        observationIds=['synthetic-previous','synthetic-current'])}
+    return data
+
+
+def test_first_next_year_outlook_with_full_admitted_company_history_is_not_revision():
+    data=initial_next_year_data();before=deepcopy(data)
+    result=earnings_rule(**data)
+    assert result==earnings_rule(**cohort()) and data==before
+    data['financial_rows']=data['financial_rows'][-2:];data['stock_bars']={};data['topix_rows']=[]
+    result=earnings_rule(**data)
+    assert result['state']=='CLEAR' and result['goodEarningsCount']==0
+    assert result['threshold']=={'value':5,'operator':'>=','unit':'CASES'}
+    assert result['underperformedCount'] is None and result['validationStatus']=='UNVALIDATED'
+
+
+@pytest.mark.parametrize('bad', ['absent','old_receipt','partial','short_span','missing_original','unadmitted_original','revision_document','current_year'])
+def test_initial_outlook_cannot_bypass_missing_prior_without_bound_complete_receipt(bad):
+    data=initial_next_year_data();proof=data['company_coverage']['1005'];s=data['financial_rows'][-1]['summary']
+    if bad=='absent':data['company_coverage']={}
+    if bad=='old_receipt':proof['receivedAt']='2026-08-01T00:00:00Z'
+    if bad=='partial':proof['complete']=False
+    if bad=='short_span':proof['firstDisclosureDay']=DAYS[-3]
+    if bad=='missing_original':proof['observationIds']=['synthetic-previous']
+    if bad=='unadmitted_original':proof['observationIds'].append('not-read')
+    if bad=='revision_document':s['DocType']='ForecastRevision'
+    if bad=='current_year':s['CurFYEn']='2028-08-31';s['NxtFYEn']='2029-08-31';s['FOP']=110;s['NxFOP']=''
+    result=earnings_rule(**data)
+    assert result['state']=='DATA_GATED' and result['missingComparisonCases']==1
+
+
+def test_existing_same_year_prior_still_counts_next_year_revision_and_requires_prices():
+    data=initial_next_year_data()
+    previous=data['financial_rows'][-2]
+    previous['summary'].update(CurFYEn='2027-08-31',FOP=100)
+    result=earnings_rule(**data)
+    assert result['goodEarningsCount']==6 and result['state']=='DATA_GATED'
+    assert '調整済み株価とTOPIX' in result['reasonJa']
+
 def test_same_publication_conflicting_forecasts_are_ambiguous_not_last_row_wins():
     data=cohort()
     data['financial_rows'].append({**data['financial_rows'][1],
@@ -275,3 +326,70 @@ def test_complete_low_count_is_admitted_to_v3_and_tampered_count_is_rejected():
     assert projected['schemaVersion']=='jp-warning-conditions-v3'
     assert projected['signals'][6]['state']=='CLEAR'
     assert projected['signals'][6]['distance']['unit']=='CASES'
+
+@pytest.mark.parametrize('fault,field,text', [
+    ('membership', 'missingMembershipDays', '日付別の225構成が不足'),
+    ('receipt', 'missingReceiptDays', '全体取得の受領記録が不足'),
+    ('partial', 'incompleteReceiptDays', '全体取得が未完了'),
+    ('scope', 'scopeMismatchDays', '取得範囲と対象構成が不一致'),
+    ('future', 'unavailableReceiptDays', '利用時点までの受領を確認できない'),
+])
+def test_earnings_coverage_failure_identifies_stage_without_exposing_company_inputs(fault, field, text):
+    data = cohort(); day = DAYS[-3]
+    if fault == 'membership': data['membership_by_day'].pop(day)
+    elif fault == 'receipt': data['coverage_by_day'].pop(day)
+    elif fault == 'partial': data['coverage_by_day'][day]['complete'] = False
+    elif fault == 'scope': data['coverage_by_day'][day]['memberCodes'] = ['9999'] * 225
+    else: data['coverage_by_day'][day]['receivedAt'] = '2026-09-16T00:00:00Z'
+    before = deepcopy(data)
+    result = earnings_rule(**data)
+    assert result['state'] == 'DATA_GATED' and result['conditionMet'] is None
+    assert result['value'] is None and result['probability'] is None and result['actionAuthority'] is False
+    assert text in result['reasonJa']
+    diagnostic = result['inputCoverage']
+    assert diagnostic[field] == [day] and diagnostic['verifiedSessionCount'] == 9
+    assert diagnostic['requiredSessionCount'] == 10
+    assert set(diagnostic) == {'requiredSessionCount', 'verifiedSessionCount', 'missingMembershipDays',
+        'missingReceiptDays', 'incompleteReceiptDays', 'scopeMismatchDays', 'unavailableReceiptDays'}
+    assert data == before
+
+
+def test_earnings_dated_coverage_lists_all_missing_days_in_calendar_order():
+    data = cohort()
+    for day in (DAYS[-2], DAYS[-8]): data['coverage_by_day'].pop(day)
+    data['membership_by_day'].pop(DAYS[-5])
+    result = earnings_rule(**data)
+    assert result['inputCoverage']['missingReceiptDays'] == [DAYS[-8], DAYS[-2]]
+    assert result['inputCoverage']['missingMembershipDays'] == [DAYS[-5]]
+    assert result['inputCoverage']['verifiedSessionCount'] == 7
+    assert '2日' in result['reasonJa'] and '1日' in result['reasonJa']
+    data['coverage_by_day'] = dict(reversed(list(data['coverage_by_day'].items())))
+    assert earnings_rule(**data) == result
+
+
+def test_earnings_short_calendar_is_distinct_from_forecasts_and_reaction_prices():
+    data = cohort(); data['sessions'] = DAYS[-10:]
+    result = earnings_rule(**data)
+    assert result['conditionMet'] is None and '営業日履歴が不足' in result['reasonJa']
+    data = cohort(); data['stock_bars'] = {}
+    result = earnings_rule(**data)
+    assert result['reasonJa'] == '発表翌営業日の調整済み株価とTOPIXが不足'
+    assert 'inputCoverage' not in result
+
+
+def test_earnings_coverage_diagnostic_survives_existing_sealed_display_projection():
+    from test_argus_warning_conditions import evidence
+    from argus_warning_conditions import project_warning_conditions
+    from jp_market_engine import _sha256
+    data = cohort(); data['coverage_by_day'].pop(DAYS[-1])
+    rows = {family: _empty(family, 'missing') for family in ('D03', 'D04', 'D07')}
+    rows['D07'] = earnings_rule(**data)
+    original = evidence(); original['informationCutoff'] = AT; original.pop('artifactId')
+    original['artifactId'] = 'jp-market-engine-evidence-' + _sha256(original)
+    result = project_warning_conditions(original, cutoff=AT,
+        adopted_rules=seal_candidates(cutoff=AT, results=rows))
+    signal = result['signals'][6]
+    assert signal['reasonJa'] == '全体取得の受領記録が不足（1日）'
+    assert signal['inputCoverage']['verifiedSessionCount'] == 9
+    assert signal['state'] == 'DATA_GATED' and signal['conditionMet'] is None
+    assert signal['performance']['evaluated'] == 0 and result['actionAuthority'] is False
