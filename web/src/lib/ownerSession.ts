@@ -56,7 +56,11 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 // server after its session is gone (a stray 401 after logout, 2026-10-02).
 const inflight = new Set<AbortController>();
 // Server sessions last 24 hours (argus_owner_auth.TTL); anything longer is rejected.
-const MAX_SESSION_MS = 86_401_000;
+// The expiry is stamped with the server's clock and checked with this device's
+// clock: a device a second behind a newly started server rejected every valid
+// sign-in (2026-10-17, session_invalid). Five minutes of clock difference are
+// allowed; a longer session is still refused.
+const MAX_SESSION_MS = 86_400_000 + 5 * 60_000;
 const STORE_KEY = 'argus.owner.session.v1';
 const buildId = () => {
   try { return typeof __FRONTEND_BUILD_SHA__ === 'string' && __FRONTEND_BUILD_SHA__ ? __FRONTEND_BUILD_SHA__
