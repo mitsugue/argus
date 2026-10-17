@@ -15,7 +15,14 @@ for(const patch of [{reportType:'FUTURES_AND_OPTIONS'},{unit:'JPY'},{actionAutho
  {contractCode:'099741'},{current:{...document.current,netContracts:100}},{change:{...document.change,shortContracts:0}},
  {receivedAt:'unknown'},{positionAgeCalendarDays:-1}]) assert.equal(validJpyPosition({...document,...patch}),false);
 const render=document=>renderToStaticMarkup(React.createElement(JpyPositionCard,{document}));
-assert.ok(render(document).includes('90枚'));assert.ok(render(document).includes('公表日時'));assert.ok(render(document).includes('未確認'));
+assert.ok(render(document).includes('90枚'));assert.ok(render(document).includes('実際の公表時刻'));assert.ok(render(document).includes('未確認'));
+assert.ok(render(document).includes('日程表に未登録'));
+const planned={...document,releaseSchedule:{status:'OFFICIAL_SCHEDULE',scheduledReleaseAt:'2026-11-16T20:30:00+00:00',shifted:true}};
+assert.ok(validJpyPosition(planned));assert.ok(render(planned).includes('2026/11/17 5:30:00 JST'));assert.ok(render(planned).includes('祝日のため'));
+assert.ok(render(planned).includes('実際の公表時刻 未確認'));
+const broken={...document,releaseSchedule:{status:'OFFICIAL_SCHEDULE',scheduledReleaseAt:'unknown',shifted:false}};
+assert.ok(validJpyPosition(broken));assert.ok(render(broken).includes('日程表に未登録'));assert.ok(render(broken).includes('90枚'));
+assert.ok(render({...document,releaseSchedule:{status:'OUT_OF_TABLE',scheduledReleaseAt:null,shifted:false}}).includes('日程表に未登録'));
 assert.ok(render(document).includes('売り建玉がなくなったという意味ではありません'));
 assert.ok(render({...document,acquisition:{status:'FAILED'}}).includes('前回取得分'));
 assert.ok(render({...document,status:'STALE'}).includes('時間が経過'));

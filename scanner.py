@@ -41739,8 +41739,10 @@ def _cftc_jpy_autorefresh():
                     if size > 1024 * 1024:
                         raise ValueError("cftc_response_bound_exceeded")
                     chunks.append(chunk)
+                headers = {name: response.headers.get(name) for name in ("Last-Modified", "Date")} \
+                    if getattr(response, "headers", None) is not None else {}
             report = jp_market_positioning.normalize_cftc_jpy_report(b"".join(chunks),
-                received_at=_ai_now_iso())
+                received_at=_ai_now_iso(), source_headers=headers)
             with _DURABLE_CHECKPOINT_LOCK:
                 candidates = jp_market_positioning.ledger_candidates(report, _MARKET_LEDGER)
                 if candidates:

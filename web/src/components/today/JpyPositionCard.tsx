@@ -25,6 +25,12 @@ export function validJpyPosition(v: unknown): v is JpyPosition {
     && Number.isSafeInteger(v.positionAgeCalendarDays) && v.positionAgeCalendarDays >= 0
     && v.sourceRef === 'https://www.cftc.gov/dea/futures/deacmesf.htm';
 }
+// 2026-10-18: the official schedule is shown beside the actual receipt. It is
+// optional (rows saved earlier are projected on read) and never replaces the
+// unverified moment of publication; a malformed schedule hides only itself.
+type Schedule = { status: string; scheduledReleaseAt: string | null; shifted: boolean };
+const schedule = (v: unknown): Schedule | null => object(v) && typeof v.status === 'string' && typeof v.shifted === 'boolean'
+  && (v.scheduledReleaseAt === null || Number.isFinite(Date.parse(v.scheduledReleaseAt))) ? v as Schedule : null;
 const count = (value: number) => value.toLocaleString('ja-JP');
 const signed = (value: number) => `${value > 0 ? '+' : ''}${count(value)}`;
 const time = (value: string) => new Date(value).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
@@ -34,6 +40,7 @@ export function JpyPositionCard({ document }: { document: unknown }) {
     <h3>円の投機ポジション</h3><p>対象日・内訳・取得時刻がそろった公式データを確認中です。</p>
   </section>;
   const { current, previous, change } = document;
+  const plan = schedule((document as Record<string, unknown>).releaseSchedule);
   const switched = current.netContracts !== 0 && previous.netContracts !== 0 && Math.sign(current.netContracts) !== Math.sign(previous.netContracts);
   return <section className="card at-margin-dynamics" aria-label="円の投機ポジション">
     <h3>円の投機ポジション</h3>
@@ -53,7 +60,9 @@ export function JpyPositionCard({ document }: { document: unknown }) {
       <p>CFTCの非商業取引者区分・円先物のみ。オプション合算の系列とは区別しています。</p>
       <p>スプレッド建玉 {count(current.spreadContracts)}枚（差 {signed(change.spreadContracts)}枚）。差引は買いから売りを引いた値です。</p>
       <p>買い越しになっても、売り建玉がなくなったという意味ではありません。</p>
-      <p>取得 {time(document.receivedAt)} JST ／ 公表日時 {document.publishedAt ? `${time(document.publishedAt)} JST` : '未確認'}</p>
+      <p>公表予定（CFTCの公式日程）{plan?.status === 'OFFICIAL_SCHEDULE' && plan.scheduledReleaseAt
+        ? ` ${time(plan.scheduledReleaseAt)} JST${plan.shifted ? '（祝日のため通常の金曜から移動）' : ''}` : ' 日程表に未登録'}</p>
+      <p>実際の公表時刻 {document.publishedAt ? `${time(document.publishedAt)} JST` : '未確認'} ／ 取得 {time(document.receivedAt)} JST</p>
       <p>既存の市場台帳に記録します。{document.acquisition?.persistenceStatus !== 'VERIFIED' && '今回の保存・復旧の確認は未完了です。'}</p>
       <a href={document.sourceRef} target="_blank" rel="noreferrer">CFTCの公式報告を見る ↗</a>
       <p>このデータ単独では売買判断や予測確率を出しません。</p>
