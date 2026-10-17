@@ -144,3 +144,32 @@ def test_future_observation_period_cannot_satisfy_the_due_week():
     row = source({"sources": {"credit_balances": {
         "dataUpdatedAt": NOW, "latestPeriod": "2027-01-01"}}}, "credit_balances")
     assert row["status"] == "unknown" and row["publicationState"] == "unknown"
+
+
+def test_series_reconciliation_keeps_only_reviewed_counts_and_dates():
+    import jp_market_series_reconciliation as rec
+    sentinel = 'PRIVATE_DOMAIN_SENTINEL'
+    rows = [{'date': d, 'close': 12345.678, 'private': sentinel} for d in ('2026-10-13', '2026-10-15')]
+    document = rec.reconcile({'price_series': {'nikkei': rows, 'sp500': rows}}, measured_at=NOW,
+                             open_days=['2026-10-13', '2026-10-14', '2026-10-15'])
+    document['series']['price_series:nikkei']['missingDates']['first'].append(sentinel)
+    document['series'][sentinel] = {'status': sentinel, 'expected': sentinel}
+    health = build_collection_health({'seriesReconciliation': document}, now_iso=NOW)
+    table = {row['key']: row for row in health['seriesReconciliation']['series']}
+    assert sentinel not in json.dumps(health) and '12345' not in json.dumps(health)
+    assert table['price_series:nikkei']['status'] == 'GAPS_FOUND'
+    assert table['price_series:nikkei']['missingFirst'] == ['2026-10-14'] and table['price_series:nikkei']['missing'] == 1
+    assert table['price_series:sp500']['status'] == 'EXPECTED_CALENDAR_UNAVAILABLE' and table['price_series:sp500']['expected'] is None
+    assert health['seriesReconciliation']['automaticRepair'] is False
+    assert build_collection_health({}, now_iso=NOW)['seriesReconciliation']['series'] == []
+
+
+def test_runtime_reconciliation_uses_the_stored_calendar_and_marks_unknown_days(monkeypatch):
+    import scanner
+    calendar = [{'Date': d, 'HolDiv': h} for d, h in (('2025-12-29', '1'), ('2025-12-30', '1'), ('2025-12-31', '0'))]
+    monkeypatch.setattr(scanner, '_N225_ANALOG_HISTORY', {'calendar': calendar})
+    rows = [{'date': '2025-12-29', 'close': 1.0}, {'date': '2025-12-31', 'close': 1.0}]
+    result = scanner._jp_market_series_reconciliation({'price_series': {'nikkei': rows}}, '2026-01-01T00:00:00Z')
+    row = result['series']['price_series:nikkei']
+    assert row['missingDates']['first'] == ['2025-12-30'] and row['unexpectedDates']['first'] == ['2025-12-31']
+    assert row['status'] == 'GAPS_FOUND'

@@ -44,6 +44,48 @@ def _count(value):
     return value if type(value) is int and 0 <= value <= 9_007_199_254_740_991 else None
 
 
+RECONCILIATION_STATUSES = ("COMPLETE", "COMPLETE_WHERE_CALENDAR_KNOWN", "GAPS_FOUND", "NO_ROWS",
+                           "EXPECTED_CALENDAR_UNAVAILABLE", "NOT_EXPECTED")
+
+
+def _dates(value):
+    """At most fifty reviewed dates or ISO weeks; anything else is dropped."""
+    raw = value.get("first") if isinstance(value, Mapping) else None
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw[:50]:
+        if _day(item) or (isinstance(item, str) and len(item) == 8 and item[4:6] == "-W" and item[:4].isdigit() and item[6:].isdigit()):
+            out.append(item)
+    return out
+
+
+def _reconciliation(document):
+    """Expected against stored dates per input (2026-10-18): counts and dates only."""
+    document = document if isinstance(document, Mapping) else {}
+    series = document.get("series") if isinstance(document.get("series"), Mapping) else {}
+    rows = []
+    from jp_market_series_reconciliation import CALENDARS
+    for key in sorted(k for k in series if k in CALENDARS):
+        raw = series[key] if isinstance(series[key], Mapping) else {}
+        listed = {name: raw.get(name) if isinstance(raw.get(name), Mapping) else {}
+                  for name in ("missingDates", "unexpectedDates", "duplicatedDates", "invalidValueDates")}
+        rows.append({"key": key, "status": raw.get("status") if raw.get("status") in RECONCILIATION_STATUSES else "unknown",
+                     "expected": _count(raw.get("expected")), "actual": _count(raw.get("distinctDates")),
+                     "rows": _count(raw.get("rows")), "first": _day(raw.get("first")), "last": _day(raw.get("last")),
+                     "missing": _count(listed["missingDates"].get("count")),
+                     "unexpected": _count(listed["unexpectedDates"].get("count")),
+                     "duplicated": _count(listed["duplicatedDates"].get("count")),
+                     "invalidValues": _count(listed["invalidValueDates"].get("count")),
+                     "revisedDates": _count(raw.get("revisedDates")),
+                     "calendarUnknownDays": _count(raw.get("calendarUnknownDays")),
+                     "missingFirst": _dates(listed["missingDates"]),
+                     "unexpectedFirst": _dates(listed["unexpectedDates"])})
+    return {"measuredAt": document.get("measuredAt") if _day(str(document.get("measuredAt") or "")[:10]) else None,
+            "series": rows, "automaticRepair": False,
+            "noteJa": "期待される日付と保存された日付の照合です。米国・債券・為替は公式の暦を持たないため照合しません。"}
+
+
 def build_collection_health(inputs, *, now_iso):
     """Only reviewed scalar fields survive. Unknown never becomes healthy."""
     now = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
@@ -120,6 +162,7 @@ def build_collection_health(inputs, *, now_iso):
     policy = inputs.get("namingPolicy")
     return {"schemaVersion": "argus-collection-health-v1", "asOf": now_iso,
             "sources": rows, "inputWindows": windows, "archives": archives,
+            "seriesReconciliation": _reconciliation(inputs.get("seriesReconciliation")),
             "namingPolicy": policy if policy in ("configured_valid", "not_configured", "invalid") else "unknown",
             "noteJa": "データ更新と確認時刻は別です。窓の上限は分析対象で、原本の保存件数ではありません。",
             "actionAuthority": False}

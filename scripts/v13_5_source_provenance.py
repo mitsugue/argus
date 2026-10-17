@@ -390,10 +390,10 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_analysis_history.py': 'c688b85b59294dee647f83c9b766a5aec62b71f8',
     'argus_analysis_history.py': '88af8953dea84bdec7ccacab9d97bba02309d393',
     'argus_market_ledger.py': 'e497d1c6020adead5e823303e7a144ef6b1e7911',
-    'jp_market_positioning.py': '265c103ffdbc995123cdbfbfbf86db00d264c9f0',
-    'test_jp_market_positioning.py': '25652d6b817191b47053d3c9bef22f56e15d7a37',
-    'web/scripts/jpy-position.test.cjs': 'b06ad4ed402a187d9d949a0d30aea45ac6a648d7',
-    'web/src/components/today/JpyPositionCard.tsx': '38a7da45a161ed0611c39abf57ed275e070b808f',
+    'jp_market_positioning.py': 'c0f090d16b77a8aa180560088d0da1060e0e1c20',
+    'test_jp_market_positioning.py': '1250c72e7c1fa227cbd3a4d085b9789602a768bc',
+    'web/scripts/jpy-position.test.cjs': 'c4f3f103ddad2f13042f691c898eebfda2fb84a0',
+    'web/src/components/today/JpyPositionCard.tsx': '87a90f7b65787a9ddc1533073d7bff17b74c288c',
     # Owner-authorized staged analysis delivery; exact tested file contents only.
     'argus_ai_usage_receipt.py': '272e2a780d26a65917210df416e6546eb1c441dc',
     'argus_ai_usage_store.py': 'bc0ccd94eeb2b601da72ecb4a847c8ba3bbf07e1',
@@ -686,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "jp_market_positioning_schedule.py",
     "test_brief_required_citations.py",
     "web/scripts/owner-session-clock-skew.test.cjs",
     ".github/workflows/restore-safe-pages.yml",

@@ -2,6 +2,7 @@ import { CreditConditionsDetails } from '../components/today/CreditConditionsDet
 import { useMarketBrief } from '../hooks/useMarketBrief';
 import { TriangleStepLoader } from '../components/common/TriangleStepLoader';
 import { CandidateBoard } from '../components/today/CandidateBoard';
+import { SeriesReconciliationCard } from '../components/today/SeriesReconciliationCard';
 import React from 'react';
 import { publishDataQuality } from '../lib/positionExposureShare';
 import {
@@ -116,6 +117,7 @@ export const PublicDiagnosticsPanel: React.FC = () => {
           </section>
         </>
       )}
+      <SeriesReconciliationCard />
       <CandidateBoard />
     </section>
   );
