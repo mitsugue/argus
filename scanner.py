@@ -41249,6 +41249,13 @@ def _jp_market_comparison_calculate(horizon):
             material_records = [{key: deepcopy(record.get(key))
                 for key in ("eventId", "eventCode", "eventTimeEvidence")}
                 for record in _MACRO_ANALYSIS.values()]
+        # 2026-10-18: the stored records only grow. Past the reaction bound the
+        # whole lane used to fail; evidenced records are kept first, then the
+        # newest, and the number left out is reported.
+        material_records.sort(key=lambda r: (isinstance(r.get("eventTimeEvidence"), dict), str(r.get("eventId") or "")),
+                              reverse=True)
+        omitted = max(0, len(material_records) - jp_market_material_reactions.MAX_EVENTS)
+        material_records = material_records[:jp_market_material_reactions.MAX_EVENTS]
         try:
             if missing_calendar:
                 raise ValueError("official_calendar_incomplete")
@@ -41273,7 +41280,7 @@ def _jp_market_comparison_calculate(horizon):
             # Walk-forward validation, computed when the history or the
             # policy changes and shared by the four horizons (2026-09-30).
             backtest_cache=_JP_ANALOG_BACKTEST_CACHE)
-        result["materialReactionAcquisition"] = material["diagnostics"]
+        result["materialReactionAcquisition"] = {**material["diagnostics"], "recordsOmittedByBound": omitted}
         result["marketFeatureAcquisition"] = {k: _JP_MARKET_FEATURE_HISTORY.get(k)
             for k in ("status", "lastSuccessfulCalculationAt", "errorClass", "errorReason",
                       "firstCutoff", "lastCutoff", "sourceWarming", "reuseDecision", "calculationWork")}

@@ -111,7 +111,8 @@ class RuntimeConnection(unittest.TestCase):
             '_level_map_current_valuation':lambda *a,**k:{'basis':'synthetic-current','date':None,'recordedAt':None},
             'jp_market_level_map':SimpleNamespace(EPS_BASIS='synthetic-current'), '_JP_MARKET_FEATURE_HISTORY':{},
             '_JP_ANALOG_BACKTEST_CACHE':{}, '_JP_MARKET_FEATURE_CACHE_STATUS':{}, '_jp_market_series_acquisition_status':lambda:{},
-            '_JP_MARKET_FEATURE_INPUT_SPANS':{},'_JP_OFFICIAL_SOURCE_CACHE':SimpleNamespace(snapshot=lambda:{})}
+            '_JP_MARKET_FEATURE_INPUT_SPANS':{},'_JP_MARKET_SERIES_RECONCILIATION':{},
+            '_JP_OFFICIAL_SOURCE_CACHE':SimpleNamespace(snapshot=lambda:{})}
         source = (REPO / 'scanner.py').read_text()
         node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == '_jp_market_comparison_calculate')
         exec(compile(ast.Module([node], type_ignores=[]), '<real-scanner-comparison>', 'exec'), ns)
@@ -121,5 +122,12 @@ class RuntimeConnection(unittest.TestCase):
         ns['_MACRO_ANALYSIS']={'synthetic-nfp':{'eventId':'synthetic-nfp','eventCode':'NFP'}}
         result=ns['_jp_market_comparison_calculate'](1)
         self.assertEqual(result['status'],'available');self.assertEqual(captured[-1]['reaction_rows'],[])
+        # 2026-10-18: more records than the reaction bound no longer drop the
+        # evidenced ones; records without evidence are the ones left out.
+        many={f'synthetic-old-{i:03d}':{'eventId':f'synthetic-old-{i:03d}','eventCode':'NFP'} for i in range(240)}
+        ns['_MACRO_ANALYSIS']={**many,'synthetic-nfp':record()}
+        result=ns['_jp_market_comparison_calculate'](1)
+        self.assertEqual(len(captured[-1]['reaction_rows']),3)
+        self.assertEqual(result['materialReactionAcquisition']['recordsOmittedByBound'],41)
 
 if __name__=='__main__':unittest.main(verbosity=2)
