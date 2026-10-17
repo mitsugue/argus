@@ -6,7 +6,7 @@ on:
       release_sha:
         description: Exact previously accepted frontend commit to restore
         required: true
-        default: 43147c533877bd3f6853add0604266e6bcfee50e
+        default: 32adf932bbcf10ff7e90a5d3c2ea5d7700d52143
         type: string
       frontend_version:
         description: Exact expected frontend version

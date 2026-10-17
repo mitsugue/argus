@@ -18,9 +18,9 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.121"
-ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
-ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
+PRODUCT_VERSION = "v13.8.122"
+ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
+ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -589,8 +589,10 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # market-shock (Major News) pipeline, the Prediction Ledger workflow
     # correction (canonical steps before private-store extras + precise
     # diagnostics), the checkpoint-v2 capacity budgets, and the v13.5.x
-    # identity. The accepted baseline is the LIVE v13.5.0 release
-    # (f79548bb…); anything outside this list fails the release closed.
+    # identity. The accepted baseline was the LIVE v13.5.0 release; since
+    # 2026-10-17 it is the first commit of this repository (the same tree,
+    # without the earlier history, which is kept in a private archive).
+    # Anything outside this list fails the release closed.
     # v13.5.36 SCHEDULED_AI enablement (owner 「有効にして」 2026-08-23/24):
     # bounded cost-policy mode + quarantine review. Decision authority remains
     # deterministic and fail-closed.
