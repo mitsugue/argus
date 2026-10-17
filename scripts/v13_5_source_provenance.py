@@ -687,7 +687,6 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
     "web/scripts/owner-session-clock-skew.test.cjs",
-    ".github/workflows/render-repository-switch.yml",
     ".github/workflows/restore-safe-pages.yml",
     "test_ledger_private_cutover.py",
     "scripts/ledger_use_private.sh",
