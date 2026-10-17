@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.123"
+PRODUCT_VERSION = "v13.8.124"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
