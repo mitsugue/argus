@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 
+import jp_market_positioning_schedule as release_calendar
+
 
 class _ReportText(HTMLParser):
     def __init__(self):
@@ -15,7 +17,7 @@ class _ReportText(HTMLParser):
         self.parts.append(data)
 
 
-def normalize_cftc_jpy_report(raw: bytes, *, received_at: str) -> dict:
+def normalize_cftc_jpy_report(raw: bytes, *, received_at: str, source_headers=None) -> dict:
     if not isinstance(raw, bytes) or not 1 <= len(raw) <= 1024 * 1024:
         raise ValueError('bounded_cftc_report_required')
     received = datetime.fromisoformat(received_at.replace('Z', '+00:00'))
@@ -87,6 +89,10 @@ def normalize_cftc_jpy_report(raw: bytes, *, received_at: str) -> dict:
         'sourceResponseSha256': hashlib.sha256(raw).hexdigest(),
         'historicalVintageVerified': False, 'observesCurrentLivePositions': False,
         'validationStatus': 'DESCRIPTIVE_NOT_PREDICTIVE', 'actionAuthority': False,
+        # The official schedule and the server's file headers sit beside the
+        # actual receipt. Neither is the moment of publication (2026-10-18).
+        'releaseSchedule': release_calendar.release_schedule(day.isoformat(), received_at=received_at),
+        'sourceHeaders': _headers(source_headers),
     }
     economic = {key: result[key] for key in ('instrumentId', 'contractCode', 'reportType',
         'traderCategory', 'positionDate', 'previousPositionDate', 'current', 'previous',
@@ -94,6 +100,15 @@ def normalize_cftc_jpy_report(raw: bytes, *, received_at: str) -> dict:
     result['reportId'] = hashlib.sha256(json.dumps(economic, sort_keys=True,
         separators=(',', ':'), allow_nan=False).encode()).hexdigest()
     return result
+
+
+def _headers(headers):
+    """Last-Modified and Date as sent, bounded; a record, never a publication time."""
+    out = {'lastModified': None, 'date': None}
+    for key, name in (('lastModified', 'Last-Modified'), ('date', 'Date')):
+        value = (headers or {}).get(name)
+        out[key] = value[:64] if isinstance(value, str) and value.strip() else None
+    return out
 
 
 POSITION_SERIES = {
@@ -175,4 +190,10 @@ def latest_from_ledger(state: dict, *, cutoff: str) -> dict:
                                       datetime.fromisoformat(key[0]).date()).days
     result['status'] = 'STALE' if result['positionAgeCalendarDays'] > 14 else 'AVAILABLE'
     result['storageBasis'] = 'EXISTING_MARKET_LEDGER'
+    if not isinstance(result.get('releaseSchedule'), dict):
+        # Rows saved before 2026-10-18 carry no schedule; it is a function of
+        # the position date, so it is added on read and the rows stay as saved.
+        result['releaseSchedule'] = {**release_calendar.release_schedule(
+            result['positionDate'], received_at=result['receivedAt']), 'basis': 'PROJECTED_AT_READ'}
+        result.setdefault('sourceHeaders', {'lastModified': None, 'date': None})
     return result

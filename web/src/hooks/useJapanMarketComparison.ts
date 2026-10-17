@@ -6,9 +6,11 @@ import { validForecastTrackRecord, validJapanMarketComparison } from '../lib/jap
 import { validLevelMap, type LevelMapState } from '../lib/levelMap';
 import { comparisonReply, retainComparisonReply, comparisonReadInterval, type ComparisonReply } from '../lib/japanMarketComparisonReply';
 import { validResearchChart } from '../lib/researchChart';
+import type { SeriesReconciliation } from '../lib/seriesReconciliation';
 
 type State = { document: JapanMarketComparison | null; loading: boolean; error: boolean;
-  reason: string | null; lastSuccessfulAcquisitionAt: string | null; levelMap?: LevelMapState | null; levelMapError?: boolean };
+  reason: string | null; lastSuccessfulAcquisitionAt: string | null; levelMap?: LevelMapState | null; levelMapError?: boolean;
+  seriesReconciliation?: SeriesReconciliation | null };
 // levelMap (2026-10-04): the morning map rides the five-session reply.
 type Reply = ComparisonReply;
 const memory = new Map<string, Reply>();

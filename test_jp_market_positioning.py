@@ -128,6 +128,7 @@ def test_runtime_collect_reuses_ledger_and_retries_failed_persistence(monkeypatc
         status_code = 200
         def __enter__(self): return self
         def __exit__(self, *args): return None
+        headers = {'Last-Modified': 'Fri, 11 Sep 2026 19:31:02 GMT'}
         def iter_content(self, size): yield REPORT
     calls = []
     def fetch(url, **kwargs):
@@ -140,6 +141,8 @@ def test_runtime_collect_reuses_ledger_and_retries_failed_persistence(monkeypatc
     before = deepcopy(scanner._MARKET_LEDGER)
     public = scanner._cftc_jpy_document()
     assert public['current']['netContracts'] == 10796
+    assert public['sourceHeaders'] == {'lastModified': 'Fri, 11 Sep 2026 19:31:02 GMT', 'date': None}
+    assert public['publishedAt'] is None
     assert len(calls) == 1  # cached document does not fetch
     assert scanner._cftc_jpy_autorefresh()['status'] == 'NOT_DUE'
     scanner._CFTC_JPY_STATE['lastAttemptMonotonic'] = None
@@ -193,3 +196,58 @@ def test_future_receipt_does_not_suppress_current_report_and_other_dates_do_not_
     tampered = deepcopy(future)
     for row in tampered['observations']: row['metadata']['reportId'] = 'wrong'
     assert len(positioning.ledger_candidates(document(at='2026-09-15T13:00:00Z'), tampered)) == 4
+
+
+import jp_market_positioning_schedule as release_calendar
+
+
+@pytest.mark.parametrize('position, expected, shifted', [
+    ('2026-10-06', '2026-10-09T19:30:00+00:00', False),   # Friday 15:30 ET (summer time)
+    ('2026-11-10', '2026-11-16T20:30:00+00:00', True),    # Veterans Day week, winter time
+    ('2026-11-24', '2026-11-30T20:30:00+00:00', True),
+    ('2026-12-22', '2026-12-28T20:30:00+00:00', True),
+    ('2025-12-30', '2026-01-05T20:30:00+00:00', True),
+    ('2026-06-30', '2026-07-06T19:30:00+00:00', True),
+])
+def test_official_schedule_follows_friday_rule_and_listed_holiday_moves(position, expected, shifted):
+    row = release_calendar.release_schedule(position)
+    assert (row['status'], row['scheduledReleaseAt'], row['shifted']) == ('OFFICIAL_SCHEDULE', expected, shifted)
+    assert row['publicationBasis'] == 'nominal_schedule_not_actual_receipt'
+
+
+def test_unlisted_year_and_non_tuesday_get_no_guessed_time():
+    assert release_calendar.release_schedule('2026-12-29')['status'] == 'OUT_OF_TABLE'
+    assert release_calendar.release_schedule('2027-03-02')['scheduledReleaseAt'] is None
+    odd = release_calendar.release_schedule('2026-10-07')
+    assert (odd['status'], odd['scheduledReleaseAt']) == ('SCHEDULE_UNCERTAIN', None)
+
+
+def test_schedule_and_headers_do_not_change_identity_or_fill_publication():
+    plain = document()
+    headed = positioning.normalize_cftc_jpy_report(REPORT, received_at=RECEIVED,
+        source_headers={'Last-Modified': 'Fri, 11 Sep 2026 19:31:02 GMT', 'Date': 'x' * 200})
+    assert headed['reportId'] == plain['reportId']
+    assert headed['publishedAt'] is None and not headed['publicationTimeVerified']
+    assert headed['sourceHeaders'] == {'lastModified': 'Fri, 11 Sep 2026 19:31:02 GMT', 'date': 'x' * 64}
+    assert plain['sourceHeaders'] == {'lastModified': None, 'date': None}
+    assert headed['releaseSchedule']['scheduledReleaseAt'] == '2026-09-11T19:30:00+00:00'
+    assert headed['releaseSchedule']['receiptBeforeSchedule'] is False
+    state = imported(plain)
+    assert positioning.ledger_candidates(headed, state) == []   # same report: first receipt kept
+    early = positioning.normalize_cftc_jpy_report(REPORT, received_at='2026-09-11T12:00:00+00:00')
+    assert early['releaseSchedule']['receiptBeforeSchedule'] is True and early['publishedAt'] is None
+
+
+def test_rows_saved_without_schedule_are_projected_on_read_and_left_as_saved():
+    report = document()
+    old = {k: v for k, v in report.items() if k not in ('releaseSchedule', 'sourceHeaders')}
+    state = imported(old)
+    saved = deepcopy(state)
+    current = positioning.latest_from_ledger(state, cutoff='2026-09-13T00:00:00+00:00')
+    assert current['status'] == 'AVAILABLE' and current['reportId'] == report['reportId']
+    assert current['releaseSchedule']['basis'] == 'PROJECTED_AT_READ'
+    assert current['releaseSchedule']['scheduledReleaseAt'] == '2026-09-11T19:30:00+00:00'
+    assert current['sourceHeaders'] == {'lastModified': None, 'date': None}
+    assert state == saved
+    recorded = positioning.latest_from_ledger(imported(report), cutoff='2026-09-13T00:00:00+00:00')
+    assert 'basis' not in recorded['releaseSchedule']

@@ -2,9 +2,11 @@ import type { JapanMarketComparison } from '../types/japanMarketComparison';
 import { validJapanMarketComparison } from './japanMarketComparison';
 import { validLevelMap, type LevelMapState } from './levelMap';
 import { validResearchChart } from './researchChart';
+import { validSeriesReconciliation, type SeriesReconciliation } from './seriesReconciliation';
 
 export type ComparisonReply = { document: JapanMarketComparison | null; reason: string | null;
-  lastSuccessfulAcquisitionAt: string | null; levelMap?: LevelMapState | null };
+  lastSuccessfulAcquisitionAt: string | null; levelMap?: LevelMapState | null;
+  seriesReconciliation?: SeriesReconciliation | null };
 
 /** The close/PER display is independent of the slower analog calculation. */
 export function comparisonReply(value: unknown, horizon: number): ComparisonReply {
@@ -20,12 +22,19 @@ export function comparisonReply(value: unknown, horizon: number): ComparisonRepl
       : document ? null : 'invalid_comparison_response',
     lastSuccessfulAcquisitionAt: typeof body.lastSuccessfulAcquisitionAt === 'string'
       && Number.isFinite(Date.parse(body.lastSuccessfulAcquisitionAt)) ? body.lastSuccessfulAcquisitionAt : null,
-    levelMap };
+    levelMap, seriesReconciliation: reconciliationOf(body) };
+}
+
+function reconciliationOf(body: Record<string, unknown>): SeriesReconciliation | null {
+  const acquisition = body.marketFeatureAcquisition as Record<string, unknown> | null | undefined;
+  const value = acquisition && typeof acquisition === 'object' ? acquisition.seriesReconciliation : null;
+  return validSeriesReconciliation(value) ? value : null;
 }
 
 export function retainComparisonReply(fresh: ComparisonReply, cached?: ComparisonReply): ComparisonReply {
   return { ...fresh, document: fresh.document ?? cached?.document ?? null,
     levelMap: fresh.levelMap ?? cached?.levelMap ?? null,
+    seriesReconciliation: fresh.seriesReconciliation ?? cached?.seriesReconciliation ?? null,
     lastSuccessfulAcquisitionAt: fresh.lastSuccessfulAcquisitionAt ?? cached?.lastSuccessfulAcquisitionAt ?? null };
 }
 

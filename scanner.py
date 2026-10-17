@@ -145,6 +145,7 @@ import argus_notification_brief
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import jp_market_price_paths
+import jp_market_series_reconciliation
 import argus_index_history
 import jp_market_valuation
 import jp_market_source_adapters
@@ -8583,6 +8584,7 @@ def _collection_health_inputs(now_iso):
                 for key, filename in (("analysis_history", "market_analysis_history.sqlite3"),
                                       ("source_history", "jp_market_source_history.sqlite3"))}
     return {"sources": sources, "inputSpans": _JP_MARKET_FEATURE_INPUT_SPANS,
+            "seriesReconciliation": dict(_JP_MARKET_SERIES_RECONCILIATION),
             "namingPolicy": policy, "archives": archives}
 
 
@@ -41119,6 +41121,39 @@ def _index_research_warm():
 
 
 _JP_MARKET_FEATURE_INPUT_SPANS = {}
+_JP_MARKET_SERIES_RECONCILIATION = {}
+
+
+def _jp_market_series_reconciliation(inputs, now):
+    """Tokyo sessions over the inputs' span: the stored HolDiv table where it
+    covers a day, the market clock otherwise; a day neither answers is
+    unknown, never assumed open (as _jp_exchange_sessions)."""
+    from datetime import date as calendar_date
+    checked = {key for key, kind in jp_market_series_reconciliation.CALENDARS.items()
+               if kind not in (jp_market_series_reconciliation.NO_CALENDAR, jp_market_series_reconciliation.NOT_CHECKED)}
+    lists = {**{"price_series:" + k: v for k, v in (inputs.get("price_series") or {}).items()},
+             **{k: v for k, v in inputs.items() if k != "price_series"}}
+    days = [str(r.get("periodEnd") or r.get("date") or "")[:10]
+            for key, rows in lists.items() if key in checked for r in rows or () if isinstance(r, dict)]
+    days = [d for d in days if len(d) == 10]
+    if not days:
+        return jp_market_series_reconciliation.reconcile(inputs, open_days=(), measured_at=now)
+    first = calendar_date.fromisoformat(min(days))
+    last = datetime.fromisoformat(now.replace("Z", "+00:00")).astimezone(TZ_JST).date()
+    table = {row.get("Date"): row.get("HolDiv") for row in _N225_ANALOG_HISTORY.get("calendar", []) or ()}
+    open_days, unknown = [], []
+    for offset in range(max(0, (last - first).days) + 1):
+        day = first + timedelta(days=offset)
+        try:
+            is_open = table[day.isoformat()] == "1" if day.isoformat() in table else \
+                argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, day)
+        except argus_market_clock.CalendarUnavailableError:
+            unknown.append(day.isoformat())
+            continue
+        if is_open:
+            open_days.append(day.isoformat())
+    return jp_market_series_reconciliation.reconcile(inputs, open_days=open_days, unknown_days=unknown,
+                                                     measured_at=now)
 
 
 def _d02_week_end_ratios(margin_rows, weeks=6):
@@ -41214,6 +41249,13 @@ def _jp_market_comparison_calculate(horizon):
             material_records = [{key: deepcopy(record.get(key))
                 for key in ("eventId", "eventCode", "eventTimeEvidence")}
                 for record in _MACRO_ANALYSIS.values()]
+        # 2026-10-18: the stored records only grow. Past the reaction bound the
+        # whole lane used to fail; evidenced records are kept first, then the
+        # newest, and the number left out is reported.
+        material_records.sort(key=lambda r: (isinstance(r.get("eventTimeEvidence"), dict), str(r.get("eventId") or "")),
+                              reverse=True)
+        omitted = max(0, len(material_records) - jp_market_material_reactions.MAX_EVENTS)
+        material_records = material_records[:jp_market_material_reactions.MAX_EVENTS]
         try:
             if missing_calendar:
                 raise ValueError("official_calendar_incomplete")
@@ -41238,13 +41280,17 @@ def _jp_market_comparison_calculate(horizon):
             # Walk-forward validation, computed when the history or the
             # policy changes and shared by the four horizons (2026-09-30).
             backtest_cache=_JP_ANALOG_BACKTEST_CACHE)
-        result["materialReactionAcquisition"] = material["diagnostics"]
+        result["materialReactionAcquisition"] = {**material["diagnostics"], "recordsOmittedByBound": omitted}
         result["marketFeatureAcquisition"] = {k: _JP_MARKET_FEATURE_HISTORY.get(k)
             for k in ("status", "lastSuccessfulCalculationAt", "errorClass", "errorReason",
                       "firstCutoff", "lastCutoff", "sourceWarming", "reuseDecision", "calculationWork")}
         result["marketFeatureAcquisition"]["derivedCache"] = dict(_JP_MARKET_FEATURE_CACHE_STATUS)
         result["marketFeatureAcquisition"]["seriesAcquisition"] = _jp_market_series_acquisition_status()
         result["marketFeatureAcquisition"]["inputSpans"] = dict(_JP_MARKET_FEATURE_INPUT_SPANS)
+        result["marketFeatureAcquisition"]["seriesReconciliation"] = (
+            jp_market_series_reconciliation.summary(_JP_MARKET_SERIES_RECONCILIATION)
+            if _JP_MARKET_SERIES_RECONCILIATION.get("series") else
+            {"status": _JP_MARKET_SERIES_RECONCILIATION.get("status", "NOT_MEASURED"), "actionAuthority": False})
         result["marketFeatureAcquisition"]["officialSources"] = _JP_OFFICIAL_SOURCE_CACHE.snapshot()
         if result.get('comparison'):
             result['comparison']['sourceAcquisition'] = {
@@ -41739,8 +41785,10 @@ def _cftc_jpy_autorefresh():
                     if size > 1024 * 1024:
                         raise ValueError("cftc_response_bound_exceeded")
                     chunks.append(chunk)
+                headers = {name: response.headers.get(name) for name in ("Last-Modified", "Date")} \
+                    if getattr(response, "headers", None) is not None else {}
             report = jp_market_positioning.normalize_cftc_jpy_report(b"".join(chunks),
-                received_at=_ai_now_iso())
+                received_at=_ai_now_iso(), source_headers=headers)
             with _DURABLE_CHECKPOINT_LOCK:
                 candidates = jp_market_positioning.ledger_candidates(report, _MARKET_LEDGER)
                 if candidates:
@@ -42398,6 +42446,15 @@ def _jp_market_feature_history_warm():
             _JP_MARKET_FEATURE_INPUT_SPANS.update(jp_market_features.input_spans(inputs), measuredAt=now)
         except Exception as exc:
             _JP_MARKET_FEATURE_INPUT_SPANS.update(errorClass=type(exc).__name__)
+        # 2026-10-18: expected dates against stored dates. Diagnostics only;
+        # nothing is refetched or repaired, and a failure never stops the warm.
+        try:
+            reconciliation = _jp_market_series_reconciliation(inputs, now)
+            _JP_MARKET_SERIES_RECONCILIATION.clear()
+            _JP_MARKET_SERIES_RECONCILIATION.update(reconciliation)
+        except Exception as exc:
+            _JP_MARKET_SERIES_RECONCILIATION.clear()
+            _JP_MARKET_SERIES_RECONCILIATION.update(status="FAILED", errorClass=type(exc).__name__, measuredAt=now)
         identity = hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False, allow_nan=False,
             separators=(",", ":")).encode()).hexdigest()
         if identity == _JP_MARKET_FEATURE_HISTORY.get("inputIdentity") and \
