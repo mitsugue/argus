@@ -274,8 +274,6 @@ def install(app, env=None):
     prepare(auth)
     import argus_weighted_per
     argus_weighted_per.prepare(auth)
-    import argus_index_factor_input
-    argus_index_factor_input.prepare(auth)
 
     @app.before_request
     def owner_boundary():
@@ -335,9 +333,6 @@ def install(app, env=None):
         if action == 'weighted-per':
             import argus_weighted_per
             return argus_weighted_per.action(auth)
-        if action == 'index-factors':
-            import argus_index_factor_input
-            return argus_index_factor_input.action(auth)
         if action == 'watchlist':
             from argus_account_watchlist import action as watchlist_action
             return watchlist_action(auth)

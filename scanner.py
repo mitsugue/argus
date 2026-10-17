@@ -121,7 +121,6 @@ import argus_ai_usage_store
 import argus_ai_usage_runtime
 import jp_market_internals
 import jp_index_contribution  # 2026-10-17: Nikkei 225 contributions by member
-import argus_index_factor_input
 import jp_market_positioning
 import argus_analysis_history
 import argus_index_live
@@ -39876,21 +39875,6 @@ def _jp_index_keep_member_closes(day, bars, factors):
     _JP_INDEX_PROXY.setdefault("memberCloses", {})[day] = kept
 
 
-# The last contributions computed, for the owner's entry form (2026-10-17).
-_JP_INDEX_CONTRIBUTION_LAST = {"results": {}, "names": {}, "factorsAsOf": None}
-
-
-def _jp_index_factor_overrides():
-    auth = app.extensions.get("argus_owner_auth")
-    if not auth or not getattr(auth, "enabled", False):
-        return []
-    try:
-        with auth.reader() as conn:
-            return argus_index_factor_input.overrides(conn)
-    except Exception:
-        return []
-
-
 def _jp_index_contribution_for(start, end, index_rows):
     """Contributions for one period from cached inputs only (no fetch)."""
     factors = _JP_INDEX_PROXY.get("factors") or {}
@@ -39910,32 +39894,8 @@ def _jp_index_contribution_for(start, end, index_rows):
         start=start, end=end, members_start=members[start], members_end=members[end],
         closes=_JP_INDEX_PROXY.get("memberCloses") or {},
         index_close={str(r.get("date"))[:10]: r.get("close") for r in index_rows or []},
-        derived_factors=base, overrides=_jp_index_factor_overrides(), names=names, factors_as_of=as_of)
-    _JP_INDEX_CONTRIBUTION_LAST["names"].update({k: v for k, v in names.items() if v})
-    _JP_INDEX_CONTRIBUTION_LAST["factorsAsOf"] = as_of
+        derived_factors=base, names=names, factors_as_of=as_of)
     return result
-
-
-def _jp_index_factor_needs():
-    """What the owner's entry form must show now (read from the last calculation)."""
-    if not _JP_INDEX_CONTRIBUTION_LAST["results"]:
-        _jp_market_internals_cached()
-    results = _JP_INDEX_CONTRIBUTION_LAST["results"]
-    need = jp_index_contribution.needs(results)
-    # The day each missing member joined (published changes), so its factor
-    # is entered as applying from that day.
-    since = {}
-    for row in sorted(((_nikkei225_constituent_changes() or {}).get("rows") or []),
-                      key=lambda r: str(r.get("effective") or "")):
-        for code in row.get("added") or []:
-            since[str(code)] = str(row.get("effective") or "")[:10] or None
-    return {**need, "names": {c: _JP_INDEX_CONTRIBUTION_LAST["names"].get(c) for c in need["missingFactorCodes"]},
-            "since": {c: since.get(c) for c in need["missingFactorCodes"]},
-            "factorsAsOf": _JP_INDEX_CONTRIBUTION_LAST["factorsAsOf"]}
-
-
-app.extensions["argus_index_factor_needs"] = _jp_index_factor_needs
-app.extensions["argus_index_factor_changed"] = lambda: _JP_INDEX_CONTRIBUTION_LAST["results"].clear()
 
 
 def _jp_index_proxy_warm(nikkei_rows):
@@ -41583,15 +41543,12 @@ def _jp_market_internals_cached():
         observations = [r for r in _MARKET_LEDGER.get("observations", []) if r.get("importId") not in rolled
                         and not (r.get("metadata") or {}).get("excludeFromEffective")]
         index_rows = (prices.get("NIKKEI_225_INDEX") or {}).get("rows") or []
-        computed = {}
         def contributions(horizon, start, end):
-            computed[str(horizon)] = _jp_index_contribution_for(start, end, index_rows)
-            return computed[str(horizon)]
+            return _jp_index_contribution_for(start, end, index_rows)
         result = jp_market_internals.build_snapshot(session_dates=sessions, cutoff=cutoff, prices=prices,
             symbols=[r["symbol"] for r in _JP_WATCHLIST], classifications=_JP_INTERNALS_CACHE["classifications"],
             breadth=jp_market_internals.breadth_from_ledger(observations, cutoff=cutoff),
             index_contributions=contributions)
-        _JP_INDEX_CONTRIBUTION_LAST["results"] = computed
         result["acquisition"] = {k: v for k, v in _JP_INTERNALS_ACQUISITION.items() if k != "lastAttemptMonotonic"}
         return result
     except Exception as exc:
