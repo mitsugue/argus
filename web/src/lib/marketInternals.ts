@@ -7,7 +7,7 @@ type Counts = { advancers:number; decliners:number; unchanged:number; available:
 type Period = { horizonSessions:number;startDate:string;endDate:string;index:Return;benchmark:Return;sectors:Sector[];assets:Asset[];sample:{isWholeMarket:false;counts:Counts};indexContributions:IndexContribution };
 export type ContributionRow = { code:string; nameJa:string|null; points:number; pricePct:number };
 export type IndexContribution = { status:string; reason?:string|null; startDate?:string; endDate?:string; members?:number;
-  indexDeltaPoints?:number; residualPoints?:number; factorsAsOf?:string|null; top?:ContributionRow[]; bottom?:ContributionRow[]; missingFactorCodes?:string[] };
+  indexDeltaPoints?:number; residualPoints?:number; factorsAsOf?:string|null; top?:ContributionRow[]; bottom?:ContributionRow[]; estimate?:boolean; assumedFactorCodes?:string[] };
 export type MarketInternalsDocument = { schemaVersion:string;evidenceId:string;asOfDate:string;periods:Record<string,Period>;actionAuthority:false;predictiveProbabilityVerified:false;limitationsJa:string[];
   comparisonAvailability?:{latestCompletedSessionDate:string;comparedThrough:string;latestSessionIncluded:boolean};
   breadth:{status:string;periodEnd?:string;universeLabelJa?:string;receivedAt?:string;counts?:{advancers:number;decliners:number;unchanged:number;unavailable:number;totalUniverseCount:number}};

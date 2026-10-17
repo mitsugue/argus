@@ -36,7 +36,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     # 受領済みの公式結果を既存の見立てとニュースへ渡す正確な内容。
-    'argus_macro_material.py': 'dc534081dff2a6ec82b0c11c53bd976948ca10f8',
+    'argus_macro_material.py': 'fdabb0863e0df5de12e4dd6c835e232ce7c65bc2',
     'test_argus_macro_material.py': 'b5e68b9722079359a1f74f72a21c527e80d94332',
     'docs/operations/official-macro-material.md': 'fe1a36ec2fac6168851d76a14f5407575f371763',
     'web/scripts/official-macro-results.test.cjs': 'fc44f9044ef9d6b08594121980a5ecab97df544e',
@@ -184,7 +184,7 @@ REVIEWED_EXTENSION_BLOBS = {
     '.github/actions/warm-profile-seed/action.yml': 'eda05275ed6f5f0eb86d866c15022535194cd5bb',
     '.github/actions/warm-profile-consumer/action.yml': '12934bafbf41522ba487c3b26328f74276dfc732',
     # Exact opt-in owner authentication, UI, backup and regression candidate.
-    'argus_owner_auth.py': '2489128c4aea1ce1a0fca08cb46747339b3e607d',
+    'argus_owner_auth.py': 'b3beff3fe54bd66209c860df755aec7b33c7dff3',
     'docs/ops/owner-server-auth.md': 'c1c9661a76392785523d34572227bcb98911d4a3',
     'scripts/owner_auth_backup.py': 'a6e25ebfbd2bbda11b88e578d5236eace54b2fcd',
     'test_argus_owner_auth.py': 'e40b6d73bcb283e836e7d5812bd7f7b16e721ace',
@@ -382,13 +382,13 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dialogue/OwnerDialogue.css': '99f542e0fc1391a58a1cb60ac1c5bec249fe9a28',
     'web/src/components/dialogue/OwnerDialogue.tsx': 'ee84e0b33570373650bb69c2208bafae960eae8e',
     'web/src/components/today/MarketBriefCard.tsx': '233425edb62286fe57d8e3666de491ecf9d5bed9',
-    'web/src/components/today/MarketInternalsCard.tsx': '1665575c4040eeab8eb90aff9b7241a894dece7f',
+    'web/src/components/today/MarketInternalsCard.tsx': 'b5a5e300d2d3f37578dab38ee2cc30aa3fce2dca',
     'web/src/components/today/SharedMarketContext.tsx': '4ec63a0ed76a28d86933cc128c033225d30d7244',
-    'web/src/lib/marketInternals.ts': '14196b3f1d70e3f7477dde5dc1a2ac783e8872ed',
+    'web/src/lib/marketInternals.ts': '00bf214587140911c29227f6460e1106104298f5',
     'web/src/lib/pwaRecovery.ts': '038fe1dc3e55433a0f72e8a06ca1701176155438',
     'web/src/components/today/MarketAnalysisHistory.tsx': '7a986421fdd00c28c53e563a09287dbbc314694e',
     'test_argus_analysis_history.py': 'c688b85b59294dee647f83c9b766a5aec62b71f8',
-    'argus_analysis_history.py': 'b78fa3f00656921ad8961d6ac99133203f76586f',
+    'argus_analysis_history.py': '88af8953dea84bdec7ccacab9d97bba02309d393',
     'argus_market_ledger.py': 'e497d1c6020adead5e823303e7a144ef6b1e7911',
     'jp_market_positioning.py': '265c103ffdbc995123cdbfbfbf86db00d264c9f0',
     'test_jp_market_positioning.py': '25652d6b817191b47053d3c9bef22f56e15d7a37',
@@ -686,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_brief_required_citations.py",
     "web/scripts/owner-session-clock-skew.test.cjs",
     ".github/workflows/restore-safe-pages.yml",
     "test_ledger_private_cutover.py",

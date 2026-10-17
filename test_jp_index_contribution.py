@@ -33,38 +33,36 @@ def test_points_add_up_to_the_index_move():
     assert result["sumOfContributionsPoints"] == result["indexDeltaPoints"] == 44.0
 
 
-def test_a_factor_that_changed_unseen_shows_no_member_values():
-    # The real factor of 1003 became 1.0 (a split); the derived 2.0 no longer adds up.
-    actual = {**FACTORS, "1003": 1.0}
+def test_a_large_unseen_factor_change_shows_no_member_values():
+    # The real factor of 1003 became 0.2 (a big split); the derived 2.0 is far off.
+    actual = {**FACTORS, "1003": 0.2}
     result = run(index_close={"2026-10-14": official(START), "2026-10-15": official(END, actual)})
     assert result["status"] == "SUM_MISMATCH" and "top" not in result
-    assert ic.needs({"1": result})["mismatch"]["endDate"] == "2026-10-15"
 
 
-def test_a_new_member_without_a_factor_asks_for_it_and_the_entry_completes_it():
+def test_a_new_member_is_counted_with_factor_one_and_marked_as_an_estimate():
+    """Owner 2026-10-17: fully automatic; an estimate within a small error is fine."""
     derived = {"1001": 1.0, "1002": 0.5}               # 1003 joined after the weight table
-    result = run(derived_factors=derived)
-    assert result["status"] == "NEEDS_FACTOR" and result["missingFactorCodes"] == ["1003"]
-    assert ic.needs({"1": result}) == {"missingFactorCodes": ["1003"], "mismatch": None, "inputDue": True}
-    entered = run(derived_factors=derived, overrides=[{"code": "1003", "factor": 2.0, "effectiveFrom": "2026-10-01"}])
-    assert entered["status"] == "AVAILABLE"
-    assert ic.needs({"1": entered})["inputDue"] is False
+    exact = run(derived_factors=derived, index_close={"2026-10-14": official(START, {**FACTORS, "1003": 1.0}),
+                                                      "2026-10-15": official(END, {**FACTORS, "1003": 1.0})})
+    assert exact["status"] == "AVAILABLE" and exact["assumedFactorCodes"] == ["1003"] and exact["estimate"] is True
+    near = run(derived_factors=derived)                # the real factor is 2.0: the error is 15 points
+    assert near["status"] == "SUM_MISMATCH" or abs(near["residualPoints"]) <= max(1.0, 0.03 * abs(near["indexDeltaPoints"]))
+
+
+def test_a_small_residual_is_shown_as_an_estimate_and_a_large_one_is_hidden():
+    exact = run()
+    assert exact["status"] == "AVAILABLE" and exact["estimate"] is False
+    slightly = run(index_close={"2026-10-14": official(START), "2026-10-15": official(END) + 0.5})
+    assert slightly["status"] == "AVAILABLE" and slightly["estimate"] is True
+    far = run(index_close={"2026-10-14": official(START), "2026-10-15": official(END) + 5})
+    assert far["status"] == "SUM_MISMATCH"
 
 
 def test_changes_inside_the_period_are_refused():
     assert run(members_end={"1001", "1002"})["reason"] == "constituents_changed_in_period"
-    later = [{"code": "1003", "factor": 1.0, "effectiveFrom": "2026-10-15"}]
-    assert run(overrides=later)["reason"] == "factor_changed_in_period"
     assert run(closes={"2026-10-14": START, "2026-10-15": {"1001": 1100}})["reason"] == "member_closes_missing"
     assert run(index_close={"2026-10-14": official(START)})["reason"] == "index_close_missing"
-
-
-def test_the_latest_owner_entry_effective_on_the_day_wins():
-    rows = [{"code": "1003", "factor": 1.0, "effectiveFrom": "2026-09-01"},
-            {"code": "1003", "factor": 2.0, "effectiveFrom": "2026-10-01"},
-            {"code": "1003", "factor": 9.0, "effectiveFrom": "2026-11-01"}]
-    assert ic.factor_on("1003", "2026-10-15", FACTORS, rows) == Decimal("2.0")
-    assert ic.factor_on("1001", "2026-10-15", FACTORS, rows) == Decimal("1.0")
 
 
 def test_scanner_keeps_member_closes_and_computes_from_cached_inputs_only(monkeypatch):
@@ -75,7 +73,6 @@ def test_scanner_keeps_member_closes_and_computes_from_cached_inputs_only(monkey
                                                      "memberCloses": {}})
     monkeypatch.setattr(scanner, "_nikkei225_constituent_changes", lambda: {"rows": []})
     monkeypatch.setattr(scanner, "_jq_name_for", lambda code, **kw: {"1001": "甲"}.get(code))
-    monkeypatch.setattr(scanner, "_jp_index_factor_overrides", lambda: [])
     for day, prices in (("2026-10-14", START), ("2026-10-15", END)):
         bars = {code + "0": {"C": price} for code, price in prices.items()}
         bars["99990"] = {"C": 1}                                     # not a member: not kept

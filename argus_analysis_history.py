@@ -242,6 +242,10 @@ def call_report(path, *, since_day):
             first = first if isinstance(first, dict) else {}
             row["viewsWithCorrection"] += 1
             reason = re.sub(r"[^A-Za-z0-9_:.-]", "_", str(first.get("reason") or first.get("status") or "unknown"))[:60]
+            if reason == "presentation_invalid" and first.get("detail"):
+                # 2026-10-17: which presentation rule fails (a code such as
+                # presentation_evidence_invalid), to target the next reduction.
+                reason += ":" + re.sub(r"[^A-Za-z0-9_.-]", "_", str(first.get("detail")))[:60]
             row["firstRejectionReasons"][reason] = row["firstRejectionReasons"].get(reason, 0) + 1
         for attempt in attempts:
             provider = (attempt.get("provider") or {}) if isinstance(attempt, dict) else {}

@@ -143,6 +143,29 @@ def released_materials(records, *, now_iso, history=False):
     return sorted(selected.values(), key=lambda row: row['sourceReceivedAt'], reverse=True)[:8]
 
 
+def required_citation_line(facts):
+    """The evidence IDs checked_coverage requires, stated in the request itself.
+
+    2026-10-17 (measured): about a third of the first answers were rejected
+    as important_macro_reporting_omitted and paid for a second full request.
+    The same rule now reaches the model before it answers. ``facts`` are the
+    prompt facts (their evidenceId already aliased). Empty when nothing applies.
+    """
+    rows = [f for f in facts or () if isinstance(f, dict)]
+    result = [f.get('evidenceId') for f in rows if f.get('source') == 'official_macro_result'
+              and f.get('priority') == 'P0' and f.get('evidenceId')][:1]
+    reporting = [f.get('evidenceId') for f in rows if f.get('source') == 'macro_release_news'
+                 and f.get('priority') == 'P0' and f.get('evidenceId')]
+    parts = []
+    if result:
+        parts.append(f"公式結果の根拠ID {result[0]} を必ず含める")
+    if reporting:
+        parts.append("関連報道の根拠ID(" + "・".join(reporting[:6]) + ")から少なくとも1つを必ず含める")
+    if not parts:
+        return ""
+    return "必須: viewまたはreasonsのevidenceIdsに、" + "。".join(parts) + "。"
+
+
 def checked_coverage(summary, context, diagnostic):
     """Reject a new edition that silently skips its leading official result.
 
