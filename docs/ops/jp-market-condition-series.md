@@ -174,4 +174,3 @@ TTL。`jp_market_acquisition.py` の変更は特徴履歴の手法識別子を�
 - 出し先: 管理診断 `collectionHealth.seriesReconciliation`(日付は先頭50件まで)、
   指数チャートの `marketFeatureAcquisition.seriesReconciliation`(件数と状態のみ)、Data Quality 画面の表。
   Today のカードは変えない。原本は書き換えない。
-
