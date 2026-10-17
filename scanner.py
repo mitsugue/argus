@@ -17577,6 +17577,11 @@ def _market_brief_ai_polish(brief):
         "STRICT JSONで6項目とpresentationとpositionを返してください。")
     user = (instructions + argus_presentation_intent.generation_instruction(prompt_catalog).replace("\n", " ")
         + "\n" + json.dumps(prompt_context, ensure_ascii=False, separators=(",", ":")))
+    # 2026-10-17: the citation rule that otherwise rejects the first answer,
+    # stated after the data so the reusable instruction prefix is unchanged.
+    required = argus_macro_material.required_citation_line(prompt_context.get("facts"))
+    if required:
+        user += "\n" + required
     diag = {}
     raw = _openai_prose(user, max_out=5200,
                        system=argus_presentation_intent.VOICE,
