@@ -18,9 +18,9 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.121"
-ACCEPTED_V13_SOURCE = "f79548bb274c5c5acc4075c181195834c252d54d"
-ACCEPTED_V13_TREE = "bdba7c970872b92b88bc6e7cc7b0b8afe4785a96"
+PRODUCT_VERSION = "v13.8.122"
+ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
+ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -161,7 +161,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '67773f00aa636d3e90d84dbafb684f339b13c324',
+    'web/scripts/owner-today-https.mjs': '95c37c5f6baefc8f52e03c4d61aaf7d5e40ca52a',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -589,8 +589,10 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # market-shock (Major News) pipeline, the Prediction Ledger workflow
     # correction (canonical steps before private-store extras + precise
     # diagnostics), the checkpoint-v2 capacity budgets, and the v13.5.x
-    # identity. The accepted baseline is the LIVE v13.5.0 release
-    # (f79548bb…); anything outside this list fails the release closed.
+    # identity. The accepted baseline was the LIVE v13.5.0 release; since
+    # 2026-10-17 it is the first commit of this repository (the same tree,
+    # without the earlier history, which is kept in a private archive).
+    # Anything outside this list fails the release closed.
     # v13.5.36 SCHEDULED_AI enablement (owner 「有効にして」 2026-08-23/24):
     # bounded cost-policy mode + quarantine review. Decision authority remains
     # deterministic and fail-closed.
@@ -684,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    ".github/workflows/restore-safe-pages.yml",
     "test_ledger_private_cutover.py",
     "scripts/ledger_use_private.sh",
     "docs/operations/ledger-private-repository.md",
