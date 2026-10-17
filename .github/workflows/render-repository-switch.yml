@@ -1,0 +1,47 @@
+# One-time switch of the Render service to this repository (2026-10-17).
+#
+# The previous repository moved to a private archive. The Render service still
+# builds from it; this manual job points the same service at this repository's
+# main branch and starts one deploy, using the Render key stored in the
+# protected environment. No inputs: the service, repository and branch are
+# fixed here. It prints only the resulting repository, branch and deploy state.
+name: render-repository-switch
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-repository-switch
+  cancel-in-progress: false
+
+jobs:
+  switch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production-release-manifest
+    steps:
+      - name: Point the Render service at this repository and deploy main
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$RENDER_API_KEY" || { echo "::error::RENDER_API_KEY is not registered"; exit 1; }
+          SERVICE=srv-d8j2hts8aovs738s1in0
+          API=https://api.render.com/v1/services/$SERVICE
+          curl -sS --fail-with-body -X PATCH "$API" \
+            -H "Authorization: Bearer $RENDER_API_KEY" -H "Content-Type: application/json" \
+            -d "{\"repo\":\"https://github.com/${GITHUB_REPOSITORY}\",\"branch\":\"main\"}" \
+            -o "$RUNNER_TEMP/service.json"
+          python3 - "$RUNNER_TEMP/service.json" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          print("repo:", d.get("repo"), "branch:", d.get("branch"))
+          assert d.get("repo", "").rstrip("/").endswith("/mitsugue/argus") and d.get("branch") == "main"
+          PY
+          curl -sS --fail-with-body -X POST "$API/deploys" \
+            -H "Authorization: Bearer $RENDER_API_KEY" -H "Content-Type: application/json" \
+            -d '{"clearCache":"do_not_clear"}' -o "$RUNNER_TEMP/deploy.json"
+          python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print('deploy:',d.get('status'),'commit:',(d.get('commit') or {}).get('id'))" "$RUNNER_TEMP/deploy.json"
