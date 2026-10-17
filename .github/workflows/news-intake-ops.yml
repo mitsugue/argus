@@ -1,0 +1,103 @@
+# v13.5.3 — owner-only news-intake operations (manual dispatch).
+# Lets the operator trigger the bounded reprocess/backfill (§26) without ever
+# moving the admin token through chat or local machines.
+name: news-intake-ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'reprocess = bounded backfill / quarantine-review = classify past quarantines (add -reprocess to also re-inject false quarantines)'
+        required: true
+        default: 'reprocess'
+        type: choice
+        options:
+          - reprocess
+          - health
+          - quarantine-review
+          - quarantine-reprocess
+          - ai-ping
+
+permissions:
+  contents: read
+
+jobs:
+  ops:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Run intake operation
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          if [ "${{ inputs.action }}" = "health" ]; then
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/news-intake/health" \
+              | python3 -m json.tool | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token"; exit 1; }
+          case "${{ inputs.action }}" in
+            ai-ping)
+              # Production uses Terra only.  This manual diagnostic never
+              # probes retired external providers or a higher-cost fallback.
+              for TARGET in "openai "; do
+                P="${TARGET%% *}"; Q="${TARGET##* }"
+                RESP=$(curl -s --max-time 150 -X POST \
+                  -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"provider\": \"$P\", \"confirm\": true, \"reason\": \"model currency proof (owner-approved ops dispatch)\"}" \
+                  "$BE/api/argus/ai-provider-status/ping$Q" || echo '{}')
+                echo "$RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); row=d.get("openai") or {}; print("provider=%s requested=%s returned=%s ok=%s status=%s" % (d.get("provider"), row.get("requestedModel") or d.get("model"), row.get("returnedModel") or row.get("model"), row.get("ok"), d.get("status") or d.get("reason") or "called"))' \
+                  2>/dev/null || echo "ping parse failed: ${RESP:0:160}"
+              done | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "--- lastPings (server-side record; survives client timeouts) ---"
+              curl -s --max-time 30 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+                "$BE/api/argus/ai-provider-status" \
+                | python3 -c 'import json,sys; [print("%s requested=%s returned=%s ok=%s at=%s" % (k, v.get("requestedModel"), v.get("returnedModel"), v.get("ok"), v.get("at"))) for k, v in (json.load(sys.stdin).get("lastPings") or {}).items()]' \
+                | tee -a "$GITHUB_STEP_SUMMARY"
+              ;;
+            quarantine-review|quarantine-reprocess)
+              BODY='{"reprocess": false}'
+              [ "${{ inputs.action }}" = "quarantine-reprocess" ] && BODY='{"reprocess": true}'
+              RESP=$(curl -sf --max-time 300 -X POST \
+                -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+                -H "Content-Type: application/json" -d "$BODY" \
+                "$BE/api/argus/admin/news-intake/quarantine-review")
+              # Public repo: print a REDACTED summary only — verdicts, domains
+              # and auth flags. subjectPrefix (licensed content) never reaches
+              # the log.
+              python3 - "$RESP" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          try:
+              data = json.loads(sys.argv[1])
+          except Exception:
+              print("unparseable response head:", sys.argv[1][:200])
+              raise SystemExit(1)
+          print("ok:", data.get("ok"), "counts:",
+                json.dumps(data.get("counts") or {}))
+          if data.get("noteJa"):
+              print("note:", data["noteJa"])
+          for r in data.get("reviewed") or []:
+              print("- {} verdict={} from={} rp={} spf={} dkim={} dmarc={} "
+                    "source={} reprocessed={}".format(
+                        str(r.get("messageId", ""))[:12], r.get("verdict"),
+                        r.get("fromDomain"), r.get("returnPathDomain"),
+                        r.get("spf"), r.get("dkim"), r.get("dmarc"),
+                        r.get("resolvedSource"),
+                        r.get("reprocessedStatus", "-")))
+              if r.get("verdict") == "UNRESOLVED_SOURCE_FAMILY":
+                  print("    links={}".format(
+                      ",".join(r.get("linkDomains") or [])[:140]))
+          PY
+              ;;
+            *)
+              RESP=$(python3 scripts/workflow_http.py --name news-reprocess \
+                --method POST --timeout 300 \
+                --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+                --url "$BE/api/argus/admin/news-intake/reprocess")
+              echo "reprocess: $RESP"
+              echo "📥 news reprocess: \`${RESP:0:300}\`" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac

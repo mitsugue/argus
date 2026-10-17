@@ -1,0 +1,167 @@
+"""v13.5.44 — ARGUS-derived Japan valuation (argus_japan_valuation) tests."""
+from __future__ import annotations
+
+import json
+
+import argus_japan_valuation as val
+import jp_market_engine as jp_market_engine
+
+ROWS = [
+    {"Code": "58030", "DiscDate": "2026-08-05", "FEPS": 250.0, "EPS": 60.1,          # V2 summary row shape
+     "DocType": "1QFinancialStatements_Consolidated_JP", "CurPerEn": "2026-06-30"},
+    {"LocalCode": "58030", "DisclosedDate": "2026-08-05", "ForecastEarningsPerShare": "250.0",
+     "EarningsPerShare": "60.1", "TypeOfDocument": "1QFinancialStatements_Consolidated_JP"},
+    {"LocalCode": "58030", "DisclosedDate": "2026-05-10", "ForecastEarningsPerShare": "240.0"},
+    {"LocalCode": "80580", "DisclosedDate": "2026-08-01", "ForecastEarningsPerShare": "400.0"},
+    {"LocalCode": "99840", "DisclosedDate": "2026-08-07", "ForecastEarningsPerShare": "-10.0"},
+    {"LocalCode": "12345", "DisclosedDate": "2026-08-07"},                     # no EPS → skipped
+    {"Code": "6584", "DisclosedDate": "2026-07-30", "EarningsPerShare": "80.0"},  # actual only
+]
+PRICES = {"5803": 4951.0, "8058": 5059.0, "9984": 5001.0, "6584": 1600.0}
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_product_stores():
+    """Module stores (boot warm, derived valuation, statements state) must never
+    leak into other auto-discovered suites (e.g. D07 expects MISSING when cold)."""
+    import argus_chart_bootstrap as _boot
+    import argus_japan_valuation as _val
+    _boot._reset_for_tests(); _val._reset_for_tests()
+    yield
+    _boot._reset_for_tests(); _val._reset_for_tests()
+
+
+
+def test_latest_forecast_eps_keeps_newest_disclosure_per_issuer():
+    eps = val.latest_forecast_eps(ROWS)
+    assert eps["5803"]["forecastEps"] == 250.0 and eps["5803"]["disclosedDate"] == "2026-08-05"
+    assert eps["6584"]["forecastEps"] is None and eps["6584"]["actualEps"] == 80.0
+    assert "1234" not in eps
+
+
+def test_compute_derives_forward_per_median_and_condition_without_claiming_nikkei():
+    evidence = val.compute(ROWS, PRICES, computed_at="2026-09-03T09:00:00Z",
+                           universe=["5803", "8058", "9984", "6584", "7203"])
+    assert evidence["status"] == "AVAILABLE" and evidence["lineage"] == "ARGUS_CANDIDATE"
+    by_code = {row["code"]: row for row in evidence["issuers"]}
+    assert by_code["5803"]["forwardPer"] == round(4951.0 / 250.0, 4)
+    assert by_code["9984"]["forwardPer"] is None                # negative EPS → no PER
+    assert by_code["6584"]["epsBasis"] == "ACTUAL"
+    assert "7203" not in by_code                                # no statement → excluded
+    assert evidence["coverage"] == 3 and evidence["universeSize"] == 5
+    assert evidence["conditionMet"] == (evidence["medianForwardPer"] <= 21.0)
+    assert evidence["nikkeiOfficialPer"] == "NOT_CLAIMED"
+    assert evidence["knownAt"] == "2026-08-07" or evidence["knownAt"] == "2026-08-05"
+    serialized = json.dumps(evidence).lower()
+    assert "nikkei 225 per" not in serialized
+
+
+def test_compute_reports_missing_when_no_coverage():
+    evidence = val.compute(ROWS, {}, computed_at="2026-09-03T09:00:00Z", universe=["5803"])
+    assert evidence["status"] == "MISSING" and evidence["conditionMet"] is None
+    assert evidence["missing"] == ["derived_forward_per_coverage"]
+
+
+def test_d04_keeps_universe_valuation_separate_and_point_in_time():
+    val._reset_for_tests()
+    cutoff = "2026-09-03T09:00:00Z"
+    blocked = jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX")
+    assert blocked["status"] == "LICENSE_BLOCKED"
+    evidence = val.compute(ROWS, PRICES, computed_at=cutoff, universe=["5803", "8058"])
+    val.publish(evidence)
+    derived = jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX")
+    assert derived["status"] == "LICENSE_BLOCKED"
+    assert derived["conditionMet"] is None and derived["levels"] == []
+    alternate = derived["alternativeValuation"]
+    assert alternate["appliesToD04"] is False
+    assert alternate["evidence"]["medianForwardPer"] == evidence["medianForwardPer"]
+    # explicit argument wins; future-dated evidence is not visible at the cutoff
+    future = {**evidence, "availableFrom": "2026-09-04T23:59:00+09:00"}
+    assert jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
+                            derived_valuation=future)["status"] == "LICENSE_BLOCKED"
+    val._reset_for_tests()
+    assert jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX")["status"] == "LICENSE_BLOCKED"
+
+
+def test_d07_not_applicable_only_when_statements_feed_is_warm():
+    val._reset_for_tests()
+    cold = jp_market_engine.evaluate_d07(cutoff="2026-09-03T09:00:00Z")
+    assert cold["status"] == "MISSING"
+    val.publish_statements_state({"warmedAt": "2026-09-03T08:59:00Z", "rowCount": 0, "source": "jquants"})
+    warm = jp_market_engine.evaluate_d07(cutoff="2026-09-03T09:00:00Z")
+    assert warm["status"] == "NOT_APPLICABLE" and warm["missing"] == ["no_supported_earnings_event_in_window"]
+    assert warm["statementsFeed"]["rowCount"] == 0
+    val._reset_for_tests()
+    explicit = jp_market_engine.evaluate_d07(cutoff="2026-09-03T09:00:00Z",
+                                statements_state={"warmedAt": "x", "rowCount": 3, "source": "jquants"})
+    assert explicit["status"] == "NOT_APPLICABLE"
+
+
+def test_family_conditions_are_deterministic_and_labelled():
+    cutoff = "2026-09-03T09:00:00Z"
+    proxy = {"instrumentId": "1321", "seriesId": "relative_strength_20d", "date": "2026-09-02",
+             "value": 0.012, "availableFrom": "2026-09-02T07:00:00Z"}
+    d03 = jp_market_engine.evaluate_d03(cutoff=cutoff, proxy_evidence=proxy)
+    assert d03["conditionMet"] is True and d03["conditionLineage"] == "ARGUS_CANDIDATE"
+    assert jp_market_engine.evaluate_d03(cutoff=cutoff, proxy_evidence={**proxy, "value": -0.02})["conditionMet"] is False
+    assert jp_market_engine.evaluate_d03(cutoff=cutoff)["conditionMet"] is None
+    flow = {"seriesId": "flow.foreign", "periodEnd": "2026-08-29", "availableFrom": "2026-09-02T00:00:00Z", "value": -1099300000000.0}
+    d05 = jp_market_engine.evaluate_d05([flow], cutoff=cutoff)
+    assert d05["direction"] == "OUTFLOW" and d05["conditionMet"] is False
+    assert jp_market_engine.evaluate_d05([{**flow, "value": 5.0}], cutoff=cutoff)["conditionMet"] is True
+    closes = [20 + (i % 7) * 0.5 - (i / 10.0) for i in range(80)]
+    rows = [{"instrumentId": "VIX", "seriesId": "vix.close", "value": c,
+             "periodEnd": f"2026-0{1 + i // 28}-{1 + i % 28:02d}",
+             "availableFrom": f"2026-0{1 + i // 28}-{2 + i % 28:02d}T00:00:00Z"} for i, c in enumerate(closes)]
+    d06 = jp_market_engine.evaluate_d06(rows, cutoff=cutoff)
+    assert d06["status"] == "AVAILABLE" and d06["conditionMet"] in (True, False)
+    assert d06["conditionMet"] == (d06["argusBaseline"]["histogram"] < 0)
+    assert d06["conditionLineage"] == "ARGUS_CANDIDATE"
+
+
+
+def test_d07_condition_is_reaction_based_and_labelled():
+    cutoff = "2026-09-03T09:00:00Z"
+    event = {"instrumentId": "5803", "date": "2026-08-06", "knownAt": "2026-08-05T15:30:00+09:00",
+             "availableFrom": "2026-08-05T15:30:00+09:00", "epsActual": 60.1, "epsEstimate": None,
+             "qualitySupported": False}
+    def bar(day, close):
+        return {"instrumentId": "5803", "date": day, "open": close - 1, "high": close + 2, "low": close - 3,
+                "close": close, "volume": 1000, "availableFrom": f"{day}T07:00:00Z"}
+    days = ["2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13"]
+    up = [bar(d, 100 + i * 2) for i, d in enumerate(days)]
+    result = jp_market_engine.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=up)
+    assert result["status"] == "AVAILABLE" and result["conditionMet"] is True
+    assert result["conditionLineage"] == "ARGUS_CANDIDATE" and "5d" in result["conditionRule"]
+    down = [bar(d, 100 - i * 2) for i, d in enumerate(days)]
+    assert jp_market_engine.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=down)["conditionMet"] is False
+    assert jp_market_engine.evaluate_d07(cutoff=cutoff, earnings_event=event, stock_bars=down)["supportedBeatMiss"] is None
+
+
+def test_d04_takes_the_argus_proxy_only_as_a_labelled_candidate():
+    """The official row stays LICENSE_BLOCKED; the proxy fills the same quantity
+    under its own basis, lineage and measured error (owner spec, D04)."""
+    from jp_market_price_paths import PROXY_BASIS
+    cutoff = "2026-09-10T09:00:00Z"
+    proxy = {"instrumentId": "NIKKEI_225_INDEX", "basis": PROXY_BASIS, "currency": "JPY",
+             "date": "2026-09-10", "indexClose": 44000.0, "per": 22.0,
+             "sourceRef": "argus:proxy:test", "knownAt": "2026-09-10T08:00:00Z",
+             "officialErrorPct": 0.6, "coverage": {"priced": 225, "members": 225}}
+    row = jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
+                                        proxy_valuation=proxy)
+    assert row["status"] == "AVAILABLE"
+    assert row["lineage"] == "ARGUS_CANDIDATE" and row["conditionLineage"] == "ARGUS_CANDIDATE"
+    assert row["officialStatus"] == "LICENSE_BLOCKED"
+    assert row["proxyErrorPct"] == 0.6
+    assert row["per"] == 22.0 and abs(row["eps"] - 2000.0) < 1e-9
+    assert row["valuation"]["isProxy"] is True
+    # A proxy with the wrong basis, or one not known at the cutoff, changes nothing.
+    wrong = jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
+                                          proxy_valuation={**proxy, "basis": "CAP_WEIGHTED_PER"})
+    assert wrong["status"] == "LICENSE_BLOCKED"
+    late = jp_market_engine.evaluate_d04(cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
+                                         proxy_valuation={**proxy, "knownAt": "2026-09-10T10:00:00Z"})
+    assert late["status"] == "LICENSE_BLOCKED" and late["proxyRejected"] == "valuation_not_known_at_cutoff"

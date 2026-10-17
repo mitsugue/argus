@@ -1,0 +1,12 @@
+[Unit]
+Description=A.R.G.U.S. mission tick every 30 minutes (EC2 primary)
+
+[Timer]
+OnCalendar=*-*-* *:07,37:00 UTC
+Persistent=true
+AccuracySec=1s
+RandomizedDelaySec=0
+Unit=argus-mission-tick.service
+
+[Install]
+WantedBy=timers.target

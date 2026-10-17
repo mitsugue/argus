@@ -1,0 +1,40 @@
+.argus-editorial{color:#dfe8ed;padding:8px 0 20px;max-width:980px;margin:auto}
+.argus-editorial__edition{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;color:#92bbce;font-size:13px;letter-spacing:.04em}
+.argus-editorial__edition time,.argus-editorial__edition [role="status"]{white-space:nowrap}
+.argus-editorial__edition time,.argus-editorial__period{color:#8e9ba5;font-size:12px}
+.argus-editorial__period{margin:10px 0 30px}
+.argus-editorial__retained--update{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin:4px 0 10px;color:#9eabb5;font-size:12px;line-height:1.6}
+.argus-editorial__retained--update .triangle-step-loader{color:#c9d8e0}
+.argus-editorial__element{margin:0 0 24px;min-width:0}
+.argus-editorial__element h2{font-weight:500;font-size:13px;color:#a7c5d3;margin:0 0 10px;letter-spacing:.04em}
+.argus-editorial__text{font-size:15px;line-height:1.9;margin:0;text-wrap:pretty;overflow-wrap:anywhere;color:#c4cdd4}
+.argus-editorial__element.is-primary{margin-top:14px;margin-bottom:30px}
+.argus-editorial__element.is-primary>.argus-editorial__text{font-size:clamp(23px,3.1vw,32px);font-weight:500;line-height:1.7;letter-spacing:.025em;color:#e3ebef;max-width:28em}
+.argus-editorial__element.is-quiet>.argus-editorial__text{font-size:13px;color:#a1aeb8}
+.argus-editorial__element.element-changes{border-left:2px solid #93c6df;padding:2px 0 3px 17px}
+.argus-editorial__element.element-changes h2{color:#c6d7de}
+.argus-editorial__element.placement-lead{margin-bottom:30px}
+.argus-editorial__element.element-nikkei-comparison{margin-top:32px}
+.argus-editorial__element.element-nikkei-comparison .jp-comparison{background:#141e28;border-color:#2b3b47;border-radius:18px}
+.argus-editorial__uncertain{display:block;color:#8e9ba5;font-size:11px;margin-top:5px}
+.argus-editorial details summary{cursor:pointer;min-height:44px;align-content:center;color:#9aadb9;font-size:13px}
+.argus-editorial__evidence{border-top:1px solid #25323c;padding-top:10px;margin-top:24px;font-size:13px;line-height:1.8;color:#a3b0ba}
+.argus-editorial__evidence h3{font-size:13px;color:#bccbd4}
+.argus-editorial__evidence small{display:block;font-size:11px;color:#7f919e}
+.argus-editorial__fact-list{margin-top:10px;font-size:13px;line-height:1.8;color:#a8b6c0}
+.argus-editorial__fact-list>div{padding:12px 0;border-top:1px solid #26333d}
+.argus-editorial__fact-list p{margin:0 0 6px;overflow-wrap:anywhere}
+.argus-editorial__fact-list small{display:block;color:#8e9ba5;font-size:11px;overflow-wrap:anywhere}
+.argus-editorial__fact-list a{color:#93c6df;display:inline-block;min-height:36px;align-content:center}
+@media(max-width:480px){.argus-editorial__edition{font-size:12px}.argus-editorial__period{margin-bottom:24px}.argus-editorial__text{font-size:14px;line-height:1.85}.argus-editorial__element{margin-bottom:22px}.argus-editorial__element.is-primary>.argus-editorial__text{font-size:24px;line-height:1.7}.argus-editorial__element.element-changes{padding-left:14px}}
+
+.argus-editorial__fact-note { color: var(--text-muted); font-size: 11px; margin: 0 0 6px; }
+
+.argus-editorial--live .argus-editorial__edition span { font-size: 12px; }
+.argus-editorial__digest { display: grid; gap: 10px; margin: 0 0 18px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.argus-editorial__digest h2 { margin: 0; color: var(--text-sub); font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+.argus-editorial__digest-row small { display: block; color: var(--cyan); font-size: 11px; font-weight: 600; margin-bottom: 2px; }
+.argus-editorial__digest-row p { margin: 0; color: var(--text-main); font-size: 14px; line-height: 1.6; }
+.argus-editorial__vault { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin: 0 0 18px; }
+.argus-editorial__vault > summary { color: var(--text-main); font-size: 14px; font-weight: 600; cursor: pointer; }
+.argus-editorial__vault[open] > summary { margin-bottom: 8px; }

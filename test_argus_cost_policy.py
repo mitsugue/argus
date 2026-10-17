@@ -1,0 +1,515 @@
+import unittest
+
+import argus_cost_policy as cp
+
+
+class CostPolicyTests(unittest.TestCase):
+    def test_deterministic_blocks_all_generated_ai(self):
+        state = cp.default_state()
+        for provider in cp.PROVIDERS:
+            result = cp.authorize(
+                state, provider=provider, purpose="scheduled", automatic=True,
+                estimated_cost_usd=0.01, estimated_tokens=100)
+            self.assertFalse(result["allowed"])
+            self.assertEqual(result["classification"], "expected_skip")
+            self.assertEqual(result["status"], "deterministic_mode")
+
+    def test_event_opt_in_is_explicit_bounded_and_fail_closed(self):
+        state = cp.configure(cp.default_state(), mode="EVENT_OPT_IN",
+                             event_opt_in=True, event_id="CPI-1",
+                             event_enabled=True, providers=["openai"],
+                             event_budget_usd=0.5, event_token_limit=5000)
+        allowed = cp.authorize(
+            state, provider="openai", purpose="event_analysis", automatic=True,
+            event_id="CPI-1", event_phase="pre", estimated_cost_usd=0.1,
+            estimated_tokens=1000)
+        self.assertTrue(allowed["allowed"])
+        state = cp.record_execution(
+            state, provider="openai", purpose="event_analysis",
+            at="2026-07-20T01:00:00Z", estimated_cost_usd=0.1,
+            event_id="CPI-1", event_phase="pre")
+        duplicate = cp.authorize(
+            state, provider="openai", purpose="event_analysis", automatic=True,
+            event_id="CPI-1", event_phase="pre", estimated_cost_usd=0.1,
+            estimated_tokens=1000)
+        self.assertEqual(duplicate["reason"], "event_phase_already_run")
+        unknown_cost = cp.authorize(
+            state, provider="openai", purpose="event_analysis", automatic=True,
+            event_id="CPI-1", event_phase="post", estimated_cost_usd=None,
+            estimated_tokens=1000)
+        self.assertEqual(unknown_cost["reason"], "cost_unknown")
+
+    def test_manual_requires_confirmation_and_never_authorizes_automatic(self):
+        state = cp.default_state("MANUAL")
+        denied = cp.authorize(
+            state, provider="gemini", purpose="manual_api", automatic=True,
+            confirmation=True, estimated_cost_usd=0.01, estimated_tokens=100)
+        self.assertEqual(denied["reason"], "manual_only")
+        denied = cp.authorize(
+            state, provider="gemini", purpose="manual_api", automatic=False,
+            confirmation=False, estimated_cost_usd=0.01, estimated_tokens=100)
+        self.assertEqual(denied["reason"], "confirmation_required")
+        allowed = cp.authorize(
+            state, provider="gemini", purpose="manual_api", automatic=False,
+            confirmation=True, estimated_cost_usd=0.01, estimated_tokens=100)
+        self.assertTrue(allowed["allowed"])
+
+    def test_public_status_counts_providers_without_secrets(self):
+        state = cp.default_state()
+        state = cp.record_execution(state, provider="openai", purpose="manual_api",
+                                    at="2026-07-20T01:00:00Z", estimated_cost_usd=0.02)
+        view = cp.public_status(state, "2026-07-20T02:00:00Z")
+        self.assertEqual(view["todayRuns"]["openai"], 1)
+        self.assertFalse(view["automaticAiEnabled"])
+        self.assertNotIn("apiKey", view)
+
+    # ── v13.5.36 SCHEDULED_AI (owner 2026-08-23 「有効にして」) ──
+    def test_scheduled_ai_allows_only_the_two_news_purposes(self):
+        state = cp.default_state("SCHEDULED_AI")
+        for purpose in cp.SCHEDULED_PURPOSES:
+            result = cp.authorize(
+                state, provider="gemini", purpose=purpose, automatic=True,
+                now_iso="2026-08-24T01:00:00Z",
+                estimated_cost_usd=0.02, estimated_tokens=3000)
+            self.assertTrue(result["allowed"], purpose)
+        for purpose in ("event_analysis", "ai_judgment", "osint_research",
+                        "buy_candidates", "prose"):
+            result = cp.authorize(
+                state, provider="openai", purpose=purpose, automatic=True,
+                now_iso="2026-08-24T01:00:00Z",
+                estimated_cost_usd=0.02, estimated_tokens=3000)
+            self.assertFalse(result["allowed"], purpose)
+            self.assertEqual(result["reason"], "scheduled_scope_required")
+
+    def test_scheduled_ai_daily_budget_is_a_hard_stop_and_resets_next_day(self):
+        state = cp.default_state("SCHEDULED_AI")
+        for i in range(3):
+            state = cp.record_execution(
+                state, provider="gemini", purpose="headline_translation",
+                at="2026-08-24T0%d:00:00Z" % i, estimated_cost_usd=0.4)
+        blocked = cp.authorize(
+            state, provider="gemini", purpose="headline_translation",
+            automatic=True, now_iso="2026-08-24T04:00:00Z",
+            estimated_cost_usd=0.02, estimated_tokens=3000,
+            scheduled_daily_budget_usd=1.0)
+        self.assertFalse(blocked["allowed"])
+        self.assertEqual(blocked["reason"], "scheduled_daily_budget_exhausted")
+        next_day = cp.authorize(
+            state, provider="gemini", purpose="headline_translation",
+            automatic=True, now_iso="2026-08-25T01:00:00Z",
+            estimated_cost_usd=0.02, estimated_tokens=3000,
+            scheduled_daily_budget_usd=1.0)
+        self.assertTrue(next_day["allowed"])
+
+    def test_monthly_cap_blocks_before_a_provider_call_even_when_daily_cap_allows(self):
+        state = cp.default_state("SCHEDULED_AI")
+        state = cp.record_execution(
+            state, provider="openai", purpose="market_brief",
+            at="2026-09-20T01:00:00Z", estimated_cost_usd=9.90)
+        blocked = cp.authorize(
+            state, provider="openai", purpose="market_brief", automatic=True,
+            now_iso="2026-09-21T01:00:00Z", estimated_cost_usd=0.11,
+            estimated_tokens=1000, scheduled_daily_budget_usd=0.50,
+            scheduled_monthly_budget_usd=10.0)
+        self.assertFalse(blocked["allowed"])
+        self.assertEqual(blocked["reason"], "scheduled_monthly_budget_exhausted")
+
+    def test_monthly_cap_keeps_more_than_two_thousand_small_calls(self):
+        state = cp.default_state("SCHEDULED_AI")
+        state["usage"] = [{"provider": "openai", "purpose": "headline_translation",
+                           "at": f"2026-09-{1 + i // 100:02d}T01:00:00Z",
+                           "estimatedCostUsd": 0.00499}
+                          for i in range(2001)]
+        self.assertEqual(len(cp.normalize_state(state)["usage"]), 2001)
+        denied = cp.authorize(state, provider="openai",
+                              purpose="headline_translation", automatic=True,
+                              now_iso="2026-09-23T01:00:00Z",
+                              estimated_cost_usd=0.017, estimated_tokens=1000)
+        self.assertEqual(denied["reason"], "scheduled_monthly_budget_exhausted")
+
+    def test_budget_window_keeps_full_current_and_previous_month(self):
+        rows = [{"at": "2026-09-30T23:59:59Z"},
+                {"at": "2026-10-01T00:00:00Z", "pending": True},
+                {"at": "2026-11-01T00:00:00Z"}]
+        self.assertEqual(cp.retain_budget_window(rows, "2026-11-01T01:00:00Z"), rows[1:])
+
+    def test_market_brief_is_not_forced_beyond_four_material_updates_per_day(self):
+        state = cp.default_state("SCHEDULED_AI")
+        for hour in range(4):
+            state = cp.record_execution(
+                state, provider="openai", purpose="market_brief",
+                at=f"2026-09-21T0{hour}:00:00Z", estimated_cost_usd=0.01)
+        blocked = cp.authorize(
+            state, provider="openai", purpose="market_brief", automatic=True,
+            now_iso="2026-09-21T05:00:00Z", estimated_cost_usd=0.01,
+            estimated_tokens=1000, scheduled_daily_budget_usd=0.50)
+        self.assertFalse(blocked["allowed"])
+        self.assertEqual(blocked["reason"], "scheduled_purpose_runs_exhausted")
+
+    def test_public_status_exposes_both_ceilings_without_secrets(self):
+        state = cp.default_state("SCHEDULED_AI")
+        state = cp.record_execution(state, provider="openai", purpose="market_brief",
+                                    at="2026-09-21T01:00:00Z", estimated_cost_usd=0.12)
+        lane = cp.public_status(state, "2026-09-21T02:00:00Z", 0.50, 10.0)["scheduledLane"]
+        self.assertEqual(lane["dailyBudgetUsd"], 0.50)
+        self.assertEqual(lane["monthlyBudgetUsd"], 10.0)
+        self.assertAlmostEqual(lane["spentThisMonthUsd"], 0.12)
+
+    def test_scheduled_ai_still_permits_confirmed_manual_ping_only(self):
+        state = cp.default_state("SCHEDULED_AI")
+        ok = cp.authorize(
+            state, provider="openai", purpose="manual_api", automatic=False,
+            confirmation=True, now_iso="2026-08-24T01:00:00Z",
+            estimated_cost_usd=0.001, estimated_tokens=100)
+        self.assertTrue(ok["allowed"])
+        unconfirmed = cp.authorize(
+            state, provider="openai", purpose="manual_api", automatic=False,
+            confirmation=False, now_iso="2026-08-24T01:00:00Z",
+            estimated_cost_usd=0.001, estimated_tokens=100)
+        self.assertFalse(unconfirmed["allowed"])
+        self.assertEqual(unconfirmed["reason"], "confirmation_required")
+
+    def test_scheduled_ai_public_status_reports_automatic_ai_truthfully(self):
+        view = cp.public_status(cp.default_state("SCHEDULED_AI"),
+                                "2026-08-24T01:00:00Z")
+        self.assertTrue(view["automaticAiEnabled"])
+        self.assertIn("日本語要約", view["messageJa"])
+        self.assertFalse(cp.public_status(
+            cp.default_state(), "2026-08-24T01:00:00Z")["automaticAiEnabled"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class ScheduledEventOptInTests(unittest.TestCase):
+    """v13.5.60 (owner 2026-09-07): event scenarios under SCHEDULED_AI are an
+    explicit owner opt-in, bounded by the daily budget and a per-day run cap."""
+
+    def _state(self, opt_in):
+        return cp.default_state("SCHEDULED_AI", opt_in)
+
+    def test_event_analysis_stays_off_without_the_opt_in(self):
+        st = self._state(False)
+        r = cp.authorize(st, provider="openai", purpose="event_analysis",
+                         automatic=True, now_iso="2026-09-07T01:00:00Z",
+                         estimated_cost_usd=0.10, estimated_tokens=8000)
+        self.assertFalse(r["allowed"])
+        self.assertEqual(r["reason"], "scheduled_scope_required")
+
+    def test_event_analysis_runs_inside_the_daily_budget_when_opted_in(self):
+        st = self._state(True)
+        r = cp.authorize(st, provider="openai", purpose="event_analysis",
+                         automatic=True, now_iso="2026-09-07T01:00:00Z",
+                         estimated_cost_usd=0.10, estimated_tokens=8000)
+        self.assertTrue(r["allowed"], r)
+        # Budget is shared with the news lane: an exhausted day blocks events too.
+        spent = self._state(True)
+        for i in range(20):
+            spent = cp.record_execution(spent, provider="openai", purpose="news_intel",
+                                        at=f"2026-09-07T00:{i:02d}:00Z", estimated_cost_usd=0.10)
+        blocked = cp.authorize(spent, provider="openai", purpose="event_analysis",
+                               automatic=True, now_iso="2026-09-07T01:00:00Z",
+                               estimated_cost_usd=0.10, estimated_tokens=8000)
+        self.assertFalse(blocked["allowed"])
+        self.assertEqual(blocked["reason"], "scheduled_daily_budget_exhausted")
+
+    def test_event_runs_are_capped_per_day(self):
+        st = self._state(True)
+        for i in range(cp.SCHEDULED_EVENT_RUNS_PER_DAY):
+            st = cp.record_execution(st, provider="openai", purpose="event_analysis",
+                                     at=f"2026-09-07T00:{i:02d}:00Z", estimated_cost_usd=0.01)
+        r = cp.authorize(st, provider="openai", purpose="event_analysis",
+                         automatic=True, now_iso="2026-09-07T01:00:00Z",
+                         estimated_cost_usd=0.01, estimated_tokens=8000)
+        self.assertFalse(r["allowed"])
+        self.assertEqual(r["reason"], "scheduled_event_runs_exhausted")
+        # The cap is per UTC day.
+        nxt = cp.authorize(st, provider="openai", purpose="event_analysis",
+                           automatic=True, now_iso="2026-09-08T01:00:00Z",
+                           estimated_cost_usd=0.01, estimated_tokens=8000)
+        self.assertTrue(nxt["allowed"], nxt)
+
+
+class ScheduledLaneReserveTests(unittest.TestCase):
+    """v13.5.63 (GPT review item 4): production 2026-09-07 — 101 translation
+    runs spent the whole $2 budget, so the opted-in event lane never ran and
+    the public status could not say why."""
+
+    def _spent(self, usd_each, runs):
+        state = cp.default_state("SCHEDULED_AI", event_opt_in=True)
+        for i in range(runs):
+            state = cp.record_execution(
+                state, provider="gemini", purpose="headline_translation",
+                at="2026-09-07T0%d:00:00Z" % i, estimated_cost_usd=usd_each)
+        return state
+
+    def test_news_lanes_stop_at_budget_minus_reserve_and_event_lane_still_runs(self):
+        state = self._spent(0.4, 4)                       # $1.60 of $2.00
+        news = cp.authorize(state, provider="gemini", purpose="headline_translation",
+                            automatic=True, now_iso="2026-09-07T06:00:00Z",
+                            estimated_cost_usd=0.02, estimated_tokens=100,
+                            scheduled_daily_budget_usd=2.0)
+        self.assertFalse(news["allowed"])
+        self.assertEqual(news["reason"], "scheduled_daily_budget_exhausted")
+        event = cp.authorize(state, provider="openai", purpose="event_analysis",
+                             automatic=True, now_iso="2026-09-07T06:00:00Z",
+                             event_id="FOMC", event_phase="pre",
+                             estimated_cost_usd=0.08, estimated_tokens=1200,
+                             scheduled_daily_budget_usd=2.0)
+        self.assertTrue(event["allowed"], event)
+
+    def test_event_lane_is_still_bounded_by_the_whole_budget(self):
+        state = self._spent(0.5, 4)                       # $2.00 of $2.00
+        event = cp.authorize(state, provider="openai", purpose="event_analysis",
+                             automatic=True, now_iso="2026-09-07T06:00:00Z",
+                             event_id="FOMC", event_phase="pre",
+                             estimated_cost_usd=0.08, estimated_tokens=1200,
+                             scheduled_daily_budget_usd=2.0)
+        self.assertFalse(event["allowed"])
+
+    def test_last_refusal_and_lane_facts_are_public_and_secret_free(self):
+        state = self._spent(0.4, 4)
+        refused = cp.authorize(state, provider="gemini", purpose="headline_translation",
+                               automatic=True, now_iso="2026-09-07T06:00:00Z",
+                               estimated_cost_usd=0.02, estimated_tokens=100,
+                               scheduled_daily_budget_usd=2.0)
+        state = cp.record_skip(state, refused, at="2026-09-07T06:00:00Z", provider="gemini")
+        allowed = cp.authorize(state, provider="openai", purpose="event_analysis",
+                               automatic=True, now_iso="2026-09-07T06:00:00Z",
+                               event_id="FOMC", event_phase="pre",
+                               estimated_cost_usd=0.08, estimated_tokens=1200,
+                               scheduled_daily_budget_usd=2.0)
+        state = cp.record_skip(state, allowed, at="2026-09-07T06:01:00Z")   # allowed → unchanged
+        view = cp.public_status(state, "2026-09-07T06:30:00Z", 2.0,
+                                openai_key_configured=True)
+        self.assertEqual(view["lastSkip"]["reason"], "scheduled_daily_budget_exhausted")
+        self.assertEqual(view["lastSkip"]["purpose"], "headline_translation")
+        self.assertEqual(view["lastExecutionPurpose"], "headline_translation")
+        self.assertEqual(view["lastExecutionAt"], "2026-09-07T03:00:00Z")
+        lane = view["scheduledLane"]
+        self.assertEqual(lane["dailyBudgetUsd"], 2.0)
+        self.assertAlmostEqual(lane["spentTodayUsd"], 1.6)
+        self.assertEqual(lane["eventReserveUsd"], 0.5)
+        self.assertAlmostEqual(lane["newsRemainingUsd"], 0.0)
+        self.assertAlmostEqual(lane["eventRemainingUsd"], 0.4)
+        self.assertTrue(lane["eventLaneOpen"])
+        self.assertIs(view["openaiKeyConfigured"], True)
+        self.assertNotIn("apiKey", json_dumps(view))
+        # the default view (no key fact supplied) does not invent one
+        self.assertIsNone(cp.public_status(state, "2026-09-07T06:30:00Z")["openaiKeyConfigured"])
+
+
+def json_dumps(value):
+    import json
+    return json.dumps(value, ensure_ascii=False)
+
+
+class SpentEventReserveTests(unittest.TestCase):
+    def state(self, news, event_costs):
+        st = cp.default_state("SCHEDULED_AI", event_opt_in=True)
+        for purpose, costs in (("news_intel", [news]), ("event_analysis", event_costs)):
+            for cost in costs:
+                st = cp.record_execution(st, provider="openai", purpose=purpose,
+                                         at="2026-09-11T01:00:00Z", estimated_cost_usd=cost)
+        return st
+
+    def authorize(self, st, cost, purpose="news_intel", at="2026-09-11T09:21:18Z"):
+        return cp.authorize(st, provider="openai", purpose=purpose, automatic=True,
+                            now_iso=at, estimated_cost_usd=cost, estimated_tokens=100,
+                            scheduled_daily_budget_usd=2.0)
+
+    def test_spent_event_allocation_is_not_reserved_a_second_time(self):
+        st = self.state(1.3, [0.3])
+        self.assertTrue(self.authorize(st, 0.19)["allowed"])
+        self.assertFalse(self.authorize(st, 0.21)["allowed"])
+        lane = cp.public_status(st, "2026-09-11T09:21:18Z", 2.0)["scheduledLane"]
+        self.assertAlmostEqual(lane["newsRemainingUsd"], 0.2)
+        self.assertAlmostEqual(lane["eventReserveRemainingUsd"], 0.2)
+        self.assertTrue(lane["eventLaneOpen"])
+        self.assertEqual(lane["eventReserveUsd"], 0.5)
+
+    def test_completed_daily_event_quota_releases_only_unspent_budget(self):
+        # Same total and six-run condition observed on production; per-row
+        # amounts are a synthetic fixture, not claimed production measurements.
+        st = self.state(1.050078, [0.08] * 6)
+        self.assertTrue(self.authorize(st, 0.46)["allowed"])
+        self.assertFalse(self.authorize(st, 0.47)["allowed"])
+        self.assertEqual(self.authorize(st, 0.01, "event_analysis")["reason"],
+                         "scheduled_event_runs_exhausted")
+        lane = cp.public_status(st, "2026-09-11T09:21:18Z", 2.0)["scheduledLane"]
+        self.assertAlmostEqual(lane["newsRemainingUsd"], 0.469922)
+        self.assertEqual(lane["eventReserveRemainingUsd"], 0.0)
+        self.assertFalse(lane["eventLaneOpen"])
+        self.assertEqual(lane["dailyBudgetUsd"], 2.0)
+        self.assertEqual(cp.normalize_state(st), st)
+
+
+def _runtime_ledger(monkeypatch, tmp_path):
+    import scanner
+    monkeypatch.setattr(scanner, "_COST_POLICY", cp.default_state("SCHEDULED_AI"))
+    monkeypatch.setattr(scanner, "_COST_POLICY_DURABLE", {"enabled": True, "lastError": None})
+    monkeypatch.setattr(scanner, "_cost_policy_durable_path",
+                        lambda: str(tmp_path / "cost-policy.json"))
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: "2026-09-12T07:00:00Z")
+    monkeypatch.setattr(scanner, "_cost_policy_checkpoint_after_write", lambda _: None)
+    return scanner
+
+
+def _six_hundred_monthly_rows():
+    return [{"provider": "openai", "purpose": "headline_translation",
+             "at": f"2026-09-{1 + i // 30:02d}T01:{i % 30:02d}:00Z",
+             "estimatedCostUsd": 0.016} for i in range(600)]
+
+
+def test_legacy_policy_window_fails_closed_after_restart(monkeypatch, tmp_path):
+    import json
+    scanner = _runtime_ledger(monkeypatch, tmp_path)
+    saved = cp.default_state("SCHEDULED_AI")
+    saved["usage"] = _six_hundred_monthly_rows()
+    saved.pop("budgetWindowVersion")  # pre-fix state may already have lost rows
+    (tmp_path / "cost-policy.json").write_text(json.dumps(saved))
+    assert scanner._cost_policy_restore_durable() == 600
+    assert len(scanner._COST_POLICY["usage"]) == 600
+    decision = cp.authorize(scanner._COST_POLICY, provider="openai",
+                            purpose="headline_translation", automatic=True,
+                            now_iso="2026-09-21T01:00:00Z",
+                            estimated_cost_usd=0.41, estimated_tokens=1000)
+    assert decision["reason"] == "scheduled_budget_history_incomplete"
+    assert cp.public_status(scanner._COST_POLICY,
+                            "2026-09-21T01:00:00Z")["scheduledLane"]["historyComplete"] is False
+
+
+def test_complete_policy_window_restores_full_month_without_false_unknown(monkeypatch, tmp_path):
+    import json
+    scanner = _runtime_ledger(monkeypatch, tmp_path)
+    saved = cp.default_state("SCHEDULED_AI")
+    saved["usage"] = _six_hundred_monthly_rows()
+    scanner._COST_POLICY["budgetWindowVersion"] = 1
+    scanner._COST_POLICY["usage"] = saved["usage"][:500]
+    (tmp_path / "cost-policy.json").write_text(json.dumps(saved))
+    assert scanner._cost_policy_restore_durable() == 100
+    assert len(scanner._COST_POLICY["usage"]) == 600
+    assert scanner._COST_POLICY["budgetHistoryIncompleteMonth"] is None
+    decision = cp.authorize(scanner._COST_POLICY, provider="openai",
+                            purpose="headline_translation", automatic=True,
+                            now_iso="2026-09-21T01:00:00Z",
+                            estimated_cost_usd=0.41, estimated_tokens=1000)
+    assert decision["reason"] == "scheduled_monthly_budget_exhausted"
+
+
+def test_runtime_reservation_does_not_drop_earlier_current_month_rows(monkeypatch, tmp_path):
+    scanner = _runtime_ledger(monkeypatch, tmp_path)
+    monkeypatch.setattr(scanner, "_DURABILITY_PRODUCTION", False)
+    scanner._COST_POLICY["usage"] = [
+        {"provider": "openai", "purpose": "manual_api",
+         "at": "2026-09-01T01:00:00Z", "estimatedCostUsd": 0.0,
+         "reservationId": f"prior-{i}"} for i in range(2001)]
+    decision, reservation = scanner._cost_policy_reserve(
+        "openai", "manual_api", automatic=False, confirmation=True,
+        estimated_cost_usd=0.0, estimated_tokens=100)
+    assert decision["allowed"] and reservation
+    assert len(scanner._COST_POLICY["usage"]) == 2002
+    scanner._cost_policy_settle(reservation, ok=True, actual_cost_usd=0.0)
+    assert len(scanner._COST_POLICY["usage"]) == 2002
+
+
+def test_confirmed_manual_and_research_calls_share_production_ceilings():
+    manual = cp.default_state("MANUAL")
+    manual = cp.record_execution(manual, provider="openai", purpose="manual_api",
+                                 at="2026-09-23T01:00:00Z", estimated_cost_usd=0.49)
+    denied_manual = cp.authorize(
+        manual, provider="openai", purpose="manual_api", automatic=False,
+        confirmation=True, now_iso="2026-09-23T02:00:00Z",
+        estimated_cost_usd=0.02, estimated_tokens=100)
+    assert denied_manual["reason"] == "total_daily_budget_exhausted"
+
+    research = cp.default_state("RESEARCH_BENCHMARK")
+    research = cp.record_execution(research, provider="openai", purpose="research_benchmark",
+                                   at="2026-09-01T01:00:00Z", estimated_cost_usd=9.99)
+    denied_research = cp.authorize(
+        research, provider="openai", purpose="research_benchmark", automatic=False,
+        confirmation=True, now_iso="2026-09-23T02:00:00Z",
+        estimated_cost_usd=0.02, estimated_tokens=100)
+    assert denied_research["reason"] == "total_monthly_budget_exhausted"
+
+
+def test_public_status_reports_shared_manual_and_scheduled_spend():
+    state = cp.default_state("SCHEDULED_AI")
+    state = cp.record_execution(state, provider="openai", purpose="market_brief",
+                                at="2026-09-23T01:00:00Z", estimated_cost_usd=0.12)
+    state = cp.record_execution(state, provider="openai", purpose="manual_api",
+                                at="2026-09-23T02:00:00Z", estimated_cost_usd=0.08)
+    lane = cp.public_status(state, "2026-09-23T03:00:00Z")["scheduledLane"]
+    assert lane["totalProductionDailySpentUsd"] == 0.2
+    assert lane["totalProductionMonthlySpentUsd"] == 0.2
+
+    def test_shared_cap_next_day_and_purpose_restrictions_remain(self):
+        st = self.state(1.7, [0.1] * 3)
+        self.assertFalse(self.authorize(st, 0.01)["allowed"])
+        self.assertFalse(self.authorize(st, 0.01, "event_analysis")["allowed"])
+        self.assertTrue(self.authorize(st, 0.1, at="2026-09-12T00:00:01Z")["allowed"])
+        self.assertEqual(self.authorize(st, 0.0, "ai_judgment")["reason"],
+                         "scheduled_scope_required")
+        lane = cp.public_status(st, "2026-09-12T00:00:01Z", 2.0)["scheduledLane"]
+        self.assertEqual(lane["eventReserveRemainingUsd"], 0.5)
+        self.assertEqual(lane["newsRemainingUsd"], 1.5)
+
+    def test_event_overspend_cannot_increase_the_shared_budget(self):
+        st = self.state(1.1, [0.7])
+        self.assertTrue(self.authorize(st, 0.19)["allowed"])
+        self.assertFalse(self.authorize(st, 0.21)["allowed"])
+        lane = cp.public_status(st, "2026-09-11T09:21:18Z", 2.0)["scheduledLane"]
+        self.assertAlmostEqual(lane["newsRemainingUsd"], 0.2)
+        self.assertEqual(lane["eventReserveRemainingUsd"], 0.0)
+
+
+class OwnerUnlimitedAcceptanceTests(unittest.TestCase):
+    def test_no_monetary_or_event_count_stop_but_accounting_remains(self):
+        state = cp.default_state("SCHEDULED_AI", event_opt_in=True)
+        for i in range(7):
+            state = cp.record_execution(state, provider="openai", purpose="event_analysis",
+                at="2026-09-12T01:00:00Z", estimated_cost_usd=100.0)
+        for purpose in ("news_intel", "event_analysis"):
+            kwargs = dict(provider="openai", purpose=purpose, automatic=True,
+                now_iso="2026-09-12T02:00:00Z", estimated_cost_usd=50.0, estimated_tokens=1000)
+            assert not cp.authorize(state, **kwargs)["allowed"]
+            assert cp.authorize(state, budget_enforced=False, **kwargs)["allowed"]
+        view = cp.public_status(state, "2026-09-12T02:00:00Z", budget_enforced=False)
+        assert view["budgetEnforced"] is False
+        assert view["todayEstimatedCostUsd"] == 700.0
+        assert view["todayRuns"]["openai"] == 7
+        assert view["scheduledLane"]["eventLaneOpen"] is True
+
+    def test_full_analysis_is_explicit_gpt_only_and_bounded_by_mode(self):
+        state = cp.default_state("SCHEDULED_AI")
+        for purpose in cp.SCHEDULED_MAIN_PURPOSES:
+            kwargs = dict(provider="openai", purpose=purpose, automatic=True,
+                estimated_cost_usd=0.1, estimated_tokens=1000)
+            assert not cp.authorize(state, **kwargs)["allowed"]
+            assert cp.authorize(state, full_analysis_enabled=True, **kwargs)["allowed"]
+            assert not cp.authorize(cp.default_state(), full_analysis_enabled=True,
+                                    budget_enforced=False, **kwargs)["allowed"]
+            kwargs["provider"] = "gemini"
+            assert cp.authorize(state, full_analysis_enabled=True, **kwargs)["reason"] == "primary_analysis_requires_openai"
+        denied = cp.authorize(state, provider="openai", purpose="prose", automatic=True,
+            full_analysis_enabled=True, budget_enforced=False,
+            estimated_cost_usd=0.1, estimated_tokens=1000)
+        assert denied["reason"] == "scheduled_scope_required"
+
+    def test_unlimited_keeps_token_bounds_and_event_opt_in(self):
+        state = cp.default_state("SCHEDULED_AI")
+        assert cp.authorize(state, provider="openai", purpose="event_analysis",
+            automatic=True, budget_enforced=False, estimated_cost_usd=0.1,
+            estimated_tokens=1000)["reason"] == "scheduled_scope_required"
+        assert cp.authorize(state, provider="openai", purpose="news_intel",
+            automatic=True, budget_enforced=False, estimated_cost_usd=100,
+            estimated_tokens=99999)["reason"] == "request_token_bound"
+
+    def test_expanded_brief_is_not_blocked_by_disabled_token_budget(self):
+        state = cp.default_state("SCHEDULED_AI")
+        args = dict(provider="openai", purpose="market_brief", automatic=True,
+                    estimated_cost_usd=.08, estimated_tokens=5200 * 3)
+        assert cp.authorize(state, **args)["reason"] == "event_token_limit"
+        assert cp.authorize(state, budget_enforced=False, **args)["allowed"]
+        assert cp.authorize(cp.default_state(), budget_enforced=False, **args)["reason"] == "deterministic_mode"

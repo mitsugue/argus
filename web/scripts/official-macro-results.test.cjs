@@ -1,0 +1,17 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),esbuild=require('esbuild');
+const React=require('react'),{renderToStaticMarkup}=require('react-dom/server');
+const today=fs.readFileSync('src/components/today/ArgusTodayPanel.tsx','utf8');
+assert.ok(!today.includes('OfficialMacroResults'),'do not put a separate CPI block above the AI view');
+assert.ok(!fs.existsSync('src/components/today/OfficialMacroResults.tsx'));
+const entry=path.resolve('src/components/dashboard/EventResultBrief.tsx');
+const code=esbuild.buildSync({entryPoints:[entry],bundle:true,write:false,platform:'node',format:'cjs',jsx:'automatic',external:['react','react-dom','react/jsx-runtime']}).outputFiles[0].text;
+const mod=new Module(entry,module);mod.filename=entry;mod.paths=module.paths;mod._compile(code,entry);
+const context={comparisonJa:'一部項目は市場予想上振れとの報道（項目別の予想値・数値差は未照合）',storyStatus:'REPORTED_CONTEXT_PRESENT',articles:[{source:'合成の報道元',headline:'合成のCPI記事',facts:['原油高が物価を押し上げた。','CPI上振れで利上げ警戒が強まり株安となったとの報道。'],receivedAt:'2026-10-15T01:00:00Z',sourceRefSha256:'synthetic',scope:'RECEIVED_NEWS_ANALYSIS'}]};
+const original=JSON.stringify(context),html=renderToStaticMarkup(React.createElement(mod.exports.EventResultBrief,{available:true,headline:'合成結果',newsContext:context}));
+assert.ok(html.includes('event-news-context-v1')&&html.includes('市場予想上振れ')&&html.includes('合成の報道元')&&html.includes('利上げ警戒'));
+assert.ok(html.includes('下落原因の実証は別')&&!html.includes('市場が結果をどう受け止めたか、説明する記事根拠が不足'));
+const missing=renderToStaticMarkup(React.createElement(mod.exports.EventResultBrief,{available:true,newsContext:{...context,storyStatus:'ARTICLE_EVIDENCE_INCOMPLETE'}}));
+assert.ok(missing.includes('記事根拠が不足'));assert.equal(JSON.stringify(context),original);
+const event=fs.readFileSync('src/components/dashboard/ImportantEventsCard.tsx','utf8');
+assert.ok(event.includes('newsContext={ev.newsContext}')&&event.includes('newsContext={ai.newsContext}'));
+console.log('イベント内で予想比較・出典付き報道・材料不足を表示、AI上の重複枠なし PASS');

@@ -1,0 +1,43 @@
+name: Product naming
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  naming:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Load the external naming policy
+        env:
+          PRODUCT_NAMING_POLICY: ${{ vars.PRODUCT_NAMING_POLICY }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          policy = os.environ.get('PRODUCT_NAMING_POLICY', '')
+          if not policy.strip():
+              raise SystemExit('Required external naming policy is unavailable')
+          pathlib.Path(os.environ['RUNNER_TEMP'], 'product-naming-policy.json').write_text(policy)
+          PY
+      - name: Check source paths and content
+        run: python3 -B scripts/product_naming_guard.py --policy "$RUNNER_TEMP/product-naming-policy.json"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build the distributed files
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+      - name: Check distributed files including Service Worker and source maps
+        run: python3 -B scripts/product_naming_guard.py --policy "$RUNNER_TEMP/product-naming-policy.json" --directory web/dist

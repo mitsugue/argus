@@ -1,0 +1,48 @@
+# ARGUS production smoke test — POST-DEPLOY health monitor (v12.2.10).
+# v12.2.9までの罠: mainへのpushで起動しRenderのデプロイ完了を待つcheckだったが、
+# RenderのAuto-Deploy(After CI Checks Pass)はコミット上の全checkのpassを待つ —
+# smoke⇄Renderの相互待ちでsmokeが12分timeoutでcancelされ、Renderは永遠に
+# 自動デプロイしない循環依存になっていた(v12.2.8/v12.2.9で実際に発生)。
+# 恒久対策: smokeをmain pushのcheckにしない。pre-deploy必須check=
+# backend-rules/frontend/gateのまま。smokeはpost-deploy監視として
+# 6時間毎スケジュール+手動dispatchでのみ実行(将来deployment_status等の
+# 非循環トリガが安全に用意できたら追加 — secrets/hookの自動追加はしない)。
+
+name: smoke-test
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours — post-deploy health monitor
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Each read has its own bounded retry. Do not spend the job budget
+      # warming the same endpoints a second time before the actual checks.
+      - name: Run smoke test
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: python3 -u smoke_test.py
+
+      - name: Notify on failure (skipped without NTFY_TOPIC)
+        if: failure()
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          [ -z "$NTFY_TOPIC" ] && exit 0
+          curl -s --max-time 30 \
+            -H "Title: ARGUS smoke FAILED" -H "Priority: high" -H "Tags: warning" \
+            -H "Click: https://github.com/mitsugue/argus/actions/workflows/smoke-test.yml" \
+            -d "本番スモークテストが失敗しました。直近のデプロイ/リファクタを確認してください。" \
+            "https://ntfy.sh/$NTFY_TOPIC" > /dev/null || true

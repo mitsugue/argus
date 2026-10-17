@@ -1,0 +1,45 @@
+name: render-deploy-diagnostics
+
+# Read-only: lists the newest Render deploys of the backend service and
+# prints the build log of the newest failed one on the run page, so a
+# "build failed" mail can be diagnosed without dashboard access.  It never
+# triggers, cancels or retries a deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "How many recent deploys to list (1-20)"
+        required: false
+        default: "5"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Read recent deploys and the newest failed build log (read-only)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          DEPLOY_LIMIT: ${{ github.event.inputs.limit || '5' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/render-deploy-diagnostics
+          python3 -B scripts/render_deploy_diagnostics.py \
+            --service-id srv-d8j2hts8aovs738s1in0 \
+            --limit "$DEPLOY_LIMIT" \
+            --output artifacts/render-deploy-diagnostics/deploys.json \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Publish the diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-deploy-diagnostics-${{ github.run_id }}
+          path: artifacts/render-deploy-diagnostics
+          if-no-files-found: ignore
+          retention-days: 7

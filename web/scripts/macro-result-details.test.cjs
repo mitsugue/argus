@@ -1,0 +1,13 @@
+const ts=require('typescript'),fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const React=require('react'),{renderToStaticMarkup}=require('react-dom/server');
+const context={exports:{},require,Date,Number};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/dashboard/MacroResultDetails.tsx','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,context);
+const {cpiRows,MacroResultDetails}=context.exports;
+const result={schemaVersion:'macro-cpi-result-v2',metrics:{referenceMonth:'2026-08',headlineCpiMoM:0.4,headlineCpiYoY:3.4},metricDefinitions:{headlineCpiMoM:{seasonalAdjustment:'SA',unit:'PERCENT_CHANGE',referenceMonth:'2026-08'},headlineCpiYoY:{seasonalAdjustment:'NSA',unit:'PERCENT_CHANGE',referenceMonth:'2026-08'}},receivedAt:'2026-09-12T13:25:01Z',releasedAt:null,referenceMatched:true};
+assert.equal(cpiRows(result).length,2);
+const html=renderToStaticMarkup(React.createElement(MacroResultDetails,{result}));
+assert.ok(html.includes('季節調整なし'));assert.ok(html.includes('3.40%'));
+assert.ok(html.includes('公表日時 未確認'));assert.ok(html.includes('22:25:01 JST'));
+assert.equal(cpiRows({...result,metricDefinitions:{headlineCpiYoY:{...result.metricDefinitions.headlineCpiYoY,seasonalAdjustment:'SA'}}}).length,0);
+assert.equal(cpiRows({}).length,0);
+console.log('CPI definition, period and receipt display PASS');

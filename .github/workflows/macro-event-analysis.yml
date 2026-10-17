@@ -1,0 +1,163 @@
+# ARGUS C.A.O.S. Macro Event Pre/Post Intelligence (v11.3.2).
+# NFP/CPI/FOMC etc. are NOT aligned with the 16:05 JST ledger run, so this dedicated
+# cron uses bounded observation windows: Japan open/close, the pre-US-event
+# check, and the event/reaction windows after the common 08:30 ET release.
+# Manual dispatch remains available for an exceptional event. This avoids
+# paying for unchanged analyses every two hours while preserving timely
+# official-result, explanation, and notification updates.
+# This repository-only cadence change does not alter the deployed backend.
+# (admin path = the only LLM caller), and persists the public-safe snapshot to the
+# ledger branch so pre-event views survive redeploys for the post answer-check.
+
+name: macro-event-analysis
+
+on:
+  schedule:
+    # 09:35, 15:35, 19:35 JST: Japan open/close and pre-US-event check.
+    - cron: '35 0,6,10 * * 1-5'
+    # 21:45, 22:30, 23:30 JST: common US 08:30 ET result and reaction path.
+    - cron: '45 12 * * 1-5'
+    - cron: '30 13 * * 1-5'
+    - cron: '30 14 * * 1-5'
+    # 05:30 JST: US-session reaction before the next Japan session.
+    - cron: '30 20 * * 1-5'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+# Serialize with every other ledger-branch writer.
+concurrency:
+  group: ledger-branch-writer
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - name: Refresh official results + generate analyses (admin; token never logged)
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
+            echo "::warning::ARGUS_ADMIN_TOKEN missing — skipping generation (snapshot only)"
+          else
+            BE="https://argus-backend-3j2m.onrender.com"
+            # Wait only on a read-only readiness contract during a deploy.
+            # Do not retry provider calls after an ambiguous POST response.
+            python3 scripts/macro_readiness.py --url "$BE/readyz"
+            RES=$(python3 scripts/workflow_http.py --name macro-refresh-results --method POST --timeout 120 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/admin/macro-event-analysis/refresh-results")
+            echo "refresh-results: ${RES:0:200}"
+            GEN_RC=0
+            GEN=$(python3 scripts/workflow_http.py --name macro-generate --method POST --timeout 600 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --expected-status deterministic_mode --url "$BE/api/argus/admin/macro-event-analysis/generate") || GEN_RC=$?
+            echo "generate: ${GEN:0:200} (rc=$GEN_RC)"
+            if [ "$GEN_RC" != "0" ]; then
+            # 13.5.66 generateRun: the backend keeps generating after this client's
+            # timeout and records running → done / failed. Judge the step by that
+            # record (public GET, no token), not by the dropped connection. A run the
+            # backend marks failed still fails this job; a run still in progress is a
+            # warning that the next slot will find finished (single-flight).
+            python3 - "$BE" <<'PY'
+          import json, sys, time, urllib.request
+          be = sys.argv[1]; deadline = time.time() + 480; last = {}
+          while time.time() < deadline:
+              try:
+                  with urllib.request.urlopen(be + "/api/argus/macro-event-analysis?limit=1", timeout=60) as r:
+                      last = json.load(r).get("generateRun") or {}
+              except Exception as exc:
+                  last = {"status": "unreachable", "errorClass": type(exc).__name__}
+              print("generateRun:", json.dumps({k: last.get(k) for k in ("status", "startedAt", "finishedAt", "pre", "post", "errorClass")}), flush=True)
+              if last.get("status") in ("done", "failed", "interrupted"):
+                  break
+              time.sleep(30)
+          status = last.get("status")
+          if status == "done":
+              print("::notice::macro generation finished after the client timeout (tracked by generateRun)")
+          elif status == "running":
+              print("::warning::macro generation still running in the backend; generateRun keeps tracking it")
+          else:
+              print(f"::error::macro generation did not complete: {status}")
+              sys.exit(1)
+          PY
+            fi
+            # V11.5: quantify the post-release market reaction (rates/FX/indices/VIX/BTC).
+            # No LLM; baseline captured on first observation, reaction merged into the store.
+            RX=$(python3 scripts/workflow_http.py --name macro-market-reaction --method POST --timeout 180 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/admin/macro-event-analysis/refresh-market-reaction")
+            echo "refresh-market-reaction: ${RX:0:200}"
+            # V11.4.1: repair stuck post-release displays (fetch result, recompute phase,
+            # generate/repair the answer-check where actual+pre exist). Preserves pre.
+            REP=$(python3 scripts/workflow_http.py --name macro-repair --method POST --timeout 240 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --expected-status deterministic_mode --url "$BE/api/argus/admin/macro-event-analysis/repair-post-release")
+            echo "repair-post-release: ${REP:0:200}"
+            # V11.5.2: drain the on-screen translation request queue FIRST (what the owner
+            # actually sees), then the inferred visible pool. Enqueue-only public POSTs feed
+            # this queue; the LLM call lives here. No article bodies / prompts persisted.
+            TRV=$(python3 scripts/workflow_http.py --name macro-translate-visible --method POST --timeout 120 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --expected-status deterministic_mode --url "$BE/api/argus/admin/news/translate-visible")
+            echo "news-translate-visible: ${TRV:0:200}"
+            # V11.5: then translate any remaining queued English headlines (owner rule).
+            TR=$(python3 scripts/workflow_http.py --name macro-news-translate --method POST --timeout 120 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --expected-status deterministic_mode --url "$BE/api/argus/admin/news/translate")
+            echo "news-translate: ${TR:0:200}"
+            # V11.5.2: drain owner AI-explanation requests ("理由を詳しく調べる"), then the
+            # priority queue's budgeted top-unresolved movers. Cooldown/budget-guarded.
+            EXR=$(python3 scripts/workflow_http.py --name macro-mover-explain --method POST --timeout 240 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --expected-status deterministic_mode --url "$BE/api/argus/admin/mover-causes/explain/run")
+            echo "mover-explain-run: ${EXR:0:200}"
+          fi
+
+      - name: Fetch the public-safe analysis snapshot
+        env:
+          # Owner authentication is live (2026-09-28): machine reads carry the
+          # operational credential; nothing is written and no owner session is used.
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          for i in 1 2 3 4; do
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/macro-event-analysis?limit=50" \
+              -o "$RUNNER_TEMP/macro.json" && break
+            echo "retry $i"; sleep 15
+          done
+          test -s "$RUNNER_TEMP/macro.json"
+          N=$(python3 -c "import json;print(json.load(open('$RUNNER_TEMP/macro.json')).get('count',0))")
+          echo "items=$N"
+          echo "ITEMS=$N" >> "$GITHUB_ENV"
+
+      - name: Checkout repo
+        if: env.ITEMS != '0'
+        uses: actions/checkout@v5
+        with:
+          ref: main
+      - name: Commit snapshot to ledger branch
+        if: env.ITEMS != '0'
+        run: |
+          # Safe ledger checkout (mirrors event-ledger.yml): full history, stage ONLY
+          # our own path so other writers' files are never wiped.
+          # 2026-10-17: the ledger lives in the private repository.
+          LEDGER_TOKEN="${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}" bash scripts/ledger_use_private.sh
+          git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
+            || git fetch origin ledger 2>/dev/null || true
+          if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
+            git checkout -B ledger refs/remotes/origin/ledger
+          elif git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+            git checkout -B ledger FETCH_HEAD
+          else
+            echo "::warning::origin/ledger not found — creating a FRESH ledger branch (first run only)"
+            git checkout --orphan ledger
+            git rm -rq --cached . 2>/dev/null || true
+            find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+          fi
+          mkdir -p ledger/macro-events/analysis
+          DAY=$(TZ=Asia/Tokyo date +%F)
+          cp "$RUNNER_TEMP/macro.json" "ledger/macro-events/analysis/latest.json"
+          # day files are append-only: first write of the day wins, later runs only latest
+          if [ ! -f "ledger/macro-events/analysis/$DAY.json" ]; then
+            cp "$RUNNER_TEMP/macro.json" "ledger/macro-events/analysis/$DAY.json"
+          fi
+          git config user.name "argus-ledger[bot]"
+          git config user.email "argus-ledger@users.noreply.github.com"
+          git add ledger/macro-events/
+          if git diff --cached --quiet; then
+            echo "no change"
+          else
+            git commit -m "macro-events: $(date -u +%FT%TZ) analysis snapshot ($ITEMS items)"
+            git push origin HEAD:ledger
+          fi

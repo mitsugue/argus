@@ -1,0 +1,430 @@
+{
+  "aiAddedValueAudit": {
+    "actionChangeValue": null,
+    "actualForecastRuns": 10,
+    "aiRevisedActionRecords": 0,
+    "brier": null,
+    "comparableResolvedActionPairs": 0,
+    "conclusion": "SECOND_OPINION_ONLY",
+    "downsideMissRate": null,
+    "falsePositiveRate": null,
+    "modelEpochs": {
+      "gemini:gemini-2.5-pro:scout-prompt-v3:grounding:v1": 10
+    },
+    "outcomeRecords": 10,
+    "rankedProbabilityScore": null,
+    "reason": "No resolved forecast contains both Rule action and AI revised action; predictive Brier/RPS and action-change value cannot be estimated",
+    "researchPowerScoreIsPredictiveRps": false,
+    "researchPowerScoreRecords": 32,
+    "resolvedOutcomes": 0,
+    "ruleActionRecords": 0
+  },
+  "backendIdentity": {
+    "sha": "e66680d",
+    "version": "13.3.2"
+  },
+  "backendMigrationExecuted": false,
+  "canonicalRegeneration": {
+    "canonicalCount": 4061,
+    "canonicalInternalDuplicateCount": 0,
+    "canonicalMissingFromPersisted": [
+      {
+        "date": "2021-07-27",
+        "rule": "short_above_medium",
+        "universe": "all"
+      },
+      {
+        "date": "2021-07-27",
+        "rule": "short_above_medium",
+        "universe": "first_section"
+      },
+      {
+        "date": "2021-07-28",
+        "rule": "short_below_medium",
+        "universe": "all"
+      },
+      {
+        "date": "2021-07-28",
+        "rule": "short_below_medium",
+        "universe": "first_section"
+      },
+      {
+        "date": "2021-07-28",
+        "rule": "short_sharp_drop",
+        "universe": "first_section"
+      },
+      {
+        "date": "2021-07-29",
+        "rule": "short_above_medium",
+        "universe": "all"
+      },
+      {
+        "date": "2021-07-29",
+        "rule": "ratio6_over_120",
+        "universe": "first_section"
+      },
+      {
+        "date": "2021-07-29",
+        "rule": "short_above_medium",
+        "universe": "first_section"
+      },
+      {
+        "date": "2021-08-03",
+        "rule": "short_below_medium",
+        "universe": "all"
+      },
+      {
+        "date": "2021-08-03",
+        "rule": "short_below_medium",
+        "universe": "first_section"
+      },
+      {
+        "date": "2021-08-10",
+        "rule": "short_above_medium",
+        "universe": "first_section"
+      },
+      {
+        "date": "2021-08-11",
+        "rule": "short_below_medium",
+        "universe": "first_section"
+      },
+      {
+        "date": "2021-08-12",
+        "rule": "short_above_medium",
+        "universe": "all"
+      },
+      {
+        "date": "2021-08-12",
+        "rule": "short_above_medium",
+        "universe": "first_section"
+      },
+      {
+        "date": "2021-08-17",
+        "rule": "short_below_medium",
+        "universe": "all"
+      },
+      {
+        "date": "2021-08-17",
+        "rule": "short_below_medium",
+        "universe": "first_section"
+      },
+      {
+        "date": "2021-08-24",
+        "rule": "short_above_medium",
+        "universe": "all"
+      },
+      {
+        "date": "2021-08-24",
+        "rule": "short_above_medium",
+        "universe": "first_section"
+      }
+    ],
+    "canonicalMissingFromPersistedCount": 18,
+    "canonicalUniquePartitionCount": 4061,
+    "dedupeKey": [
+      "date",
+      "universe",
+      "rule"
+    ],
+    "migrationExecuted": false,
+    "persistedBacktestEvidence": [
+      {
+        "classification": "insufficient_data",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 0,
+        "universe": "first_section"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 617,
+        "universe": "prime"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 528,
+        "universe": "all"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 1246,
+        "universe": "first_section"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 919,
+        "universe": "prime"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 1847,
+        "universe": "all"
+      },
+      {
+        "classification": "insufficient_data",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 0,
+        "universe": "first_section"
+      },
+      {
+        "classification": "insufficient_data",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 0,
+        "universe": "prime"
+      },
+      {
+        "classification": "insufficient_data",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 0,
+        "universe": "all"
+      },
+      {
+        "classification": "insufficient_data",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 13,
+        "universe": "all"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 151,
+        "universe": "first_section"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 942,
+        "universe": "prime"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 930,
+        "universe": "all"
+      },
+      {
+        "classification": "insufficient_data",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 0,
+        "universe": "first_section"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 225,
+        "universe": "prime"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 199,
+        "universe": "all"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 151,
+        "universe": "first_section"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 942,
+        "universe": "prime"
+      },
+      {
+        "classification": "experimental",
+        "hasEce": false,
+        "hasTwoNonOverlappingHoldouts": false,
+        "hasUnconditionalAndMomentumBaselines": false,
+        "hasWilsonHalfWidth": false,
+        "noFutureLeakage": true,
+        "sampleSize": 930,
+        "universe": "all"
+      }
+    ],
+    "persistedCount": 4509,
+    "persistedDuplicateExtraRows": 466,
+    "persistedDuplicatePartitionCount": 466,
+    "persistedNotCanonical": [],
+    "persistedNotCanonicalCount": 0,
+    "persistedUniquePartitionCount": 4043,
+    "provisionalReason": "rule-level two-holdout skill, unconditional+momentum dominance, Wilson width, ECE, and freshness evidence are not persisted",
+    "provisionalRules": [
+      "all:all_overheated",
+      "all:index_down_breadth_improves",
+      "all:index_up_breadth_down",
+      "all:ratio6_over_120",
+      "all:ratio6_under_80",
+      "all:short_above_medium",
+      "all:short_below_medium",
+      "all:short_sharp_drop",
+      "first_section:all_overheated",
+      "first_section:index_down_breadth_improves",
+      "first_section:index_up_breadth_down",
+      "first_section:ratio6_over_120",
+      "first_section:ratio6_under_80",
+      "first_section:short_above_medium",
+      "first_section:short_below_medium",
+      "first_section:short_sharp_drop",
+      "prime:all_overheated",
+      "prime:index_down_breadth_improves",
+      "prime:index_up_breadth_down",
+      "prime:ratio6_over_120",
+      "prime:ratio6_under_80",
+      "prime:short_above_medium",
+      "prime:short_below_medium",
+      "prime:short_sharp_drop"
+    ],
+    "ruleEffectiveEpisodes": {
+      "all:all_overheated": 92,
+      "all:index_down_breadth_improves": 249,
+      "all:index_up_breadth_down": 370,
+      "all:ratio6_over_120": 202,
+      "all:ratio6_under_80": 153,
+      "all:short_above_medium": 230,
+      "all:short_below_medium": 231,
+      "all:short_sharp_drop": 343,
+      "first_section:all_overheated": 110,
+      "first_section:index_down_breadth_improves": 150,
+      "first_section:index_up_breadth_down": 199,
+      "first_section:ratio6_over_120": 118,
+      "first_section:ratio6_under_80": 108,
+      "first_section:short_above_medium": 141,
+      "first_section:short_below_medium": 142,
+      "first_section:short_sharp_drop": 278,
+      "prime:all_overheated": 92,
+      "prime:index_down_breadth_improves": 104,
+      "prime:index_up_breadth_down": 167,
+      "prime:ratio6_over_120": 113,
+      "prime:ratio6_under_80": 63,
+      "prime:short_above_medium": 93,
+      "prime:short_below_medium": 92,
+      "prime:short_sharp_drop": 221
+    },
+    "weakRulesBelow60": []
+  },
+  "generatedAt": "2026-07-27T05:55:36Z",
+  "marketLedger": {
+    "methodVersion": "market-ledger-phase1-v1",
+    "observationCount": 44910,
+    "stateHash": "faa97c4d86588c9d5ef70fa57bdfc2a5"
+  },
+  "mode": "offline_read_only",
+  "probabilityDisplayAudit": {
+    "currentExactPercentagesAllowed": false,
+    "directionalLeanPopulation": {
+      "barDeduplication": "one normalized OHLCV row per trading date",
+      "breadthTurningPointsUsed": false,
+      "calculation": "plurality of the hidden UP/RANGE/DOWN calibration vector",
+      "canonical4061TurningPointsUsed": false,
+      "episodeDeduplication": "one best occurrence per signal family and non-overlapping cooldown window",
+      "persisted4509TurningPointsUsed": false,
+      "source": "argus_today_intelligence.calibrate_horizon price-bar episodes"
+    },
+    "exactPercentagePolicy": {
+      "breadthLagTradingDaysMax": 1,
+      "duplicatesMax": 0,
+      "eceMax": 0.05,
+      "minimumBrierSkill": 0.05,
+      "mustBeat": [
+        "unconditional",
+        "momentum"
+      ],
+      "nonOverlappingSkilledHoldoutsMin": 2,
+      "oosEffectiveNMin": 100,
+      "ruleEffectiveNMin": 60,
+      "unresolvedPartitionsMax": 0,
+      "wilsonHalfWidthPtMax": 10
+    },
+    "fallback": [
+      "directional lean",
+      "evidence strength",
+      "effective n",
+      "uncertainty",
+      "EXPERIMENTAL"
+    ]
+  },
+  "productionMutation": false,
+  "schemaVersion": "argus-breadth-probability-truth-audit-v1",
+  "soakIdentity": {
+    "soakId": "soak-e66680d-99407148",
+    "startedAt": "2026-07-27T00:07:25Z"
+  }
+}

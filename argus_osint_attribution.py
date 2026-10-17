@@ -1,0 +1,329 @@
+"""ARGUS V12.0.8 — OSINT / Catalyst Attribution Review (pure, deterministic).
+
+「浜松ホトニクスの下落にSamsung/Anthropic系AI半導体バリューチェーン懸念が絡んで
+いたかもしれないのに、ARGUSは無関係/古いニュースを出した」(オーナー報告)への
+根治レイヤー。値動きの候補原因を 直接材料 / セクター・テーマ連想 / バリュー
+チェーン / マクロ / 古い背景 / 不明 に分離し、鮮度・ソース多様性から OSINT確度
+(high/medium/low/unknown)と「この推定が外れている可能性」(whyWrongJa)を必ず付ける。
+
+HARD RULES:
+  - 14日超の記事は絶対に主要因(primary)にしない。
+  - 主要因候補は原則3営業日(近似96h)以内で、publishedAtが
+    時刻精度を持ち、非未来である場合だけ。
+  - firstDetectedAt/fetchedAtは受信・検出の診断時刻であり、publishedAtの
+    代用にしない。当日の再取得も古い/日付のみ/未来/欠落記事を
+    current causal authorityに格上げしない。
+  - 弱いテーマ連想を事実として書かない — 必ず「〜の候補」「テーマ連想」と明示。
+  - ソース・日付を捏造しない(与えられた候補のメタデータのみ使用)。
+"""
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+import argus_news_freshness
+
+SCHEMA_VERSION = "osint-attribution-v1"
+
+CATEGORIES = ("direct_official", "direct_news", "value_chain", "sector_theme",
+              "macro", "stale_background", "unknown")
+CATEGORY_JA = {
+    "direct_official": "直接材料(公式開示)",
+    "direct_news": "直接材料(報道)",
+    "value_chain": "バリューチェーン(顧客/供給網)",
+    "sector_theme": "セクター/テーマ連想",
+    "macro": "マクロ/イベント",
+    "stale_background": "古い背景材料",
+    "unknown": "不明",
+}
+CONFIDENCES = ("high", "medium", "low", "unknown")
+CONFIDENCE_JA = {"high": "高", "medium": "中", "low": "低", "unknown": "不明"}
+
+SOURCE_CLASSES = ("official", "credible_news", "aggregator", "price_confirmation", "unknown")
+
+# v12.0.8追補: 出典プロビナンス(候補ごとに必ず付ける — 事実/連想/古さを混ぜない)
+SOURCE_TYPES = ("official_disclosure", "major_news", "market_commentary",
+                "sector_theme", "value_chain", "price_only", "unknown")
+DIRECTNESS = ("direct_company", "sector_theme", "value_chain_inference",
+              "macro", "background", "unsupported")
+FRESHNESS = ("today", "within_3_trading_days", "stale_14d_plus", "unknown")
+
+_CAT_TO_DIRECTNESS = {
+    "direct_official": "direct_company", "direct_news": "direct_company",
+    "value_chain": "value_chain_inference", "sector_theme": "sector_theme",
+    "macro": "macro", "stale_background": "background", "unknown": "unsupported",
+}
+_CAT_TO_SOURCE_TYPE = {
+    "direct_official": "official_disclosure", "value_chain": "value_chain",
+    "sector_theme": "sector_theme", "macro": "market_commentary",
+}
+FRESHNESS_JA = {"today": "本日", "within_3_trading_days": "3営業日内",
+                "stale_14d_plus": "14日超", "unknown": "日付不明"}
+NO_DIRECT_EVIDENCE_JA = "原因未特定。候補はテーマ連想であり、直接材料ではありません。"
+
+
+def _freshness(age_h):
+    if age_h is None:
+        return "unknown"
+    if age_h <= 24.0:
+        return "today"
+    if age_h <= PRIMARY_MAX_AGE_H:
+        return "within_3_trading_days"
+    if age_h > STALE_AGE_H:
+        return "stale_14d_plus"
+    return "within_3_trading_days" if age_h <= PRIMARY_MAX_AGE_H else "unknown"
+
+
+def _source_type(cat, src_cls):
+    if cat in _CAT_TO_SOURCE_TYPE:
+        return _CAT_TO_SOURCE_TYPE[cat]
+    if cat == "direct_news":
+        return "major_news" if src_cls == "credible_news" else "market_commentary"
+    if src_cls == "price_confirmation":
+        return "price_only"
+    return "unknown"
+
+_OFFICIAL_PROVIDERS = frozenset(
+    ("tdnet", "official", "edinet", "sec_edgar", "bls", "bea"))
+_CREDIBLE_PROVIDERS = frozenset(
+    ("nikkei", "reuters", "nhk", "bloomberg", "cnbc", "wsj",
+     "coindesk", "cointelegraph", "kabutan", "finnhub"))
+_AGGREGATOR_PROVIDERS = frozenset(
+    ("google_news", "google_news_jp", "google_news_us", "googlenews", "rss", "yahoo"))
+
+_MACRO_WORDS = ("CPI", "FOMC", "雇用統計", "NFP", "金利", "国債入札", "日銀", "PCE",
+                "GDP", "利下げ", "利上げ", "為替介入")
+
+PRIMARY_MAX_AGE_H = 96.0          # ≈3営業日の近似(週末を跨ぐ場合は再報道例外で救済)
+STALE_AGE_H = 14 * 24.0           # これ超えは絶対にprimary不可
+
+
+def _normalized_provider(value: Any) -> str:
+    """Normalize an explicit provider id without substring-based promotion."""
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _source_metadata(c: Dict[str, Any]) -> tuple[str, str, str]:
+    """Return (display source, provider id, source class).
+
+    A caller may carry an explicit, typed sourceClass.  Otherwise only an exact
+    provider-id registry match classifies authority.  In particular a discovery
+    source such as ``yanoshin_tdnet`` must not become official merely because its
+    label contains the name of an official venue.
+    """
+    display = str(c.get("sourceName") or c.get("source") or
+                  c.get("sourceId") or c.get("provider") or "")[:40]
+    provider = _normalized_provider(
+        c.get("provider") or c.get("sourceId") or c.get("source") or
+        c.get("sourceName"))
+    explicit = c.get("sourceClass")
+    official = c.get("official")
+    if explicit in SOURCE_CLASSES and not (
+            explicit == "official" and official is False):
+        return display, provider, str(explicit)
+    if official is True and explicit in (None, "official"):
+        return display, provider, "official"
+    if provider in _OFFICIAL_PROVIDERS and official is not False:
+        return display, provider, "official"
+    if provider in _CREDIBLE_PROVIDERS:
+        return display, provider, "credible_news"
+    if provider in _AGGREGATOR_PROVIDERS:
+        return display, provider, "aggregator"
+    return display, provider, "unknown"
+
+
+def _age_hours(c: Dict[str, Any], now_iso: str) -> Optional[float]:
+    published = c.get("publishedAt")
+    if not argus_news_freshness.has_exact_time(published):
+        return None
+    return argus_news_freshness.age_hours(published, now_iso)
+
+
+def _published_time_authority(c: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
+    """Classify publication time without consulting receipt/detection clocks."""
+    published = c.get("publishedAt")
+    classified = argus_news_freshness.classify(published, now_iso)
+    age_h = _age_hours(c, now_iso)
+    current = age_h is not None and age_h <= PRIMARY_MAX_AGE_H
+    if current:
+        status = "exact_current"
+        reason = None
+    elif classified.get("freshness") == "future_time":
+        status = "future"
+        reason = classified.get("staleReasonJa")
+    elif classified.get("freshness") == "date_only":
+        status = "date_only"
+        reason = classified.get("staleReasonJa")
+    elif published in (None, ""):
+        status = "missing"
+        reason = "publishedAtが欠落しているため現在の因果根拠に使用しない。"
+    elif age_h is None:
+        status = "invalid"
+        reason = "publishedAtが時刻精度のある非未来時刻でないため使用しない。"
+    else:
+        status = "stale"
+        reason = f"publishedAtが現在から約{int(age_h)}時間前で、{int(PRIMARY_MAX_AGE_H)}時間の上限外。"
+    return {"status": status, "ageHours": age_h,
+            "currentCausalAuthority": current, "reasonJa": reason}
+
+
+def _refetched_today(c: Dict[str, Any], now_iso: str) -> bool:
+    f = argus_news_freshness.age_hours(c.get("fetchedAt"), now_iso)
+    return f is not None and f <= 24.0
+
+
+def _category(c: Dict[str, Any], company_names: List[str], theme_words: List[str],
+              age_h: Optional[float], current_time_authority: bool,
+              src_cls: str) -> str:
+    title = str(c.get("titleJa") or c.get("titleOriginal") or c.get("title") or "")
+    if not current_time_authority:
+        # Exact but out-of-window records remain historical diagnostics.  A
+        # missing/date-only/future/malformed publication clock cannot even
+        # establish causal ordering, so it stays unknown/background.
+        if age_h is not None:
+            return "stale_background"
+        return "unknown"
+    if age_h is not None and age_h > STALE_AGE_H:
+        return "stale_background"
+    named = any(n and n in title for n in company_names)
+    if named and src_cls == "official":
+        return "direct_official"
+    if named:
+        return "direct_news"
+    if c.get("valueChainRelation"):          # 明示タグがある時だけ(推測で付けない)
+        return "value_chain"
+    if any(w in title for w in _MACRO_WORDS):
+        return "macro"
+    if any(w and w in title for w in theme_words):
+        return "sector_theme"
+    return "unknown"
+
+
+def _why_wrong_ja(cat: str, symbol_names: List[str]) -> str:
+    name = symbol_names[0] if symbol_names else "この銘柄"
+    return {
+        "direct_official": "公式開示でも、値動きの主因が別(地合い/需給)の可能性は残る。",
+        "direct_news": "単一報道の場合、誤報・旧材料の再掲・織り込み済みの可能性がある。",
+        "value_chain": f"{name}への影響度は未実証 — 取引関係の規模次第で無関係の可能性。",
+        "sector_theme": f"{name}固有の開示・報道は見つかっていない — セクター/テーマ連想であり直接材料ではない。",
+        "macro": "個別材料ではなく市場全体要因 — 銘柄固有の説明にはならない可能性。",
+        "stale_background": "古い記事 — 当日の値動きの主因にはならない(背景参考のみ)。",
+        "unknown": "裏付けソースがない — 原因不明として扱うのが正直。",
+    }[cat]
+
+
+def _primary_eligible(cat: str, current_time_authority: bool,
+                      source_class: str,
+                      decision_usable: Optional[bool]) -> bool:
+    if cat in ("stale_background", "unknown"):
+        return False
+    if decision_usable is False or source_class == "unknown":
+        return False
+    return current_time_authority
+
+
+def _confidence(fresh_count: int, has_official_or_credible: bool,
+                sector_confirm: bool, cat: str) -> str:
+    if cat in ("stale_background", "unknown"):
+        return "unknown"
+    if fresh_count >= 2 and sector_confirm:
+        return "high"
+    if fresh_count >= 1 and has_official_or_credible:
+        return "medium"
+    if cat in ("sector_theme", "value_chain", "macro"):
+        return "low"
+    return "low"
+
+
+def review(symbol: str, market: str, change_pct: Optional[float],
+           candidates: List[Dict[str, Any]], *,
+           company_names: Optional[List[str]] = None,
+           theme_words: Optional[List[str]] = None,
+           sector_confirm: bool = False,
+           now_iso: str = "") -> Dict[str, Any]:
+    """candidates: [{titleJa/titleOriginal/title, source|sourceId, publishedAt,
+    firstDetectedAt, fetchedAt, url?, valueChainRelation?}] — 与えられたメタデータ
+    のみで判定(fetchなし・捏造なし)。"""
+    names = [n for n in (company_names or []) if n]
+    themes = [t for t in (theme_words or []) if t]
+    rank_order = {"direct_official": 0, "direct_news": 1, "value_chain": 2,
+                  "sector_theme": 3, "macro": 4, "unknown": 5, "stale_background": 6}
+    rows = []
+    for c in (candidates or [])[:12]:
+        time_authority = _published_time_authority(c, now_iso)
+        age_h = time_authority["ageHours"]
+        source, provider, src_cls = _source_metadata(c)
+        cat = _category(c, names, themes, age_h,
+                        time_authority["currentCausalAuthority"], src_cls)
+        refetched = _refetched_today(c, now_iso)
+        explicit_decision_usable = c.get("decisionUsable")
+        if not isinstance(explicit_decision_usable, bool):
+            explicit_decision_usable = None
+        eligible = _primary_eligible(
+            cat, time_authority["currentCausalAuthority"], src_cls,
+            explicit_decision_usable)
+        fresh = _freshness(age_h)
+        why = _why_wrong_ja(cat, names)
+        rows.append({
+            "titleJa": str(c.get("titleJa") or c.get("titleOriginal") or c.get("title") or "")[:160],
+            "source": source,
+            "provider": provider or None,
+            "official": (c.get("official") if isinstance(c.get("official"), bool)
+                         else src_cls == "official"),
+            "sourceClass": src_cls,
+            "publishedAt": c.get("publishedAt"),
+            "ageHours": round(age_h, 1) if age_h is not None else None,
+            "publishedTimeAuthority": time_authority["status"],
+            "currentCausalTime": time_authority["currentCausalAuthority"],
+            "timeAuthorityReasonJa": time_authority["reasonJa"],
+            "category": cat, "categoryJa": CATEGORY_JA[cat],
+            # v12.0.8追補: プロビナンス(出典タイプ/直接度/鮮度)を候補ごとに必須化
+            "sourceType": _source_type(cat, src_cls),
+            "directness": _CAT_TO_DIRECTNESS[cat],
+            "freshness": fresh, "freshnessJa": FRESHNESS_JA[fresh],
+            "primaryEligible": eligible,
+            "decisionUsable": explicit_decision_usable,
+            # Diagnostic only.  It never changes primaryEligible.
+            "refetchedToday": refetched,
+            "whyWrongJa": why,
+            "whyThisMightBeWrongJa": why,
+        })
+    rows.sort(key=lambda r: (rank_order.get(r["category"], 9),
+                             r["ageHours"] if r["ageHours"] is not None else 9e9))
+    for i, r in enumerate(rows, 1):
+        r["rank"] = i
+
+    eligible_rows = [r for r in rows if r["primaryEligible"]]
+    fresh_count = len({(r["sourceClass"], r["provider"], r["source"])
+                       for r in eligible_rows})
+    has_strong = any(r["sourceClass"] in ("official", "credible_news") for r in eligible_rows)
+    primary = eligible_rows[0] if eligible_rows else None
+    conf = _confidence(fresh_count, has_strong, bool(sector_confirm),
+                       primary["category"] if primary else "unknown")
+
+    if primary is None:
+        headline = "原因不明(裏付けソースなし) — 憶測で断定しません。"
+    elif primary["category"] in ("sector_theme", "value_chain"):
+        headline = f"{CATEGORY_JA[primary['category']]}の候補: {primary['titleJa']}(直接材料ではなくテーマ連想)"
+    elif primary["category"] == "macro":
+        headline = f"マクロ要因の候補: {primary['titleJa']}"
+    else:
+        headline = f"候補原因: {primary['titleJa']}"
+
+    has_fresh_direct = any(r["directness"] == "direct_company" and r["primaryEligible"]
+                           for r in rows)
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "symbol": str(symbol).upper(), "market": str(market).upper(),
+        "changePct": change_pct,
+        "causes": rows[:8],
+        "evidenceCount": len(eligible_rows),
+        # v12.0.8追補: 新鮮な直接材料が無い時は必ずこの一文(連想を事実にしない)
+        "noDirectEvidenceNoteJa": (None if has_fresh_direct else NO_DIRECT_EVIDENCE_JA),
+        "primary": primary,
+        "osintConfidence": conf, "osintConfidenceJa": CONFIDENCE_JA[conf],
+        "headlineJa": headline,
+        "sourcesMissingJa": ([] if any(r["sourceClass"] == "official" for r in rows)
+                             else ["公式開示(TDnet/EDINET)での裏付けは未確認"]),
+        "sectorConfirm": bool(sector_confirm),
+        "complianceNote": "候補原因の分類であり事実の断定ではない。売買指示ではない。",
+    }

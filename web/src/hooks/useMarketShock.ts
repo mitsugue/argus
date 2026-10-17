@@ -1,0 +1,113 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { sessionViewCheckpoint } from '../lib/sessionViewCheckpoint';
+import { useEffect, useState } from 'react';
+import { FEED_VISIBLE_MS, isPageVisible } from '../lib/pollingPolicy';
+
+// v13.5.1 market-shock view: direct long-end rate sensing plus corroborated
+// shock-theme news, classified server-side by the pure materiality engine.
+// Read-only cached GET; explicit states, never silent absence.
+export interface MarketShockEvent {
+  eventId: string;
+  eventClass: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  baseSeverity: string;
+  headlineJa: string;
+  whyJa: string;
+  evidence: Record<string, unknown>;
+  crossMarket: { confirmed: boolean; signals: string[] };
+  sources: Array<{ name: string; kind: string }>;
+  asOf: string | null;
+}
+
+export interface MarketShockView {
+  schemaVersion: string;
+  generatedAt?: string;
+  status: string;
+  eventCount: number;
+  events: MarketShockEvent[];
+  longEnd?: Record<string, unknown>;
+}
+
+export interface MarketShockState {
+  previousObservation?: boolean;
+  status: 'loading' | 'data' | 'error';
+  view: MarketShockView | null;
+}
+
+let memory: MarketShockView | null = null;
+let inflight: Promise<MarketShockView | null> | null = null;
+
+function baseUrl() {
+  return (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)
+    ?.replace(/\/$/, '') ?? null;
+}
+
+async function fetchShock(): Promise<MarketShockView | null> {
+  const base = baseUrl();
+  if (!base) return null;
+  // Release the shared flight on stalled headers/body so later refreshes can
+  // recover. Previously acquired rows remain visible with an error state.
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch(`${base}/api/argus/market-shock`, {
+      method: 'GET', cache: 'no-store', signal: controller.signal, headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.json() as MarketShockView;
+    if (body.schemaVersion !== 'argus-market-shock-v1') {
+      throw new Error('schema_incompatible');
+    }
+    return body;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+export function useMarketShock(): MarketShockState {
+  const saved = sessionViewCheckpoint.restoredValue('market-shock') as MarketShockState | undefined;
+  const restored = !!saved && ['data','error'].includes(saved.status)
+    && (saved.view === null || (saved.view?.schemaVersion === 'argus-market-shock-v1' && Array.isArray(saved.view.events)))
+    && (!memory || memory === saved.view);
+  if (!memory && restored && saved.view) memory = saved.view;
+  const [state, setState] = useState<MarketShockState>(() => restored ? saved : (memory
+    ? { status: 'data', view: memory }
+    : { status: 'loading', view: null }));
+  useEffect(() => {
+    let cancelled = false;
+    const publish = (next: MarketShockState) => {
+      if (cancelled) return;
+      setState(next);
+      if (sessionViewCheckpoint.keep('market-shock', next)) void sessionViewCheckpoint.flush();
+    };
+    const load = async () => {
+      if (!inflight) inflight = fetchShock().finally(() => { inflight = null; });
+      try {
+        const view = await inflight;
+        if (!cancelled && view) {
+          memory = view;
+          publish({ status: 'data', view });
+        } else if (!cancelled && !view) {
+          publish({ status: 'error', view: memory });
+        }
+      } catch {
+        // v13.5.50: a failed refresh never relabels retained data as current.
+        if (!cancelled) publish({ status: 'error', view: memory });
+      }
+    };
+    if (!restored) void load();
+    // v13.5.50: refresh on visibility resume and on online transition (was a
+    // single fetch per mount); the visible-page cadence replaced the 5-minute poll.
+    const timer = scheduleVisibleInterval(() => { if (isPageVisible()) void load(); }, FEED_VISIBLE_MS);
+    const onVisible = () => { if (!document.hidden) void load(); };
+    const onOnline = () => void load();
+    const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible, restored);
+    window.addEventListener('online', onOnline);
+    return () => {
+      cancelled = true; timer();
+      stopInitialOnVisible();
+      window.removeEventListener('online', onOnline);
+    };
+  }, []);
+  return { ...state, previousObservation: restored && state.view === saved.view };
+}

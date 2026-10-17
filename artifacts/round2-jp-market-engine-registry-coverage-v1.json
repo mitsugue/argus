@@ -1,0 +1,287 @@
+{
+  "schemaVersion": "argus-round2-jp-market-engine-coverage-v1",
+  "canonicalRfcSha256": "69a631ebc549b3bede6356cabf338e38d9418fc3683821198ef9a3c1eb440d51",
+  "registryVersion": "jp-market-engine-jp-canonical-2026.08-round2-v1",
+  "registrySha256": "f5771b1d1b4ca86f88aef02da91194078983f72b6ee4939acd38607494c6870b",
+  "registrySealed": true,
+  "registryIndex": [
+    {
+      "id": "ARGUS-D01-SENS-700B",
+      "family": "D01",
+      "lineage": "ARGUS_CANDIDATE",
+      "policyId": "jp-market-engine-jp-argus-d01-sens-700b-v1",
+      "policyHash": "56d9154f47f4a028db5241ffa0949367f63685842073c583188c809f56936f8a",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "ARGUS-D01-SENS-750B",
+      "family": "D01",
+      "lineage": "ARGUS_CANDIDATE",
+      "policyId": "jp-market-engine-jp-argus-d01-sens-750b-v1",
+      "policyHash": "faf5f1cbca80bfc3cc212ecb2fc5e1529bfb58967a96023a9807950918a9d6f1",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "ARGUS-D01-SENS-800B",
+      "family": "D01",
+      "lineage": "ARGUS_CANDIDATE",
+      "policyId": "jp-market-engine-jp-argus-d01-sens-800b-v1",
+      "policyHash": "0532f3a434626c0c06914b9f13b69098902416340b1dc453286b35d4e481f510",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "ARGUS-D01-SENS-850B",
+      "family": "D01",
+      "lineage": "ARGUS_CANDIDATE",
+      "policyId": "jp-market-engine-jp-argus-d01-sens-850b-v1",
+      "policyHash": "37e52e31a9790b19b01b5f11caec3b526bf9a2ae06848aeedbb0e41baa9faaf2",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "ARGUS-D01-SENS-900B",
+      "family": "D01",
+      "lineage": "ARGUS_CANDIDATE",
+      "policyId": "jp-market-engine-jp-argus-d01-sens-900b-v1",
+      "policyHash": "4f388ca5100d31c9d8230822e77a65fb12db0391a469b42827724cf1ab1d318d",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "ARGUS-D03-ETF-PROXY",
+      "family": "D03",
+      "lineage": "ARGUS_CANDIDATE",
+      "policyId": "jp-market-engine-jp-argus-d03-etf-proxy-v1",
+      "policyHash": "bd1f288c4d74f593ce0a595a9539fce2a0ce686c6f07205d7ff8f93e06c233ff",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "ARGUS-D06-MACD-12-26-9",
+      "family": "D06",
+      "lineage": "ARGUS_CANDIDATE",
+      "policyId": "jp-market-engine-jp-argus-d06-macd-12-26-9-v1",
+      "policyHash": "e7b84bfb97bf7e831559011e60184efe832d1da05be1644fa3f4579c05750807",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "JP_MARKET_ENGINE-D01-ORIGINAL",
+      "family": "D01",
+      "lineage": "JP_MARKET_ENGINE_ORIGINAL",
+      "policyId": "jp-market-engine-jp-jp_market_engine-d01-original-v1",
+      "policyHash": "ed04ba546f86618dba4daf67cdc8887d63ef4a0c24e61b322930388f04f69dea",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "JP_MARKET_ENGINE-D02-ORIGINAL",
+      "family": "D02",
+      "lineage": "JP_MARKET_ENGINE_ORIGINAL",
+      "policyId": "jp-market-engine-jp-jp_market_engine-d02-original-v1",
+      "policyHash": "0f4a5081ea55abc9c8e9ba6e682297fe754c027ceb51f991b482b0c3c37d23f9",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "JP_MARKET_ENGINE-D03-ORIGINAL",
+      "family": "D03",
+      "lineage": "JP_MARKET_ENGINE_ORIGINAL",
+      "policyId": "jp-market-engine-jp-jp_market_engine-d03-original-v1",
+      "policyHash": "e7a9e886280809596ba3b715b26e2481d8cebb60ff071031cf0ce11427fe9de3",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "JP_MARKET_ENGINE-D04-ORIGINAL",
+      "family": "D04",
+      "lineage": "JP_MARKET_ENGINE_ORIGINAL",
+      "policyId": "jp-market-engine-jp-jp_market_engine-d04-original-v1",
+      "policyHash": "24a5c844779bf3bd1cce13e13e2efcc2406a4b440fb632220fe4f960f4f38aa5",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "JP_MARKET_ENGINE-D05-ORIGINAL",
+      "family": "D05",
+      "lineage": "JP_MARKET_ENGINE_ORIGINAL",
+      "policyId": "jp-market-engine-jp-jp_market_engine-d05-original-v1",
+      "policyHash": "26f2948b7a029d08d7422c7b7b4ecdc3e8c6b0e3e6460aeb55eee1ef81858ce2",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "JP_MARKET_ENGINE-D06-ORIGINAL",
+      "family": "D06",
+      "lineage": "JP_MARKET_ENGINE_ORIGINAL",
+      "policyId": "jp-market-engine-jp-jp_market_engine-d06-original-v1",
+      "policyHash": "0bd6c97504eec7c4dbe9d6b89e879621184e4ce932b805b996f6f577663328f6",
+      "validationStatus": "UNVALIDATED"
+    },
+    {
+      "id": "JP_MARKET_ENGINE-D07-ORIGINAL",
+      "family": "D07",
+      "lineage": "JP_MARKET_ENGINE_ORIGINAL",
+      "policyId": "jp-market-engine-jp-jp_market_engine-d07-original-v1",
+      "policyHash": "5d59c8f457f2f32bf57044106a03b3bd1cde104a1e6bc83f29fc3cf5633efe94",
+      "validationStatus": "UNVALIDATED"
+    }
+  ],
+  "scope": "repository_only_no_runtime_inference",
+  "coverage": [
+    {
+      "dataId": "nikkei_ohlcv",
+      "status": "MISSING",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "No committed direct Nikkei 225 OHLCV dataset."
+    },
+    {
+      "dataId": "topix_ohlcv",
+      "status": "MISSING",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "No committed direct TOPIX OHLCV dataset."
+    },
+    {
+      "dataId": "vix_history",
+      "status": "PARTIAL",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "Live/cache seams exist, but no durable committed VIX validation history."
+    },
+    {
+      "dataId": "two_market_margin_balances",
+      "status": "AVAILABLE",
+      "coverageStart": "2002-08-02",
+      "coverageEnd": "2026-07-10",
+      "rowCount": 2434,
+      "repositoryPath": "ops/imports/jpx_two_market_credit_20020802_20260710.csv",
+      "sha256": "50c57ae35762d90f5123f4fc40614c85954c7dee417ff249fc688b9130ee37cb",
+      "note": "1,217 official weekly short rows and 1,217 official weekly long rows."
+    },
+    {
+      "dataId": "credit_valuation_loss",
+      "status": "LICENSE_BLOCKED",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "Schema exists; redistributable history is not committed."
+    },
+    {
+      "dataId": "1570_margin_ratio",
+      "status": "MISSING",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "No committed point-in-time 1570 margin-ratio history."
+    },
+    {
+      "dataId": "foreign_investor_flow",
+      "status": "PARTIAL",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "Publication-gated ingestion exists; no committed validation history."
+    },
+    {
+      "dataId": "nikkei_eps_per",
+      "status": "LICENSE_BLOCKED",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": "ops/imports/nikkei_per_pbr_licensed_template.csv",
+      "sha256": null,
+      "note": "Template only; direct licensed observations are absent."
+    },
+    {
+      "dataId": "individual_stock_margin",
+      "status": "PARTIAL",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "Live per-symbol seam exists; no committed historical archive."
+    },
+    {
+      "dataId": "jsf_balance",
+      "status": "PARTIAL",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "Live daily seam exists; no committed historical archive."
+    },
+    {
+      "dataId": "reverse_fee",
+      "status": "MISSING",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "Reverse stock-lending fee is not ingested."
+    },
+    {
+      "dataId": "earnings_quality",
+      "status": "PARTIAL",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "Event/reaction evidence exists; comprehensive quality history does not."
+    },
+    {
+      "dataId": "sector_style",
+      "status": "PARTIAL",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "Proxy/rotation seams exist; complete PIT sector/style history does not."
+    },
+    {
+      "dataId": "breadth",
+      "status": "PARTIAL",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "Aggregate machinery exists; full raw licensed history stays outside Git."
+    },
+    {
+      "dataId": "ten_year_multi_source_pit_archive",
+      "status": "MISSING",
+      "coverageStart": null,
+      "coverageEnd": null,
+      "rowCount": 0,
+      "repositoryPath": null,
+      "sha256": null,
+      "note": "No complete ten-year direct-index/VIX/flow/earnings PIT archive in Git."
+    }
+  ],
+  "dataGates": [
+    "1570_pit_margin_history",
+    "durable_vix_history",
+    "source_confirmed_jp_market_engine_vix_macd_parameters",
+    "direct_verified_nikkei_topix_history_and_rights",
+    "nikkei_valuation_licensed_fields",
+    "comprehensive_earnings_quality_history",
+    "complete_sector_style_history",
+    "complete_ten_year_multi_source_pit_archive",
+    "reverse_fee_history",
+    "tachibana_actual_field_behavior"
+  ],
+  "artifactId": "jp-market-engine-coverage-bd61cd1e6418f61ff3b67747402d50e0c48c667dc9b87f031272a47913d60f26"
+}

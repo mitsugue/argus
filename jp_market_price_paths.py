@@ -1,0 +1,660 @@
+"""Explicit scales and descriptive scenario paths for the Japan index.
+
+The ensemble is a research forecast, not a calibrated probability. A reference
+frequency is not an accuracy claim. The current price scale uses the stored market-cap weighted estimate. Old
+index valuation remains a separate compatibility path; the definitions are
+never mixed and missing current inputs do not fall back to an old definition.
+"""
+from __future__ import annotations
+
+import copy
+import math
+import statistics
+from typing import Any, Mapping, Sequence
+
+from jp_market_engine import _instant
+from jp_market_level_map import EPS_BASIS as CURRENT_BASIS, EPS_LABEL_JA as CURRENT_LABEL_JA
+
+VALUATION_BASIS = "NIKKEI_225_INDEX_BASED_PER"
+#: The ARGUS reconstruction from constituent forecast EPS (argus_index_valuation_proxy).
+#: It is accepted by the same scale so the chart can be translated into yen, and
+#: it keeps its own basis so nothing downstream can present it as the official figure.
+PROXY_BASIS = "ARGUS_PROXY_INDEX_BASED_PER"
+ACCEPTED_BASES = (VALUATION_BASIS, PROXY_BASIS, CURRENT_BASIS)
+BASIS_LABEL_JA = {
+    VALUATION_BASIS: "公式の指数ベースPER（日経平均プロフィル日次サマリー）",
+    PROXY_BASIS: "ARGUS代理値（構成銘柄の予想EPSから再構成。公式の指数ベースPERではありません）",
+}
+METHOD = "jp-index-analog-median-research-v2-history-coverage"
+
+
+SERIES_COVERAGE_MINIMUM_SHARE = 0.5
+CONDITION_HISTORY_TOLERANCE_DAYS = 365
+
+
+def series_coverage_check(current_states, candidates, study):
+    """Expected against actual coverage of every market-condition series (2026-10-03).
+
+    Expected: each of the sixteen series exists now and in most historical
+    candidates, and each warning condition has events from near the start of
+    the history. A series present now but in fewer than half of the
+    candidates, or a condition whose first event is more than a year after
+    the first candidate, is named as a gap. Found because the ten-year
+    investor-type backfill was invisible to every past cutoff while every
+    count above it looked normal. Diagnostic only: it changes no selection.
+    """
+    from datetime import date as _date, timedelta as _timedelta
+    from jp_market_analogs import FEATURE_DEFINITIONS
+    total = len(candidates)
+    starts = sorted(str(e.get("anchorDate") or "")[:10] for e in candidates if e.get("anchorDate"))
+    series, gaps = {}, []
+    for key in FEATURE_DEFINITIONS:
+        present = sum(1 for e in candidates if key in (e.get("states") or {}))
+        share = round(present / total, 4) if total else None
+        if key not in current_states:
+            status = "CURRENT_MISSING"
+        elif share is None or share < SERIES_COVERAGE_MINIMUM_SHARE:
+            status = "PAST_SIDE_SPARSE"
+        else:
+            status = "OK"
+        series[key] = {"candidates": present, "share": share, "status": status}
+        if status != "OK":
+            gaps.append(key)
+    conditions = {}
+    limit = None
+    if starts:
+        limit = (_date.fromisoformat(starts[0]) + _timedelta(days=CONDITION_HISTORY_TOLERANCE_DAYS)).isoformat()
+    for family, row in sorted(((study or {}).get("conditions") or {}).items()):
+        if not isinstance(row, Mapping) or not row.get("seriesId"):
+            continue                       # no activation rule (D07)
+        first = row.get("coverageStart")
+        if first is None:
+            status = "NO_HISTORY"
+        elif limit and first > limit:
+            status = "HISTORY_SHORT"
+        else:
+            status = "OK"
+        conditions[family] = {"coverageStart": first, "status": status}
+        if status != "OK":
+            gaps.append(family)
+    return {"candidateCount": total, "candidateStart": starts[0] if starts else None,
+            "minimumShare": SERIES_COVERAGE_MINIMUM_SHARE,
+            "conditionToleranceDays": CONDITION_HISTORY_TOLERANCE_DAYS,
+            "series": series, "conditions": conditions, "gaps": gaps,
+            "status": "GAPS_FOUND" if gaps else "OK", "actionAuthority": False}
+
+
+def _finite(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _quantile(values: Sequence[float], fraction: float) -> float:
+    ordered = sorted(values)
+    position = fraction * (len(ordered) - 1)
+    left = int(position)
+    right = min(left + 1, len(ordered) - 1)
+    return ordered[left] + (ordered[right] - ordered[left]) * (position - left)
+
+
+def current_estimate_scale(valuation: Mapping[str, Any] | None, *, cutoff: str,
+                           anchor_date: str, anchor_price: float) -> dict[str, Any]:
+    """Read the existing estimate, with its definition and actual receipt.
+
+    This does not calculate a new estimate, manufacture a historical vintage,
+    or substitute another PER when the current definition is unavailable.
+    """
+    result = {"status": "UNAVAILABLE", "reason": "missing_current_per_estimate",
+              "instrumentId": "NIKKEI_225_INDEX", "currency": "JPY", "basis": CURRENT_BASIS,
+              "eps": None, "per": None, "anchorPrice": None}
+    if not isinstance(valuation, Mapping) or not valuation or set(valuation) == {"basis"}:
+        return result
+    if valuation.get("instrumentId") != "NIKKEI_225_INDEX" or valuation.get("basis") != CURRENT_BASIS:
+        return {**result, "reason": "incompatible_current_per_definition"}
+    if valuation.get("currency") != "JPY" or valuation.get("date") != anchor_date:
+        return {**result, "reason": "incompatible_valuation_currency_or_session"}
+    recorded = valuation.get("recordedAt")
+    # Date-only values are not exact acquisition instants.
+    known = _instant(recorded) if isinstance(recorded, str) and "T" in recorded else None
+    limit = _instant(cutoff)
+    if known is None or limit is None or known > limit:
+        return {**result, "reason": "current_per_not_known_at_cutoff"}
+    if not valuation.get("sourceRef") or not valuation.get("constituentsAsOf"):
+        return {**result, "reason": "current_per_source_or_constituents_missing"}
+    if valuation.get("officialValue") is not False:
+        return {**result, "reason": "current_per_estimate_identity_required"}
+    index, per, eps, anchor = (_finite(v) for v in
+        (valuation.get("indexClose"), valuation.get("per"), valuation.get("eps"), anchor_price))
+    if any(v is None or v <= 0 for v in (index, per, eps, anchor)):
+        return {**result, "reason": "invalid_valuation_value"}
+    if not math.isclose(index, anchor, rel_tol=1e-6, abs_tol=.01):
+        return {**result, "reason": "valuation_anchor_price_mismatch"}
+    if not math.isclose(eps * per, index, rel_tol=1e-6, abs_tol=.01):
+        return {**result, "reason": "current_per_eps_identity_mismatch"}
+    coverage = valuation.get("coverage")
+    share = _finite(coverage.get("marketCapShareUsed")) if isinstance(coverage, Mapping) else None
+    if share is None or not 0 < share <= 1:
+        return {**result, "reason": "current_per_coverage_missing"}
+    return {**result, "status": "AVAILABLE", "reason": None, "eps": eps, "per": per,
+            "anchorPrice": anchor, "date": anchor_date, "basisLabelJa": CURRENT_LABEL_JA,
+            "isProxy": True, "officialValue": False, "historicalVintageVerified": False,
+            "proxyCoverage": dict(coverage), "proxyErrorPct": None,
+            "constituentsAsOf": valuation["constituentsAsOf"], "sourceRef": valuation["sourceRef"],
+            "recordedAt": recorded, "knownAt": recorded, "availableFrom": recorded,
+            "epsKind": "MARKET_CAP_WEIGHTED_FORWARD_ESTIMATE",
+            "epsDerivation": "stored same-session market-cap-weighted estimate",
+            "shapeToYenFormula": "current index EPS * current index PER * shape / 100",
+            "assumptions": ["constant_current_index_eps_for_reference_mapping",
+                            "shape_returns_are_not_observed_historical_per_changes"],
+            "revocationConditions": ["new_index_eps_or_definition", "anchor_session_changes"],
+            "perClippingApplied": False}
+
+
+def index_valuation_scale(valuation: Mapping[str, Any] | None, *, cutoff: str,
+                          anchor_date: str, anchor_price: float) -> dict[str, Any]:
+    if isinstance(valuation, Mapping) and valuation.get("basis") == CURRENT_BASIS:
+        return current_estimate_scale(valuation, cutoff=cutoff,
+                                      anchor_date=anchor_date, anchor_price=anchor_price)
+    result = {"status": "UNAVAILABLE", "reason": "missing_index_valuation",
+              "instrumentId": "NIKKEI_225_INDEX", "currency": "JPY",
+              "eps": None, "per": None, "anchorPrice": None}
+    if not valuation:
+        return result
+    if valuation.get("instrumentId") != "NIKKEI_225_INDEX" or valuation.get("basis") not in ACCEPTED_BASES:
+        return {**result, "reason": "incompatible_index_valuation_definition"}
+    basis = valuation["basis"]
+    if valuation.get("currency") != "JPY" or valuation.get("date") != anchor_date:
+        return {**result, "reason": "incompatible_valuation_currency_or_session"}
+    limit = _instant(cutoff)
+    known = [_instant(valuation.get(key)) for key in ("availableFrom", "knownAt") if valuation.get(key)]
+    if not limit or not known or any(value is None or value > limit for value in known):
+        return {**result, "reason": "valuation_not_known_at_cutoff"}
+    if not valuation.get("sourceRef"):
+        return {**result, "reason": "valuation_source_required"}
+    index = _finite(valuation.get("indexClose"))
+    per = _finite(valuation.get("per"))
+    anchor = _finite(anchor_price)
+    if any(value is None or value <= 0 for value in (index, per, anchor)):
+        return {**result, "reason": "invalid_valuation_value"}
+    if not math.isclose(index, anchor, rel_tol=1e-6, abs_tol=.01):
+        return {**result, "reason": "valuation_anchor_price_mismatch"}
+    eps = index / per
+    if not math.isfinite(eps) or eps <= 0:
+        return {**result, "reason": "invalid_derived_index_eps"}
+    return {**result, "status": "AVAILABLE", "reason": None,
+            "eps": eps, "per": per, "anchorPrice": anchor, "date": anchor_date,
+            "basis": basis, "basisLabelJa": BASIS_LABEL_JA[basis],
+            "isProxy": basis == PROXY_BASIS,
+            "proxyErrorPct": valuation.get("officialErrorPct") if basis == PROXY_BASIS else None,
+            "proxyCoverage": valuation.get("coverage") if basis == PROXY_BASIS else None,
+            "sourceRef": valuation["sourceRef"],
+            "epsKind": valuation.get("epsKind", "DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER"),
+            "publishedAt": valuation.get("publishedAt"),
+            "sourceResponseSha256": valuation.get("sourceResponseSha256"),
+            "availableFrom": valuation.get("availableFrom"), "knownAt": valuation.get("knownAt"),
+            "epsDerivation": "same-session index close / index-based PER",
+            "shapeToYenFormula": "current index EPS * current index PER * shape / 100",
+            "assumptions": ["constant_current_index_eps_for_reference_mapping",
+                            "shape_returns_are_not_observed_historical_per_changes"],
+            "revocationConditions": ["new_index_eps_or_definition", "anchor_session_changes"],
+            "perClippingApplied": False}
+
+
+def convert_shape_to_yen(points: Sequence[Mapping[str, Any]], *, scale: Mapping[str, Any]) -> list[dict[str, Any]]:
+    if scale.get("status") != "AVAILABLE" or scale.get("basis") not in ACCEPTED_BASES:
+        return []
+    eps, per = _finite(scale.get("eps")), _finite(scale.get("per"))
+    if eps is None or per is None or min(eps, per) <= 0:
+        return []
+    converted = []
+    for row in points:
+        value = _finite(row.get("value"))
+        if value is None or value <= 0:
+            raise ValueError("invalid_shape_value")
+        price = eps * per * value / 100
+        if not math.isfinite(price):
+            raise ValueError("price_conversion_overflow")
+        converted.append({**dict(row), "shapeValue": value, "value": price,
+                          "unit": "JPY_INDEX_POINTS", "scaleBasis": scale.get("basis")})
+    return converted
+
+
+def reference_ensemble(selection: Mapping[str, Any], paths: Sequence[Mapping[str, Any]], *,
+                       horizon_sessions: int = 5, flat_threshold_pct: float = .5) -> dict[str, Any]:
+    """Summarize complete, uniquely selected historical paths after selection.
+
+    This may be drawn as a provisional calculation-engine forecast. Its band
+    is the 25th–75th percentile of these past outcomes, NOT a future coverage
+    interval. Small samples and failed independent validation remain visible.
+    """
+    if isinstance(horizon_sessions, bool) or horizon_sessions not in (1, 5, 10, 20):
+        raise ValueError("unsupported_scenario_horizon")
+    threshold = _finite(flat_threshold_pct)
+    if threshold is None or threshold < 0:
+        raise ValueError("invalid_flat_classification_threshold")
+    selection_cutoff = _instant(selection.get("informationCutoff"))
+    if selection_cutoff is None:
+        raise ValueError("selection_information_cutoff_required")
+    eligible = {row["snapshotId"] for row in selection.get("selected", [])}
+    admitted: dict[str, list[float]] = {}
+    for path in paths:
+        identifier = path.get("snapshotId")
+        points = path.get("subsequentReference", [])
+        path_cutoff = _instant(path.get("displayCutoff"))
+        if path_cutoff is None or path_cutoff > selection_cutoff:
+            continue
+        if identifier not in eligible or identifier in admitted:
+            continue
+        if path.get("scale") != "ANCHOR_100" or path.get("status") != "AVAILABLE" \
+                or path.get("horizonSessions") != horizon_sessions or len(points) != horizon_sessions + 1:
+            continue
+        values = [_finite(point.get("value")) for point in points]
+        if any(v is None or v <= 0 for v in values) or values[0] != 100 \
+                or [point.get("offsetSessions") for point in points] != list(range(horizon_sessions + 1)):
+            continue
+        admitted[identifier] = values
+    counts = {"up": 0, "flat": 0, "down": 0}
+    for path in admitted.values():
+        change = path[-1] - 100
+        counts["up" if change > threshold else "down" if change < -threshold else "flat"] += 1
+    sample = len(admitted)
+    line = []
+    band = []
+    if sample >= 2:
+        for session in range(horizon_sessions + 1):
+            values = [path[session] for path in admitted.values()]
+            line.append({"offsetSessions": session, "value": statistics.median(values)})
+            band.append({"offsetSessions": session, "lower": _quantile(values, .25),
+                         "upper": _quantile(values, .75)})
+    return {
+        "method": METHOD, "selectionId": selection.get("selectionId"),
+        "instrumentId": "NIKKEI_225_INDEX", "horizonSessions": horizon_sessions,
+        "classification": {"unit": "PERCENT", "upAbove": threshold,
+                           "flatInclusive": [-threshold, threshold], "downBelow": -threshold},
+        "status": "PROVISIONAL_RESEARCH_FORECAST" if line else "INSUFFICIENT_COMPLETE_ANALOGS",
+        "forecastLine": line, "forecastBand": band, "scale": "ANCHOR_100",
+        "frequency": {"meaning": "SELECTED_HISTORICAL_OUTCOME_FREQUENCY", "sampleCount": sample,
+                      "counts": counts, "fractions": {key: count / sample if sample else None
+                                                      for key, count in counts.items()}},
+        "bandMeaning": "selected historical path quartiles; not a predictive coverage interval",
+        "predictiveProbabilities": None, "predictionConfidence": None,
+        "validationStatus": "UNVALIDATED", "baselineAdditionalBenefitVerified": False,
+        "selectionCoverage": selection.get("status"), "actionAuthority": False,
+    }
+
+
+def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any],
+                        paths: Sequence[Mapping[str, Any]], ensemble: Mapping[str, Any], *,
+                        scale: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Project one set of calculation identities into the chart contract."""
+    if current.get("status") != "AVAILABLE" or not current.get("window"):
+        raise ValueError("actual_index_window_required")
+    if selection.get("currentSnapshotId") != current.get("snapshotId") or \
+            ensemble.get("selectionId") != selection.get("selectionId"):
+        raise ValueError("chart_calculation_identity_mismatch")
+    anchor_price = current["window"][-1]["close"]
+    use_yen = bool(scale and scale.get("status") == "AVAILABLE")
+    if use_yen and (scale.get("date") != current.get("anchorDate") or
+                    not math.isclose(scale.get("anchorPrice", 0), anchor_price, abs_tol=.01)):
+        raise ValueError("chart_valuation_anchor_mismatch")
+
+    def convert(points):
+        return convert_shape_to_yen(points, scale=scale) if use_yen else [dict(p) for p in points]
+
+    actual = [{"offsetSessions": index - len(current["window"]) + 1,
+               "date": row["date"], "value": row["close"] / anchor_price * 100}
+              for index, row in enumerate(current["window"])]
+    by_id = {path["snapshotId"]: path for path in paths}
+    groups = {"priceShape": "基準値を合わせた価格形状を比較",
+              "marketState": "同じ尺度の市場状態を比較",
+              "conditionOrder": "条件の発生順序を比較",
+              "materialReaction": "同種の材料に対する価格反応を比較"}
+    feature_labels = {
+        "credit.ratio": "二市場信用倍率", "credit.ratio_change": "二市場信用倍率の変化",
+        "credit.loss_pct": "信用評価損失率", "margin1570.ratio": "日経レバ信用倍率",
+        "margin1570.long_change_pct": "日経レバ買残の変化率", "margin1570.short_change_pct": "日経レバ売残の変化率",
+        "relative_jp_us.return20": "日米相対力", "vix.level": "VIX水準", "vix.change5": "VIXの変化",
+        "vix.macd_histogram": "VIXのMACD", "foreign_flow.net4w": "海外投資家の4週フロー",
+        "fx.usdjpy_change5": "ドル円の変化率", "rate.jp10y_change5": "日本10年金利の変化幅",
+        "rate.us10y_change5": "米国10年金利の変化幅", "nt.ratio_change5": "NT倍率の変化率",
+        "event.sq_sessions": "SQまでの営業日数",
+    }
+    # A proxy-derived state is named as such wherever its label appears; the
+    # official figure and the ARGUS proxy are never shown under one name.
+    proxy_keys = {key for key, state in (current.get("states") or {}).items()
+                  if isinstance(state, Mapping) and state.get("derivationBasis")}
+    def label_for(key, basis=None):
+        base = feature_labels.get(key, "市場指標")
+        return base + "（ARGUS代理計算）" if basis or key in proxy_keys else base
+
+    def display_value(value, unit):
+        labels = {"RATIO": "倍", "PERCENT": "%", "INDEX_POINTS": "ポイント",
+                  "PERCENTAGE_POINTS": "%ポイント", "TRADING_SESSIONS": "営業日", "JPY": "円"}
+        if unit == "JPY" and abs(value) >= 100_000_000:
+            return f"{value / 100_000_000:,.1f}億円"
+        return f"{value:,.3f}".rstrip("0").rstrip(".") + labels.get(unit, "")
+
+    candidates = []
+    from jp_market_analogs import FEATURE_DEFINITIONS
+    for selected in selection.get("selected", []):
+        path = by_id.get(selected["snapshotId"])
+        if not path:
+            continue
+        # The market-condition series this candidate was actually compared on
+        # (defined series minus the ones missing on either side), so the chart
+        # can say "6 of 16" instead of leaving "market conditions" unqualified.
+        compared = [key for key in FEATURE_DEFINITIONS if key not in set(selected["missingFeatures"])
+                    and "marketState" not in selected["missingGroups"]]
+        differences = []
+        for difference in selected.get("importantDifferences", []):
+            if "currentValue" in difference:
+                label = label_for(difference["feature"], difference.get("derivationBasis"))
+                differences.append(f"{label}：現在条件 {display_value(difference['currentValue'], difference['unit'])}、比較時 {display_value(difference['comparisonValue'], difference['unit'])}")
+        if selected["componentDistances"].get("conditionOrder", 0):
+            differences.append("条件が発生した順序には違いがあります")
+        if selected["componentDistances"].get("materialReaction", 0):
+            differences.append("同種の材料に対する価格反応には違いがあります")
+        if selected["missingFeatures"]:
+            differences.append(f"市場指標のうち{len(selected['missingFeatures'])}系列が比較できません")
+        if selected["missingGroups"]:
+            missing_labels = {"marketState": "市場状態", "conditionOrder": "条件の順序",
+                              "materialReaction": "材料反応", "priceShape": "価格形状"}
+            differences.append("・".join(missing_labels[key] for key in selected["missingGroups"]) + "の根拠が不足しています")
+        differences.append("過去時点の改訂前データは検証できていません")
+        candidates.append({"snapshotId": selected["snapshotId"], "anchorDate": path["anchorDate"],
+                           "comparisonKind": selected["comparisonKind"],
+                           "comparison": convert(path["comparison"]),
+                           "subsequentReference": convert(path["subsequentReference"]),
+                           "missingFeatures": selected["missingFeatures"], "missingGroups": selected["missingGroups"],
+                           "comparedFeatures": [label_for(key) for key in compared],
+                           "comparedFeatureCount": len(compared),
+                           "stateFeatureDefinitionCount": len(FEATURE_DEFINITIONS),
+                           "similarReasons": [groups[key] for key in selected["similarityReasons"]],
+                           "differences": differences})
+    converted_band = []
+    for point in ensemble["forecastBand"]:
+        bounds = convert([{"offsetSessions": point["offsetSessions"], "value": point[key]}
+                          for key in ("lower", "upper")])
+        converted_band.append({"offsetSessions": point["offsetSessions"],
+                               "lower": bounds[0]["value"], "upper": bounds[1]["value"]})
+    return {
+        "schemaVersion": "jp-market-comparison-v1", "informationCutoff": current["cutoff"],
+        "anchorDate": current["anchorDate"], "actualAnchorPrice": anchor_price,
+        "unit": "JPY_INDEX_POINTS" if use_yen else "ANCHOR_100", "actual": convert(actual),
+        "candidates": candidates,
+        "forecast": {"status": ensemble["status"], "line": convert(ensemble["forecastLine"]),
+                     "band": converted_band, "horizonSessions": ensemble["horizonSessions"],
+                     "validationStatus": ensemble["validationStatus"],
+                     "sampleCount": ensemble["frequency"]["sampleCount"],
+                     "counts": ensemble["frequency"]["counts"],
+                     "flatThresholdPct": ensemble["classification"]["upAbove"]},
+        "scaleExplanation": ("同じ基準日の指数EPS×指数PER×比較値/100で円換算しています。短期間のEPS一定を仮定しています。"
+                             if use_yen else "現在と各過去局面の基準日を100に合わせた形状比較です。整合する指数EPS/PERがないため円換算は表示していません。"),
+        "reviewConditionsJa": [
+            "基準日や比較に使う市場条件が更新されたら、候補を選び直します。",
+            *(["EPSの値・計算方法が変わったら、円換算をやり直します。"] if use_yen else []),
+        ],
+        "limitations": ["過去の参考経路は確定した未来ではありません。",
+                        "単純トレンド等に対する独立期間の追加効果は未検証です。",
+                        "取得済みの終値までを表示し、欠測した価格は補間していません。"],
+    }
+
+
+def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
+                            session_dates: Sequence[str], horizon_sessions: int = 5,
+                            acquired_at: str | None = None,
+                            valuation: Mapping[str, Any] | None = None,
+                            state_rows: Sequence[Mapping[str, Any]] = (),
+                            condition_rows: Sequence[Mapping[str, Any]] = (),
+                            reaction_rows: Sequence[Mapping[str, Any]] = (),
+                            policy=None, backtest_cache: dict | None = None) -> dict[str, Any]:
+    """Connect cached daily observations to the existing four-layer calculation.
+
+    Historical bars are the source's currently reported history. Their session
+    close availability is NOT proof of an archived, unrevised historical vintage.
+    The caller supplies independently verified exchange sessions; missing bars
+    cannot silently compress a twenty-session comparison window.
+    """
+    from jp_market_analogs import (AnalogPolicy, INSTRUMENT, FEATURE_MAX_AGE_DAYS, _hash, build_episode,
+                                  reference_path, select_episodes)
+    from jp_market_engine import point_in_time_rows
+
+    current_per_context = isinstance(valuation, Mapping) and valuation.get("basis") == CURRENT_BASIS
+    if current_per_context:
+        # A legacy 19x event must not influence current-condition selection
+        # or be scored as a warning under a different PER definition.
+        condition_rows = [row for row in condition_rows
+                          if row.get("seriesId") != "d04_index_per_at_least_19"]
+
+    if isinstance(horizon_sessions, bool) or horizon_sessions not in (1, 5, 10, 20):
+        raise ValueError("unsupported_reference_horizon")
+    if len(bars) > 3000:
+        raise ValueError("index_history_bound_exceeded")
+    if list(session_dates) != sorted(set(session_dates)):
+        raise ValueError("unique_ordered_session_calendar_required")
+    # 2026-09-30: the yardstick per market-condition series comes from the
+    # series' own history (robust MAD); a series without enough history keeps
+    # its fixed definition and the document says which.
+    # Only rows knowable at this cutoff enter the yardstick: a correction
+    # received later must not move the unit a past comparison was measured in.
+    from jp_market_analogs import robust_feature_scales
+    scales = robust_feature_scales(point_in_time_rows(
+        [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0])
+    policy = policy or AnalogPolicy.with_scales(scales)
+    visible, visibility = point_in_time_rows(
+        [dict(row) for row in bars if row.get("instrumentId") == INSTRUMENT], cutoff)
+    visible.sort(key=lambda row: row.get("date", ""))
+    base = {"status": "unavailable", "automaticAiCalls": 0, "actionAuthority": False,
+            "informationCutoff": cutoff, "lastSuccessfulAcquisitionAt": acquired_at,
+            "historicalVintageVerified": False, "comparison": None,
+            "sourceRef": "yahoo:chart:^N225", "sourceVisibility": visibility}
+    # Retain revisions until each candidate's own cutoff. Filtering all inputs
+    # to the latest revision first would erase the information known then.
+    from bisect import bisect_left, bisect_right
+    from datetime import date, timedelta
+    evidence = (state_rows, condition_rows, reaction_rows)
+    if sum(len(rows) for rows in evidence) > 60000:
+        raise ValueError("market_evidence_history_bound_exceeded")
+    indexed = []
+    for rows in evidence:
+        dated = []
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            day = str(row.get("periodEnd") or row.get("date") or "")[:10]
+            try:
+                date.fromisoformat(day)
+            except ValueError:
+                continue
+            dated.append((day, dict(row)))
+        dated.sort(key=lambda pair: pair[0])
+        indexed.append(([pair[0] for pair in dated], [pair[1] for pair in dated]))
+
+    def episode_at(at, price_rows):
+        end = _instant(at).date()
+        oldest = (end - timedelta(days=max(FEATURE_MAX_AGE_DAYS.values()))).isoformat()
+        if price_rows:
+            oldest = min(oldest, price_rows[max(0, len(price_rows) - policy.lookback_sessions - 1)]["date"])
+        scoped = [rows[bisect_left(days, oldest):bisect_right(days, end.isoformat())]
+                  for days, rows in indexed]
+        return build_episode(cutoff=at, bars=price_rows, state_rows=scoped[0],
+                             condition_rows=scoped[1], reaction_rows=scoped[2], policy=policy)
+
+    current = episode_at(cutoff, visible)
+    if current["status"] != "AVAILABLE":
+        return {**base, "reason": "insufficient_complete_index_history"}
+    # Limit candidates to dates whose complete lookback exists on the official
+    # calendar. The source's list of observed dates is never itself the calendar.
+    positions = {day: i for i, day in enumerate(session_dates)}
+    def complete_window(episode):
+        position = positions.get(episode["anchorDate"])
+        return position is not None and position >= policy.lookback_sessions and \
+            [row["date"] for row in episode["window"]] == list(
+                session_dates[position - policy.lookback_sessions:position + 1])
+    if not complete_window(current):
+        return {**base, "reason": "current_exchange_sessions_missing"}
+    candidates = []
+    excluded = {"missingCalendarOrPriceSession": 0, "incompleteEpisode": 0}
+    for index in range(policy.lookback_sessions, len(visible) - policy.lookback_sessions - 1):
+        row = visible[index]
+        episode = episode_at(row["date"] + "T23:59:59Z",
+                             visible[index - policy.lookback_sessions:index + 1])
+        if episode["status"] != "AVAILABLE":
+            excluded["incompleteEpisode"] += 1
+        elif not complete_window(episode):
+            excluded["missingCalendarOrPriceSession"] += 1
+        else:
+            candidates.append(episode)
+    validation, search = None, None
+    selection_policy = policy
+    if backtest_cache is not None:
+        # Walk-forward validation of this forecast rule on the same sealed
+        # episodes, and the component-weight search (chosen on the first half
+        # of the evaluation dates, adopted on the third quarter, reported on
+        # the last), recomputed when the
+        # history or the policy changes and shared by the four horizons.
+        import jp_market_analog_backtest as backtest
+        key = _hash({"method": backtest.METHOD, "last": visible[-1]["date"], "candidates": len(candidates),
+                     "policy": policy.policy_id, "scales": list(policy.state_scales),
+                     "grid": list(backtest.WEIGHT_GRID),
+                     # A revision can replace a value or knowledge timestamp
+                     # without changing row counts. Validate the same sealed
+                     # episodes, price outcomes, calendar and knowable scale
+                     # history that the cached study actually consumes.
+                     "cacheSchema": "sealed-input-content-v1",
+                     "priceHistory": _hash(visible),
+                     "sessionCalendar": _hash(list(session_dates)),
+                     "candidateSnapshots": [episode["snapshotId"] for episode in candidates],
+                     "componentWeights": list(policy.component_weights),
+                     "stateHistory": _hash(point_in_time_rows(
+                         [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0]),
+                     "valuationBasis": (valuation or {}).get("basis")})
+        if backtest_cache.get("key") != key:
+            closes = {row["date"]: float(row["close"]) for row in visible if row.get("close")}
+            result = backtest.walk_forward(candidates, closes, session_dates, policy=policy, state_rows=state_rows)
+            searched = backtest.weight_search(candidates, closes, session_dates, policy=policy, state_rows=state_rows)
+            backtest_cache.clear()
+            backtest_cache.update(key=key, result=result, search=searched)
+        validation, search = backtest_cache["result"], backtest_cache.get("search")
+        if search and search.get("adopted"):
+            from dataclasses import replace
+            selection_policy = replace(policy, component_weights=tuple(sorted(search["chosenWeights"].items())))
+    selection = select_episodes(current, candidates, session_dates=session_dates, policy=selection_policy)
+    selected = {row["snapshotId"] for row in selection["selected"]}
+    paths = [reference_path(episode, later_bars=visible, display_cutoff=cutoff,
+                            session_dates=session_dates, horizon_sessions=horizon_sessions, policy=policy)
+             for episode in candidates if episode["snapshotId"] in selected]
+    ensemble = reference_ensemble(selection, paths, horizon_sessions=horizon_sessions)
+    scale = index_valuation_scale(valuation, cutoff=cutoff, anchor_date=current["anchorDate"],
+                                  anchor_price=current["window"][-1]["close"])
+    document = comparison_document(current, selection, paths, ensemble, scale=scale)
+    if validation is not None:
+        adopted = bool(search and search.get("adopted"))
+        # With adopted weights the reported figures are the final quarter's,
+        # which neither the choice nor the adoption saw; otherwise the full
+        # walk-forward.
+        metrics = (search["test"].get(str(horizon_sessions)) if adopted
+                   else validation["horizons"].get(str(horizon_sessions)))
+        if metrics:
+            document["forecast"]["validationStatus"] = metrics["validationStatus"]
+            document["forecast"]["validation"] = {
+                **metrics, "method": search["method"] if adopted else validation["method"],
+                "evaluationStart": search["testStart"] if adopted else validation["evaluationStart"],
+                "evaluationEnd": search["testEnd"] if adopted else validation["evaluationEnd"],
+                "stepSessions": validation["step"], "scaleRule": validation["scaleRule"],
+                "predictiveProbabilities": None}
+        if search and search.get("status") == "AVAILABLE":
+            document["forecast"]["weightSearch"] = {
+                "gridSize": search["gridSize"], "chosenWeights": search["chosenWeights"],
+                "choiceHorizon": search["choiceHorizon"], "adopted": adopted,
+                "trainStart": search["trainStart"], "trainEnd": search["trainEnd"],
+                "confirmStart": search["confirmStart"], "confirmEnd": search["confirmEnd"],
+                "testStart": search["testStart"], "testEnd": search["testEnd"],
+                "trainHitRate": search["train"]["hitRate"], "trainNaiveRate": search["train"]["naiveMajorityRate"],
+                "testHitRate": search["test"][str(search["choiceHorizon"])]["hitRate"],
+                "testNaiveRate": search["test"][str(search["choiceHorizon"])]["naiveMajorityRate"],
+                "testWilsonLower95": search["test"][str(search["choiceHorizon"])]["hitRateWilsonLower95"],
+                "equalWeightsTestHitRate": (search["equalWeightsTest"] or {}).get("hitRate"),
+                "predictiveProbabilities": None}
+    # Seven warning conditions: what followed each activation in the same
+    # history, against any session (2026-10-02). Recomputed when the closes,
+    # the cutoff date or the condition events change; shared by the horizons.
+    import jp_market_sign_event_study as sign_study
+    condition_list = [row for row in condition_rows if isinstance(row, Mapping)]
+    study_key = _hash({"method": sign_study.METHOD, "last": visible[-1]["date"], "cutoffDate": cutoff[:10],
+                       "valuationBasis": (valuation or {}).get("basis"),
+                       "sessions": len(session_dates), "bars": len(visible),
+                       "conditions": [[str(row.get(k)) for k in ("seriesId", "date", "value", "availableFrom",
+                                                                  "knownAt", "revision")] for row in condition_list]})
+    cached_study = (backtest_cache or {}).get("signEventStudy")
+    if cached_study and cached_study.get("key") == study_key:
+        study = cached_study["result"]
+    else:
+        closes = {row["date"]: float(row["close"]) for row in visible if row.get("close")}
+        study = sign_study.sign_event_study(condition_list, closes, session_dates, cutoff=cutoff,
+                                           valuation_basis=CURRENT_BASIS if current_per_context else None)
+        if backtest_cache is not None:
+            backtest_cache["signEventStudy"] = {"key": study_key, "result": study}
+    document["forecast"]["signEventStudy"] = copy.deepcopy(study)
+    document["limitations"].append("過去比較には取得元が現在報告する履歴を使用しています。改訂前の履歴の再現は未検証です。")
+    groups ={key: len(current[key]) for key in ("states", "conditions", "reactions")}
+    document["marketEvidence"] = {
+        "informationCutoff": current["cutoff"], "current": {key: current[key] for key in groups},
+        "currentCounts": groups,
+        "candidateCoverage": {key: sum(bool(episode[key]) for episode in candidates) for key in groups},
+        "seriesCoverageCheck": series_coverage_check(current.get("states") or {}, candidates, study),
+        "historicalVintageVerified": False, "actionAuthority": False,
+    }
+    if not any(groups.values()):
+        document["limitations"].append("市場状態・条件の順序・材料反応の履歴が未取得のため、価格形状の部分比較です。")
+    elif selection["status"] != "MARKET_ANALOGS_AVAILABLE":
+        document["limitations"].append("入手時点を確認できる市場条件だけを比較しています。未取得の条件・材料反応は補完せず、比較可能な範囲を候補ごとに表示します。")
+    document["calculationIdentity"] = {"currentSnapshotId": current["snapshotId"],
+                                       "selectionId": selection["selectionId"],
+                                       "sourceContentHash": _hash(visible)}
+    by_year = {}
+    for episode in candidates:
+        year = episode["anchorDate"][:4]
+        by_year[year] = by_year.get(year, 0) + 1
+    coverage = {"sourceBars": len(visible),
+        "sourceStart": visible[0]["date"] if visible else None,
+        "sourceEnd": visible[-1]["date"] if visible else None,
+        "candidateCount": len(candidates),
+        "candidateStart": min((row["anchorDate"] for row in candidates), default=None),
+        "candidateEnd": max((row["anchorDate"] for row in candidates), default=None),
+        "calendarStart": session_dates[0] if session_dates else None,
+        "calendarEnd": session_dates[-1] if session_dates else None,
+        "candidatesByYear": by_year, "excluded": excluded,
+        "maximumSelected": policy.maximum_candidates,
+        "selectedCount": len(selection["selected"]), "admittedCount": selection["admittedCount"],
+        "allMarketFeaturesTenYearsVerified": False}
+    document["historyCoverage"] = coverage
+    # This is a descriptive audit of the same fixed-time selection above.  It
+    # answers whether a year was searched and why its closest candidate was or
+    # was not selected; it neither changes the ranking nor uses later returns.
+    document["selectionAudit"] = selection.get("yearAudit", {})
+    document["selectionPolicy"] = {
+        "policyId": policy.policy_id, "lookbackSessions": policy.lookback_sessions,
+        "maximumCandidates": policy.maximum_candidates, "minimumSeparationSessions": policy.minimum_separation_sessions,
+        "maximumDistance": policy.maximum_distance, "shapeScalePct": policy.shape_scale_pct,
+        "componentWeights": dict(selection_policy.component_weights) or None,
+        "stateScales": {key: {"scale": value["scale"], "basis": value["basis"],
+                              "observations": value["observations"], "unit": value["unit"]}
+                        for key, value in scales.items()},
+        "distanceMeaning": "各要素の差をその系列の物差しで割った値の平均。1.0は物差し1つ分。",
+    }
+    document["valuationStatus"] = scale["status"]
+    if scale["status"] == "AVAILABLE":
+        document["valuationEvidence"] = {key: scale.get(key) for key in (
+            "date", "eps", "per", "epsKind", "knownAt", "publishedAt", "sourceRef", "sourceResponseSha256")}
+        document["limitations"].append(
+            "EPSは同日の指数終値÷指数ベースPERによる逆算値で、独立した公表EPSではありません。"
+            "円換算はこの尺度を固定した形状の換算です。利益成長やPER変動を別に予測したものではありません。")
+    return {**base, "status": "available", "reason": None, "comparison": document,
+            "selection": selection, "valuation": scale,
+            "historyCoverage": coverage}

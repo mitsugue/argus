@@ -1,0 +1,1008 @@
+# C.A.O.S. Watchtower — near-real-time source patrol for the Core Portfolio
+# universe (V11.5.3). The deterministic EC2 scheduler supplies 7/8-minute UTC
+# weekday opportunities and 30-minute weekend opportunities. Each run fetches
+# the allow-listed public feeds + targeted per-symbol discovery for urgent/high
+# targets, applies the news-freshness gate (old news never a current lead),
+# queues English headlines for translation, and snapshots the public-safe status
+# to the ledger branch. Metadata only — no article bodies, no LLM in the refresh
+# (translate-visible is the only LLM step and touches headlines only).
+# HONESTY: this is near-real-time monitoring, NOT a Bloomberg/Reuters terminal.
+name: caos-watchtower
+run-name: ${{ inputs.dispatchMode == 'ec2_systemd_writer' && format('Watchtower EC2 {0}', inputs.writerDispatchId) || inputs.remoteJournalRearm == true && 'Watchtower Remote Journal re-arm' || 'Watchtower owner manual' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      remoteJournalRearm:
+        description: Apply natural Remote Journal durability policy only
+        required: false
+        default: false
+        type: boolean
+      dispatchMode:
+        description: Exact caller identity; owner manual is the safe default
+        required: false
+        default: owner_manual
+        type: choice
+        options:
+          - owner_manual
+          - ec2_systemd_writer
+      writerScheduledFor:
+        description: Canonical EC2 UTC slot; empty for owner manual/re-arm
+        required: false
+        default: ''
+        type: string
+      writerDispatchId:
+        description: Deterministic repository/workflow/ref/slot correlation ID
+        required: false
+        default: ''
+        type: string
+      expectedHeadSha:
+        description: Dispatcher-resolved exact protected main commit; empty for owner manual
+        required: false
+        default: ''
+        type: string
+
+# GitHub concurrency keeps at most one running and one pending run for this
+# event-class group; a newer pending run replaces the older pending run. The
+# dedicated re-arm group cannot cancel or queue behind ordinary patrol work.
+# The ordinary writer and Remote Journal re-arm remain disjoint.  The EC2
+# writer state machine provides slot deduplication before this queue boundary.
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.remoteJournalRearm == true && 'caos-watchtower-remote-journal-rearm' || 'caos-watchtower' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  patrol:
+    if: github.event_name != 'workflow_dispatch' || inputs.remoteJournalRearm != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact EC2 writer head
+        if: inputs.dispatchMode == 'ec2_systemd_writer'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.expectedHeadSha }}
+          fetch-depth: 0
+      - name: Checkout exact owner-manual head
+        if: inputs.dispatchMode != 'ec2_systemd_writer'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Validate exact Watchtower dispatch identity
+        env:
+          WATCHTOWER_REMOTE_REARM: ${{ inputs.remoteJournalRearm }}
+          WATCHTOWER_DISPATCH_MODE: ${{ inputs.dispatchMode }}
+          WATCHTOWER_SCHEDULED_FOR: ${{ inputs.writerScheduledFor }}
+          WATCHTOWER_DISPATCH_ID: ${{ inputs.writerDispatchId }}
+          WATCHTOWER_REPOSITORY: ${{ github.repository }}
+          WATCHTOWER_REF: ${{ github.ref_name }}
+          WATCHTOWER_EXPECTED_HEAD_SHA: ${{ inputs.expectedHeadSha }}
+          WATCHTOWER_EVENT_SHA: ${{ github.sha }}
+          WATCHTOWER_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          CHECKOUT_SHA=$(git rev-parse HEAD)
+          python3 scripts/argus_watchtower_writer_dispatch.py validate-inputs \
+            --remote-journal-rearm "$WATCHTOWER_REMOTE_REARM" \
+            --dispatch-mode "$WATCHTOWER_DISPATCH_MODE" \
+            --writer-scheduled-for "$WATCHTOWER_SCHEDULED_FOR" \
+            --writer-dispatch-id "$WATCHTOWER_DISPATCH_ID" \
+            --repository "$WATCHTOWER_REPOSITORY" \
+            --workflow 'caos-watchtower.yml' \
+            --ref "$WATCHTOWER_REF" \
+            --expected-head-sha "$WATCHTOWER_EXPECTED_HEAD_SHA" \
+            --github-sha "$WATCHTOWER_EVENT_SHA" \
+            --github-workflow-sha "$WATCHTOWER_WORKFLOW_SHA" \
+            --checkout-sha "$CHECKOUT_SHA"
+      - name: Capture exact backend runtime identity before mutation
+        run: |
+          set -euo pipefail
+          BE="https://argus-backend-3j2m.onrender.com"
+          curl --fail --silent --show-error --max-time 30 \
+            --max-filesize 65536 "$BE/healthz" \
+            -o "$RUNNER_TEMP/runtime-health-prepare.json"
+          curl --fail --silent --show-error --max-time 30 \
+            --max-filesize 65536 "$BE/readyz" \
+            -o "$RUNNER_TEMP/runtime-ready-prepare.json"
+          PYTHONPATH="$GITHUB_WORKSPACE" \
+            python3 "$GITHUB_WORKSPACE/scripts/prepare_remote_journal_publish.py" \
+            verify-runtime \
+            --health "$RUNNER_TEMP/runtime-health-prepare.json" \
+            --ready "$RUNNER_TEMP/runtime-ready-prepare.json" \
+            > "$RUNNER_TEMP/runtime-identity.json"
+      - name: Watchtower refresh + visible translation (admin; token never logged)
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
+            echo "::warning::ARGUS_ADMIN_TOKEN missing — skipping refresh (status snapshot only)"
+          else
+            curl -s --max-time 60 "$BE/healthz" > /dev/null || true    # warm dyno
+            REF=$(python3 scripts/workflow_http.py --name watchtower-refresh --method POST --timeout 240 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --url "$BE/api/argus/admin/caos-watchtower/refresh")
+            echo "watchtower-refresh: ${REF:0:300}"
+            # translate what the owner actually sees FIRST (headlines only)
+            TRV=$(python3 scripts/workflow_http.py --name translate-visible --method POST --timeout 120 \
+              --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+              --expected-status deterministic_mode \
+              --url "$BE/api/argus/admin/news/translate-visible")
+            echo "translate-visible: ${TRV:0:200}"
+          fi
+
+      - name: Fetch public-safe status snapshot
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          READBACK_MAX_BYTES=$(python3 -c \
+            'import argus_remote_journal as j; print(j.MAX_COMPACT_READBACK_BYTES)')
+          case "$READBACK_MAX_BYTES" in
+            ''|*[!0-9]*)
+              echo "invalid canonical compact readback bound"
+              exit 1
+              ;;
+          esac
+          [ "$READBACK_MAX_BYTES" -gt 0 ] || {
+            echo "invalid canonical compact readback bound"
+            exit 1
+          }
+          for i in 1 2 3 4; do
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/caos-watchtower/status" \
+              -o "$RUNNER_TEMP/watchtower-status.json" && break
+            echo "retry $i"; sleep 15
+          done
+          test -s "$RUNNER_TEMP/watchtower-status.json"
+          # sanity peek (public-safe fields only)
+          python3 - "$RUNNER_TEMP/watchtower-status.json" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          live = sum(1 for s in d.get("sources", []) if s.get("status") == "live")
+          ph = d.get("patrolHealth") or {}
+          print(f"sources={len(d.get('sources', []))} live={live} alerts={len(d.get('alerts', []))} "
+                f"patrol={ph.get('status')} deep24h={ph.get('deepSweeps24h')}")
+          PY
+          curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/caos/watchtower-plan" \
+            -o "$RUNNER_TEMP/watchtower-plan.json" || echo '{}' > "$RUNNER_TEMP/watchtower-plan.json"
+          # V11.5.5: patrol-health = the 24h soak proof (public GET, no AI endpoints).
+          # Its embedded 24h ledger is what a restarted dyno restores from.
+          for i in 1 2 3; do
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/caos/patrol-health" \
+              -o "$RUNNER_TEMP/patrol-health.json" && break
+            echo "retry patrol-health $i"; sleep 10
+          done
+          test -s "$RUNNER_TEMP/patrol-health.json"
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
+            echo "ARGUS_ADMIN_TOKEN missing; remote artifact mode is indeterminate"
+            exit 1
+          fi
+          RECOVERY_STATUS=$(curl --silent --show-error --max-time 60 \
+            --max-filesize 8388608 \
+            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            -o "$RUNNER_TEMP/osint-recovery.json" -w '%{http_code}' \
+            "$BE/api/argus/admin/remote-journal/recovery-sidecar")
+          if [ "$RECOVERY_STATUS" = "200" ]; then
+            PYTHONPATH="$GITHUB_WORKSPACE" python3 scripts/prepare_remote_journal_publish.py \
+              validate-sidecar \
+              --recovery "$RUNNER_TEMP/osint-recovery.json" > /dev/null
+            curl --fail --silent --show-error --max-time 60 \
+              --max-filesize "$READBACK_MAX_BYTES" \
+              "$BE/api/argus/osint/remote-readback" \
+              -o "$RUNNER_TEMP/osint-readback.json" \
+              -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN"
+            printf '%s' encrypted_recovery_v1 > \
+              "$RUNNER_TEMP/remote-artifact-mode"
+          elif [ "$RECOVERY_STATUS" = "503" ] && python3 -c \
+              "import json; assert json.load(open('$RUNNER_TEMP/osint-recovery.json')).get('status') == 'not_configured'"; then
+            rm -f "$RUNNER_TEMP/osint-recovery.json"
+            printf '%s' legacy_full > "$RUNNER_TEMP/remote-artifact-mode"
+          else
+            echo "encrypted recovery sidecar unavailable"
+            exit 1
+          fi
+          if [ "$(cat "$RUNNER_TEMP/remote-artifact-mode")" = "legacy_full" ]; then
+            # Legacy compatibility only: when encrypted recovery is not
+            # configured, retain the existing full boot-snapshot publication.
+            # The explicit cap bounds even this compatibility download.
+            for i in 1 2 3; do
+              curl -sf --max-time 60 --max-filesize 268435456 \
+                -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+                "$BE/api/argus/osint/memory-snapshot" \
+                -o "$RUNNER_TEMP/osint-memory.json" && break
+              echo "retry memory $i"; sleep 10
+            done
+            test -s "$RUNNER_TEMP/osint-memory.json"
+            python3 -c "import json;d=json.load(open('$RUNNER_TEMP/osint-memory.json'));assert d.get('schemaVersion')=='argus-durable-v3'"
+          fi
+          # A moving checkout with ref: main is forbidden. Both writer modes
+          # already checked out their immutable event authority above.
+          # Authenticated operational scalar truth closes the separate lost-receipt edge where
+          # the ledger is current but the backend ACK has not advanced.
+          for i in 1 2 3; do
+            curl -sf --max-time 60 \
+              -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "$BE/api/argus/admin/diagnostics/operational" \
+              -o "$RUNNER_TEMP/data-quality.json" && break
+            echo "retry data-quality $i"; sleep 10
+          done
+          test -s "$RUNNER_TEMP/data-quality.json"
+          python3 -c "import json;d=json.load(open('$RUNNER_TEMP/data-quality.json'));assert d.get('schemaVersion')=='argus-operational-diagnostics-v1'"
+          EXPECTED_RUNTIME_SHA=$(python3 -c \
+            "import json; print(json.load(open('$RUNNER_TEMP/runtime-identity.json'))['runtimeSha'])")
+          curl --fail --silent --show-error --max-time 30 \
+            --max-filesize 65536 "$BE/healthz" \
+            -o "$RUNNER_TEMP/runtime-health-post-artifact.json"
+          curl --fail --silent --show-error --max-time 30 \
+            --max-filesize 65536 "$BE/readyz" \
+            -o "$RUNNER_TEMP/runtime-ready-post-artifact.json"
+          PYTHONPATH="$GITHUB_WORKSPACE" \
+            python3 "$GITHUB_WORKSPACE/scripts/prepare_remote_journal_publish.py" \
+            verify-runtime \
+            --health "$RUNNER_TEMP/runtime-health-post-artifact.json" \
+            --ready "$RUNNER_TEMP/runtime-ready-post-artifact.json" \
+            --expected-runtime-sha "$EXPECTED_RUNTIME_SHA" > /dev/null
+          python3 - "$RUNNER_TEMP/patrol-health.json" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1]))
+          s = d.get("summary") or {}
+          print(f"patrol-health: {d.get('status')} runs24h={s.get('runs24h')} "
+                f"deep={s.get('deepSweeps24h')} baseline={s.get('baselineSweeps24h')} "
+                f"violations={s.get('oldPrimaryViolations')}")
+          PY
+
+      - name: Commit snapshot and enqueue bounded Remote Journal receipt
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+          WATCHTOWER_DISPATCH_MODE: ${{ inputs.dispatchMode }}
+          WATCHTOWER_SCHEDULED_FOR: ${{ inputs.writerScheduledFor }}
+          WATCHTOWER_DISPATCH_ID: ${{ inputs.writerDispatchId }}
+          WATCHTOWER_EXPECTED_HEAD_SHA: ${{ inputs.expectedHeadSha }}
+          WATCHTOWER_EVENT_SHA: ${{ github.sha }}
+          WATCHTOWER_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          # Copy exact control-plane helpers before switching to the
+          # payload-only ledger branch.
+          ARTIFACT_MODE=$(cat "$RUNNER_TEMP/remote-artifact-mode")
+          if [ "$ARTIFACT_MODE" = "legacy_full" ]; then
+            python3 scripts/build_remote_readback_receipt.py \
+              "$RUNNER_TEMP/osint-memory.json" \
+              "$RUNNER_TEMP/osint-readback.json"
+          else
+            [ "$ARTIFACT_MODE" = "encrypted_recovery_v1" ]
+            test -s "$RUNNER_TEMP/osint-readback.json"
+            test -s "$RUNNER_TEMP/osint-recovery.json"
+          fi
+          cp scripts/prepare_remote_journal_publish.py \
+            "$RUNNER_TEMP/prepare_remote_journal_publish.py"
+          cp scripts/remote_journal_publish_policy.py \
+            "$RUNNER_TEMP/remote_journal_publish_policy.py"
+          cp scripts/workflow_http.py "$RUNNER_TEMP/workflow_http.py"
+          cp scripts/remote_receipt_drain.py \
+            "$RUNNER_TEMP/remote_receipt_drain.py"
+          cp argus_remote_journal.py "$RUNNER_TEMP/argus_remote_journal.py"
+
+          # Historical artifact provenance and current runtime identity are
+          # different authorities. Resolve any legacy seven-character
+          # producer only as one unique repository commit, then prove bounded
+          # ancestry. Current runtime and workflow identities remain exact.
+          HEALTH=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+            --name watchtower-durability-health --timeout 60 \
+            --url "$BE/healthz")
+          READY=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+            --name watchtower-durability-ready --timeout 60 \
+            --url "$BE/readyz")
+          printf '%s' "$HEALTH" > "$RUNNER_TEMP/runtime-health-prewrite.json"
+          printf '%s' "$READY" > "$RUNNER_TEMP/runtime-ready-prewrite.json"
+          EXPECTED_RUNTIME_SHA=$(python3 -c \
+            "import json; print(json.load(open('$RUNNER_TEMP/runtime-identity.json'))['runtimeSha'])")
+          verify_runtime_boundary() {
+            local label="$1" health ready
+            health=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+              --name "watchtower-runtime-${label}-health" --timeout 30 \
+              --url "$BE/healthz")
+            ready=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+              --name "watchtower-runtime-${label}-ready" --timeout 30 \
+              --url "$BE/readyz")
+            printf '%s' "$health" > \
+              "$RUNNER_TEMP/runtime-health-${label}.json"
+            printf '%s' "$ready" > \
+              "$RUNNER_TEMP/runtime-ready-${label}.json"
+            python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+              verify-runtime \
+              --health "$RUNNER_TEMP/runtime-health-${label}.json" \
+              --ready "$RUNNER_TEMP/runtime-ready-${label}.json" \
+              --expected-runtime-sha "$EXPECTED_RUNTIME_SHA" > /dev/null
+          }
+          python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+            verify-runtime \
+            --health "$RUNNER_TEMP/runtime-health-prewrite.json" \
+            --ready "$RUNNER_TEMP/runtime-ready-prewrite.json" \
+            --expected-runtime-sha "$EXPECTED_RUNTIME_SHA" > /dev/null
+          BACKEND_BUILD_SHA=$(printf '%s' "$HEALTH" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("buildSha") or "")')
+          SNAPSHOT_BUILD_SHA=$(python3 -c \
+            "import json; print((json.load(open('$RUNNER_TEMP/osint-readback.json')).get('buildIdentity') or {}).get('buildSha') or '')")
+          CHECKOUT_SHA=$(git rev-parse HEAD)
+          PROTECTED_MAIN_SHA="$WATCHTOWER_EXPECTED_HEAD_SHA"
+          if [ -z "$PROTECTED_MAIN_SHA" ]; then
+            PROTECTED_MAIN_SHA="$WATCHTOWER_EVENT_SHA"
+          fi
+          python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+            verify-build-provenance --repository "$GITHUB_WORKSPACE" \
+            --artifact-producer-sha "$SNAPSHOT_BUILD_SHA" \
+            --current-runtime-sha "$BACKEND_BUILD_SHA" \
+            --workflow-dispatch-sha "$WATCHTOWER_EVENT_SHA" \
+            --workflow-checkout-sha "$CHECKOUT_SHA" \
+            --protected-main-sha "$PROTECTED_MAIN_SHA" > /dev/null
+
+          MIN=$(date -u +%M)
+          SCHEDULED_WRITER_ARG=()
+          if [ "$WATCHTOWER_DISPATCH_MODE" = 'ec2_systemd_writer' ]; then
+            SCHEDULED_WRITER_ARG+=(--scheduled-writer)
+            echo "watchtower writer evidence: source=ec2_systemd_writer scheduledFor=$WATCHTOWER_SCHEDULED_FOR writerDispatchId=$WATCHTOWER_DISPATCH_ID"
+          fi
+          # 2026-10-17: the ledger lives in the private repository.
+          LEDGER_TOKEN="${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}" bash scripts/ledger_use_private.sh
+          git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
+            || git fetch origin ledger 2>/dev/null || true
+          if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
+            git checkout -B ledger refs/remotes/origin/ledger
+          elif git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+            git checkout -B ledger FETCH_HEAD
+          else
+            echo "::warning::origin/ledger not found — creating a FRESH ledger branch (first run only)"
+            git checkout --orphan ledger
+            git rm -rq --cached . 2>/dev/null || true
+            find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+          fi
+          LEDGER_CAS_BASE=$(git rev-parse HEAD 2>/dev/null || true)
+          if [ "$ARTIFACT_MODE" = "encrypted_recovery_v1" ]; then
+            SOURCE_RECOVERY_LEDGER_BASE=$(python3 -c \
+              "import json; print((json.load(open('$RUNNER_TEMP/osint-recovery.json')).get('recovery') or {}).get('ledgerBaseCommitSha') or '')")
+          else
+            SOURCE_RECOVERY_LEDGER_BASE=
+          fi
+
+          # Preserve the ordinary hourly churn bound. A delayed natural run
+          # bypasses it only when the newly-built signed compact proof contains
+          # event or exact-WAL progress absent from the ledger proof.
+          DECISION=$(python3 "$RUNNER_TEMP/remote_journal_publish_policy.py" \
+            decision \
+            --source-readback "$RUNNER_TEMP/osint-readback.json" \
+            --ledger-readback ledger/osint/readback.json \
+            --runtime-data-quality "$RUNNER_TEMP/data-quality.json" \
+            --event-name "${{ github.event_name }}" \
+            --utc-minute "$MIN" "${SCHEDULED_WRITER_ARG[@]}")
+          DECISION_VALUES=$(printf '%s' "$DECISION" | python3 -c \
+            'import json,sys; d=json.load(sys.stdin); print(d["action"]); print(d["reason"]); print(d["sourceEventCount"]); print(d["remoteEventCount"]); print(d["sourceWalTarget"]); print(d["remoteWalTarget"]); print(d.get("runtimeRemotePendingCount") or 0); print(d.get("runtimeRemoteFailureCount") or 0); print(d["policySource"])')
+          DECISION_ACTION=$(printf '%s\n' "$DECISION_VALUES" | sed -n '1p')
+          DECISION_REASON=$(printf '%s\n' "$DECISION_VALUES" | sed -n '2p')
+          SOURCE_EVENTS=$(printf '%s\n' "$DECISION_VALUES" | sed -n '3p')
+          REMOTE_EVENTS=$(printf '%s\n' "$DECISION_VALUES" | sed -n '4p')
+          SOURCE_WAL=$(printf '%s\n' "$DECISION_VALUES" | sed -n '5p')
+          REMOTE_WAL=$(printf '%s\n' "$DECISION_VALUES" | sed -n '6p')
+          RUNTIME_PENDING=$(printf '%s\n' "$DECISION_VALUES" | sed -n '7p')
+          RUNTIME_FAILURES=$(printf '%s\n' "$DECISION_VALUES" | sed -n '8p')
+          POLICY_SOURCE=$(printf '%s\n' "$DECISION_VALUES" | sed -n '9p')
+          echo "watchtower durability decision: action=$DECISION_ACTION reason=$DECISION_REASON source=$POLICY_SOURCE events=$REMOTE_EVENTS->$SOURCE_EVENTS wal=$REMOTE_WAL->$SOURCE_WAL runtimePending=$RUNTIME_PENDING historicalFailures=$RUNTIME_FAILURES"
+          if [ "$DECISION_ACTION" = "skip" ]; then
+            echo "skip persist (hourly churn bound; no Remote Journal progress)"
+            exit 0
+          fi
+          [ -n "$ARGUS_ADMIN_TOKEN" ] || {
+            echo "Remote Journal receipt auth is unavailable"
+            exit 1
+          }
+
+          if [ "$DECISION_ACTION" = "publish" ]; then
+          mkdir -p ledger/caos-watchtower ledger/caos-patrol ledger/osint
+          DAY=$(TZ=Asia/Tokyo date +%F)
+          cp "$RUNNER_TEMP/watchtower-status.json" ledger/caos-watchtower/latest.json
+          cp "$RUNNER_TEMP/watchtower-status.json" "ledger/caos-watchtower/$DAY.json"
+          # V11.5.5: patrol soak-proof snapshot (restore source after dyno restarts)
+          cp "$RUNNER_TEMP/patrol-health.json" ledger/caos-patrol/latest.json
+          cp "$RUNNER_TEMP/patrol-health.json" "ledger/caos-patrol/$DAY.json"
+          # v13.3.3: use the same stale-writer guard and GitHub 100 MiB safety
+          # contract as caos-scan. Oversized full snapshots retain the last
+          # boot-restore blob while the exact compact read-back advances.
+          if [ "$ARTIFACT_MODE" = "encrypted_recovery_v1" ]; then
+            RECOVERY_LEDGER_BASE=$SOURCE_RECOVERY_LEDGER_BASE
+            # The sidecar authenticates checkpoint base C. Other safe ledger
+            # writers may already have advanced HEAD to X, so prove C <= X;
+            # equality is not required, while a sibling is rejected.
+            python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+              verify-ledger-base-ancestor --repository . \
+              --recovery-ledger-base "$RECOVERY_LEDGER_BASE" \
+              --cas-ledger-head "$LEDGER_CAS_BASE" > /dev/null
+            PREPARED=$(python3 \
+              "$RUNNER_TEMP/prepare_remote_journal_publish.py" prepare-pair \
+              --source-readback "$RUNNER_TEMP/osint-readback.json" \
+              --source-recovery "$RUNNER_TEMP/osint-recovery.json" \
+              --ledger-readback ledger/osint/readback.json \
+              --ledger-recovery ledger/osint/recovery.json \
+              --ledger-base-commit-sha "$RECOVERY_LEDGER_BASE")
+          else
+            PREPARED=$(python3 \
+              "$RUNNER_TEMP/prepare_remote_journal_publish.py" prepare \
+              --source-full "$RUNNER_TEMP/osint-memory.json" \
+              --source-readback "$RUNNER_TEMP/osint-readback.json" \
+              --ledger-full ledger/osint/memory.json \
+              --ledger-readback ledger/osint/readback.json)
+          fi
+          PREPARED_VALUES=$(printf '%s' "$PREPARED" | python3 -c \
+            'import json,sys; d=json.load(sys.stdin); print(d["status"]); print(d["expectedHash"]); print(d["expectedReceiptHash"]); print(d["generatedAt"]); print(d.get("previousGeneratedAt") or ""); print(d.get("fullSnapshotBytes") or 0); print(str(d.get("fullSnapshotPublished") is True).lower()); print(str(d.get("fullSnapshotRetained") is True).lower()); print(d["artifactMode"]); print(d.get("recoveryBundleHash") or ""); print(d.get("recoveryGenerationId") or ""); print(d.get("recoveryKeyId") or ""); print(d.get("ledgerBaseCommitSha") or "")')
+          PREPARED_STATUS=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '1p')
+          NEW_HASH=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '2p')
+          NEW_RECEIPT_HASH=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '3p')
+          NEW_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '4p')
+          OLD_ASOF=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '5p')
+          FULL_BYTES=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '6p')
+          FULL_PUBLISHED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '7p')
+          FULL_RETAINED=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '8p')
+          ARTIFACT_MODE=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '9p')
+          RECOVERY_BUNDLE_HASH=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '10p')
+          RECOVERY_GENERATION_ID=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '11p')
+          RECOVERY_KEY_ID=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '12p')
+          PREPARED_RECOVERY_BASE=$(printf '%s\n' "$PREPARED_VALUES" | sed -n '13p')
+          if [ "$ARTIFACT_MODE" = "encrypted_recovery_v1" ]; then
+            [ "$PREPARED_RECOVERY_BASE" = "$RECOVERY_LEDGER_BASE" ]
+          fi
+          echo "remote journal publish: status=$PREPARED_STATUS old=$OLD_ASOF new=$NEW_ASOF fullBytes=$FULL_BYTES fullPublished=$FULL_PUBLISHED fullRetained=$FULL_RETAINED"
+          if [ "$PREPARED_STATUS" = "stale" ]; then
+            echo "skip stale snapshot (new=$NEW_ASOF)"
+            exit 0
+          fi
+          git config user.name "argus-ledger[bot]"
+          git config user.email "argus-ledger@users.noreply.github.com"
+          git add ledger/caos-watchtower/ ledger/caos-patrol/ ledger/osint/
+          if git diff --cached --quiet; then
+            echo "no change"
+          else
+            git commit -m "caos-watchtower: $(date -u +%FT%TZ) status snapshot"
+            # Exact-base compare-and-swap. A concurrent writer wins; this run
+            # never rebases or reuses its old encrypted pair against a new base.
+            verify_runtime_boundary pre-ledger-write
+            git push --force-with-lease=refs/heads/ledger:"$LEDGER_CAS_BASE" \
+              origin HEAD:ledger
+          fi
+          elif [ "$DECISION_ACTION" = "receipt_only" ]; then
+            # The exact ledger proof already contains the current data; only
+            # the asynchronous backend intent was lost. Under keyed mode the
+            # exact sidecar may also be missing even though readback is current;
+            # publish that pair once before re-enqueuing its bound receipt.
+            if [ "$ARTIFACT_MODE" = "encrypted_recovery_v1" ]; then
+              PAIR=
+              PAIR_NEEDS_COMMIT=false
+              # Receipt recovery must prefer the immutable pair already at X.
+              # A fresher local checkpoint with equal WAL/events must not cause
+              # a duplicate ledger commit merely because generatedAt changed.
+              if [ -s ledger/osint/readback.json ] && \
+                  [ -s ledger/osint/recovery.json ]; then
+                CANDIDATE=$(python3 \
+                  "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+                  inspect-pair --readback ledger/osint/readback.json \
+                  --recovery ledger/osint/recovery.json 2>/dev/null || true)
+                if [ -n "$CANDIDATE" ]; then
+                  CANDIDATE_BASE=$(printf '%s' "$CANDIDATE" | python3 -c \
+                    'import json,sys; print(json.load(sys.stdin)["ledgerBaseCommitSha"])')
+                  if python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+                      verify-ledger-base-ancestor --repository . \
+                      --recovery-ledger-base "$CANDIDATE_BASE" \
+                      --cas-ledger-head "$LEDGER_CAS_BASE" > /dev/null 2>&1; then
+                    PAIR=$CANDIDATE
+                    RECOVERY_LEDGER_BASE=$CANDIDATE_BASE
+                  fi
+                fi
+              fi
+              if [ -z "$PAIR" ]; then
+                RECOVERY_LEDGER_BASE=$SOURCE_RECOVERY_LEDGER_BASE
+                python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+                  verify-ledger-base-ancestor --repository . \
+                  --recovery-ledger-base "$RECOVERY_LEDGER_BASE" \
+                  --cas-ledger-head "$LEDGER_CAS_BASE" > /dev/null
+                PAIR=$(python3 \
+                  "$RUNNER_TEMP/prepare_remote_journal_publish.py" prepare-pair \
+                  --source-readback "$RUNNER_TEMP/osint-readback.json" \
+                  --source-recovery "$RUNNER_TEMP/osint-recovery.json" \
+                  --ledger-readback ledger/osint/readback.json \
+                  --ledger-recovery ledger/osint/recovery.json \
+                  --ledger-base-commit-sha "$RECOVERY_LEDGER_BASE")
+                PAIR_STATUS=$(printf '%s' "$PAIR" | python3 -c \
+                  'import json,sys; print(json.load(sys.stdin)["status"])')
+                [ "$PAIR_STATUS" = "prepared" ] || {
+                  echo "receipt-only recovery pair is stale"
+                  exit 1
+                }
+                PAIR_NEEDS_COMMIT=true
+              fi
+              if [ "$PAIR_NEEDS_COMMIT" = "true" ]; then
+                git config user.name "argus-ledger[bot]"
+                git config user.email "argus-ledger@users.noreply.github.com"
+                git add ledger/osint/readback.json ledger/osint/recovery.json
+                git diff --cached --quiet && exit 1
+                git commit -m "remote-journal: restore exact recovery pair"
+                verify_runtime_boundary pre-ledger-write
+                git push \
+                  --force-with-lease=refs/heads/ledger:"$LEDGER_CAS_BASE" \
+                  origin HEAD:ledger
+              fi
+              NEW_HASH=$(printf '%s' "$PAIR" | python3 -c \
+                'import json,sys; print(json.load(sys.stdin)["expectedHash"])')
+              NEW_RECEIPT_HASH=$(printf '%s' "$PAIR" | python3 -c \
+                'import json,sys; print(json.load(sys.stdin)["expectedReceiptHash"])')
+              RECOVERY_BUNDLE_HASH=$(printf '%s' "$PAIR" | python3 -c \
+                'import json,sys; print(json.load(sys.stdin)["recoveryBundleHash"])')
+              RECOVERY_GENERATION_ID=$(printf '%s' "$PAIR" | python3 -c \
+                'import json,sys; print(json.load(sys.stdin)["recoveryGenerationId"])')
+              RECOVERY_KEY_ID=$(printf '%s' "$PAIR" | python3 -c \
+                'import json,sys; print(json.load(sys.stdin)["recoveryKeyId"])')
+              SELECTED_RECOVERY_BASE=$(printf '%s' "$PAIR" | python3 -c \
+                'import json,sys; print(json.load(sys.stdin)["ledgerBaseCommitSha"])')
+              [ "$SELECTED_RECOVERY_BASE" = "$RECOVERY_LEDGER_BASE" ]
+            else
+              test -s ledger/osint/readback.json
+              NEW_HASH=$(python3 -c \
+                'import json; d=json.load(open("ledger/osint/readback.json")); print((d.get("integrityManifest") or {}).get("manifestHash") or "")')
+              NEW_RECEIPT_HASH=$(python3 -c \
+                'import json; print(json.load(open("ledger/osint/readback.json")).get("receiptHash") or "")')
+              ARTIFACT_MODE=legacy_full
+              RECOVERY_BUNDLE_HASH=
+              RECOVERY_GENERATION_ID=
+              RECOVERY_KEY_ID=
+              RECOVERY_LEDGER_BASE=
+            fi
+            echo "remote journal receipt-only recovery: exact proof ready"
+          else
+            echo "invalid durability decision action: $DECISION_ACTION"
+            exit 1
+          fi
+          REMOTE_COMMIT_SHA=$(git rev-parse HEAD)
+          REMOTE_HEAD=$(git ls-remote origin refs/heads/ledger | awk '{print $1}')
+          [ "$REMOTE_HEAD" = "$REMOTE_COMMIT_SHA" ] || {
+            echo "remote ledger verification failed"
+            exit 1
+          }
+          VERIFY_RECOVERY_ARGS=()
+          if [ "$ARTIFACT_MODE" = "encrypted_recovery_v1" ]; then
+            VERIFY_RECOVERY_ARGS+=(
+              --recovery ledger/osint/recovery.json
+              --expected-recovery-bundle-hash "$RECOVERY_BUNDLE_HASH"
+              --ledger-base-commit-sha "$RECOVERY_LEDGER_BASE")
+          fi
+          VERIFIED=$(python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+            verify-committed --readback ledger/osint/readback.json \
+            --expected-hash "$NEW_HASH" \
+            --expected-receipt-hash "$NEW_RECEIPT_HASH" \
+            "${VERIFY_RECOVERY_ARGS[@]}")
+          EXPECTED_HASH=$(printf '%s' "$VERIFIED" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["actualHash"])')
+
+          # Enqueue the fsynced asynchronous intent, then request one bounded
+          # authenticated drain after immutable publication. Natural missions
+          # remain the independent fallback and keep their existing cadence.
+          RECOVERY_RECEIPT_ARGS=()
+          if [ "$ARTIFACT_MODE" = "encrypted_recovery_v1" ]; then
+            RECOVERY_RECEIPT_ARGS+=(
+              --recovery-bundle-hash "$RECOVERY_BUNDLE_HASH"
+              --recovery-generation-id "$RECOVERY_GENERATION_ID"
+              --recovery-key-id "$RECOVERY_KEY_ID"
+              --ledger-base-commit-sha "$RECOVERY_LEDGER_BASE")
+          fi
+          RECEIPT_REQUEST=$(python3 \
+            "$RUNNER_TEMP/remote_journal_publish_policy.py" receipt \
+            --readback ledger/osint/readback.json \
+            --remote-commit-sha "$REMOTE_COMMIT_SHA" \
+            --backend-build-sha "$BACKEND_BUILD_SHA" \
+            --expected-hash "$EXPECTED_HASH" \
+            --expected-receipt-hash "$NEW_RECEIPT_HASH" \
+            --artifact-mode "$ARTIFACT_MODE" \
+            "${RECOVERY_RECEIPT_ARGS[@]}")
+          RECEIPT_IDEMPOTENCY_KEY=$(printf '%s' "$RECEIPT_REQUEST" | \
+            python3 -c 'import json,sys; print(json.load(sys.stdin)["idempotencyKey"])')
+          RECEIPT_TARGET_WAL=$(printf '%s' "$RECEIPT_REQUEST" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["payload"]["targetWalSequence"])')
+          RECEIPT_PAYLOAD=$(printf '%s' "$RECEIPT_REQUEST" | python3 -c \
+            'import json,sys; print(json.dumps(json.load(sys.stdin)["payload"],separators=(",",":")))')
+          export RECEIPT_IDEMPOTENCY_KEY REMOTE_COMMIT_SHA RECEIPT_TARGET_WAL
+          verify_runtime_boundary pre-receipt
+          RECEIPT=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+            --name watchtower-remote-journal-accept-receipt \
+            --method POST --timeout 15 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --header-env Idempotency-Key=RECEIPT_IDEMPOTENCY_KEY \
+            --header 'Content-Type: application/json' \
+            --data "$RECEIPT_PAYLOAD" \
+            --url "$BE/api/argus/admin/remote-journal/commit-receipt")
+          RECEIPT_VALUES=$(printf '%s' "$RECEIPT" | python3 -c \
+            'import json,os,sys; d=json.load(sys.stdin); assert d.get("accepted") is True; assert d.get("operationId"); assert d.get("remoteCommitSha")==os.environ["REMOTE_COMMIT_SHA"]; assert int(d.get("targetWalSequence") or 0)==int(os.environ["RECEIPT_TARGET_WAL"]); state=d.get("durabilityState"); assert state in ("pending","verified"); print(state); print(d["operationId"])')
+          RECEIPT_STATE=$(printf '%s\n' "$RECEIPT_VALUES" | sed -n '1p')
+          OPERATION_ID=$(printf '%s\n' "$RECEIPT_VALUES" | sed -n '2p')
+          export OPERATION_ID
+          echo "watchtower Remote Journal receipt accepted: state=$RECEIPT_STATE"
+          DRAIN=$(python3 "$RUNNER_TEMP/remote_receipt_drain.py" \
+            --name watchtower-remote-journal-drain --base-url "$BE" \
+            --operation-id "$OPERATION_ID" \
+            --backend-build-sha "$BACKEND_BUILD_SHA" \
+            --remote-commit-sha "$REMOTE_COMMIT_SHA" \
+            --target-wal-sequence "$RECEIPT_TARGET_WAL" \
+            --token-env ARGUS_ADMIN_TOKEN --budget-seconds 1800)
+          verify_runtime_boundary terminal-ack
+          echo "watchtower Remote Journal publisher drain: $DRAIN"
+
+  remote-journal-rearm:
+    if: github.event_name == 'workflow_dispatch' && inputs.remoteJournalRearm == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact re-arm head
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.expectedHeadSha }}
+          fetch-depth: 0
+      - name: Validate exact Watchtower dispatch identity
+        env:
+          WATCHTOWER_REMOTE_REARM: ${{ inputs.remoteJournalRearm }}
+          WATCHTOWER_DISPATCH_MODE: ${{ inputs.dispatchMode }}
+          WATCHTOWER_SCHEDULED_FOR: ${{ inputs.writerScheduledFor }}
+          WATCHTOWER_DISPATCH_ID: ${{ inputs.writerDispatchId }}
+          WATCHTOWER_REPOSITORY: ${{ github.repository }}
+          WATCHTOWER_REF: ${{ github.ref_name }}
+          WATCHTOWER_EXPECTED_HEAD_SHA: ${{ inputs.expectedHeadSha }}
+          WATCHTOWER_EVENT_SHA: ${{ github.sha }}
+          WATCHTOWER_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          CHECKOUT_SHA=$(git rev-parse HEAD)
+          python3 scripts/argus_watchtower_writer_dispatch.py validate-inputs \
+            --remote-journal-rearm "$WATCHTOWER_REMOTE_REARM" \
+            --dispatch-mode "$WATCHTOWER_DISPATCH_MODE" \
+            --writer-scheduled-for "$WATCHTOWER_SCHEDULED_FOR" \
+            --writer-dispatch-id "$WATCHTOWER_DISPATCH_ID" \
+            --repository "$WATCHTOWER_REPOSITORY" \
+            --workflow 'caos-watchtower.yml' \
+            --ref "$WATCHTOWER_REF" \
+            --expected-head-sha "$WATCHTOWER_EXPECTED_HEAD_SHA" \
+            --github-sha "$WATCHTOWER_EVENT_SHA" \
+            --github-workflow-sha "$WATCHTOWER_WORKFLOW_SHA" \
+            --checkout-sha "$CHECKOUT_SHA"
+      - name: Fetch one bounded verified recovery pair
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "$ARGUS_ADMIN_TOKEN" ] || {
+            echo "Remote Journal receipt auth is unavailable"
+            exit 1
+          }
+          BE="https://argus-backend-3j2m.onrender.com"
+          READBACK_MAX_BYTES=$(python3 -c \
+            'import argus_remote_journal as j; print(j.MAX_COMPACT_READBACK_BYTES)')
+          case "$READBACK_MAX_BYTES" in
+            ''|*[!0-9]*)
+              echo "invalid canonical compact readback bound"
+              exit 1
+              ;;
+          esac
+          [ "$READBACK_MAX_BYTES" -gt 0 ] || {
+            echo "invalid canonical compact readback bound"
+            exit 1
+          }
+          curl --fail --silent --show-error --max-time 30 \
+            --max-filesize 65536 "$BE/healthz" \
+            -o "$RUNNER_TEMP/health-before.json"
+          curl --fail --silent --show-error --max-time 30 \
+            --max-filesize 65536 "$BE/readyz" \
+            -o "$RUNNER_TEMP/ready-before.json"
+          PYTHONPATH="$GITHUB_WORKSPACE" \
+            python3 "$GITHUB_WORKSPACE/scripts/prepare_remote_journal_publish.py" \
+            verify-runtime \
+            --health "$RUNNER_TEMP/health-before.json" \
+            --ready "$RUNNER_TEMP/ready-before.json" \
+            > "$RUNNER_TEMP/runtime-identity-rearm.json"
+          curl --fail --silent --show-error --max-time 30 \
+            --max-filesize 524288 \
+            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/admin/diagnostics/operational" \
+            -o "$RUNNER_TEMP/data-quality-before.json"
+          curl --fail --silent --show-error --max-time 60 \
+            --max-filesize "$READBACK_MAX_BYTES" \
+            "$BE/api/argus/osint/remote-readback" \
+            -o "$RUNNER_TEMP/osint-readback.json"
+          curl --fail --silent --show-error --max-time 60 \
+            --max-filesize 8388608 \
+            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/admin/remote-journal/recovery-sidecar" \
+            -o "$RUNNER_TEMP/osint-recovery.json"
+          curl --fail --silent --show-error --max-time 30 \
+            --max-filesize 524288 \
+            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/admin/diagnostics/operational" \
+            -o "$RUNNER_TEMP/data-quality-after.json"
+          curl --fail --silent --show-error --max-time 30 \
+            --max-filesize 65536 "$BE/healthz" \
+            -o "$RUNNER_TEMP/health-after.json"
+          curl --fail --silent --show-error --max-time 30 \
+            --max-filesize 65536 "$BE/readyz" \
+            -o "$RUNNER_TEMP/ready-after.json"
+          EXPECTED_RUNTIME_SHA=$(python3 -c \
+            "import json; print(json.load(open('$RUNNER_TEMP/runtime-identity-rearm.json'))['runtimeSha'])")
+          PYTHONPATH="$GITHUB_WORKSPACE" \
+            python3 "$GITHUB_WORKSPACE/scripts/prepare_remote_journal_publish.py" \
+            verify-runtime \
+            --health "$RUNNER_TEMP/health-after.json" \
+            --ready "$RUNNER_TEMP/ready-after.json" \
+            --expected-runtime-sha "$EXPECTED_RUNTIME_SHA" > /dev/null
+          python3 - "$RUNNER_TEMP" <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          read = lambda name: json.loads((root / name).read_text())
+          before = read("health-before.json")
+          after = read("health-after.json")
+          ready = read("ready-before.json")
+          ready_after = read("ready-after.json")
+          dq_before = read("data-quality-before.json")
+          dq_after = read("data-quality-after.json")
+          compact = read("osint-readback.json")
+          sidecar = read("osint-recovery.json")
+          sha = str(before.get("buildSha") or "").lower()
+          assert re.fullmatch(r"[0-9a-f]{40}", sha), "health_sha_invalid"
+          assert after.get("buildSha") == sha, "backend_identity_changed"
+          assert ready.get("ready") is True and ready.get("buildSha") == sha, \
+              "backend_not_ready"
+          assert ready_after.get("ready") is True and \
+              ready_after.get("buildSha") == sha, "backend_identity_changed"
+          assert dq_before.get("schemaVersion") == \
+              "argus-operational-diagnostics-v1"
+          assert dq_after.get("schemaVersion") == \
+              "argus-operational-diagnostics-v1"
+          assert sidecar.get("schemaVersion") == \
+              "argus-remote-recovery-sidecar-v1"
+          assert sidecar.get("readback") == compact, "endpoint_pair_mismatch"
+          assert compact.get("receiptSchemaVersion"), "compact_proof_missing"
+          target = (compact.get("missionTickDurability") or {}).get(
+              "walAppliedSequence")
+          assert isinstance(target, int) and not isinstance(target, bool) and \
+              target > 0
+          checkpoint = (dq_after.get("durability") or {}).get(
+              "checkpoint") or {}
+          assert checkpoint.get("verified") is True
+          assert checkpoint.get("readBackVerified") is True
+          assert checkpoint.get("includedWalSequence") == target
+          PY
+          PYTHONPATH="$GITHUB_WORKSPACE" python3 scripts/prepare_remote_journal_publish.py \
+            validate-sidecar \
+            --recovery "$RUNNER_TEMP/osint-recovery.json" > /dev/null
+      - name: Commit exact pair by CAS and enqueue one receipt
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+          WATCHTOWER_EXPECTED_HEAD_SHA: ${{ inputs.expectedHeadSha }}
+          WATCHTOWER_EVENT_SHA: ${{ github.sha }}
+          WATCHTOWER_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          BE="https://argus-backend-3j2m.onrender.com"
+          cp scripts/prepare_remote_journal_publish.py \
+            "$RUNNER_TEMP/prepare_remote_journal_publish.py"
+          cp scripts/remote_journal_publish_policy.py \
+            "$RUNNER_TEMP/remote_journal_publish_policy.py"
+          cp scripts/workflow_http.py "$RUNNER_TEMP/workflow_http.py"
+          cp scripts/remote_receipt_drain.py \
+            "$RUNNER_TEMP/remote_receipt_drain.py"
+          cp argus_remote_journal.py "$RUNNER_TEMP/argus_remote_journal.py"
+          HEALTH=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+            --name rearm-health --timeout 30 --url "$BE/healthz")
+          READY=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+            --name rearm-ready --timeout 30 --url "$BE/readyz")
+          BACKEND_BUILD_SHA=$(printf '%s' "$HEALTH" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("buildSha") or "")')
+          printf '%s' "$HEALTH" > "$RUNNER_TEMP/rearm-health-prewrite.json"
+          printf '%s' "$READY" > "$RUNNER_TEMP/rearm-ready-prewrite.json"
+          EXPECTED_RUNTIME_SHA=$(python3 -c \
+            "import json; print(json.load(open('$RUNNER_TEMP/runtime-identity-rearm.json'))['runtimeSha'])")
+          verify_runtime_boundary() {
+            local label="$1" health ready
+            health=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+              --name "rearm-runtime-${label}-health" --timeout 30 \
+              --url "$BE/healthz")
+            ready=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+              --name "rearm-runtime-${label}-ready" --timeout 30 \
+              --url "$BE/readyz")
+            printf '%s' "$health" > \
+              "$RUNNER_TEMP/rearm-runtime-health-${label}.json"
+            printf '%s' "$ready" > \
+              "$RUNNER_TEMP/rearm-runtime-ready-${label}.json"
+            python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+              verify-runtime \
+              --health "$RUNNER_TEMP/rearm-runtime-health-${label}.json" \
+              --ready "$RUNNER_TEMP/rearm-runtime-ready-${label}.json" \
+              --expected-runtime-sha "$EXPECTED_RUNTIME_SHA" > /dev/null
+          }
+          python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+            verify-runtime \
+            --health "$RUNNER_TEMP/rearm-health-prewrite.json" \
+            --ready "$RUNNER_TEMP/rearm-ready-prewrite.json" \
+            --expected-runtime-sha "$EXPECTED_RUNTIME_SHA" > /dev/null
+          WORKFLOW_CHECKOUT_SHA=$(git rev-parse HEAD)
+          SNAPSHOT_BUILD_SHA=$(python3 -c \
+            "import json; print((json.load(open('$RUNNER_TEMP/osint-readback.json')).get('buildIdentity') or {}).get('buildSha') or '')")
+          python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+            verify-build-provenance --repository "$GITHUB_WORKSPACE" \
+            --artifact-producer-sha "$SNAPSHOT_BUILD_SHA" \
+            --current-runtime-sha "$BACKEND_BUILD_SHA" \
+            --workflow-dispatch-sha "$WATCHTOWER_EVENT_SHA" \
+            --workflow-checkout-sha "$WORKFLOW_CHECKOUT_SHA" \
+            --protected-main-sha "$WATCHTOWER_EXPECTED_HEAD_SHA" > /dev/null
+          # 2026-10-17: the ledger lives in the private repository.
+          LEDGER_TOKEN="${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}" bash scripts/ledger_use_private.sh
+          git fetch origin "ledger:refs/remotes/origin/ledger"
+          git checkout -B ledger refs/remotes/origin/ledger
+          LEDGER_CAS_BASE=$(git rev-parse HEAD)
+          SOURCE_RECOVERY_LEDGER_BASE=$(python3 -c \
+            "import json; print((json.load(open('$RUNNER_TEMP/osint-recovery.json')).get('recovery') or {}).get('ledgerBaseCommitSha') or '')")
+          DECISION=$(python3 "$RUNNER_TEMP/remote_journal_publish_policy.py" \
+            decision \
+            --source-readback "$RUNNER_TEMP/osint-readback.json" \
+            --ledger-readback ledger/osint/readback.json \
+            --runtime-data-quality "$RUNNER_TEMP/data-quality-after.json" \
+            --event-name workflow_dispatch --utc-minute "$(date -u +%M)" \
+            --natural-rearm)
+          DECISION_ACTION=$(printf '%s' "$DECISION" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["action"])')
+          if [ "$DECISION_ACTION" = "skip" ]; then
+            echo "remote journal re-arm: already caught up"
+            exit 0
+          fi
+          { [ "$DECISION_ACTION" = "publish" ] || \
+            [ "$DECISION_ACTION" = "receipt_only" ]; } || {
+            echo "remote journal re-arm policy rejected publication"
+            exit 1
+          }
+          PAIR=
+          PAIR_NEEDS_COMMIT=false
+          if [ "$DECISION_ACTION" = "receipt_only" ] && \
+              [ -s ledger/osint/readback.json ] && \
+              [ -s ledger/osint/recovery.json ]; then
+            CANDIDATE=$(python3 \
+              "$RUNNER_TEMP/prepare_remote_journal_publish.py" inspect-pair \
+              --readback ledger/osint/readback.json \
+              --recovery ledger/osint/recovery.json 2>/dev/null || true)
+            if [ -n "$CANDIDATE" ]; then
+              CANDIDATE_BASE=$(printf '%s' "$CANDIDATE" | python3 -c \
+                'import json,sys; print(json.load(sys.stdin)["ledgerBaseCommitSha"])')
+              if python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+                  verify-ledger-base-ancestor --repository . \
+                  --recovery-ledger-base "$CANDIDATE_BASE" \
+                  --cas-ledger-head "$LEDGER_CAS_BASE" > /dev/null 2>&1; then
+                PAIR=$CANDIDATE
+                RECOVERY_LEDGER_BASE=$CANDIDATE_BASE
+              fi
+            fi
+          fi
+          if [ -z "$PAIR" ]; then
+            RECOVERY_LEDGER_BASE=$SOURCE_RECOVERY_LEDGER_BASE
+            # Bind source checkpoint base C to observed CAS head X. An
+            # unrelated descendant X is valid; a sibling is fail-closed.
+            python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+              verify-ledger-base-ancestor --repository . \
+              --recovery-ledger-base "$RECOVERY_LEDGER_BASE" \
+              --cas-ledger-head "$LEDGER_CAS_BASE" > /dev/null
+            PAIR=$(python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+              prepare-pair \
+              --source-readback "$RUNNER_TEMP/osint-readback.json" \
+              --source-recovery "$RUNNER_TEMP/osint-recovery.json" \
+              --ledger-readback ledger/osint/readback.json \
+              --ledger-recovery ledger/osint/recovery.json \
+              --ledger-base-commit-sha "$RECOVERY_LEDGER_BASE")
+            PAIR_STATUS=$(printf '%s' "$PAIR" | python3 -c \
+              'import json,sys; print(json.load(sys.stdin)["status"])')
+            PAIR_NEEDS_COMMIT=true
+          else
+            PAIR_STATUS=verified
+          fi
+          if [ "$DECISION_ACTION" = "publish" ]; then
+            [ "$PAIR_STATUS" = "prepared" ] || {
+              echo "remote journal re-arm pair was not fresh"
+              exit 1
+            }
+          else
+            { [ "$PAIR_STATUS" = "prepared" ] || \
+              [ "$PAIR_STATUS" = "verified" ]; } || {
+              echo "receipt-only recovery pair is stale"
+              exit 1
+            }
+          fi
+          EXPECTED_HASH=$(printf '%s' "$PAIR" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["expectedHash"])')
+          EXPECTED_RECEIPT_HASH=$(printf '%s' "$PAIR" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["expectedReceiptHash"])')
+          RECOVERY_BUNDLE_HASH=$(printf '%s' "$PAIR" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["recoveryBundleHash"])')
+          RECOVERY_GENERATION_ID=$(printf '%s' "$PAIR" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["recoveryGenerationId"])')
+          RECOVERY_KEY_ID=$(printf '%s' "$PAIR" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["recoveryKeyId"])')
+          SELECTED_RECOVERY_BASE=$(printf '%s' "$PAIR" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["ledgerBaseCommitSha"])')
+          [ "$SELECTED_RECOVERY_BASE" = "$RECOVERY_LEDGER_BASE" ]
+          if [ "$PAIR_NEEDS_COMMIT" = "true" ]; then
+            git config user.name "argus-ledger[bot]"
+            git config user.email "argus-ledger@users.noreply.github.com"
+            git add ledger/osint/readback.json ledger/osint/recovery.json
+            git diff --cached --quiet && {
+              echo "remote journal re-arm pair produced no change"
+              exit 1
+            }
+            git commit -m "remote-journal: re-arm verified recovery pair"
+            # Exactly one compare-and-swap attempt against observed X. A
+            # concurrent writer wins; this run never rebases or retries.
+            verify_runtime_boundary pre-ledger-write
+            git push \
+              --force-with-lease=refs/heads/ledger:"$LEDGER_CAS_BASE" \
+              origin HEAD:ledger
+          fi
+          REMOTE_COMMIT_SHA=$(git rev-parse HEAD)
+          REMOTE_HEAD=$(git ls-remote origin refs/heads/ledger | awk '{print $1}')
+          [ "$REMOTE_HEAD" = "$REMOTE_COMMIT_SHA" ]
+          python3 "$RUNNER_TEMP/prepare_remote_journal_publish.py" \
+            verify-committed --readback ledger/osint/readback.json \
+            --expected-hash "$EXPECTED_HASH" \
+            --expected-receipt-hash "$EXPECTED_RECEIPT_HASH" \
+            --recovery ledger/osint/recovery.json \
+            --expected-recovery-bundle-hash "$RECOVERY_BUNDLE_HASH" \
+            --ledger-base-commit-sha "$RECOVERY_LEDGER_BASE" > /dev/null
+          REQUEST=$(python3 "$RUNNER_TEMP/remote_journal_publish_policy.py" \
+            receipt --readback ledger/osint/readback.json \
+            --remote-commit-sha "$REMOTE_COMMIT_SHA" \
+            --backend-build-sha "$BACKEND_BUILD_SHA" \
+            --expected-hash "$EXPECTED_HASH" \
+            --expected-receipt-hash "$EXPECTED_RECEIPT_HASH" \
+            --artifact-mode encrypted_recovery_v1 \
+            --recovery-bundle-hash "$RECOVERY_BUNDLE_HASH" \
+            --recovery-generation-id "$RECOVERY_GENERATION_ID" \
+            --recovery-key-id "$RECOVERY_KEY_ID" \
+            --ledger-base-commit-sha "$RECOVERY_LEDGER_BASE" \
+            --idempotency-prefix remote-journal-rearm)
+          IDEMPOTENCY_KEY=$(printf '%s' "$REQUEST" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin)["idempotencyKey"])')
+          PAYLOAD=$(printf '%s' "$REQUEST" | python3 -c \
+            'import json,sys; print(json.dumps(json.load(sys.stdin)["payload"],separators=(",",":")))')
+          verify_runtime_boundary pre-receipt
+          RESPONSE=$(python3 "$RUNNER_TEMP/workflow_http.py" \
+            --name rearm-commit-receipt --method POST --timeout 15 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --header "Idempotency-Key: $IDEMPOTENCY_KEY" \
+            --header 'Content-Type: application/json' --data "$PAYLOAD" \
+            --url "$BE/api/argus/admin/remote-journal/commit-receipt")
+          python3 - "$RESPONSE" "$REMOTE_COMMIT_SHA" \
+            "$EXPECTED_RECEIPT_HASH" <<'PY'
+          import json, sys
+          response = json.loads(sys.argv[1])
+          assert response.get("accepted") is True
+          assert response.get("remoteCommitSha") == sys.argv[2]
+          assert response.get("expectedReceiptHash") == sys.argv[3]
+          assert response.get("artifactMode") == "encrypted_recovery_v1"
+          assert response.get("durabilityState") in ("pending", "verified")
+          PY
+          OPERATION_ID=$(python3 -c \
+            'import json,sys; print(json.loads(sys.argv[1])["operationId"])' \
+            "$RESPONSE")
+          RECEIPT_TARGET_WAL=$(python3 -c \
+            'import json,sys; print(json.loads(sys.argv[1])["targetWalSequence"])' \
+            "$RESPONSE")
+          DRAIN=$(python3 "$RUNNER_TEMP/remote_receipt_drain.py" \
+            --name rearm-remote-journal-drain --base-url "$BE" \
+            --operation-id "$OPERATION_ID" \
+            --backend-build-sha "$BACKEND_BUILD_SHA" \
+            --remote-commit-sha "$REMOTE_COMMIT_SHA" \
+            --target-wal-sequence "$RECEIPT_TARGET_WAL" \
+            --token-env ARGUS_ADMIN_TOKEN --budget-seconds 1800)
+          verify_runtime_boundary terminal-ack
+          echo "remote journal re-arm: exact terminal drain verified: $DRAIN"

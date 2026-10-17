@@ -1,0 +1,49 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# OpenD systemd unit — 提案(v11.5.9・未デプロイ)。本番反映は必ず手動で。
+#
+# ⚠️ 前提の検証が必要(リポジトリからはOpenDの仕様を確認できないため断定しない):
+#   OpenDパッケージ同梱の OpenD.xml のテンプレートに login_account /
+#   login_pwd(または login_pwd_md5)欄が存在するかを、EC2上で実際に確認すること:
+#     grep -iE 'login_account|login_pwd' <OpenDディレクトリ>/OpenD.xml
+#   ・欄が存在する → 資格情報をOpenD.xmlに記載し(chmod 600・所有者のみ)、
+#     このユニットのように【引数なし】で起動できる。プロセス一覧にパスワードが
+#     出なくなる(ファイル読み取り権限者には見える — ゼロ露出ではない)。
+#   ・欄が存在しない/動かない → 手動起動(-login_pwd引数)を継続し、下の
+#     「残存リスク」を受容する。このユニットは使わない。
+#
+# 残存リスク(正直に): -login_pwd を引数で渡す限り、このホストのローカル
+# ユーザー(root/ubuntu)は ps でパスワードを見られる。完全に隠す方法が
+# 確認できるまで「見られ得る」前提で運用する(だからこそパスワード変更後の
+# 現体制では、ホストへのSSHアクセス自体が資格情報境界)。
+#
+# 導入手順(すべて手動・確認しながら):
+#   1. 上記の OpenD.xml 検証を実施(欄が無ければここで中止)
+#   2. OpenD.xml に資格情報を記入し chmod 600 OpenD.xml
+#   3. sudo cp /opt/argus/bridge/opend.service.example /etc/systemd/system/opend.service
+#   4. sudo systemctl daemon-reload && sudo systemctl start opend
+#   5. bridge/scripts/check_opend_status.sh でバージョン/ポート確認
+#   6. 図形/SMS認証が要る場合は request_*_verify_code.sh / submit_*_verify_code.sh
+#   7. 問題なければ sudo systemctl enable opend
+#   8. 既存の手動起動プロセスは重複しないよう必ずkill(OpenD重複は7/3障害の一因)
+# ═══════════════════════════════════════════════════════════════════════════
+[Unit]
+Description=moomoo OpenD gateway (localhost-only) for ARGUS bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+# 現行の本番ディレクトリ(バージョン更新時はここを差し替え):
+WorkingDirectory=/home/ubuntu/moomoo_OpenD_new/moomoo_OpenD_10.8.6818_Ubuntu18.04
+# 引数なし起動 = 資格情報はOpenD.xmlから(上の前提検証が済んでいる場合のみ)。
+# api_ip/telnet_ip は OpenD.xml 側で 127.0.0.1 を維持すること(インターネット非公開)。
+ExecStart=/home/ubuntu/moomoo_OpenD_new/moomoo_OpenD_10.8.6818_Ubuntu18.04/moomoo_OpenD_10.8.6818_Ubuntu18.04
+Restart=on-failure
+RestartSec=15
+# systemctl cat にも journal にも秘密を出さない: Environment= に資格情報を
+# 書かないこと(このファイルには一切書いていない)。
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

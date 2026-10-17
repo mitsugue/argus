@@ -1,0 +1,132 @@
+services:
+  - type: web
+    name: argus-backend
+    runtime: python
+    # Matches the live service (confirmed Standard in the Render dashboard,
+    # 2026-07-01). Standard has no spin-down — kept in sync so a future blueprint
+    # re-apply can't silently downgrade this to free.
+    plan: standard
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scanner.py
+    # Intended contract only. The live service is dashboard-managed; this file
+    # does not prove that scaling or the Disk is configured in production.
+    numInstances: 1
+    # Render's documented monorepo build filter is an allowlist. A main commit
+    # that only changes Pages/frontend files must not restart this process or
+    # supersede its build-scoped Soak.
+    # PR checks are required before merge. On main, deploy immediately for a
+    # matching backend path; waiting for every main check would deadlock with
+    # public-acceptance, which intentionally waits for this backend release.
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - scanner.py
+        - wsgi.py
+        - argus_*.py
+        - jp_market_*.py
+        - ops/calendar/*.json
+        - scripts/analysis_migration_restore.py
+        - scripts/migrate_analysis_names.py
+        - bridge/**
+        - scripts/argus_mission_tick.py
+        - scripts/caos_watchtower_worker.py
+        - scripts/run_foundation_job.py
+        - requirements.txt
+        - Procfile
+        - gunicorn.conf.py
+        - backend-version.json
+        - product-version.json
+        - entity_profiles_seed.json
+        - web/src/types/**
+      ignoredPaths: []
+    # Intended persistent topology. The owner must attach the Disk to the
+    # existing dashboard-managed service; do not convert it to a Blueprint.
+    disk:
+      name: argus-data
+      mountPath: /var/data
+      sizeGB: 5
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: ARGUS_LEDGER_PATH
+        value: /var/data/predictions.jsonl
+      - key: ARGUS_PERSISTENT_ROOT
+        value: /var/data
+      - key: ARGUS_MISSION_WAL_FILE
+        value: /var/data/argus_mission_tick.wal
+      - key: ARGUS_OSINT_PERSIST_FILE
+        value: /var/data/argus_osint_memory.json
+      - key: ARGUS_MISSION_LEASE_FILE
+        value: /var/data/argus_mission_tick.lease
+      - key: ARGUS_MISSION_CURSOR_FILE
+        value: /var/data/argus_mission_tick.cursor.json
+      - key: ARGUS_MISSION_RECEIPT_FILE
+        value: /var/data/argus_mission_tick.receipt.json
+      - key: ARGUS_CHECKPOINT_TEMP_DIR
+        value: /var/data
+      # Provide your secrets via the Render dashboard, not in this file.
+      # J-Quants V2 (live Japan watchlist): a single dashboard API key, sent
+      # in the x-api-key header (v1 mailaddress/password is discontinued).
+      - key: JQUANTS_API_KEY
+        sync: false
+      # Dedicated breadth child process: hard upper configuration boundary.
+      # Raw provider rows are released after each <= one-month checkpoint.
+      - key: JQUANTS_BREADTH_WORKER_MEMORY_SOFT_LIMIT_MB
+        value: 1280
+      - key: ARGUS_BREADTH_PROCESS_START_METHOD
+        value: spawn
+      # FRED (live rates snapshot) — also dashboard-only.
+      - key: FRED_API_KEY
+        sync: false
+      # Twelve Data (live US watchlist) — single dashboard API key, sent as the
+      # apikey query param server-side.
+      - key: TWELVEDATA_API_KEY
+        sync: false
+      # AI Judgment Layer v1 (optional second-opinion review). Backend-only.
+      # Disabled unless AI_JUDGE_ENABLED is true. Admin token gates POST run.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false
+      - key: ARGUS_OPENAI_MODEL_STANDARD
+        value: gpt-5.6-terra
+      # Formal research benchmark blind evaluator.  This model is intentionally
+      # distinct from the ARGUS answer generator; its availability is verified
+      # through the admin capability probe before benchmark execution.
+      - key: ARGUS_OPENAI_MODEL_REFEREE
+        value: gpt-5.6-terra
+      - key: AI_JUDGE_ENABLED
+        sync: false
+      - key: AI_JUDGE_MAX_RUNS_PER_DAY
+        sync: false
+      - key: AI_JUDGE_MIN_INTERVAL_MINUTES
+        sync: false
+      - key: AI_JUDGE_CACHE_TTL_MINUTES
+        sync: false
+      - key: AI_JUDGE_LOCKED
+        sync: false
+      - key: AI_JUDGE_ALLOW_COUNTRIES
+        sync: false
+      - key: ARGUS_ADMIN_TOKEN
+        sync: false
+      - key: SECURITY_ALERT_EMAIL
+        sync: false
+      - key: SECURITY_ALERT_PROVIDER
+        sync: false
+      - key: SECURITY_ALERT_WEBHOOK
+        sync: false
+      # Corporate Catalyst Layer. SEC EDGAR needs a descriptive User-Agent with
+      # a real contact email (SEC policy). TDnet add-on stays off until enabled.
+      - key: SEC_USER_AGENT
+        sync: false
+      - key: JQUANTS_TDNET_ENABLED
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: NEWS_API_KEY
+        sync: false
+      - key: X_API_BEARER_TOKEN
+        sync: false
+      - key: EDINET_API_KEY
+        sync: false

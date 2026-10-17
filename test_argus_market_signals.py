@@ -1,0 +1,137 @@
+"""v13.5.38 — MARKET SIGNALS (SIG-01..07) owner-facing projection tests."""
+from __future__ import annotations
+
+import ast
+import pathlib
+
+import argus_market_signals as signals
+
+
+def _row(status="AVAILABLE", condition=None):
+    return {"status": status, "conditionMet": condition,
+            "lineage": "JP_MARKET_ENGINE_ORIGINAL", "validationStatus": "UNVALIDATED"}
+
+
+def test_seven_owner_facing_identities_are_fixed_and_ordered():
+    assert signals.SIGNAL_IDS == (
+        "SIG-01", "SIG-02", "SIG-03", "SIG-04", "SIG-05", "SIG-06", "SIG-07")
+    assert signals.SIGNAL_TOTAL == 7
+    assert [row["family"] for row in signals.SIGNAL_DEFINITIONS] == [
+        "D01", "D02", "D03", "D04", "D05", "D06", "D07"]
+    names = {row["id"]: row["nameEn"] for row in signals.SIGNAL_DEFINITIONS}
+    assert names["SIG-01"] == "Margin / Credit Balance"
+    assert names["SIG-02"] == "1570 / Supply-Demand"
+    assert names["SIG-03"] == "Relative Strength"
+    assert names["SIG-04"] == "Japan Earnings / Valuation"
+    assert names["SIG-05"] == "Foreign Investor Flow"
+    assert names["SIG-06"] == "VIX / MACD"
+    assert names["SIG-07"] == "Earnings Reaction"
+    # Owner-facing vocabulary never carries the legacy person-derived name.
+    for row in signals.SIGNAL_DEFINITIONS:
+        assert "JP_MARKET_ENGINE" not in row["nameEn"] and "JP_MARKET_ENGINE" not in row["nameJa"]
+
+
+def test_numerator_counts_only_active_signals_and_is_not_hard_coded():
+    none_active = signals.project_market_signals({
+        f"D0{i}": _row(condition=False) for i in range(1, 8)})
+    assert none_active["activeCount"] == 0 and none_active["countLabel"] == "0 / 7"
+    three = signals.project_market_signals({
+        "D01": _row(condition=True), "D02": _row(condition=True),
+        "D03": _row(condition=True), "D04": _row("LICENSE_BLOCKED"),
+        "D05": _row(condition=False), "D06": _row(condition=None),
+        "D07": _row("MISSING")})
+    assert three["activeCount"] == 3 and three["countLabel"] == "3 / 7"
+    assert three["total"] == 7
+    seven = signals.project_market_signals({
+        f"D0{i}": _row(condition=True) for i in range(1, 8)})
+    assert seven["activeCount"] == 7 and seven["countLabel"] == "7 / 7"
+    assert "AVAILABLE and conditionMet true" in three["countRule"]
+
+
+def test_each_signal_state_is_independent_and_truthful():
+    projection = signals.project_market_signals({
+        "D01": _row(condition=True), "D02": _row(condition=False),
+        "D03": _row(condition=None), "D04": _row("LICENSE_BLOCKED"),
+        "D05": _row("STALE"), "D06": _row("MISSING"),
+        # D07 absent entirely: a missing provider is UNAVAILABLE, never zero/CLEAR
+    })
+    by_id = {row["id"]: row["state"] for row in projection["signals"]}
+    assert by_id == {
+        "SIG-01": "ACTIVE", "SIG-02": "CLEAR", "SIG-03": "DATA_GATED",
+        "SIG-04": "LICENSE_BLOCKED", "SIG-05": "STALE",
+        "SIG-06": "UNAVAILABLE", "SIG-07": "UNAVAILABLE",
+    }
+    assert projection["activeCount"] == 1
+    assert projection["stateCounts"] == {
+        "ACTIVE": 1, "CLEAR": 1, "DATA_GATED": 1, "STALE": 1,
+        "LICENSE_BLOCKED": 1, "NOT_APPLICABLE": 0, "UNAVAILABLE": 2,
+    }
+    assert projection["actionAuthority"] is False
+    assert projection["schemaVersion"] == "argus-market-signals-v1"
+
+
+def test_missing_or_malformed_families_never_collapse_to_clear():
+    assert signals.project_market_signals(None)["activeCount"] == 0
+    states = {row["state"] for row in
+              signals.project_market_signals(None)["signals"]}
+    assert states == {"UNAVAILABLE"}
+    assert signals.signal_state({"status": "AVAILABLE"}) == "DATA_GATED"
+    assert signals.signal_state({"status": "PARTIAL", "conditionMet": True}) == "DATA_GATED"
+    assert signals.signal_state("not a row") == "UNAVAILABLE"
+
+
+def test_module_is_pure_and_carries_no_authority():
+    source = pathlib.Path(signals.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    assert imported <= {"__future__", "typing"}
+    for forbidden in ("os", "time", "requests", "socket", "argus_providers",
+                      "scanner", "argus_single_decision"):
+        assert forbidden not in imported
+    assert "order" not in source.lower().replace("display order", "")
+
+
+def test_jp_market_engine_projection_embeds_market_signals():
+    import jp_market_engine as jp_market_engine
+    cutoff = "2026-09-03T02:00:00Z"
+    projection = jp_market_engine.project_today_sda_safe(cutoff=cutoff)
+    assert projection["marketSignals"]["total"] == 7
+    assert projection["marketSignals"]["activeCount"] == 0
+    assert [row["id"] for row in projection["marketSignals"]["signals"]] == \
+        list(signals.SIGNAL_IDS)
+    assert projection["actionAuthority"] is False and projection["action"] is None
+
+
+def test_not_applicable_is_distinct_from_unavailable_and_never_counts():
+    import argus_market_signals as signals
+    assert signals.signal_state({"status": "NOT_APPLICABLE"}) == "NOT_APPLICABLE"
+    assert "NOT_APPLICABLE" in signals.SIGNAL_STATES
+    projected = signals.project_market_signals({
+        "D01": {"status": "AVAILABLE", "conditionMet": True},
+        "D07": {"status": "NOT_APPLICABLE", "conditionMet": None}})
+    by_id = {row["id"]: row for row in projected["signals"]}
+    assert by_id["SIG-07"]["state"] == "NOT_APPLICABLE"
+    assert by_id["SIG-02"]["state"] == "UNAVAILABLE"
+    assert projected["activeCount"] == 1 and projected["stateCounts"]["NOT_APPLICABLE"] == 1
+    assert "NOT_APPLICABLE" in projected["countRule"]
+
+
+def test_data_gated_note_separates_missing_rule_from_missing_data():
+    import argus_market_signals as signals
+    families = {
+        "D04": {"status": "AVAILABLE", "conditionMet": None},  # projected rows carry no rule text
+        "D05": {"status": "PARTIAL", "conditionMet": None},
+        "D06": {"status": "AVAILABLE", "conditionMet": True},
+    }
+    rows = {row["family"]: row for row in signals.project_market_signals(families)["signals"]}
+    assert rows["D04"]["state"] == "DATA_GATED"
+    assert rows["D04"]["gateNoteJa"] == "評価値あり・点灯規則が原典に未定義（参考水準のみ）"
+    assert rows["D05"]["state"] == "DATA_GATED"
+    assert rows["D05"]["gateNoteJa"] == "判定に必要なデータが未取得または不完全"
+    assert rows["D06"]["state"] == "ACTIVE" and rows["D06"]["gateNoteJa"] is None
+    assert rows["D01"]["gateNoteJa"] is None

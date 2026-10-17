@@ -1,0 +1,34 @@
+[Unit]
+Description=A.R.G.U.S. deterministic Watchtower writer dispatch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=argus-rearm
+Group=argus-rearm
+# Reuse only the existing least-privilege Actions-write PAT.  The credential
+# remains out-of-band root:argus-rearm 0640/0440 and is never installed here.
+EnvironmentFile=/etc/argus-remote-journal-rearm.env
+Environment=ARGUS_BACKEND_URL=https://argus-backend-3j2m.onrender.com
+Environment=ARGUS_WATCHTOWER_WRITER_STATE_ROOT=/var/lib/argus-watchtower-writer
+ExecStart=/usr/bin/python3 /opt/argus-watchtower-writer/argus_watchtower_writer_dispatch.py
+TimeoutStartSec=90
+Restart=no
+UMask=0077
+StateDirectory=argus-watchtower-writer
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

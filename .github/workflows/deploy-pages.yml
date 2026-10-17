@@ -1,0 +1,615 @@
+name: Deploy web/ to GitHub Pages
+
+on:
+  push:
+    # Deploy only from main. The github-pages environment allows deploys from
+    # main (and gh-pages) only, so triggering on a feature branch produced a
+    # build that always failed at the deploy step — noisy failure emails for no
+    # reason. Pages requires a two-parent merge with the accepted candidate tree.
+    branches:
+      - main
+    paths:
+      - 'web/**'
+      - 'product-version.json'
+      # v13.5.64: backend-only (Recovery) merges no longer run this release
+      # path — they carry no product certificate, so the run could only fail.
+      # Their post-swap warm lives in backend-warm-after-deploy.yml.
+      - '.github/workflows/deploy-pages.yml'
+      - '.github/actions/warm-profile-*/**'
+      - '.github/actions/acceptance-runtime-preflight/**'
+      - '.github/actions/v13-5-pre-mutation-rehearsal/**'
+      - 'release/v13-acceptance-runtime.json'
+      - 'release/v13-accepted-fix-manifest.json'
+      - 'release/v13-snapshot-readiness-contract.json'
+      - 'web/scripts/release-state-machine.mjs'
+      - 'web/scripts/acceptance-runtime.mjs'
+      - 'scripts/v13_5_release_certificate.py'
+      - 'scripts/v13_5_source_provenance.py'
+      - 'scripts/v13_5_pre_mutation_rehearsal.py'
+      - 'scripts/verify_public_candidate_release.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+
+# GitHub's recommended Pages pattern: do NOT cancel in-progress deploys —
+# cancelling actions/deploy-pages mid-flight leaves the github-pages environment
+# with a PENDING deployment that blocks/hangs the next run (the v10.144 cancel:true
+# experiment made the timeouts worse). false = let each deploy complete; the build
+# job's own concurrency + the 5-min deploy timeout fail closed on a genuine
+# infrastructure hang while the last accepted live site remains current.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      backend_deploy: ${{ steps.scope.outputs.backend_deploy }}
+      backend_sha: ${{ steps.scope.outputs.backend_sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - id: scope
+        env:
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          python3 -B - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          import subprocess
+          from scripts.deploy_scope import classify
+          paths = subprocess.check_output(
+              ["git", "diff", "--name-only", "HEAD^", "HEAD"], text=True
+          ).splitlines()
+          backend = classify(paths)["backendDeploy"]
+          print("backend_deploy=" + str(backend).lower())
+          print("backend_sha=" + (os.environ["CURRENT_SHA"] if backend else ""))
+          PY
+
+  acceptance-runtime-admission:
+    # This is the production P1-P6 gate. The exact certificate and browser
+    # runtime are admitted before backend readiness or Pages deployment.
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+      candidate_tree: ${{ steps.candidate.outputs.tree }}
+      runtime_identity_digest: ${{ steps.runtime.outputs.runtime_identity_digest }}
+      certificate_digest: ${{ steps.certificate.outputs.digest }}
+      source_provenance_digest: ${{ steps.rehearsal.outputs.source_provenance_digest }}
+      rehearsal_digest: ${{ steps.rehearsal.outputs.rehearsal_digest }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: candidate
+        name: Bind the merge to its exact accepted candidate tree
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          read -r merge parent_one parent_two extra < <(git rev-list --parents -n 1 HEAD)
+          if [ -z "$parent_one" ] || [ -z "$parent_two" ] || [ -n "$extra" ]; then
+            echo "::error::Pages requires a two-parent merge commit of the exact admitted candidate; use gh pr merge --merge."
+            exit 1
+          fi
+          candidate_tree=$(git rev-parse "$parent_two^{tree}")
+          test "$(git rev-parse HEAD^{tree})" = "$candidate_tree"
+          echo "sha=$parent_two" >> "$GITHUB_OUTPUT"
+          echo "tree=$candidate_tree" >> "$GITHUB_OUTPUT"
+          echo "base=$parent_one" >> "$GITHUB_OUTPUT"
+      - id: release_scope
+        name: Recompute the exact predeployment certificate requirements
+        run: |
+          python3 -B scripts/recovery_admission.py classify \
+            --repo . \
+            --base-sha '${{ steps.candidate.outputs.base }}' \
+            --head-sha '${{ steps.candidate.outputs.sha }}' \
+            --out artifacts/v13-release-proof/recovery-classification.json \
+            --github-output "$GITHUB_OUTPUT"
+          python3 -c 'import json; s=json.load(open("artifacts/v13-release-proof/recovery-classification.json")); assert s["status"] == "PASS" and s["classification"] in {"PRODUCT", "PRODUCT_AND_RECOVERY"}'
+      - name: Independently admit Recovery for a paired migration before deployment
+        if: steps.release_scope.outputs.classification == 'PRODUCT_AND_RECOVERY'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/recovery_admission.py collect-authority \
+            --repository '${{ github.repository }}' \
+            --base-sha '${{ steps.candidate.outputs.base }}' \
+            --candidate-sha '${{ steps.candidate.outputs.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --classification-digest '${{ steps.release_scope.outputs.classification_digest }}' \
+            --timeout-seconds 60 \
+            --out artifacts/v13-release-proof/recovery-producer-authority.json
+          python3 -B scripts/recovery_admission.py fetch-authority \
+            --repository '${{ github.repository }}' \
+            --authority artifacts/v13-release-proof/recovery-producer-authority.json \
+            --certificate-out artifacts/v13-release-proof/recovery-certificate.json \
+            --classification-out artifacts/v13-release-proof/recovery-authority-classification.json \
+            --evidence-out artifacts/v13-release-proof/recovery-evidence.json \
+            --receipt-out artifacts/v13-release-proof/recovery-retrieval-receipt.json
+          cmp artifacts/v13-release-proof/recovery-classification.json \
+            artifacts/v13-release-proof/recovery-authority-classification.json
+          python3 -B scripts/recovery_admission.py verify \
+            --certificate artifacts/v13-release-proof/recovery-certificate.json \
+            --classification artifacts/v13-release-proof/recovery-classification.json \
+            --evidence artifacts/v13-release-proof/recovery-evidence.json
+      - name: Reconfirm every CURRENT_REQUIRED check for the candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py collect-checks \
+            --repo '${{ github.repository }}' \
+            --candidate-sha '${{ steps.candidate.outputs.sha }}' \
+            --out artifacts/v13-release-proof/current-required.json \
+            --timeout-seconds 60
+      - name: Bind the exact proof-certificate producer
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py collect-authority \
+            --repo '${{ github.repository }}' \
+            --candidate-sha '${{ steps.candidate.outputs.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --out artifacts/v13-release-proof/producer-authority.json \
+            --timeout-seconds 60
+      - name: Fetch only the explicitly bound pre-merge admission certificate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py fetch-admission \
+            --repo '${{ github.repository }}' \
+            --candidate-sha '${{ steps.candidate.outputs.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --consumer-run-id '${{ github.run_id }}' \
+            --consumer-run-attempt '${{ github.run_attempt }}' \
+            --producer-authority artifacts/v13-release-proof/producer-authority.json \
+            --out artifacts/v13-release-proof/certificate.json \
+            --receipt-out artifacts/v13-release-proof/retrieval-receipt.json \
+            --timeout-seconds 60
+      - id: runtime
+        uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ steps.candidate.outputs.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/production-runtime-admission/proof.json
+      - id: rehearsal
+        name: Execute the exact production read-only path before deployment
+        uses: ./.github/actions/v13-5-pre-mutation-rehearsal
+        with:
+          owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          candidate-sha: ${{ steps.candidate.outputs.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          release-merge-sha: ${{ github.sha }}
+          release-merge-tree: ${{ steps.candidate.outputs.tree }}
+          build-sha: ${{ github.sha }}
+          certificate-path: artifacts/v13-release-proof/certificate.json
+          retrieval-receipt-path: artifacts/v13-release-proof/retrieval-receipt.json
+          runtime-proof-path: artifacts/production-runtime-admission/proof.json
+          evidence-dir: artifacts/pre-mutation-rehearsal
+      - id: certificate
+        name: Export the admitted detached certificate digest
+        run: |
+          digest=$(python3 -c 'import json; print(json.load(open("artifacts/v13-release-proof/certificate.json"))["certificateDigest"])')
+          test "${#digest}" = 64
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Publish production runtime admission evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-runtime-admission-${{ github.sha }}
+          path: |
+            artifacts/v13-release-proof/certificate.json
+            artifacts/v13-release-proof/producer-authority.json
+            artifacts/v13-release-proof/retrieval-receipt.json
+            artifacts/v13-release-proof/current-required.json
+            artifacts/v13-release-proof/recovery-*.json
+            artifacts/production-runtime-admission/proof.json
+            artifacts/pre-mutation-rehearsal
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish the exact predeployment Pages input
+        uses: actions/upload-artifact@v4
+        with:
+          name: v13-5-predeployment-pages-${{ github.sha }}
+          path: |
+            web/dist
+            artifacts/pre-mutation-rehearsal/rehearsal.json
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    needs: [scope, acceptance-runtime-admission]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: v13-5-predeployment-pages-${{ github.sha }}
+          path: .
+      - name: Re-verify the exact rehearsed Pages deploy input
+        run: |
+          python3 -B scripts/v13_5_pre_mutation_rehearsal.py verify \
+            --receipt artifacts/pre-mutation-rehearsal/rehearsal.json \
+            --dist web/dist \
+            --expected-build-sha '${{ github.sha }}'
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  backend-infrastructure-readiness:
+    needs: [scope, build, acceptance-runtime-admission]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # v13.5.64: ancestry check for a successor backend sha
+      - name: Record frontend-only infrastructure disposition
+        if: needs.scope.outputs.backend_deploy != 'true'
+        run: |
+          mkdir -p artifacts/backend-infrastructure-readiness
+          python3 -B - <<'PY'
+          import json
+          from pathlib import Path
+          Path("artifacts/backend-infrastructure-readiness/gate.json").write_text(
+              json.dumps({
+                  "schemaVersion": "argus-v13-infrastructure-readiness-v1",
+                  "status": "not_required",
+                  "reason": "frontend_only_release",
+              }, indent=2) + "\n")
+          PY
+      - uses: actions/setup-node@v5
+        if: needs.scope.outputs.backend_deploy == 'true'
+        with:
+          node-version: 20
+      - name: Wait for exact Render infrastructure (business state may be 0/12)
+        if: needs.scope.outputs.backend_deploy == 'true'
+        run: |
+          node web/scripts/release-state-machine.mjs infrastructure \
+            --contract release/v13-snapshot-readiness-contract.json \
+            --base-url https://argus-backend-3j2m.onrender.com \
+            --expected-sha '${{ needs.scope.outputs.backend_sha }}' \
+            --accept-successors-on main \
+            --timeout-seconds 900 \
+            --poll-seconds 10 \
+            --out artifacts/backend-infrastructure-readiness/gate.json
+      - name: Publish backend infrastructure readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-infrastructure-readiness-${{ github.sha }}
+          path: artifacts/backend-infrastructure-readiness
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy:
+    # Deploy only after the candidate backend is exact.  The public candidate
+    # remains unaccepted until the identity barrier and warm-profile jobs pass.
+    needs: [build, backend-infrastructure-readiness, acceptance-runtime-admission]
+    runs-on: ubuntu-latest
+    # One release cycle has one production publication attempt. A failure
+    # enters rollback/stop; this workflow never retries the candidate.
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          timeout: 300000
+
+  candidate-identity:
+    # Deployment API success is not CDN convergence. Poll the actual public
+    # index plus healthz/readyz and authorize seeding only for one exact release.
+    needs: [scope, deploy, backend-infrastructure-readiness]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      product_version: ${{ steps.release.outputs.product_version }}
+      frontend_version: ${{ steps.release.outputs.frontend_version }}
+      backend_version: ${{ steps.release.outputs.backend_version }}
+      backend_sha: ${{ steps.observed.outputs.backend_sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # v13.5.64: ancestry check for a successor backend sha
+      - name: Resolve exact release coordinates
+        id: release
+        run: |
+          python3 -c 'import json; print("product_version=" + json.load(open("product-version.json"))["productVersion"])' >> "$GITHUB_OUTPUT"
+          node -p '"frontend_version=" + require("./web/package.json").version' >> "$GITHUB_OUTPUT"
+          python3 -c 'import json; print("backend_version=" + json.load(open("backend-version.json"))["version"])' >> "$GITHUB_OUTPUT"
+      - name: Wait for exact public frontend and backend candidate identities
+        id: gate
+        run: |
+          python3 -B scripts/verify_public_candidate_release.py \
+            --public-url https://mitsugue.github.io/argus/ \
+            --backend-url https://argus-backend-3j2m.onrender.com \
+            --expected-product-version '${{ steps.release.outputs.product_version }}' \
+            --expected-frontend-version '${{ steps.release.outputs.frontend_version }}' \
+            --expected-frontend-sha '${{ github.sha }}' \
+            --expected-backend-version '${{ steps.release.outputs.backend_version }}' \
+            --expected-backend-sha '${{ needs.scope.outputs.backend_sha }}' \
+            --accept-backend-successors-on main \
+            --timeout-seconds 600 \
+            --poll-seconds 10 \
+            --output artifacts/public-candidate-identity/gate.json
+      - name: Export the exact observed backend identity
+        id: observed
+        run: |
+          python3 -B - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          gate = json.load(open("artifacts/public-candidate-identity/gate.json"))
+          health = gate["observed"]["backend"]["health"]
+          print("backend_sha=" + health["buildSha"])
+          PY
+      - name: Publish public candidate identity evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-candidate-identity-${{ github.sha }}
+          path: artifacts/public-candidate-identity
+          if-no-files-found: error
+          retention-days: 30
+
+  business-snapshot-trigger:
+    # The only release producer trigger. It is unreachable until both deployed
+    # identities converge, and a busy/duplicate response is never success.
+    needs: [candidate-identity]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Require matching frontend reader and server authentication modes
+        env:
+          ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
+          ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
+          ARGUS_EXPECTED_SHA: ${{ github.sha }}
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+        run: node web/scripts/owner-mode-consistency.mjs
+      - name: Warm the twelve chart views before the producer trigger
+        # v13.5.66 (stabilization item 1): on a cold instance each chart view
+        # computes for ~8 s; the tick that produces all twelve under the
+        # trigger id used to abort at its transport limit and the release
+        # went red after a successful deploy. Reading the twelve routes once
+        # warms the compute memo so the trigger reconciles in seconds.
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: python3 scripts/warm_protected_reads.py --group charts
+      - name: Trigger and durably acknowledge the exact 12 business snapshots
+        env:
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          ARGUS_ACCEPTANCE_OWNER_ORIGIN: https://mitsugue.github.io
+          ARGUS_ACCEPTANCE_OWNER_PASSWORD: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          node web/scripts/release-state-machine.mjs trigger-business \
+            --contract release/v13-snapshot-readiness-contract.json \
+            --base-url https://argus-backend-3j2m.onrender.com \
+            --expected-sha '${{ needs.candidate-identity.outputs.backend_sha }}' \
+            --trigger-id 'v13-production-${{ github.sha }}-${{ github.run_id }}' \
+            --out artifacts/business-snapshot-trigger/trigger.json
+      - name: Warm the runtime caches immediately after the swap
+        # v13.5.36: a deploy swap leaves quote/margin/index caches cold, and
+        # the collect cron may not fire for hours (weekends especially) — the
+        # owner saw every subject data-gated for the whole window. The same
+        # admin collect endpoint the cron uses is invoked once here; failures
+        # are reported but never fail the deploy (the cron remains the
+        # steady-state warmer).
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          if curl -fsS -X POST --max-time 300 --output /dev/null \
+              -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+              "https://argus-backend-3j2m.onrender.com/api/argus/institutional-intelligence/collect" 2>/dev/null; then
+            echo "収集処理の起動を確認しました。応答本文は表示しません。"
+          else
+            echo "::warning title=collect-warm::収集処理を起動できませんでした。次の定期実行で再確認します。"
+          fi
+      - name: Publish producer trigger evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: business-snapshot-trigger-${{ github.sha }}
+          path: artifacts/business-snapshot-trigger
+          if-no-files-found: error
+          retention-days: 30
+
+  seed-warm-profile:
+    # Production-only guard: this job is unreachable until the deployed Pages
+    # and Render identities both equal the approved main release.
+    needs: [scope, candidate-identity, business-snapshot-trigger, acceptance-runtime-admission]
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    timeout-minutes: 12
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ needs.acceptance-runtime-admission.outputs.candidate_sha }}
+          candidate-tree: ${{ needs.acceptance-runtime-admission.outputs.candidate_tree }}
+          evidence-path: artifacts/production-seed-runtime/proof.json
+          expected-runtime-identity: ${{ needs.acceptance-runtime-admission.outputs.runtime_identity_digest }}
+      - uses: ./.github/actions/warm-profile-seed
+        with:
+          owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          owner-origin: https://mitsugue.github.io
+          owner-password: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
+          owner-artifact-key: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+          candidate-sha: ${{ github.sha }}
+          public-url: https://mitsugue.github.io/argus/
+          profile-artifact-name: market-warm-profile-${{ github.sha }}
+          evidence-artifact-name: warm-profile-seed-evidence-${{ github.sha }}
+          enforce-public-candidate-identity: 'true'
+          expected-product-version: ${{ needs.candidate-identity.outputs.product_version }}
+          expected-frontend-version: ${{ needs.candidate-identity.outputs.frontend_version }}
+          expected-backend-version: ${{ needs.candidate-identity.outputs.backend_version }}
+          expected-backend-sha: ${{ needs.candidate-identity.outputs.backend_sha }}
+
+  business-snapshot-acceptance:
+    # R18 is evaluated only after the canonical 1321 / 5D request and warm
+    # profile seal, using the same engine and exact producer-trigger binding.
+    needs: [candidate-identity, business-snapshot-trigger, seed-warm-profile]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - uses: actions/download-artifact@v5
+        with:
+          name: business-snapshot-trigger-${{ github.sha }}
+          path: artifacts/business-snapshot-trigger
+      - name: Accept exactly 12 fresh trigger-bound snapshots
+        env:
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          ARGUS_ACCEPTANCE_OWNER_ORIGIN: https://mitsugue.github.io
+          ARGUS_ACCEPTANCE_OWNER_PASSWORD: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
+        run: |
+          node web/scripts/release-state-machine.mjs verify-business \
+            --contract release/v13-snapshot-readiness-contract.json \
+            --base-url https://argus-backend-3j2m.onrender.com \
+            --expected-sha '${{ needs.candidate-identity.outputs.backend_sha }}' \
+            --trigger-artifact artifacts/business-snapshot-trigger/trigger.json \
+            --out artifacts/business-snapshot-acceptance/gate.json
+      - name: Publish exact-set acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: business-snapshot-acceptance-${{ github.sha }}
+          path: artifacts/business-snapshot-acceptance
+          if-no-files-found: error
+          retention-days: 30
+
+  public-acceptance:
+    needs: [scope, deploy, candidate-identity, seed-warm-profile, business-snapshot-acceptance, backend-infrastructure-readiness, acceptance-runtime-admission]
+    # Candidate Pages, exact frontend/backend identity, and warm profile are all
+    # independently complete before final product acceptance can begin.
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    timeout-minutes: 45
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ needs.acceptance-runtime-admission.outputs.candidate_sha }}
+          candidate-tree: ${{ needs.acceptance-runtime-admission.outputs.candidate_tree }}
+          evidence-path: artifacts/production-public-acceptance-runtime/proof.json
+          expected-runtime-identity: ${{ needs.acceptance-runtime-admission.outputs.runtime_identity_digest }}
+      - uses: actions/download-artifact@v5
+        with:
+          name: business-snapshot-acceptance-${{ github.sha }}
+          path: artifacts/business-snapshot-acceptance
+      - name: Resolve independent release versions
+        id: release
+        run: |
+          node -p '"frontend_version=" + require("./web/package.json").version' >> "$GITHUB_OUTPUT"
+          python3 -c 'import json; print("backend_version=" + json.load(open("backend-version.json"))["version"])' >> "$GITHUB_OUTPUT"
+      - name: Verify downloaded profile, deployed public URL, and PWA upgrade
+        id: market_acceptance
+        uses: ./.github/actions/warm-profile-consumer
+        with:
+          owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          owner-origin: https://mitsugue.github.io
+          owner-password: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
+          owner-artifact-key: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+          profile-artifact-name: market-warm-profile-${{ github.sha }}
+          evidence-artifact-name: market-public-acceptance-${{ github.sha }}
+          candidate-sha: ${{ github.sha }}
+          public-url: https://mitsugue.github.io/argus/
+          mode: accept
+          expected-version: ${{ steps.release.outputs.frontend_version }}
+          expected-backend-version: ${{ steps.release.outputs.backend_version }}
+          expected-backend-sha: ${{ needs.candidate-identity.outputs.backend_sha }}
+      - name: Validate mobile artifact protection before reading owner content
+        env:
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          ARGUS_OWNER_ARTIFACT_KEY: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+        run: node web/scripts/owner-artifact-envelope.mjs check
+      - name: Verify mobile Today navigation, geometry, loaders, and 12 snapshots
+        id: mobile_acceptance
+        working-directory: web
+        env:
+          ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
+          ARGUS_EXPECTED_VERSION: ${{ steps.release.outputs.frontend_version }}
+          ARGUS_EXPECTED_SHA: ${{ github.sha }}
+          ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          ARGUS_ACCEPTANCE_OWNER_ORIGIN: https://mitsugue.github.io
+          ARGUS_ACCEPTANCE_OWNER_PASSWORD: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
+          ARGUS_MOBILE_ACCEPTANCE_OUT: ../artifacts/market-public-acceptance/mobile-today
+        run: node scripts/mobile-today-acceptance.mjs
+      - name: Advance the shared engine through public acceptance and V13 live
+        run: |
+          node web/scripts/release-state-machine.mjs finalize-public \
+            --contract release/v13-snapshot-readiness-contract.json \
+            --business-artifact artifacts/business-snapshot-acceptance/gate.json \
+            --public-artifact artifacts/warm-profile-consumer-evidence/acceptance.json \
+            --mobile-artifact artifacts/market-public-acceptance/mobile-today/acceptance.json \
+            --expected-sha '${{ github.sha }}' \
+            --out artifacts/v13-public-finalization/gate.json
+      - name: Report deployment and acceptance outcomes separately
+        if: always()
+        env:
+          DEPLOY_OUTCOME: ${{ needs.deploy.result }}
+          MARKET_ACCEPTANCE_OUTCOME: ${{ steps.market_acceptance.outcome }}
+          MOBILE_ACCEPTANCE_OUTCOME: ${{ steps.mobile_acceptance.outcome }}
+        run: |
+          {
+            echo "## ARGUS Pages release result"
+            echo ""
+            echo "- Pages deployment: \`$DEPLOY_OUTCOME\`"
+            echo "- Market acceptance: \`$MARKET_ACCEPTANCE_OUTCOME\`"
+            echo "- Mobile Today acceptance: \`$MOBILE_ACCEPTANCE_OUTCOME\`"
+            echo ""
+            echo "Deployment publication and post-deploy acceptance are independent gates."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - id: protect_mobile
+        name: Seal mobile owner evidence for artifact transport
+        if: always() && vars.ARGUS_ACCEPTANCE_OWNER_AUTH == '1' && hashFiles('artifacts/market-public-acceptance/mobile-today/owner-artifacts-safe.json') != ''
+        env:
+          ARGUS_OWNER_ARTIFACT_KEY: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+        run: node web/scripts/owner-artifact-envelope.mjs seal artifacts/market-public-acceptance/mobile-today artifacts/protected-mobile-evidence mobile-evidence "$GITHUB_SHA" "$GITHUB_RUN_ID"
+      - name: Publish reproducible public acceptance evidence
+        if: always() && ((vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0') == '0' || steps.protect_mobile.outcome == 'success')
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-public-acceptance-${{ github.sha }}
+          path: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH == '1' && 'artifacts/protected-mobile-evidence' || 'artifacts/market-public-acceptance/mobile-today' }}
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish R19/R20 shared-engine evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v13-public-finalization-${{ github.sha }}
+          path: artifacts/v13-public-finalization
+          if-no-files-found: error
+          retention-days: 90

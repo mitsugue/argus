@@ -1,0 +1,17 @@
+const assert=require('node:assert/strict'),path=require('node:path'),Module=require('node:module'),esbuild=require('esbuild');
+const React=require('react'),{renderToStaticMarkup}=require('react-dom/server');
+const entry=path.resolve('src/components/dashboard/EventResultBrief.tsx');
+const code=esbuild.buildSync({entryPoints:[entry],bundle:true,write:false,platform:'node',format:'cjs',jsx:'automatic',external:['react','react-dom','react/jsx-runtime']}).outputFiles[0].text;
+const mod=new Module(entry,module);mod.filename=entry;mod.paths=module.paths;mod._compile(code,entry);
+const {EventResultBrief,measuredReaction,compactResultHeadline}=mod.exports;
+const rr={basis:'PRE_RELEASE_BASELINE',latestWindow:'+8h',moves:{usdJpyMovePct:.37,spFuturesMovePct:null,ffImpliedRateMoveBp:NaN},readingJa:'比較不足'};
+const before=JSON.stringify(rr);
+assert.equal(measuredReaction(rr),'+8h・発表直前比 ドル円 +0.37%');
+assert.equal(measuredReaction({...rr,basis:'POST_RELEASE_FIRST_OBSERVATION'}),'比較可能な価格が未取得');
+assert.equal(measuredReaction({...rr,moves:{}}),'比較可能な価格が未取得');
+assert.equal(compactResultHeadline('消費者物価指数 総合CPI 前月比（季節調整済み）+0.6% / 前年比（季節調整なし）+3.7%'),'総合 前月比+0.6% / 前年比+3.7%');
+const html=renderToStaticMarkup(React.createElement(EventResultBrief,{available:true,headline:'合成結果',reaction:rr,verdict:'部分的',reading:'長い一般論'.repeat(30)}));
+assert.ok(html.includes('結果')&&html.includes('予想比較')&&html.includes('実測')&&html.includes('判断'));
+assert.ok(html.includes('数値比較は未確認')&&html.includes('比較できた市場のみ')&&!html.includes('長い一般論'));
+assert.equal(JSON.stringify(rr),before,'saved measurements are unchanged');
+console.log('Event result brief: exact measured facts, missing data, concise display and immutable input PASS');

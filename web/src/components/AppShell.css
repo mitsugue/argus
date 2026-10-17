@@ -1,0 +1,223 @@
+/* The whole app fits in a fixed-viewport flex column: slim header on top,
+   sidebar + main below. Safe-area-insets respected on iOS notch / Dynamic
+   Island devices so content never sits under the status bar. */
+
+.shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.shell__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* iPhone Dynamic Island / notch: env() returns the status-bar inset
+     when viewport-fit=cover is set (it is, in index.html). max() makes
+     the design read identically on devices with no inset. */
+  padding:
+    max(14px, env(safe-area-inset-top))
+    max(22px, env(safe-area-inset-right))
+    14px
+    max(22px, env(safe-area-inset-left));
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.shell__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  /* now a button (taps open the system-health popover) — reset native chrome */
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+.shell__brand:hover { background: var(--surface-soft, rgba(255,255,255,0.04)); }
+
+/* Monogram mark (v10.192) — eye-in-triangle, tracks the brand text color. The
+   negative right margin tightens the logo↔wordmark gap (the flex gap of 12px was
+   too wide once the standalone beacon dot was removed, v10.194.1). */
+.shell__brand-mark { align-self: center; color: var(--text-main); flex: none; margin-right: -6px; }
+
+.shell__brand-name {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--text-main);
+}
+
+/* "Pro" — plain white, no glow. Only the eye glows. */
+.shell__brand-pro {
+  color: var(--text-main);
+}
+
+/* Tiny build version pill next to the brand — quiet, always visible
+   (incl. mobile, where the sidebar footer collapses). */
+.shell__brand-version {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.shell__brand-tag {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-sub);
+  letter-spacing: 0.01em;
+}
+
+.shell__meta {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.shell__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-sub);
+}
+
+.shell__status::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.shell__updated {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.shell__updated-label {
+  color: var(--text-faint);
+  margin-right: 6px;
+}
+
+.shell__body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.shell__main {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;             /* v10.201: scroll is vertical-only — kills the left/right shake */
+  overscroll-behavior-x: none;
+  position: relative;
+  /* Respect the home-indicator inset so the last scroll line never sits
+     underneath it. */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media (max-width: 720px) {
+  .shell__header {
+    padding:
+      max(10px, env(safe-area-inset-top))
+      max(14px, env(safe-area-inset-right))
+      10px
+      max(14px, env(safe-area-inset-left));
+    gap: 10px;
+  }
+  .shell__brand {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .shell__brand-tag {
+    display: none;
+  }
+  .shell__brand-version {
+    font-size: 9px;
+    padding: 1px 5px;
+  }
+  .shell__updated,
+  .shell__status {
+    display: none;
+  }
+  .shell__body { padding-bottom: var(--argus-mobile-nav-height); }
+  .shell__main { width: 100%; padding-bottom: 0; }
+}
+
+/* Overscroll-to-next (v10.15.1): bottom-pull indicator. Sticky inside the
+   scroll container so it rides just above the home indicator. */
+.shell__pullnav {
+  position: sticky;
+
+  margin: 0 auto;
+  width: fit-content;
+  padding: 6px 14px;
+  border-radius: 14px;
+  background: rgba(20, 28, 44, 0.92);
+  border: 1px solid rgba(91, 141, 239, 0.4);
+  font-size: 12px;
+  color: var(--text-sub);
+  pointer-events: none;
+  z-index: 5;
+}
+.shell__pullnav--armed {
+  color: var(--text-main);
+  border-color: rgba(91, 141, 239, 0.9);
+  font-weight: 600;
+}
+
+
+/* Overscroll page-nav indicators (v10.28): top for prev, bottom for next. */
+.shell__pullnav--bottom { bottom: calc(env(safe-area-inset-bottom) + 10px); top: auto; }
+.shell__pullnav--top { top: calc(env(safe-area-inset-top) + 10px); bottom: auto; }
+
+/* "Clear app" page motion (v10.29): the page follows the finger via an inline
+   translateY while dragging, then springs back. On a real page change it oozes
+   in from further away with a slight overshoot, so it feels heavy and gooey. */
+.shell__page {
+  /* Spring-back after a released-but-not-triggered pull. Heavy, slightly
+     elastic settle (overshoot then ease). */
+  transition: transform 560ms cubic-bezier(0.18, 0.9, 0.24, 1.08);
+  will-change: transform;
+  /* On a real page change the new page slides a LONG way in (continuation of
+     the pull direction) and decelerates to rest — heavy, never a pop. No
+     overshoot, no scale: a solid page travelling in, not fading. */
+  animation: shell-page-in 660ms cubic-bezier(0.22, 0.61, 0.31, 1);
+}
+/* While the finger is down the page tracks it 1:1 with no transition. */
+.shell__page--dragging { transition: none; }
+/* v10.153 (owner request): pages feel like ONE continuous vertical strip — the
+   next page slides up a FULL screen from below (and prev down from above) as a
+   SOLID page (no fade), so it reads as the adjacent page connecting in, not a
+   small rise + cross-fade. Transform-only = GPU-cheap (no extra weight). */
+.shell__page--next { --from: 100vh; }   /* next page slides up a full screen from below */
+.shell__page--prev { --from: -100vh; }  /* prev page slides down a full screen from above */
+@keyframes shell-page-in {
+  0%   { transform: translateY(var(--from, 100vh)); }
+  100% { transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell__page { animation: none; transition: none; }
+}

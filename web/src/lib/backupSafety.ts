@@ -1,0 +1,164 @@
+// V11.16.0 — Backup Safety / Vault Guard + Recovery Drill (device-local TS port
+// of argus_backup_safety.py). 保護状態の判定と復元ドリルは端末内で完結し、
+// パスフレーズ・暗号ペイロード・保護状態がサーバーへ送られることはない。
+
+import type { AssetItem } from '../types/assetItem';
+import { lastCloudBackupAt, recoveryDurability } from './vault';
+import { listSnapshots, syncMeta } from './portfolioSync';
+import {
+  BACKUP_CONTRACT_VERSION, buildBackupPayload, verifyBackupRoundTrip,
+  hasBackupContent, type BackupRoundTripProof,
+} from './backup';
+import { certifiedCompleteExportAt } from './backupMeta';
+import {readOwnerVaultReceipt} from './ownerVaultReceipt';
+
+export type ProtectionLevel = 'protected' | 'partially_protected' | 'unprotected' | 'needs_attention' | 'unknown';
+export const LEVEL_JA: Record<ProtectionLevel, string> = {
+  protected: '保護済み', partially_protected: '一部保護', unprotected: '未保護',
+  needs_attention: '要確認', unknown: '判定保留',
+};
+export const LEVEL_TONE: Record<ProtectionLevel, string> = {
+  protected: 'var(--value-positive)', partially_protected: 'var(--amber, #fbbf24)',
+  unprotected: 'var(--value-negative)', needs_attention: 'var(--amber, #fbbf24)',
+  unknown: 'var(--text-faint)',
+};
+
+export interface BackupSafety {
+  protectionLevel: ProtectionLevel; protectionLevelJa: string;
+  storageMode: string;
+  vaultConfigured: boolean; vaultSyncAgeDays: number | null;
+  snapshotAgeDays: number | null; exportAgeDays: number | null;
+  restoreVerified: boolean; lastDrillAt: string | null;
+  riskFlags: string[];
+  statusJa: string; riskJa: string; nextStepJa: string; whatCanBeLostJa: string;
+}
+
+const META_KEY = 'argus.backupSafety.meta.v1';
+interface Meta {
+  restoreVerified?: boolean;
+  restoreContractVersion?: number;
+  lastDrillAt?: string;
+  lastDrillResultJa?: string;
+}
+function meta(): Meta {
+  try { return JSON.parse(localStorage.getItem(META_KEY) || '{}'); } catch { return {}; }
+}
+function saveMeta(m: Meta): void {
+  try { localStorage.setItem(META_KEY, JSON.stringify(m)); } catch { /* quota */ }
+}
+export function drillMeta(): Meta { return meta(); }
+
+const ageDays = (iso?: string | null): number | null =>
+  iso ? Math.floor((Date.now() - Date.parse(iso)) / 86_400_000) : null;
+
+export function assessBackupSafety(_assets: AssetItem[]): BackupSafety {
+  const hasData = hasBackupContent();
+  const vault = typeof window !== 'undefined' && !!localStorage.getItem('argus.vaultPass.v1');
+  const syncMs = lastCloudBackupAt();
+  const vaultSyncAgeDays = syncMs > 0 ? Math.floor((Date.now() - syncMs) / 86_400_000) : null;
+  const sm = syncMeta();
+  const completeExportAt = certifiedCompleteExportAt(sm);
+  const snaps = listSnapshots();
+  const snapshotAgeDays = snaps.length ? ageDays(snaps[0].createdAt) : null;
+  const exportAgeDays = ageDays(completeExportAt);
+  const m = meta();
+  const verified = !!m.restoreVerified && m.restoreContractVersion === BACKUP_CONTRACT_VERSION;
+  const durability = recoveryDurability(hasData, Date.parse(completeExportAt || '') || null);
+
+  const ownerPoint=readOwnerVaultReceipt();
+  if(hasData&&ownerPoint)return {
+    protectionLevel:'partially_protected',protectionLevelJa:'暗号化保存点あり',
+    storageMode:'owner_encrypted_snapshot',vaultConfigured:true,
+    vaultSyncAgeDays:Math.max(0,Math.floor((Date.now()-ownerPoint.savedAt*1000)/86_400_000)),
+    snapshotAgeDays,exportAgeDays,restoreVerified:true,lastDrillAt:new Date(ownerPoint.savedAt*1000).toISOString(),
+    riskFlags:['current_owner_content_requires_check'],
+    statusJa:'暗号化保存点を読み戻し、復号と隔離復元を照合した記録があります。現在の変更まで保存済みかは保存・復旧画面で確認できます。',
+    riskJa:'この診断は保存時点の記録です。現在の内容との一致や、実機での復元受入を表すものではありません。',
+    nextStepJa:'Settingsの保存・復旧で現在の内容と保存点の照合状況を確認',
+    whatCanBeLostJa:'保存点に含まれていない変更は端末故障・データ消去で失われる可能性があります。接続キーとパスフレーズは別途保持してください。',
+  };
+
+  const risks: string[] = [];
+  risks.push('cloud_push_unavailable');
+  if (!vault) risks.push('vault_passphrase_not_stored');
+  if (vaultSyncAgeDays == null || vaultSyncAgeDays > 2) risks.push('vault_recovery_point_stale');
+  if (exportAgeDays == null || exportAgeDays > 30 || durability.localExportRequired) risks.push('no_export_backup');
+  if (hasData && (snapshotAgeDays == null || snapshotAgeDays > 3)) risks.push('no_snapshot');
+  if (!verified) risks.push('restore_not_verified');
+  if (hasData && exportAgeDays == null) risks.push('local_only_with_private_data');
+
+  let level: ProtectionLevel; let statusJa: string;
+  if (!hasData) {
+    level = 'unknown';
+    statusJa = '保護対象の個人データはまだ端末にありません(保有数量を入力すると保護状態を判定します)。';
+  } else if (exportAgeDays != null && exportAgeDays <= 30 && !durability.localExportRequired
+    && snapshotAgeDays != null && snapshotAgeDays <= 3 && verified) {
+    level = 'protected';
+    statusJa = 'バックアップ保護済み：最近のJSONエクスポート、スナップショット、復元ドリルを確認済みです。';
+  } else if (exportAgeDays != null && exportAgeDays <= 30 && !durability.localExportRequired) {
+    level = 'partially_protected';
+    statusJa = '一部保護：最近のJSONエクスポートがあります。復元ドリルとスナップショットも確認してください。';
+  } else if (vault && vaultSyncAgeDays != null) {
+    level = 'partially_protected';
+    statusJa = durability.state === 'changes_after_envelope'
+      ? '一部保護：既存の暗号化復旧点は復元できますが、それ以降の変更はこの端末内だけです。'
+      : '一部保護：既存の暗号化復旧点は読み取り・復元できます。新しい変更はクラウドへ送信されません。';
+  } else {
+    level = 'unprotected';
+    statusJa = 'バックアップ未保護：保有データはこの端末内にのみあります。JSONエクスポートを安全な場所へ保存してください。';
+  }
+  return {
+    protectionLevel: level, protectionLevelJa: LEVEL_JA[level],
+    storageMode: !hasData ? 'unknown'
+      : vaultSyncAgeDays != null && exportAgeDays != null && exportAgeDays <= 30 && !durability.localExportRequired
+        ? 'read_only_encrypted_recovery_plus_export'
+        : exportAgeDays != null && exportAgeDays <= 30 && !durability.localExportRequired ? 'local_export' : 'local_only',
+    vaultConfigured: vault, vaultSyncAgeDays, snapshotAgeDays, exportAgeDays,
+    restoreVerified: verified, lastDrillAt: m.lastDrillAt ?? null,
+    riskFlags: risks,
+    statusJa,
+    riskJa: durability.state === 'changes_after_envelope' && durability.localExportRequired
+      ? '既存の暗号化復旧点より新しい変更はリモート保護されていません。JSONを書き出して安全な場所へ保存してください。'
+      : level === 'unprotected'
+      ? '保有・判断記録・通知・学習履歴がこの端末だけにあり、サイトデータ削除・ブラウザリセット・PWA削除・端末紛失で失われます。'
+      : !verified && level !== 'unknown'
+        ? '復元できることを一度も確認していません。復元ドリル(非破壊)の実行を推奨します。' : '',
+    nextStepJa: durability.localExportRequired ? '完全バックアップJSONを書き出してiCloud Drive等に保管'
+      : !verified && hasData ? '「復元ドリルを実行」で戻せることを確認(非破壊)'
+      : '現状維持でOK(週1回のエクスポート保管を推奨)',
+    whatCanBeLostJa: 'サイトデータ消去/ブラウザ初期化/PWA削除/プライベートブラウズ/端末変更・紛失で、端末内のデータが消える可能性があります。アプリを閉じるだけでは通常消えません。',
+  };
+}
+
+/** Complete-backup restore drill: execute the production restore path against
+ * isolated in-memory storage, then compare every protected local store. */
+export function runRecoveryDrill(_assets: AssetItem[], _appVersion: string):
+  { passed: boolean; resultJa: string } {
+  const now = new Date().toISOString();
+  let proof: BackupRoundTripProof;
+  try {
+    const file = buildBackupPayload(false, { deviceId: 'isolated-recovery-drill' });
+    proof = verifyBackupRoundTrip(file);
+  } catch {
+    proof = { passed: false, restoredKeys: [], missingKeys: [], mismatchedKeys: ['unreadable_local_store'] };
+  }
+  if (!proof.passed || proof.restoredKeys.length === 0) {
+    const failed = [...proof.missingKeys, ...proof.mismatchedKeys];
+    const detail = failed.length ? failed.join('/') : '保護対象データなし';
+    const resultJa = `復元ドリル失敗：完全バックアップを実復元できません(${detail})。`;
+    saveMeta({ ...meta(), restoreVerified: false, restoreContractVersion: BACKUP_CONTRACT_VERSION,
+      lastDrillAt: now, lastDrillResultJa: resultJa });
+    return { passed: false, resultJa };
+  }
+  const resultJa = `復元ドリル成功：完全バックアップ${proof.restoredKeys.length}項目を隔離領域へ実復元し、全項目を照合しました(現在のデータは変更していません)。`;
+  saveMeta({ restoreVerified: true, restoreContractVersion: BACKUP_CONTRACT_VERSION,
+    lastDrillAt: now, lastDrillResultJa: resultJa });
+  return { passed: true, resultJa };
+}
+
+/** Handoff用のredacted一行(保有数値・パスフレーズ情報なし)。 */
+export function backupSafetyLineJa(assets: AssetItem[]): string {
+  const b = assessBackupSafety(assets);
+  if(b.storageMode==='owner_encrypted_snapshot')return 'バックアップ: 暗号化保存点あり / 保存点の隔離復元照合済み / 現在の変更と実機復元は別確認';
+  return `バックアップ: ${b.protectionLevelJa} / スナップショット${b.snapshotAgeDays != null ? `${b.snapshotAgeDays}日前` : 'なし'} / 復元確認${b.restoreVerified ? '済' : '未'}`;
+}

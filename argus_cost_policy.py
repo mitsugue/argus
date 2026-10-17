@@ -1,0 +1,446 @@
+# -*- coding: utf-8 -*-
+"""Central generative-AI cost policy for ARGUS v12.3.0.
+
+Pure/stdlib-only.  Market-data providers are deliberately outside this policy.
+The default is fail-closed DETERMINISTIC: cached AI output remains readable, but
+no OpenAI/Gemini/Anthropic request is authorized automatically.
+
+v13.5.36 (owner directive 2026-08-23 「有効にして」): SCHEDULED_AI mode allows
+ONLY the news-mail pipeline's two bounded purposes (headline_translation,
+news_intel) to run automatically, under a dedicated daily USD budget computed
+from recorded usage.  Every other purpose in this mode behaves exactly like
+MANUAL (explicit confirmation + manual_api only).
+"""
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
+
+MODES = ("DETERMINISTIC", "EVENT_OPT_IN", "MANUAL", "RESEARCH_BENCHMARK",
+         "SCHEDULED_AI")
+# The only purposes that may execute WITHOUT human confirmation in SCHEDULED_AI.
+SCHEDULED_PURPOSES = ("headline_translation", "news_intel", "market_brief")
+# v13.5.60 (owner 2026-09-07 「イベント AI をオン」): pre/post-release event
+# scenarios may ALSO run automatically under SCHEDULED_AI, but only when the
+# owner has opted in (ARGUS_EVENT_AI_OPT_IN=1 / eventOptIn), inside the same
+# daily budget, and never more than this many runs per UTC day.
+SCHEDULED_MAIN_PURPOSES = ("ai_judgment", "entity_profiles", "candidate_research",
+                           "mover_explanation", "osint_research", "owner_dialogue")
+SCHEDULED_EVENT_PURPOSE = "event_analysis"
+SCHEDULED_EVENT_RUNS_PER_DAY = 6
+# v13.7 cost-first policy (owner directive 2026-09-21).  These are production
+# ceilings, not a usage target: cached explanations and deterministic market
+# data continue when either ceiling is reached.
+SCHEDULED_DAILY_BUDGET_USD = 0.50
+SCHEDULED_MONTHLY_BUDGET_USD = 10.0
+SCHEDULED_PURPOSE_RUN_LIMITS = {"market_brief": 4}
+# v13.5.63 (GPT review item 4, production 2026-09-07): the news lanes spent the
+# whole daily budget on headline translations (101 Gemini runs, $2.02) and the
+# opted-in event lane could never run — "予算" and "実行許可" looked fine while
+# the real reason was scheduled_daily_budget_exhausted. The event lane keeps a
+# reserve the news lanes may not consume (6 runs × ~$0.08).
+SCHEDULED_EVENT_RESERVE_USD = 0.5
+PROVIDERS = ("openai", "gemini", "anthropic")
+EVENT_PHASES = ("pre", "post")
+SCHEMA_VERSION = "argus-cost-policy-v1"
+MAX_REQUEST_ESTIMATED_TOKENS = 65536
+
+
+def default_state(mode: str = "DETERMINISTIC", event_opt_in: bool = False) -> Dict[str, Any]:
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "mode": mode if mode in MODES else "DETERMINISTIC",
+        "eventOptIn": bool(event_opt_in),
+        "events": {},
+        "usage": [],
+        "lastExecution": None,
+        "budgetWindowVersion": 2,
+        "budgetHistoryIncompleteMonth": None,
+    }
+
+
+def normalize_state(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    src = state if isinstance(state, dict) else {}
+    out = default_state(str(src.get("mode") or "DETERMINISTIC"),
+                        bool(src.get("eventOptIn")))
+    out["events"] = dict(src.get("events") or {})
+    # Never discard rows by count: even a tiny estimated charge can occur
+    # thousands of times in one month and still count toward the hard cap.
+    out["usage"] = [x for x in (src.get("usage") or []) if isinstance(x, dict)]
+    out["budgetWindowVersion"] = 2 if src.get("budgetWindowVersion") == 2 else 1
+    incomplete = src.get("budgetHistoryIncompleteMonth")
+    out["budgetHistoryIncompleteMonth"] = (incomplete if isinstance(incomplete, str)
+                                          and _valid_month(incomplete) else None)
+    out["lastExecution"] = src.get("lastExecution") if isinstance(
+        src.get("lastExecution"), dict) else None
+    # v13.5.63: the last refusal is state too — "no run" must have a reason.
+    out["lastSkip"] = src.get("lastSkip") if isinstance(
+        src.get("lastSkip"), dict) else None
+    if "legacyAiCost" in src:
+        import argus_ai_cost
+        out["legacyAiCost"] = argus_ai_cost.normalize_accounting(src["legacyAiCost"])
+    return out
+
+
+def configure(state: Dict[str, Any], *, mode: str, event_opt_in: bool,
+              event_id: str = "", event_enabled: bool = False,
+              providers: Optional[list] = None, event_budget_usd: float = 1.0,
+              event_token_limit: int = 12000) -> Dict[str, Any]:
+    """Return validated operator configuration; never enables an unknown provider."""
+    if mode not in MODES:
+        raise ValueError("invalid_mode")
+    st = normalize_state(state)
+    st["mode"] = mode
+    st["eventOptIn"] = bool(event_opt_in)
+    if event_id:
+        selected = [str(p).lower() for p in (providers or [])
+                    if str(p).lower() in PROVIDERS]
+        if not selected:
+            raise ValueError("provider_required")
+        st["events"][str(event_id)] = {
+            **dict(st["events"].get(str(event_id)) or {}),
+            "enabled": bool(event_enabled), "providers": selected,
+            "budgetUsd": max(0.0, float(event_budget_usd)),
+            "tokenLimit": max(1, int(event_token_limit)),
+            "phaseRuns": dict((st["events"].get(str(event_id)) or {}).get("phaseRuns") or {}),
+        }
+    return st
+
+
+def _skip(mode: str, reason: str, purpose: str) -> Dict[str, Any]:
+    return {"allowed": False, "classification": "expected_skip",
+            "status": "deterministic_mode" if reason == "deterministic_mode" else reason,
+            "reason": reason, "mode": mode, "purpose": purpose}
+
+
+
+def _scheduled_budget_usage(day_rows, budget):
+    rows = [row for row in day_rows if row.get("purpose") in SCHEDULED_PURPOSES + SCHEDULED_MAIN_PURPOSES
+            or row.get("purpose") == SCHEDULED_EVENT_PURPOSE]
+    events = [row for row in rows if row.get("purpose") == SCHEDULED_EVENT_PURPOSE]
+    spent = round(sum(float(row.get("estimatedCostUsd") or 0.0) for row in rows), 6)
+    event_spent = round(sum(float(row.get("estimatedCostUsd") or 0.0) for row in events), 6)
+    # Money already spent on events is already included in total spend. Keep
+    # only their outstanding allocation; after the daily run cap no new event
+    # call can use that allocation. Pending reservations count as usage too.
+    reserve = (max(0.0, min(budget, SCHEDULED_EVENT_RESERVE_USD) - event_spent)
+               if len(events) < SCHEDULED_EVENT_RUNS_PER_DAY else 0.0)
+    return spent, event_spent, len(events), reserve
+
+
+def _scheduled_monthly_usage(month_rows):
+    rows = [row for row in month_rows if row.get("purpose") in SCHEDULED_PURPOSES + SCHEDULED_MAIN_PURPOSES
+            or row.get("purpose") == SCHEDULED_EVENT_PURPOSE]
+    return round(sum(float(row.get("estimatedCostUsd") or 0.0) for row in rows), 6)
+
+
+def _total_production_usage(rows):
+    """All billable production lanes share the owner-set ceiling.
+
+    Manual diagnostics and formal research retain their explicit confirmation
+    requirements, but cannot bypass the production provider budget.  Pending
+    reservations have the same row shape and therefore count here too.
+    """
+    return round(sum(float(row.get("estimatedCostUsd") or 0.0)
+                     for row in rows), 6)
+
+
+def authorize(state: Dict[str, Any], *, provider: str, purpose: str,
+              automatic: bool, now_iso: str = "", event_id: str = "",
+              event_phase: str = "", confirmation: bool = False,
+              estimated_cost_usd: Optional[float] = None,
+              estimated_tokens: Optional[int] = None,
+              provider_enabled: bool = True,
+              event_budget_usd: float = 1.0,
+              event_token_limit: int = 12000,
+              scheduled_daily_budget_usd: float = SCHEDULED_DAILY_BUDGET_USD,
+              scheduled_monthly_budget_usd: float = SCHEDULED_MONTHLY_BUDGET_USD,
+              budget_enforced: bool = True, full_analysis_enabled: bool = False
+              ) -> Dict[str, Any]:
+    """Return an authorization without performing I/O or mutating state."""
+    st = normalize_state(state)
+    mode = st["mode"]
+    p = str(provider).lower()
+    if p not in PROVIDERS:
+        return _skip(mode, "provider_not_supported", purpose)
+    if not provider_enabled:
+        return _skip(mode, "provider_disabled", purpose)
+    if mode == "DETERMINISTIC":
+        return _skip(mode, "deterministic_mode", purpose)
+    if mode == "MANUAL":
+        if automatic:
+            return _skip(mode, "manual_only", purpose)
+        if not confirmation:
+            return _skip(mode, "confirmation_required", purpose)
+        if purpose != "manual_api":
+            return _skip(mode, "manual_api_only", purpose)
+    if mode == "RESEARCH_BENCHMARK":
+        if automatic:
+            return _skip(mode, "manual_only", purpose)
+        if not confirmation:
+            return _skip(mode, "confirmation_required", purpose)
+        if purpose != "research_benchmark":
+            return _skip(mode, "benchmark_scope_required", purpose)
+    if mode == "SCHEDULED_AI":
+        scheduled_event = (purpose == SCHEDULED_EVENT_PURPOSE
+                           and bool(st.get("eventOptIn")))
+        if scheduled_event:
+            today = _day(now_iso)
+            runs = sum(1 for x in st["usage"]
+                       if _day(x.get("at")) == today
+                       and x.get("purpose") == SCHEDULED_EVENT_PURPOSE)
+            if budget_enforced and runs >= SCHEDULED_EVENT_RUNS_PER_DAY:
+                return _skip(mode, "scheduled_event_runs_exhausted", purpose)
+        full_analysis = full_analysis_enabled and purpose in SCHEDULED_MAIN_PURPOSES
+        if full_analysis and p != "openai":
+            return _skip(mode, "primary_analysis_requires_openai", purpose)
+        if purpose in SCHEDULED_PURPOSES or scheduled_event or full_analysis:
+            if (budget_enforced and st.get("budgetHistoryIncompleteMonth") ==
+                    _month(now_iso)):
+                return _skip(mode, "scheduled_budget_history_incomplete", purpose)
+            # Automatic news translation/analysis, bounded by a daily budget
+            # summed over the recorded usage rows of the scheduled lane.
+            today = _day(now_iso)
+            est = (float(estimated_cost_usd)
+                   if isinstance(estimated_cost_usd, (int, float))
+                   and estimated_cost_usd >= 0 else 0.0)
+            budget = max(0.0, float(scheduled_daily_budget_usd))
+            spent, _, _, reserve = _scheduled_budget_usage(
+                [x for x in st["usage"] if _day(x.get("at")) == today], budget)
+            # Hold event funds only after the owner has opted into the event
+            # lane.  Otherwise a $0.50 daily ceiling would reserve the whole
+            # amount and prevent every ordinary translation.
+            if not bool(st.get("eventOptIn")):
+                reserve = 0.0
+            # Both purposes share the hard cap; only still-needed event funds
+            # are held back from news. Never count event spend twice.
+            lane_cap = budget if scheduled_event else max(0.0, budget - reserve)
+            if budget_enforced and spent + est > lane_cap:
+                return _skip(mode, "scheduled_daily_budget_exhausted", purpose)
+            monthly_budget = max(0.0, float(scheduled_monthly_budget_usd))
+            monthly_spent = _scheduled_monthly_usage(
+                [x for x in st["usage"] if _month(x.get("at")) == _month(now_iso)])
+            if budget_enforced and monthly_spent + est > monthly_budget:
+                return _skip(mode, "scheduled_monthly_budget_exhausted", purpose)
+            run_limit = SCHEDULED_PURPOSE_RUN_LIMITS.get(purpose)
+            if budget_enforced and run_limit is not None:
+                runs = sum(1 for x in st["usage"]
+                           if _day(x.get("at")) == today and x.get("purpose") == purpose)
+                if runs >= run_limit:
+                    return _skip(mode, "scheduled_purpose_runs_exhausted", purpose)
+        else:
+            if automatic:
+                return _skip(mode, "scheduled_scope_required", purpose)
+            if not confirmation:
+                return _skip(mode, "confirmation_required", purpose)
+            if purpose != "manual_api":
+                return _skip(mode, "manual_api_only", purpose)
+    if mode == "EVENT_OPT_IN":
+        if not st.get("eventOptIn"):
+            return _skip(mode, "event_opt_in_disabled", purpose)
+        if purpose != "event_analysis" or not event_id or event_phase not in EVENT_PHASES:
+            return _skip(mode, "event_scope_required", purpose)
+        ev = (st.get("events") or {}).get(event_id) or {}
+        if not ev.get("enabled"):
+            return _skip(mode, "event_not_enabled", purpose)
+        if p not in (ev.get("providers") or [p]):
+            return _skip(mode, "provider_not_enabled_for_event", purpose)
+        if int((ev.get("phaseRuns") or {}).get(event_phase) or 0) >= 1:
+            return _skip(mode, "event_phase_already_run", purpose)
+        event_budget_usd = min(event_budget_usd, float(ev.get("budgetUsd") or event_budget_usd))
+        event_token_limit = min(event_token_limit, int(ev.get("tokenLimit") or event_token_limit))
+    if estimated_cost_usd is None or estimated_cost_usd < 0:
+        return _skip(mode, "cost_unknown", purpose)
+    if budget_enforced and estimated_cost_usd > event_budget_usd:
+        return _skip(mode, "event_budget_exceeded", purpose)
+    if estimated_tokens is None or estimated_tokens < 0:
+        return _skip(mode, "tokens_unknown", purpose)
+    if estimated_tokens > MAX_REQUEST_ESTIMATED_TOKENS:
+        return _skip(mode, "request_token_bound", purpose)
+    if budget_enforced and estimated_tokens > event_token_limit:
+        return _skip(mode, "event_token_limit", purpose)
+    # The daily/monthly ceiling is a single production-provider ceiling.  It
+    # applies after each mode's permission check so manual confirmation and
+    # research consent remain necessary, while neither may spend outside the
+    # total budget.  The event allocation remains protected from non-event
+    # calls when event analysis is opted in.
+    today = _day(now_iso)
+    month = _month(now_iso)
+    daily_budget = max(0.0, float(scheduled_daily_budget_usd))
+    monthly_budget = max(0.0, float(scheduled_monthly_budget_usd))
+    day_rows = [x for x in st["usage"] if _day(x.get("at")) == today]
+    month_rows = [x for x in st["usage"] if _month(x.get("at")) == month]
+    daily_spent = _total_production_usage(day_rows)
+    monthly_spent = _total_production_usage(month_rows)
+    is_event = purpose == SCHEDULED_EVENT_PURPOSE
+    if bool(st.get("eventOptIn")) and not is_event:
+        _, event_spent, event_runs, reserve = _scheduled_budget_usage(
+            day_rows, daily_budget)
+        if event_runs >= SCHEDULED_EVENT_RUNS_PER_DAY:
+            reserve = 0.0
+        daily_cap = max(0.0, daily_budget - reserve)
+    else:
+        daily_cap = daily_budget
+    if budget_enforced and daily_spent + float(estimated_cost_usd) > daily_cap:
+        return _skip(mode, "total_daily_budget_exhausted", purpose)
+    if budget_enforced and monthly_spent + float(estimated_cost_usd) > monthly_budget:
+        return _skip(mode, "total_monthly_budget_exhausted", purpose)
+    return {"allowed": True, "classification": "success", "status": "allowed",
+            "reason": None, "mode": mode, "purpose": purpose,
+            "provider": p, "eventId": event_id or None,
+            "eventPhase": event_phase or None, "authorizedAt": now_iso}
+
+
+def record_skip(state: Dict[str, Any], decision: Dict[str, Any], *,
+                at: str, provider: str = "") -> Dict[str, Any]:
+    """Remember the last refused automatic call (reason + purpose + instant).
+
+    v13.5.63: the public status could only say what last RAN; when nothing
+    ran the owner saw a computed schedule slot with no explanation. This keeps
+    the refusal itself. Pure: returns the updated state, records no secrets."""
+    st = normalize_state(state)
+    if isinstance(decision, dict) and decision.get("allowed") is False:
+        st["lastSkip"] = {"purpose": str(decision.get("purpose") or "")[:60],
+                          "reason": str(decision.get("reason") or "")[:60],
+                          "provider": str(provider or decision.get("provider") or "")[:20],
+                          "at": at}
+    return st
+
+
+def record_execution(state: Dict[str, Any], *, provider: str, purpose: str,
+                     at: str, estimated_cost_usd: float = 0.0,
+                     event_id: str = "", event_phase: str = "") -> Dict[str, Any]:
+    st = normalize_state(state)
+    row = {"provider": str(provider).lower(), "purpose": purpose, "at": at,
+           "estimatedCostUsd": round(max(0.0, float(estimated_cost_usd)), 6),
+           "eventId": event_id or None, "eventPhase": event_phase or None}
+    st["usage"].append(row)
+    st["usage"] = retain_budget_window(st["usage"], at)
+    st["budgetWindowVersion"] = 2
+    st["lastExecution"] = row
+    if event_id and event_phase in EVENT_PHASES:
+        ev = dict(st["events"].get(event_id) or {})
+        phases = dict(ev.get("phaseRuns") or {})
+        phases[event_phase] = int(phases.get(event_phase) or 0) + 1
+        ev["phaseRuns"] = phases
+        st["events"][event_id] = ev
+    return st
+
+
+def _day(s: str) -> str:
+    return str(s or "")[:10]
+
+
+def _month(s: str) -> str:
+    return str(s or "")[:7]
+
+
+def retain_budget_window(rows: list, reference_iso: str) -> list:
+    """Keep every current/prior UTC-month row, including pending reservations.
+
+    The detailed AI receipt store retains older history. This small policy
+    state only needs the current month's full spend and the preceding month
+    for an in-flight call crossing midnight on the first day. Unknown-dated
+    rows are retained rather than silently discarded.
+    """
+    try:
+        first = datetime.strptime(_month(reference_iso), "%Y-%m").replace(day=1)
+    except ValueError:
+        return list(rows)
+    previous = (first - timedelta(days=1)).strftime("%Y-%m")
+    current = first.strftime("%Y-%m")
+    return [row for row in rows if _month(row.get("at")) in (current, previous)
+            or not _valid_month(_month(row.get("at")))]
+
+
+def _valid_month(value: str) -> bool:
+    try:
+        datetime.strptime(value, "%Y-%m")
+        return True
+    except ValueError:
+        return False
+
+
+def public_status(state: Dict[str, Any], now_iso: str,
+                  scheduled_daily_budget_usd: float = SCHEDULED_DAILY_BUDGET_USD,
+                  scheduled_monthly_budget_usd: float = SCHEDULED_MONTHLY_BUDGET_USD,
+                  *, openai_key_configured: Optional[bool] = None,
+                  budget_enforced: bool = True, full_analysis_enabled: bool = False) -> Dict[str, Any]:
+    st = normalize_state(state)
+    today, month = _day(now_iso), _month(now_iso)
+    day_rows = [x for x in st["usage"] if _day(x.get("at")) == today]
+    month_rows = [x for x in st["usage"] if _month(x.get("at")) == month]
+    counts = {p: sum(1 for x in day_rows if x.get("provider") == p)
+              for p in PROVIDERS}
+    mode = st["mode"]
+    # v13.5.63 (GPT review item 4): key / budget / permission / last refusal
+    # are separate facts. The key is reported as configured-or-not only.
+    budget = max(0.0, float(scheduled_daily_budget_usd))
+    monthly_budget = max(0.0, float(scheduled_monthly_budget_usd))
+    lane_spent, event_spent, event_runs, reserve_remaining = _scheduled_budget_usage(day_rows, budget)
+    if not bool(st.get("eventOptIn")):
+        reserve_remaining = 0.0
+    monthly_spent = _scheduled_monthly_usage(month_rows)
+    total_daily_spent = _total_production_usage(day_rows)
+    total_monthly_spent = _total_production_usage(month_rows)
+    last = st.get("lastExecution") or {}
+    scheduled_lane = {
+        "budgetEnforced": bool(budget_enforced),
+        "historyComplete": st.get("budgetHistoryIncompleteMonth") != month,
+        "dailyBudgetUsd": budget, "spentTodayUsd": lane_spent,
+        "remainingUsd": round(max(0.0, budget - lane_spent), 6),
+        "monthlyBudgetUsd": monthly_budget, "spentThisMonthUsd": monthly_spent,
+        "monthlyRemainingUsd": round(max(0.0, monthly_budget - monthly_spent), 6),
+        "eventReserveUsd": (min(budget, SCHEDULED_EVENT_RESERVE_USD)
+                            if bool(st.get("eventOptIn")) else 0.0),
+        "eventSpentTodayUsd": event_spent,
+        "eventReserveRemainingUsd": round(reserve_remaining, 6),
+        "eventRemainingUsd": round(max(0.0, budget - lane_spent), 6),
+        "newsRemainingUsd": round(max(0.0, budget - reserve_remaining - lane_spent), 6),
+        "eventRunsToday": event_runs, "eventRunsPerDay": SCHEDULED_EVENT_RUNS_PER_DAY,
+        "eventLaneOpen": bool(mode == "SCHEDULED_AI" and st.get("eventOptIn")
+                              and (not budget_enforced or (event_runs < SCHEDULED_EVENT_RUNS_PER_DAY
+                              and lane_spent < budget))),
+        "totalProductionDailySpentUsd": total_daily_spent,
+        "totalProductionDailyRemainingUsd": round(max(0.0, budget - total_daily_spent), 6),
+        "totalProductionMonthlySpentUsd": total_monthly_spent,
+        "totalProductionMonthlyRemainingUsd": round(
+            max(0.0, monthly_budget - total_monthly_spent), 6),
+    }
+    next_allowed = ("重要イベントの明示opt-in後" if mode == "EVENT_OPT_IN"
+                    else "明示確認付きmanual APIのみ" if mode == "MANUAL"
+                    else "固定benchmark実行中のみ" if mode == "RESEARCH_BENCHMARK"
+                    else "GPTの分析・説明と補助翻訳を自動実行" if mode == "SCHEDULED_AI" and full_analysis_enabled
+                    else "ニュースの日本語要約と補助解析のみ日次予算内で自動"
+                    if mode == "SCHEDULED_AI"
+                    else "なし(相談パックはAPIなしで随時生成可)")
+    return {
+        "schemaVersion": SCHEMA_VERSION, "asOf": now_iso, "mode": mode,
+        "budgetEnforced": bool(budget_enforced),
+        "fullAnalysisEnabled": bool(full_analysis_enabled),
+        "enabledScheduledPurposes": list(SCHEDULED_PURPOSES) + (list(SCHEDULED_MAIN_PURPOSES) if full_analysis_enabled else []),
+        "budgetNoteJa": ("日額・月額の設定上限を適用中" if budget_enforced else
+                         "検証用に費用停止を解除中。使用量・費用は記録します。"),
+        "eventOptIn": bool(st.get("eventOptIn")),
+        "automaticAiEnabled": (mode == "SCHEDULED_AI"
+                               or (mode == "EVENT_OPT_IN"
+                                   and bool(st.get("eventOptIn")))),
+        "todayRuns": counts,
+        "todayEstimatedCostUsd": round(sum(float(x.get("estimatedCostUsd") or 0)
+                                            for x in day_rows), 6),
+        "monthEstimatedCostUsd": round(sum(float(x.get("estimatedCostUsd") or 0)
+                                            for x in month_rows), 6),
+        "lastExecutionReason": (st.get("lastExecution") or {}).get("purpose"),
+        "lastExecutionPurpose": last.get("purpose"),
+        "lastExecutionAt": last.get("at"),
+        "lastExecutionProvider": last.get("provider"),
+        "lastSkip": st.get("lastSkip"),
+        "scheduledLane": scheduled_lane,
+        "openaiKeyConfigured": openai_key_configured,
+        "nextAllowedAiExecution": next_allowed,
+        "messageJa": ("GPTを主分析に使用し、Geminiは翻訳等を補助します。" if mode == "SCHEDULED_AI" and full_analysis_enabled else {
+            "DETERMINISTIC": "市場データ、イベント、台帳、ルール判断は動作します。自動AIは実行しません。",
+            "EVENT_OPT_IN": "有効化した重要イベントの前後だけAIを実行します。",
+            "MANUAL": "明示的に深掘りを実行した場合だけAIを使用します。",
+            "RESEARCH_BENCHMARK": "固定済み研究benchmarkだけを上限内で手動実行します。",
+            "SCHEDULED_AI": "ニュースメールの日本語要約と補助解析だけを日次予算内で自動実行します。他のAIは実行しません。",
+        }[mode]),
+    }

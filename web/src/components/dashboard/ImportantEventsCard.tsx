@@ -1,0 +1,418 @@
+import React from 'react';
+import { MacroResultDetails } from './MacroResultDetails';
+import { eventTitleJa } from '../../domain/eventTitleJa';
+import { useImportantEvents, type ImportantEvent, type EventImpact } from '../../hooks/useImportantEvents';
+import { useMacroEventAnalysis, type MacroAnalysis } from '../../hooks/useMacroEventAnalysis';
+import { useMarketLedger } from '../../hooks/useMarketLedger';
+
+import { eventAiScenarioNote, eventAiRunMetaJa, type EventAiCostFacts } from '../../lib/eventAiScenarioNote';
+
+function useEventAiScenarioNote(): string {
+  const { cost } = useMarketLedger();
+  return eventAiScenarioNote(cost as EventAiCostFacts | null);
+}
+import { useDashboardEvents } from '../../hooks/useDashboardEvents';
+import { deriveDashboardEventDisplayState, type DashboardEvent, type DashboardEventReaction } from '../../lib/dashboardEventState';
+import { useLocale, t, pick } from '../../i18n';
+import { EVENT_DESC_JA } from '../../lib/eventLabels';
+import { formatEventWhenJa } from '../../domain/argusTodayView';
+import { TodayEventSchedule } from './TodayEventSchedule';
+import { EventImpactBadge } from './EventImpactBadge';
+import './ImportantEventsCard.css';
+import { EventResultBrief } from './EventResultBrief';
+
+// v11.4.1 tone → color for the unified state badge.
+const STATE_TONE_COLOR: Record<string, string> = {
+  pre: 'var(--event-high, #8b5cf6)', pending: 'var(--amber, #fbbf24)',
+  post: 'var(--value-positive, #34d399)', checked: 'var(--value-positive, #34d399)',
+  warning: 'var(--amber, #fbbf24)', neutral: 'var(--text-muted)',
+};
+
+function jstFromUtc(utc?: string | null): string {
+  if (!utc) return '';
+  const d = new Date(utc);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' }) + ' JST';
+}
+
+// v12.0.8 Part B (owner: CPIが「21:30 JST 発表前」で今日に見えた): イベントの
+// 「いつ」は必ず 日付+JST時刻+D-count で表示する。日付が今日でも「本日」を明示。
+// 日時が取れない場合は「日時未確認」と正直に言う(時刻だけの表示はしない)。
+// v13.5.62 (GPT review item 6): one format with Today (formatEventWhenJa).
+function eventWhenJa(utc?: string | null, fallbackDate?: string | null): string {
+  if (!utc) {
+    if (!fallbackDate || !/^\d{4}-\d{2}-\d{2}$/.test(fallbackDate)) return '日時未確認';
+    const { whenJa, relativeJa } = formatEventWhenJa(`${fallbackDate}T23:59:59+09:00`, true);
+    return relativeJa ? `${whenJa} · ${relativeJa}` : whenJa;
+  }
+  const { whenJa, relativeJa } = formatEventWhenJa(utc, false);
+  return relativeJa ? `${whenJa} · ${relativeJa}` : whenJa;
+}
+
+const RISK_TONE_JA: Record<string, string> = {
+  risk_on: 'リスクオン', risk_off: 'リスクオフ', rates_up: '金利上昇', rates_down: '金利低下',
+  mixed: 'まちまち', unknown: '方向感不明',
+};
+
+// v11.5: quantitative reaction fields (US10Y/USDJPY/SPY/QQQ/VIX/…). Null fields are
+// omitted; if nothing is populated we show 市場反応データ未取得 (never fake numbers).
+function reactionChips(mr?: DashboardEventReaction): { chips: string[]; tone: string | null } {
+  if (!mr) return { chips: [], tone: null };
+  const chips: string[] = [];
+  const pushPct = (label: string, v?: number | null) => {
+    if (typeof v === 'number') chips.push(`${label} ${v >= 0 ? '+' : ''}${v.toFixed(1)}%`);
+  };
+  if (typeof mr.us10yMoveBp === 'number') chips.push(`US10Y ${mr.us10yMoveBp >= 0 ? '+' : ''}${mr.us10yMoveBp.toFixed(0)}bp`);
+  pushPct('USDJPY', mr.usdJpyMovePct);
+  pushPct('SPY', mr.spyMovePct);
+  pushPct('QQQ', mr.qqqMovePct);
+  pushPct('VIX', mr.vixMovePct);
+  pushPct('BTC', mr.btcMovePct);
+  const tone = mr.riskTone && mr.riskTone !== 'unknown' ? (RISK_TONE_JA[mr.riskTone] || null) : null;
+  return { chips, tone };
+}
+
+// IMPORTANT EVENTS — teaches the owner WHY a macro event matters before they look
+// at individual assets (v10.138). Compact rows, top event expanded. Impact = how
+// strongly markets may move (violet/amber/blue/gray tokens), NEVER a direction.
+// No forecast/consensus is fabricated.
+
+const IMPACT_KEY: Record<EventImpact, 'ie.impact.critical' | 'ie.impact.high' | 'ie.impact.medium' | 'ie.impact.low'> = {
+  critical: 'ie.impact.critical', high: 'ie.impact.high', medium: 'ie.impact.medium', low: 'ie.impact.low',
+};
+const COUNTDOWN_JA: Record<string, string> = { 'D': '本日', 'D-1': '明日', 'D-3': '数日内', 'D-7': '1週間内', 'D+1': '昨日', 'normal': '' };
+
+const VERDICT_JA: Record<string, { ja: string; tone: string }> = {
+  hit: { ja: '概ね当たり', tone: 'var(--value-positive, #34d399)' },
+  partial: { ja: '部分的', tone: 'var(--amber, #fbbf24)' },
+  miss: { ja: '外れ', tone: 'var(--value-negative, #f87171)' },
+  not_scoreable: { ja: '採点不可', tone: 'var(--text-muted)' },
+  not_available: { ja: '未確認', tone: 'var(--text-muted)' },
+};
+
+// C.A.O.S. macro pre/post block (v11.3.2). PRE = ARGUS AIシナリオ (NOT a consensus).
+// POST = preserved pre + verdict answer-check against the OFFICIAL result. Missing
+// result → 公式結果待ち; missing pre → 採点不可 — never fabricated.
+const CaosAnalysisBlock: React.FC<{ ai: MacroAnalysis; released: boolean }> = ({ ai, released }) => {
+  const aiNote = useEventAiScenarioNote();
+  const pre = ai.pre || {};
+  const post = ai.post || {};
+  const hasPre = !!(pre.argusScenarioJa || pre.summaryJa);
+  if (!released) {
+    if (!hasPre) return <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">AIシナリオ</span>{aiNote}</p>;
+    return (
+      <>
+        <p className="ie-line"><span className="ie-k">AIシナリオ</span>{pre.argusScenarioJa || pre.summaryJa}</p>
+        {/* v13.5.63 (GPT review item 6): generation time and the model that answered, on tap. */}
+        {eventAiRunMetaJa(pre.generatedAt, pre.ai) && <details className="ie-ai-meta" data-argus-contract="event-ai-run-meta-v1">
+          <summary>生成の記録</summary><p className="ie-data">{eventAiRunMetaJa(pre.generatedAt, pre.ai)}</p></details>}
+        {pre.marketPricingJa && <p className="ie-line"><span className="ie-k">市場の織り込み</span>{pre.marketPricingJa}</p>}
+        {pre.whatWouldSurpriseJa && <p className="ie-line"><span className="ie-k">サプライズ時</span>{pre.whatWouldSurpriseJa}</p>}
+        {(pre.assetsToWatch || []).length > 0 && (
+          <p className="ie-data">注目: {(pre.assetsToWatch || []).join(' · ')} ・ AIシナリオは売買指示ではありません</p>
+        )}
+      </>
+    );
+  }
+  const v = VERDICT_JA[post.verdict || 'not_available'] || VERDICT_JA.not_available;
+  return (
+    <>
+      <EventResultBrief available={ai.actual?.available === true} headline={ai.actual?.headline}
+        verdict={hasPre ? v.ja : '事前記録なし・採点不可'} reaction={ai.displayReleaseReaction} newsContext={ai.newsContext}
+        reading={ai.displayReleaseReaction?.readingJa || undefined} />
+      <details className="ie-original-analysis"><summary>事前シナリオ・分析全文・取得記録</summary>
+      {hasPre && <p className="ie-line"><span className="ie-k">事前予想(当時)</span>{pre.argusScenarioJa || pre.summaryJa}</p>}
+      {ai.actual?.available
+        ? <p className="ie-line"><span className="ie-k">公式結果</span>{ai.actual.headline || '取得済み'}</p>
+        : <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">公式結果</span>公式結果待ち</p>}
+      <MacroResultDetails result={ai.actual} />
+      {!hasPre
+        ? <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">答え合わせ</span>事前予想が保存されていないため答え合わせ不可</p>
+        : (post.answerCheckJa || post.verdict) && (
+            <p className="ie-line"><span className="ie-k">答え合わせ</span>
+              <b style={{ color: v.tone }}>{v.ja}</b>{post.answerCheckJa ? ` — ${post.answerCheckJa}` : ''}</p>
+          )}
+      {post.marketReactionJa && <p className="ie-line"><span className="ie-k">市場反応</span>{post.marketReactionJa}</p>}
+      {post.portfolioImpactJa && <p className="ie-line"><span className="ie-k">影響コメント</span>{post.portfolioImpactJa}</p>}
+      </details>
+    </>
+  );
+};
+
+const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis; compact?:boolean }> = ({ e, open, ai,compact }) => {
+  const loc = useLocale();
+  const impact = e.displayImpact;
+  const countdown = loc === 'ja' ? (COUNTDOWN_JA[e.countdown] || e.countdown) : e.countdown;
+  const novice = pick(e.noviceEn, e.noviceJa);
+  const actionUntil = pick(e.actionUntilEn, e.actionUntilJa);
+  const released = ['RELEASED', 'REACTION_PENDING', 'REACTION_CONFIRMED', 'RESOLVED'].includes(e.lifecycle ?? '');
+  const assets = (e.linkedAssets || []).slice(0, 4).join(' · ') || 'US10Y · USDJPY · QQQ';
+  const nextReview = t('ie.nextReviewTmpl').replace('{assets}', assets);
+  const impactLabel = t(IMPACT_KEY[impact]);
+  // v13.5.62: the fallback row uses the same event-time format as Today and
+  // the unified row (JST, date-only stated as such).
+  const jstIso = e.jstTime && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(String(e.jstTime))
+    ? `${String(e.jstTime).slice(0, 10)}T${String(e.jstTime).slice(11, 16)}:00+09:00` : null;
+  const when = [eventWhenJa(jstIso, e.date), released ? (loc === 'ja' ? '発表済み' : t('ie.released')) : null].filter(Boolean).join(' · ');
+
+  return (
+    <details className={`ie-row${compact?' ie-row--reading':''}`} open={open}>
+      <summary aria-label={`${e.eventCode}, ${impactLabel}, ${when}`}>
+        <span className="ie-when">{when}</span>
+        {!compact&&<span className="ie-code">{e.eventCode}</span>}
+        <span className="ie-title-ja" data-argus-contract="event-title-ja-v1">{eventTitleJa(e.eventCode, e.title)}</span>
+        <EventImpactBadge impact={impact} />
+        {compact&&!released&&<span className="ie-peek">{EVENT_DESC_JA[e.eventCode]||e.noviceJa}</span>}
+      </summary>
+      <div className="ie-body">
+        {!released && <p className="ie-line">{compact ? (e.noviceJa||EVENT_DESC_JA[e.eventCode]) : novice}</p>}
+        {!released && !compact && (
+          <p className="ie-line"><span className="ie-k">{t('ie.untilRelease')}</span><b style={{ color: actionUntil.includes('禁止') || actionUntil.toUpperCase().includes('BLOCKED') ? 'var(--value-negative)' : 'var(--text-main)' }}>{actionUntil}</b></p>
+        )}
+        {!compact&&<p className="ie-line"><span className="ie-k">{t('ie.nextReview')}</span>{nextReview}</p>}
+        {ai && <CaosAnalysisBlock ai={ai} released={released} />}
+        {!ai && released && <EventResultBrief available={false} />}
+        <details><summary>出典・取得状態</summary><p className="ie-data">{e.source || '出典未確認'} · 予想値・前回値の取得は未確認</p></details>
+      </div>
+    </details>
+  );
+};
+
+// v11.4.1 UNIFIED ROW — the single event surface. After release, official result +
+// impact lead; the pre view drops to a collapsed "事前シナリオ（当時）". Released-pending
+// shows "発表済み・公式結果取得中" (never a countdown). The pre scenario is ARGUS's own
+// read — never called "consensus".
+// Owner direction 2026-10-03: a released event answers "so what" in three
+// lines — the market's reading (conclusion), the measured reaction, and what
+// would change the reading — before the answer-check and the raw numbers.
+const ReleaseSoWhat: React.FC<{ ev: DashboardEvent; reactionValues: string[]; reactionTone: string | null;
+  vColor: string; showAnswerCheck: boolean }> = ({ ev, reactionValues, reactionTone, vColor, showAnswerCheck }) => {
+  const c = ev.caos || {};
+  const rr = ev.releaseReaction || null;
+  const reading = rr?.readingJa || c.marketReadingJa || '';
+  const measured = rr?.summaryJa || '';
+  return <div className="ie-sowhat" data-argus-contract="event-so-what-v1" data-reaction-window={rr?.latestWindow ?? ''}>
+    {reading
+      ? <p><span className="ie-k">市場の読み</span><strong>{reading}</strong>{c.nikkeiImplicationJa ? ` — ${c.nikkeiImplicationJa}` : ''}</p>
+      : <p><span className="ie-k">市場の読み</span>反応を測れていないか、分析の生成待ち</p>}
+    {measured
+      ? <p><span className="ie-k">反応</span>{measured}{rr?.basis === 'PRE_RELEASE_BASELINE' ? '（発表直前の値が基準）' : ''}</p>
+      : reactionValues.length > 0
+        ? <p><span className="ie-k">反応</span>{reactionValues.join(' · ')}{reactionTone ? ` · ${reactionTone}` : ''}（発表後の初回観測が基準）</p>
+        : <p><span className="ie-k">反応</span>市場反応データ未取得</p>}
+    {c.changeConditionJa && <p><span className="ie-k">読みが変わる条件</span>{c.changeConditionJa}</p>}
+    {(c.impactCommentJa || (!measured && c.marketReactionJa)) &&
+      <small>{c.impactCommentJa || c.marketReactionJa}</small>}
+    {showAnswerCheck
+      ? <small>答え合わせ：<strong style={{ color: vColor }}>{c.verdictJa || '採点不可'}</strong>
+        {c.answerCheckJa ? ` — ${c.answerCheckJa}` : ''}</small>
+      : <small>答え合わせ生成待ち</small>}
+  </div>;
+};
+
+const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh?: string; compact?:boolean }>
+  = ({ ev, open, lastRefresh,compact }) => {
+  const aiNote = useEventAiScenarioNote();
+  const ds = deriveDashboardEventDisplayState(ev);
+  const color = STATE_TONE_COLOR[ds.tone] ?? STATE_TONE_COLOR.neutral;
+  const c = ev.caos || {};
+  // v12.0.8: 日付+時刻+D-count を常時表示(「21:30 JSTだけで今日に見える」の根治)
+  const when = eventWhenJa(ev.eventTimeUtc, ev.eventDate);
+  const vColor = (VERDICT_JA[c.verdict || 'not_available'] || VERDICT_JA.not_available).tone;
+  const preScenario = c.preScenarioJa || c.summaryJa || null;
+  const { chips: reactionValues, tone: reactionTone } = reactionChips(ev.marketReaction);
+
+  return (
+    <details className={`ie-row${compact?' ie-row--reading':''}`} open={open}>
+      <summary aria-label={`${ev.eventCode}, ${ds.released ? '発表済' : ev.stateLabelJa}, ${when}`}>
+        <span className="ie-when">{when}</span>
+        {!compact&&<span className="ie-code">{ev.eventCode}{ev.lifecycleTierJa && <small className="ie-tier" data-argus-contract="event-lifecycle-tier-v1" data-tier={ev.lifecycleTier}>{ev.lifecycleTierJa}</small>}</span>}
+        <span className="ie-title-ja" data-argus-contract="event-title-ja-v1">{eventTitleJa(ev.eventCode, ev.title)}</span>
+        {compact&&<EventImpactBadge impact={ev.importance} />}
+        {ds.stampBoxed ? (
+          // v11.5: clear boxed "発表済" stamp so it's obvious the event has printed.
+          <span className="ie-stamp" style={{
+            color, borderColor: color, fontWeight: 700, fontSize: 12,
+            border: `1.5px solid ${color}`, borderRadius: 4, padding: '1px 6px',
+            letterSpacing: '0.05em', whiteSpace: 'nowrap',
+          }} aria-hidden>{ds.stampJa}</span>
+        ) : (
+          <span className="ie-impact" style={{ color, fontWeight: 700 }} aria-hidden>{ds.stampJa}</span>
+        )}
+        {compact&&!ds.released&&<span className="ie-peek">{EVENT_DESC_JA[ev.eventCode]}</span>}
+      </summary>
+      <div className="ie-body">
+        {!ds.released && EVENT_DESC_JA[ev.eventCode] && (
+          <p className="ie-summary">{EVENT_DESC_JA[ev.eventCode]}</p>
+        )}
+        {/* Owner report 2026-10-02: once the result is out, the result and the
+            reaction lead; the pre-release view folds away as a reference. */}
+        {ds.released && <EventResultBrief available={ev.officialResult.available === true}
+          headline={ev.officialResult.headlineJa} reaction={ev.releaseReaction}
+          verdict={c.verdictJa} newsContext={ev.newsContext} reading={ev.releaseReaction?.readingJa || c.marketReadingJa} next={c.changeConditionJa} />}
+        <details open={!ds.released} className="ie-original-analysis"><summary>{ds.released ? '事前シナリオ・分析全文・取得記録' : '事前シナリオ・確認する条件'}</summary>
+        <div className="ie-phase-grid" data-result-first={ds.showActualFirst ? 'true' : 'false'}>
+          {ds.showActualFirst ? <>
+            <section className="ie-phase">
+              <b>公式結果</b>
+              {ds.showActualFirst
+                ? <p><strong>{ev.officialResult.headlineJa || '取得済み'}</strong></p>
+                : ds.showPendingResult
+                  ? <p>発表時刻通過・取得待ち</p>
+                  : <p>発表待ち</p>}
+              {ev.officialResult.source && <small>出典：{ev.officialResult.source}</small>}
+              <MacroResultDetails result={ev.officialResult} />
+              {ds.showPendingResult && <small>定期更新待ち{lastRefresh
+                ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</small>}
+            </section>
+            <section className="ie-phase">
+              <b>発表後</b>
+              {ds.showActualFirst ? <ReleaseSoWhat ev={ev} reactionValues={reactionValues} reactionTone={reactionTone}
+                vColor={vColor} showAnswerCheck={ds.showAnswerCheck} /> : <p>公式結果取得後に更新</p>}
+            </section>
+            <details className="ie-phase ie-phase--pre-folded">
+              <summary><b>発表前の見立て(参考)</b></summary>
+              <p>{preScenario || (ds.released ? '事前予測未保存' : aiNote)}</p>
+              {c.marketPricingJa && <small>織り込み：{c.marketPricingJa}</small>}
+              {c.whatWouldSurpriseJa && <small>サプライズ：{c.whatWouldSurpriseJa}</small>}
+            </details>
+          </> : <>
+            <section className="ie-phase">
+              <b>発表前</b>
+              <p>{preScenario || (ds.released ? '事前予測未保存' : aiNote)}</p>
+              {c.marketPricingJa && <small>織り込み：{c.marketPricingJa}</small>}
+              {c.whatWouldSurpriseJa && <small>サプライズ：{c.whatWouldSurpriseJa}</small>}
+            </section>
+            {(!compact || ds.showPendingResult)&&<section className="ie-phase">
+              <b>公式結果</b>
+              {ds.showActualFirst
+                ? <p><strong>{ev.officialResult.headlineJa || '取得済み'}</strong></p>
+                : ds.showPendingResult
+                  ? <p>発表時刻通過・取得待ち</p>
+                  : <p>発表待ち</p>}
+              {ev.officialResult.source && <small>出典：{ev.officialResult.source}</small>}
+              <MacroResultDetails result={ev.officialResult} />
+              {ds.showPendingResult && <small>定期更新待ち{lastRefresh
+                ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</small>}
+            </section>}
+            {!compact&&<section className="ie-phase">
+              <b>発表後</b>
+              {ds.showActualFirst ? <ReleaseSoWhat ev={ev} reactionValues={reactionValues} reactionTone={reactionTone}
+                vColor={vColor} showAnswerCheck={ds.showAnswerCheck} /> : <p>公式結果取得後に更新</p>}
+            </section>}
+          </>}
+        </div>
+        </details>
+        {(c.assetsToWatch || []).length > 0 && (
+          <details className="ie-assets"><summary>確認する市場</summary><p className="ie-data">{(c.assetsToWatch || []).map(code=>({'^TNX':'米10年金利','US10Y':'米10年金利','TLT':'米長期国債','USDJPY':'ドル円','UUP':'米ドル指数','SPY':'米国株全体','QQQ':'米国の主要成長株','VIX':'米国株の不安指数'} as Record<string,string>)[code]||code).join(' · ')}</p></details>
+        )}
+      </div>
+    </details>
+  );
+};
+
+interface Props {
+  embedded?: boolean;
+  /** A Today embed must not duplicate the Alerts page anchor while both exist. */
+  sectionId?: string;
+}
+
+// `embedded` = the lower block of the top command card (divider only, no card
+// chrome) per spec §2. Standalone = its own card (used elsewhere).
+
+export const ImportantEventsCard: React.FC<Props> = ({ embedded, sectionId = 'important-events' }) => {
+  useLocale();
+  const [showAll, setShowAll] = React.useState(false);
+  const dash = useDashboardEvents();             // v11.4.1: unified event feed (preferred)
+  const { data } = useImportantEvents();
+  const analysis = useMacroEventAnalysis();      // v11.3.2: C.A.O.S. pre/post overlay (fallback)
+
+  if (embedded) return <TodayEventSchedule dashboard={dash} legacy={data?.events??[]} sectionId={sectionId}
+    renderDashboard={ev=><UnifiedEventRow ev={ev} open={false} compact lastRefresh={(dash?.status?.lastHotRefreshAt as string)||undefined}/>}
+    renderLegacy={e=><EventRow e={e} open={false} compact ai={analysis[e.eventId]||analysis[e.eventCode]}/>}/>;
+
+  // Preferred path: the unified dashboard-events surface (single source of truth).
+  if (dash && dash.items.length > 0) {
+    const shown = showAll ? dash.items : dash.items.slice(0, 5);
+    const lastRefresh = (dash.status?.lastHotRefreshAt as string) || undefined;
+    return (
+      <section id={sectionId}
+        className={`${embedded ? 'ie-embed' : 'ie-card'}${showAll ? ' is-expanded' : ''}`}
+        aria-label="Important events">
+        <div className="ie-head">
+          <span className="ie-title">{t('ie.title')}</span>
+          {dash.items.length > 3 && <button className="ie-viewall"
+            onClick={() => setShowAll((value) => !value)}>
+            {showAll ? '折りたたむ' : t('ie.viewAll')} {showAll ? '↑' : '↓'}
+          </button>}
+        </div>
+        <div className="ie-rows">
+          {shown.map((ev, i) => <UnifiedEventRow key={ev.displayEventId} ev={ev} open={i === 0} lastRefresh={lastRefresh} />)}
+        </div>
+        {/* v11.14.0 (owner): CAOS下段のイベント評価コーナーは廃止 — この先の予定も
+            ここ(トップカード)に一覧。分析(概要/事前予想)は接近時に上の行へ昇格。 */}
+        {(() => {
+          const covered = new Set(dash.items.map((it) => String(it.eventCode || '').toUpperCase()));
+          // v13.5.59 (owner iPhone): a RELEASED event (MONITORING/RECENT/HISTORY)
+          // is not 「この先」. It belongs to Today's 発表済み line, not here.
+          const RELEASED_TIERS = new Set(['MONITORING', 'RECENT', 'HISTORY']);
+          const RELEASED_LIFECYCLES = new Set(['RELEASED', 'REACTION_PENDING', 'REACTION_CONFIRMED', 'RESOLVED']);
+          const upcoming = (data?.events ?? [])
+            .filter((e) => (e.displayImpact === 'critical' || e.displayImpact === 'high')
+              && !covered.has(String(e.eventCode || '').toUpperCase())
+              && !RELEASED_TIERS.has(String(e.lifecycleTier || ''))
+              && !RELEASED_LIFECYCLES.has(String(e.lifecycle || ''))
+              && (e.daysUntil == null || e.daysUntil >= 0)
+              // v13.5.60 (owner): the coming month, not the next four rows.
+              && (e.daysUntil == null || e.daysUntil <= 31))
+            .slice(0, 12);  // backend order is the single authority (no re-sort)
+          if (!upcoming.length) return null;
+          return (
+            <div style={{ borderTop: '1px solid var(--line)', marginTop: 6, paddingTop: 4 }}>
+              <p style={{ margin: 0, fontSize: 10.5, color: 'var(--text-faint)' }}>この先の重要イベント(接近すると上に昇格して事前予想が付きます)</p>
+              {upcoming.map((e) => (
+                <p key={e.eventId} style={{ margin: '2px 0 0', fontSize: 11.5, color: 'var(--text-sub)' }}>
+                  <b>{e.eventCode}</b>
+                  <span style={{ marginLeft: 6 }}>{e.date?.slice(5).replace('-', '/')}</span>
+                  <span style={{ marginLeft: 6, color: 'var(--text-faint)' }}>影響:{e.displayImpact === 'critical' ? '重大' : '大'}</span>
+                  {EVENT_DESC_JA[e.eventCode] && (
+                    <span style={{ display: 'block', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                      {EVENT_DESC_JA[e.eventCode]}
+                    </span>
+                  )}
+                </p>
+              ))}
+            </div>
+          );
+        })()}
+        <p className="ie-note">{t('ie.impactNote')}</p>
+      </section>
+    );
+  }
+
+  // Fallback: legacy important-events + macro overlay (if /dashboard-events is unavailable).
+  const events = data?.events ?? [];
+  if (events.length === 0) return null;          // calm: nothing shown when no high/critical events
+  const shown = showAll ? events : events.slice(0, 5);
+
+  return (
+    <section id={sectionId}
+      className={`${embedded ? 'ie-embed' : 'ie-card'}${showAll ? ' is-expanded' : ''}`}
+      aria-label="Important events">
+      <div className="ie-head">
+        <span className="ie-title">{t('ie.title')}</span>
+        {events.length > 5 && <button className="ie-viewall"
+          onClick={() => setShowAll((value) => !value)}>
+          {showAll ? '折りたたむ' : t('ie.viewAll')} {showAll ? '↑' : '↓'}
+        </button>}
+      </div>
+      <div className="ie-rows">
+        {shown.map((e, i) => (
+          <EventRow key={e.eventId} e={e} open={i === 0}
+                    ai={analysis[e.eventId] || analysis[e.eventCode]} />
+        ))}
+      </div>
+      <p className="ie-note">{t('ie.impactNote')}</p>
+    </section>
+  );
+};

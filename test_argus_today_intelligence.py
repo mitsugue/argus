@@ -1,0 +1,265 @@
+import datetime as dt
+import math
+
+import argus_today_intelligence as ti
+
+
+def market_bars(count=1400):
+    rows = []
+    day = dt.date(2021, 1, 4)
+    value = 100.0
+    index = 0
+    while len(rows) < count:
+        if day.weekday() < 5:
+            cycle = math.sin(index / 17.0) * 0.008
+            drift = 0.00025 + cycle
+            open_ = value * (1 + math.sin(index / 7.0) * 0.002)
+            close = value * (1 + drift)
+            high = max(open_, close) * 1.009
+            low = min(open_, close) * 0.991
+            rows.append({"date": day.isoformat(), "open": open_, "high": high,
+                         "low": low, "close": close,
+                         "volume": 1_000_000 + (index % 23) * 40_000,
+                         "availableFrom": day.isoformat(), "adjusted": True})
+            value = close
+            index += 1
+        day += dt.timedelta(days=1)
+    return rows
+
+
+def short_rows(count=100):
+    start = dt.date(2025, 1, 6)
+    out = []
+    day = start
+    index = 0
+    while len(out) < count:
+        if day.weekday() < 5:
+            sell = 6_000_000_000 + index * 1_000_000
+            regulated = 3_000_000_000 + (index % 7) * 10_000_000
+            non_regulated = 1_000_000_000 + (index % 5) * 5_000_000
+            out.append({"Date": day.isoformat(), "S33": "0050",
+                        "SellExShortVa": sell, "ShrtWithResVa": regulated,
+                        "ShrtNoResVa": non_regulated})
+            index += 1
+        day += dt.timedelta(days=1)
+    return out
+
+
+def test_probability_calibration_uses_effective_episodes_and_sums_to_100():
+    result = ti.calibrate_forecast(market_bars())
+    assert result["historyCount"] == 1400
+    for horizon in ("1", "5", "20"):
+        row = result["horizons"][horizon]
+        assert row["rawOccurrenceCount"] >= row["episodeCount"]
+        assert row["episodeCount"] == row["effectiveSampleCount"]
+        assert row["cooldownTradingDays"] == int(horizon)
+        assert row["walkForward"] is True
+        assert row["noFutureLeakage"] is True
+        assert row["brierScore"] is not None
+        assert row["modelBrier"] == row["brierScore"]
+        assert row["baselineBrier"] is not None
+        assert row["calibrationIntegrity"] == "PASS"
+        eligibility = row["probabilityEligibility"]
+        assert eligibility["effectiveSample"] == row["effectiveSampleCount"]
+        assert eligibility["modelBrier"] == row["modelBrier"]
+        assert eligibility["baselineBrier"] == row["baselineBrier"]
+        assert eligibility["datasetHash"] == row["calibrationDatasetHash"]
+        assert eligibility["contractVersion"] == "probability-eligibility-v1"
+        assert row["evaluationSampleCount"] > 0
+        assert row["expectedValue"]["horizon"] == int(horizon)
+        if row["calibrationStatus"] == "calibrated":
+            assert sum(row["probabilities"].values()) == 100
+            assert row["directionProbabilities"] == row["probabilities"]
+            assert row["referenceDirectionProbabilities"] is None
+            assert row["brierSkill"] > 0
+            assert row["confidenceInterval"]
+            assert row["levelProbabilities"]["upperTargetTouch"] is not None
+            assert eligibility["eligible"] is True
+            assert eligibility["reasonCodes"] == []
+            assert eligibility["probabilitySum"] == 100
+        else:
+            assert eligibility["eligible"] is False
+            assert row["probabilities"] is None
+            assert sum(row["referenceDirectionProbabilities"].values()) == 100
+
+
+def test_walk_forward_baseline_is_past_only_and_skill_is_paired():
+    episodes = [{"index": index * 5 + 20, "direction": "UP"}
+                for index in range(45)]
+    baseline = [{"index": index, "direction": ("UP", "RANGE", "DOWN")[index % 3]}
+                for index in range(250)]
+    result = ti._walk_forward_brier(episodes, baseline, "fixed-seed")
+    assert result["evaluationSampleCount"] == 35
+    assert result["modelBrier"] < result["baselineBrier"]
+    assert result["brierSkill"] > 0
+    assert result["confidenceInterval"]["low"] is not None
+
+
+def test_small_sample_never_displays_percentages():
+    row = ti.calibrate_horizon(market_bars(70), 20)
+    assert row["calibrationStatus"] in {"insufficient_history", "insufficient_sample"}
+    assert row["probabilities"] is None
+    assert row["referenceDirectionProbabilities"] is None
+    assert row["probabilityEligibility"]["eligible"] is False
+    assert "effective_sample_below_30" in row["probabilityEligibility"]["reasonCodes"]
+
+
+def test_probability_eligibility_is_the_complete_authoritative_gate():
+    good = {
+        "effectiveSampleCount": 30,
+        "modelBrier": .51,
+        "baselineBrier": .60,
+        "brierSkill": .15,
+        "calibrationIntegrity": "PASS",
+        "noFutureLeakage": True,
+        "calibrationVersion": "fixed-v1",
+        "calibrationDatasetHash": "abc123",
+        "calibrationDatasetFixedAt": "2026-07-22",
+    }
+    probabilities = {"UP": 45, "RANGE": 30, "DOWN": 25}
+    eligible = ti.probability_eligibility(good, probabilities)
+    assert eligible["eligible"] is True
+    assert eligible["reasonCodes"] == []
+    assert eligible["probabilitySum"] == 100
+    cases = [
+        ({**good, "effectiveSampleCount": 29}, "effective_sample_below_30"),
+        ({**good, "brierSkill": 0}, "brier_skill_non_positive"),
+        ({**good, "modelBrier": .61}, "model_not_better_than_baseline"),
+        ({**good, "calibrationIntegrity": "FAIL"}, "calibration_integrity_failed"),
+        ({**good, "noFutureLeakage": False}, "future_leakage_not_excluded"),
+    ]
+    for row, reason in cases:
+        result = ti.probability_eligibility(row, probabilities)
+        assert result["eligible"] is False
+        assert reason in result["reasonCodes"]
+    bad_sum = ti.probability_eligibility(good, {"UP": 45, "RANGE": 30, "DOWN": 24})
+    assert bad_sum["eligible"] is False
+    assert "probability_sum_not_100" in bad_sum["reasonCodes"]
+    malformed = ti.probability_eligibility(
+        {**good, "effectiveSampleCount": "invalid"},
+        {"UP": "invalid", "RANGE": 30, "DOWN": 70})
+    assert malformed["eligible"] is False
+    assert malformed["effectiveSample"] == 0
+    assert malformed["probabilitySum"] is None
+
+
+def test_daily_short_schema_is_distinct_and_has_rollups():
+    normalized = ti.normalize_short_history(short_rows())
+    summary = ti.short_selling_summary(normalized)
+    latest = summary["latest"]
+    assert summary["schemaVersion"] == "argus-daily-short-selling-v1"
+    assert summary["seriesType"] == "daily_short_selling_turnover"
+    assert summary["weeklyCreditShortIsSeparate"] is True
+    assert summary["institutionalShortIsSeparate"] is True
+    assert latest["totalShortRatio"] > 0
+    assert latest["average5"] is not None
+    assert latest["average20"] is not None
+    assert 0 <= latest["rollingPercentile"] <= 100
+
+
+def test_failed_rally_fixture_is_confirmed_without_forcing_probability():
+    previous = {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000}
+    current = {"open": 102, "high": 105, "low": 98.5, "close": 99,
+               "volume": 2200, "volumeRatio20": 1.8}
+    result = ti.failed_rally_state(previous, current, short_change=-2.6,
+                                   breadth_divergence=True)
+    assert result["state"] == "CONFIRMED"
+    assert result["conditions"]["gapUp"] is True
+    assert result["conditions"]["closeBelowPrevious"] is True
+    assert result["conditions"]["shortRatioFell"] is True
+
+
+def test_failed_rally_rate_is_not_promoted_without_baseline_skill():
+    result = ti.failed_rally_backtest(market_bars())
+    assert "observedDeclineRatePct" in result
+    assert result["probability"] is None
+    assert result["calibrationStatus"] == "forward_skill_not_evaluated"
+    assert result["forwardSkill"]["eligible"] is False
+    assert result["forwardSkill"]["baselineBrier"] is None
+    assert result["forwardSkill"]["reasonCodes"] == [
+        "baseline_comparison_not_available"]
+
+
+def test_failed_rally_does_not_promote_plain_up_day():
+    previous = {"open": 100, "high": 101, "low": 99, "close": 100}
+    current = {"open": 101, "high": 104, "low": 100, "close": 103}
+    assert ti.failed_rally_state(previous, current)["state"] == "NONE"
+
+
+def test_analysis_and_durable_restore_are_duplicate_safe():
+    bars = market_bars()
+    shorts = short_rows(200)
+    result = ti.analyze(bars, symbol="1321", market="JP",
+                        short_history=shorts, comparison_rows=bars)
+    state = ti.merge_analysis(ti.empty_state(), result, bars[-1], shorts,
+                              "2026-07-23T10:00:00+09:00")
+    again = ti.merge_analysis(state, result, bars[-1], shorts,
+                              "2026-07-23T10:01:00+09:00")
+    assert len(again["snapshots"]) == 1
+    assert len(again["shortSellingHistory"]) == 200
+    restored = ti.merge_state(ti.empty_state(), again)
+    assert ti.read_back_verified(again, restored)
+    assert ti.state_hash(again) == ti.state_hash(restored)
+    assert "holdings" not in str(restored).lower()
+
+
+def test_analysis_explicit_cutoff_excludes_future_bar_mechanically():
+    source = market_bars(100)
+    cutoff = source[-2]["date"] + "T23:59:59.999999Z"
+    expected = ti.analyze(
+        source[:-1], symbol="1321", market="JP", as_of=cutoff)
+    hostile = ti.analyze(
+        source, symbol="1321", market="JP", as_of=cutoff)
+    assert hostile["historyCoverage"] == expected["historyCoverage"]
+    assert hostile["calibration"] == expected["calibration"]
+    assert hostile["pointInTime"]["verified"] is True
+    assert hostile["pointInTime"]["proofs"]["bars"][
+        "excludedFutureCount"] == 1
+
+
+def test_missing_short_data_is_honest_not_zero():
+    summary = ti.short_selling_summary([])
+    assert summary["status"] == "missing"
+    assert summary["latest"] is None
+    assert summary["missingReason"] == "daily_short_ratio_unavailable"
+
+
+def test_episode_cooldown_is_scoped_to_signal_family():
+    rows = [
+        {"index": 10, "distance": .2, "family": "trend_up"},
+        {"index": 11, "distance": .1, "family": "trend_down"},
+        {"index": 12, "distance": .3, "family": "trend_up"},
+    ]
+    grouped = ti._episodes(rows, 5)
+    assert len(grouped) == 2
+    assert {row["family"] for row in grouped} == {"trend_up", "trend_down"}
+
+
+def test_restore_keeps_highest_short_revision_without_duplicates():
+    base = ti.empty_state()
+    old = ti.normalize_short_history(short_rows(1))[0]
+    old["revision"] = 0
+    newer = {**old, "revision": 2, "observedAt": "2026-07-23T00:00:00Z"}
+    base["shortSellingHistory"] = [old]
+    remote = ti.empty_state()
+    remote["shortSellingHistory"] = [newer]
+    merged = ti.merge_state(base, remote)
+    assert len(merged["shortSellingHistory"]) == 1
+    assert merged["shortSellingHistory"][0]["revision"] == 2
+
+
+def test_credit_published_after_the_close_waits_for_the_next_session():
+    import argus_today_intelligence as ti
+    bars = [{"date": f"2026-09-{day:02d}", "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1}
+            for day in (1, 2, 3, 4, 7)]
+    context = {"creditRows": [
+        {"seriesId": "credit.short_balance", "periodEnd": "2026-08-28", "value": 1e12,
+         "availableFrom": "2026-09-03T07:30:00Z"},                       # 16:30 JST, after the 09-03 close
+        {"seriesId": "credit.long_balance", "periodEnd": "2026-08-28", "value": 4e12,
+         "availableFrom": "2026-09-03T15:00:00+09:00"}]}
+    features = ti._jp_market_engine_daily_features(bars, context, "JP")
+    assert [bool(row and "creditRatio" in row) for row in features] == [False, False, False, True, True]
+    assert ti._usable_session_day("2026-09-03T06:00:00Z", "JP") == "2026-09-03"
+    assert ti._usable_session_day("2026-09-03T23:00:00Z", "JP") == "2026-09-04"
+    assert ti._usable_session_day("2026-09-03", "JP") == "2026-09-03"
+    assert ti._usable_session_day("not-a-time", "JP") == ""

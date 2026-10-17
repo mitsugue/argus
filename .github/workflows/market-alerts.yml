@@ -1,0 +1,212 @@
+# ARGUS Market Alerts + scheduled digests — consolidated notification workflow.
+# Polls /api/argus/daily-digest hourly through the JP+US sessions and pushes a
+# ntfy notification ONLY when something actually changed:
+#   - posture flip is replaced by a change in the saved integrated-AI view
+#   - a high-impact event entering its D-1 / D window
+# Quiet by design: no change → no notification. State is carried between runs
+# via the Actions cache. Both jobs use the same NTFY_TOPIC secret
+# (no-ops gracefully when unset). Side bonus: the hourly poll keeps the Render
+# free dyno warm through market hours.
+
+name: market-alerts
+
+on:
+  schedule:
+    # JST 7:00–24:00 hourly on JP weekdays + the full US session overnight.
+    - cron: '0 22,23 * * 0-4'   # 22–23 UTC Sun–Thu = 07–08 JST Mon–Fri
+    - cron: '0 0-15 * * 1-5'    # 00–15 UTC Mon–Fri = 09–24 JST Mon–Fri
+    - cron: '0 16-21 * * 1-5'   # 16–21 UTC Mon–Fri = 01–06 JST Tue–Sat (US session)
+    # The same two digest slots fetch near delivery, not hours beforehand.
+    - cron: '25 23 * * 0-4'     # five minutes before 23:30 UTC (=08:30 JST, TSE pre-open)
+    - cron: '55 12 * * 1-5'      # five minutes before 13:00 UTC (=22:00 JST, NYSE pre-open)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Job to run manually
+        type: choice
+        required: true
+        default: alerts
+        options:
+          - alerts
+          - digest
+
+permissions: {}
+
+jobs:
+  detect-and-push:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'alerts') ||
+      github.event.schedule == '0 22,23 * * 0-4' ||
+      github.event.schedule == '0 0-15 * * 1-5' ||
+      github.event.schedule == '0 16-21 * * 1-5'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Read exact public notification formatter (no token)
+        run: |
+          # Public code only, pinned to this workflow commit. No new repository
+          # permissions or market requests; failure stops before any push.
+          curl -fsSL --max-time 30 --max-filesize 1048576 \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/argus_notification_brief.py" \
+            -o argus_notification_brief.py
+      - name: Restore previous state
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: argus-alert-state-${{ github.run_id }}
+          restore-keys: argus-alert-state-
+
+      - name: Fetch digest and diff
+        id: diff
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          # 2026-09-28: owner authentication gates every read of this host.
+          # The existing operational token passes the gate; it is never logged.
+          for i in 1 2 3 4 5 6; do
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/daily-digest" -o digest.json && break
+            echo "attempt $i failed — retrying in 20s"; sleep 20
+          done
+          test -s digest.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          from argus_notification_brief import diff
+          d = json.load(open('digest.json'))
+          prev = {}
+          if os.path.exists('state.json'):
+              try: prev = json.load(open('state.json'))
+              except Exception: prev = {}
+          state, text = diff(d, prev)
+          json.dump(state, open('state.json', 'w'))
+          if text:
+              open('alert.txt', 'w').write(text)
+              print("changed=true")
+              print("summary=保存した見立てまたは重要イベントの更新")
+          else:
+              print("changed=false")
+              print("summary=変化なし・移行初回または旧配信版")
+          PY
+          echo "diff done"
+
+      - name: Push alert (only on change; skipped without NTFY_TOPIC)
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          if [ -z "$NTFY_TOPIC" ]; then
+            echo "NTFY_TOPIC not configured — change detected but push skipped."
+            exit 0
+          fi
+          # No Click header: tapping a notification should show the text in
+          # ntfy, not jump to the app (user request 2026-06-11). JST send time
+          # in the title — iOS collapses timestamps to "yesterday" (2026-06-12).
+          SENTAT=$(TZ=Asia/Tokyo date "+%m/%d %H:%M")
+          curl -sf --max-time 30 \
+            -H "Title: ARGUS 更新のお知らせ ($SENTAT)" \
+            -H "Priority: high" \
+            -H "Tags: rotating_light" \
+            --data-binary @alert.txt \
+            "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
+          echo "alert pushed."
+
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: argus-alert-state-${{ github.run_id }}
+
+  # Daily JP/US digest; schedule identity drives session and delay selection.
+  push-digest:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'digest') ||
+      github.event.schedule == '25 23 * * 0-4' ||
+      github.event.schedule == '55 12 * * 1-5'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch digest (retry through Render cold start)
+        id: digest
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          # 2026-09-28: owner authentication gates every read of this host.
+          # The existing operational token passes the gate; it is never logged.
+          for i in 1 2 3 4 5 6; do
+            if curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/daily-digest" -o digest.json; then
+              break
+            fi
+            echo "attempt $i failed (cold start?) — retrying in 20s"
+            sleep 20
+          done
+          test -s digest.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('digest.json'))
+          if d.get('engineVersion') != 'argus-notification-brief-v2':
+              print('保存版通知への配信切替待ち・送信なし')
+              raise SystemExit(0)
+          text = d.get('textJa') or '統合AIの見立ては更新待ちです。'
+          open('digest.txt', 'w').write(text)
+          print(f"status={d.get('status')} date={d.get('dateJst')}")
+          PY
+
+      - name: Push to ntfy (skipped when NTFY_TOPIC secret is not set)
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          GH_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ -z "$NTFY_TOPIC" ]; then
+            echo "NTFY_TOPIC not configured — skipping push (digest fetched OK)."
+            exit 0
+          fi
+          test -s digest.txt || exit 0
+          # Session from the CRON that fired (robust — a multi-hour delay can't
+          # misclassify JP vs US). Target = exact JST delivery time; ntfy holds the
+          # message server-side via Delay. If the cron ran so late that we're well
+          # PAST the target (stale brief), SKIP rather than buzzing at a weird hour
+          # (user got one at 00:46 JST). No Click header (user request 2026-06-11).
+          python3 - <<'PY' > sched.env
+          import datetime, os
+          now = datetime.datetime.now(datetime.timezone.utc)
+          sched = os.environ.get("GH_SCHEDULE", "")
+          if sched.startswith("25 23"):
+              session, th, tm = "日本株・寄付前", 23, 30
+          elif sched.startswith("55 12"):
+              session, th, tm = "米国株・寄付前", 13, 0
+          else:  # manual dispatch — fall back to the clock
+              h = now.hour
+              session, th, tm = ("日本株・寄付前", 23, 30) if (h >= 18 or h < 6) else ("米国株・寄付前", 13, 0)
+          target = now.replace(hour=th, minute=tm, second=0, microsecond=0)
+          if session == "日本株・寄付前" and now.hour < 6:   # delayed past midnight UTC
+              target -= datetime.timedelta(days=1)
+          past = (now - target).total_seconds()
+          GRACE = 90 * 60   # >90 min late = stale; skip the weird-hour buzz
+          if past > GRACE:
+              print("SKIP=1")
+          else:
+              margin = datetime.timedelta(seconds=120)
+              delay = int(target.timestamp()) if target > now + margin else 0
+              jst = datetime.timezone(datetime.timedelta(hours=9))
+              shown = (target if delay else now).astimezone(jst)
+              print("SKIP=0")
+              print(f'SESSION="{session}"')
+              print(f"DELAY={delay}")
+              print(f'SENTAT="{shown.strftime("%m/%d %H:%M")}"')
+          PY
+          . ./sched.env
+          if [ "$SKIP" = "1" ]; then
+            echo "cron ran >90min past target — skipping stale digest (no weird-hour buzz)."
+            exit 0
+          fi
+          DELAY_HDR=()
+          if [ "$DELAY" != "0" ]; then DELAY_HDR=(-H "Delay: $DELAY"); fi
+          curl -sf --max-time 30 \
+            -H "Title: ARGUS 今日の見立て - $SESSION ($SENTAT)" \
+            -H "Tags: chart_with_upwards_trend" \
+            "${DELAY_HDR[@]}" \
+            --data-binary @digest.txt \
+            "https://ntfy.sh/$NTFY_TOPIC" > /dev/null
+          echo "digest pushed (session=$SESSION delay=$DELAY sentAt=$SENTAT)."

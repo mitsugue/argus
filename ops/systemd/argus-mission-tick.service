@@ -1,0 +1,30 @@
+[Unit]
+Description=A.R.G.U.S. deterministic mission tick (EC2 primary scheduler)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+EnvironmentFile=/etc/argus-bridge.env
+EnvironmentFile=-/etc/argus-mission-tick.env
+PassEnvironment=ARGUS_TRIGGER_SOURCE
+RuntimeDirectory=argus-build-identity
+RuntimeDirectoryMode=0755
+ReadWritePaths=/var/lib/argus-build-identity /run/argus-build-identity
+ExecStartPre=+/opt/argus/scripts/argus_build_identity.py
+ExecStart=/opt/argus/scripts/argus_mission_tick.py
+TimeoutStartSec=300
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

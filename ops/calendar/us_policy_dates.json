@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "us-policy-dates-v1",
+  "checkedOn": "2026-10-03",
+  "sourceNoteJa": "日付は公的な原本で確認したものだけを入れる。会社の決算日など、公式発表前のものは入れない。",
+  "rows": [
+    {
+      "id": "us-funding-deadline-2026-12-11",
+      "kind": "US_FUNDING_DEADLINE",
+      "date": "2026-12-11",
+      "titleJa": "米国 つなぎ予算の期限(12月11日)",
+      "importance": "high",
+      "sourceRef": "https://www.congress.gov/crs-product/R49353",
+      "sourceQuote": "Division A of the act—the Continuing Appropriations Act, 2027—provides continuing appropriations for FY2027 through December 11, 2026.",
+      "sourceNoteJa": "議会調査局(CRS)の報告書 R49353。2027会計年度のつなぎ予算は2026年12月11日まで。"
+    }
+  ]
+}

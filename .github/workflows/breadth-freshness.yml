@@ -1,0 +1,42 @@
+name: breadth-freshness
+
+on:
+  schedule:
+    # 17:17 JST, Monday-Friday. The runner still verifies the expected
+    # trading date because weekday alone does not prove a TSE session.
+    - cron: '17 8 * * 1-5'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: breadth-freshness-production
+  cancel-in-progress: false
+
+jobs:
+  incremental:
+    runs-on: ubuntu-latest
+    timeout-minutes: 190
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Run duplicate-safe scheduled breadth freshness check
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: >-
+          python3 scripts/run_breadth_freshness.py
+          --artifact-path "$RUNNER_TEMP/breadth-freshness.json"
+          --attempts 3
+          --retry-seconds 600
+          --poll-seconds 30
+          --max-wait-seconds 7200
+      - name: Publish freshness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: breadth-freshness-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/breadth-freshness.json
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,1327 @@
+{
+ "profiles": {
+  "8058": {
+   "symbol": "8058",
+   "name": "三菱商事",
+   "businessJa": "日本最大級の総合商社。天然ガス/LNG・金属資源（原料炭・鉄鉱石・銅）・電力・モビリティ・食品・社会インフラなど複数セグメントで世界的にトレーディングと事業投資を展開し、資源権益と非資源の事業会社群（ローソン、Cermaq等）から収益を得る。",
+   "sector": "総合商社 / Trading & Investment（Sogo Shosha）",
+   "themes": [
+    "資源価格",
+    "コモディティ市況",
+    "円安・円高（為替）",
+    "株主還元・自社株買い",
+    "バフェット/バリュー株物色",
+    "脱炭素・再エネ",
+    "LNG・天然ガス需給",
+    "非資源事業ポートフォリオ",
+    "コンビニ・小売",
+    "サーモン養殖"
+   ],
+   "relatedEntities": [
+    {
+     "name": "Berkshire Hathaway / バークシャー・ハサウェイ / バフェット",
+     "relationJa": "議決権ベースで約10.23%（2025年8月時点）を保有する筆頭級の大株主。追加取得・売却や保有方針の言及は5大商社株全体の物色とセンチメントを直接動かす。",
+     "type": "holding"
+    },
+    {
+     "name": "ローソン / Lawson",
+     "relationJa": "KDDIと各50%出資の持分法適用会社（2024年8月〜）。コンビニ業績・小売再編ニュースは非資源収益と持分損益に響く。",
+     "type": "investee"
+    },
+    {
+     "name": "KDDI",
+     "relationJa": "ローソンを各50%で共同経営するJVパートナー。両社の小売×通信DX戦略の進捗が持分損益に影響。",
+     "type": "investee"
+    },
+    {
+     "name": "Cermaq / Grieg Seafood",
+     "relationJa": "完全子会社Cermaqは世界2位級のサーモン養殖会社。2025年12月にGrieg SeafoodのノルウェーFinnmark・カナダ事業を約10億ドルで取得完了。鮭価格・養殖M&Aが食品セグメント損益を左右。",
+     "type": "subsidiary"
+    },
+    {
+     "name": "三菱自動車 / Mitsubishi Motors",
+     "relationJa": "主要株主として保有。モビリティ事業で自動車の販売金融・ディストリビューションに関与し、東南アジア自動車市況や同社業績が損益に波及。",
+     "type": "investee"
+    },
+    {
+     "name": "いすゞ自動車 / Isuzu",
+     "relationJa": "約9%超を保有する筆頭級の事業会社株主。タイを中心とした商用車の販売・金融・ディストリビューションがモビリティ損益の柱。",
+     "type": "investee"
+    },
+    {
+     "name": "BMA（BHP Mitsubishi Alliance）原料炭 / coking coal",
+     "relationJa": "豪州クイーンズランドBMA権益（BHPとのJV、2024年に7炭鉱中2炭鉱を売却）が金属資源の中核。原料炭価格の変動が利益に最も直接的に効く。",
+     "type": "commodity"
+    },
+    {
+     "name": "鉄鉱石 / Iron Ore",
+     "relationJa": "金属資源セグメントの主力権益。鉄鉱石市況と中国鋼材需要が資源利益を動かす。",
+     "type": "commodity"
+    },
+    {
+     "name": "銅 / Copper（Anglo American Sur, Chile）",
+     "relationJa": "チリAnglo American Sur等の銅権益（2024年生産221千トン）を保有。銅価格・電化需要トレンドが金属資源利益に直結。",
+     "type": "commodity"
+    },
+    {
+     "name": "LNG / 天然ガス",
+     "relationJa": "エネルギーセグメントの中核。LNG価格・需給と上流権益が資源利益の柱の一つ。",
+     "type": "commodity"
+    },
+    {
+     "name": "USD/JPY ドル円",
+     "relationJa": "資源輸出・海外事業のドル建て収益が大きく、円高は減益要因・円安は増益要因として業績前提に直結。",
+     "type": "theme"
+    },
+    {
+     "name": "中部電力",
+     "relationJa": "秋田・千葉の洋上風力（計1.7GW）コンソーシアムの共同出資者。2025年8月に三菱商事連合が同事業撤退を表明し、両社が減損計上。電力セグメントの話題に直結。",
+     "type": "investee"
+    }
+   ],
+   "peers": [
+    "三井物産 (8031)",
+    "伊藤忠商事 (8001)",
+    "住友商事 (8053)",
+    "丸紅 (8002)",
+    "豊田通商 (8015)",
+    "双日 (2768)"
+   ],
+   "keywords": [
+    "三菱商事",
+    "8058",
+    "Mitsubishi Corp",
+    "Mitsubishi Corporation",
+    "総合商社",
+    "sogo shosha",
+    "バフェット",
+    "Buffett",
+    "Berkshire",
+    "バークシャー",
+    "自社株買い",
+    "ローソン",
+    "Lawson",
+    "KDDI",
+    "Cermaq",
+    "セルマック",
+    "Grieg Seafood",
+    "三菱自動車",
+    "Mitsubishi Motors",
+    "いすゞ",
+    "Isuzu",
+    "原料炭",
+    "coking coal",
+    "BMA",
+    "BHP",
+    "Anglo American Sur",
+    "洋上風力",
+    "中部電力"
+   ],
+   "source": "seed"
+  },
+  "9984": {
+   "symbol": "9984",
+   "name": "ソフトバンクグループ",
+   "businessJa": "通信事業を源流とする世界有数のテック投資持株会社で、AI・半導体・スタートアップに大規模投資を行う。Arm(約90%保有)やOpenAI(累計投資で持分約13%目標)、Vision Fund、国内通信子会社SoftBank Corp.(9434)などを傘下・投資先に持ち、企業価値は保有資産(NAV)とAI相場のセンチメントに連動する。",
+   "sector": "テック投資持株会社 / 通信・半導体・AI (Tech Holding / Investment)",
+   "themes": [
+    "AIブーム",
+    "生成AI",
+    "半導体",
+    "データセンター/AIインフラ",
+    "NAVディスカウント",
+    "レバレッジ/借入リスク",
+    "円相場",
+    "リスクオン・オフ",
+    "Stargate",
+    "マージンローン(OpenAI株担保)"
+   ],
+   "relatedEntities": [
+    {
+     "name": "OpenAI",
+     "relationJa": "最大級の投資先(累計約645億ドル・持分約13%目標、Vision Fund 2経由)。評価額の変動がSBGの含み損益とNAVに直撃し株価の最大ドライバー。OpenAI株担保のマージンローン(2026年に$10B→$6Bへ縮小)も進行中で、調達難航やIPO遅延は急落要因。",
+     "type": "investee"
+    },
+    {
+     "name": "Arm Holdings (アーム)",
+     "relationJa": "約90%保有の中核資産。Arm株の上下がSBGの資産価値・担保余力・センチメントに直結する。",
+     "type": "subsidiary"
+    },
+    {
+     "name": "Vision Fund (ビジョン・ファンド)",
+     "relationJa": "SBGの投資ビークル。ファンドの含み損益(OpenAI等)が四半期決算と株価を動かす。",
+     "type": "subsidiary"
+    },
+    {
+     "name": "Nvidia (エヌビディア)",
+     "relationJa": "AI半導体の象徴。2025年に保有株を全売却済みだが、決算・株価がAI相場全体のセンチメントを左右しSBGはAIプロキシとして連動する代理指標。",
+     "type": "theme"
+    },
+    {
+     "name": "Ampere Computing",
+     "relationJa": "65億ドルで買収し2025年11月に完全子会社化したArmベースのデータセンターCPU設計企業。AIインフラ戦略の進捗を示す。",
+     "type": "subsidiary"
+    },
+    {
+     "name": "Intel (インテル)",
+     "relationJa": "2025年8月に約20億ドル($23/株・約2%)出資。同社の経営・株価がSBGの保有資産価値と半導体戦略評価に影響。",
+     "type": "holding"
+    },
+    {
+     "name": "Stargate",
+     "relationJa": "OpenAI/Oracle/SBG主導の最大級AIインフラ計画。進捗・資金調達ニュースがSBGのAI物語と株価に直結。",
+     "type": "theme"
+    },
+    {
+     "name": "Oracle (オラクル)",
+     "relationJa": "Stargateの主要クラウド提供者。AIインフラ提携の進捗がSBGのAI戦略評価に波及。",
+     "type": "supplier"
+    },
+    {
+     "name": "SoftBank Corp. (9434 ソフトバンク)",
+     "relationJa": "国内通信子会社。安定配当・キャッシュ源で、業績・株価がSBGのNAVと財務基盤に寄与。",
+     "type": "subsidiary"
+    },
+    {
+     "name": "PayPay",
+     "relationJa": "傘下の決済大手。2026年3月にNasdaq上場(SBGが議決権約92%保有)。評価額・上場後株価ニュースがSBGの資産価値顕在化に影響。",
+     "type": "subsidiary"
+    },
+    {
+     "name": "Alibaba (アリババ)",
+     "relationJa": "歴史的な最大投資先で保有を約8%まで縮小済み。残存分は依然NAV構成要素で、同社株の急変はSBG資産価値に影響(影響度は低下)。",
+     "type": "holding"
+    },
+    {
+     "name": "T-Mobile US",
+     "relationJa": "旧Sprint由来の保有株(約4%・段階的に売却中)。売却・株価動向がSBGの資金調達余力とNAVに影響。",
+     "type": "holding"
+    },
+    {
+     "name": "LY Corporation (LINEヤフー)",
+     "relationJa": "A Holdings(Naverと50/50)経由で間接保有のグループ企業。業績・規制(情報漏洩等)ニュースがグループ価値に影響(間接・二次的)。",
+     "type": "subsidiary"
+    },
+    {
+     "name": "ドル円 (USD/JPY)",
+     "relationJa": "海外資産(OpenAI/Arm/米テック)中心のため、円安はNAVを押し上げ、円高は逆風となる為替感応資産。",
+     "type": "commodity"
+    }
+   ],
+   "peers": [
+    "バークシャー・ハサウェイ (Berkshire Hathaw",
+    "Prosus / Naspers",
+    "9434 SoftBank Corp.",
+    "KKR",
+    "Blackstone",
+    "テマセク (Temasek)"
+   ],
+   "keywords": [
+    "ソフトバンクグループ",
+    "ソフトバンクG",
+    "SoftBank Group",
+    "SBG",
+    "9984",
+    "孫正義",
+    "Masayoshi Son",
+    "Arm Holdings",
+    "アーム",
+    "OpenAI",
+    "Vision Fund",
+    "ビジョンファンド",
+    "Ampere Computing",
+    "Stargate",
+    "PayPay",
+    "ペイペイ",
+    "LINEヤフー",
+    "LY Corporation",
+    "SoftBank Corp",
+    "ソフトバンク 9434",
+    "マージンローン",
+    "NAVディスカウント"
+   ],
+   "source": "seed"
+  },
+  "5801": {
+   "symbol": "5801",
+   "name": "古河電気工業 (Furukawa Electric)",
+   "businessJa": "古河グループ中核の総合電線・素材メーカー(電線御三家の一角)。インフラ(光ファイバ・通信ケーブル、DFBレーザー等の光部品)、電装エレクトロニクス(自動車ワイヤハーネス・銅条等)、機能製品(サーマルマネジメント等)を手がけ、近年はAIデータセンター向け光ファイバ・光半導体(DFBレーザーチップ)が成長と再評価の中核。",
+   "sector": "電線・ケーブル / 電子部品・素材 (非鉄金属)",
+   "themes": [
+    "AIデータセンター",
+    "光ファイバ",
+    "光トランシーバ/DFBレーザー",
+    "中空コア・マルチコアファイバ",
+    "自動車電装/ワイヤハーネス",
+    "EV軽量化(アルミ電線)",
+    "サーマルマネジメント",
+    "銅・アルミ市況",
+    "データセンター設備投資"
+   ],
+   "relatedEntities": [
+    {
+     "name": "Lightera (旧OFS Fitel / OFS)",
+     "relationJa": "北米OFS・中南米FEL・日本のファイバ事業を統合し2026年4月始動した光ファイバ・ケーブルの新ブランド(中間持株Lightera Holding傘下)。AIデータセンター向け13,824芯超多心ケーブルや次世代ファイバの量産主体で、ここの受注・増産・新工場ニュースは5801の成長期待に直結。",
+     "type": "subsidiary"
+    },
+    {
+     "name": "古河ファイテルオプティカルデバイス (Furukawa FITEL)",
+     "relationJa": "800G/1.6T級光トランシーバ向け高出力DFBレーザーダイオードチップを手がける光半導体子会社。岩手新工場・タイ第2工場に380億円投資し2028年に生産能力5倍超。光部品の需要・受注報道が5801の利益成長ストーリーを左右。",
+     "type": "subsidiary"
+    },
+    {
+     "name": "Nvidia / ハイパースケーラー (Microsoft, Amazon, Google, Meta)",
+     "relationJa": "AIデータセンター投資の最終需要源。GPU出荷やハイパースケーラーのDC設備投資(capex)拡大・縮小が、光ファイバ・光トランシーバ・DFBレーザー需要を通じて5801の業績期待を直接動かす。",
+     "type": "customer"
+    },
+    {
+     "name": "光トランシーバメーカー (Coherent, Lumentum, Innolight)",
+     "relationJa": "古河のDFBレーザーチップ・光部品の供給先である光トランシーバ完成品メーカー(Coherent・Lumentumは確認済みの代表的納入先、Innolightは大手proxy)。これら各社の受注・業績・データセンター需要コメントが5801光半導体事業の先行指標として波及。",
+     "type": "customer"
+    },
+    {
+     "name": "銅 (Copper / LME銅価格)",
+     "relationJa": "電線・銅条の主原料で原価とスプレッドに直結。銅高はアルミ電線への代替を促進する一方、在庫評価益・販価転嫁の論点として材料視される。",
+     "type": "commodity"
+    },
+    {
+     "name": "アルミニウム (Aluminum)",
+     "relationJa": "自動車ワイヤハーネスの軽量化・銅代替で増産中のアルミ電線の主原料。アルミ市況・EV軽量化トレンドが電装事業の収益に影響。",
+     "type": "commodity"
+    },
+    {
+     "name": "自動車メーカー (トヨタ等OEM)",
+     "relationJa": "ワイヤハーネス・ステアリングロールコネクタ等の最終顧客。自動車生産台数・EV化動向が電装エレクトロニクス事業の売上を左右。",
+     "type": "customer"
+    },
+    {
+     "name": "日本マスタートラスト信託銀行",
+     "relationJa": "筆頭株主(信託口で約17.4%、2025年9月末)。大量保有報告など株主構成の変化が短期需給に影響しうるが、信託口は名義人で実質的なイベント源としては弱め。",
+     "type": "holding"
+    }
+   ],
+   "peers": [
+    "住友電気工業 (5802)",
+    "フジクラ (5803)",
+    "SWCC (5805)",
+    "Sumitomo Electric",
+    "Fujikura",
+    "Corning"
+   ],
+   "keywords": [
+    "古河電工",
+    "古河電気工業",
+    "5801",
+    "Furukawa Electric",
+    "Lightera",
+    "OFS Fitel",
+    "13824芯",
+    "超多心光ファイバ",
+    "DFBレーザー",
+    "DFB laser",
+    "光トランシーバ",
+    "optical transceiver",
+    "中空コアファイバ",
+    "空孔コアファイバ",
+    "hollow core fiber",
+    "マルチコアファイバ",
+    "AIデータセンター",
+    "電線御三家",
+    "古河ファイテル",
+    "ワイヤハーネス",
+    "アルミ電線",
+    "サーマルマネジメント",
+    "Coherent",
+    "Lumentum",
+    "住友電工",
+    "フジクラ"
+   ],
+   "source": "seed"
+  },
+  "5803": {
+   "symbol": "5803",
+   "name": "フジクラ",
+   "businessJa": "独立系の電線・ケーブル大手で、光ファイバ・光ファイバケーブル、光融着接続機(世界シェア首位)、通信部品、電子部品、自動車電装品、電力ケーブルなどを手掛ける。近年はAIデータセンター向け高密度光ファイバケーブル(WTC/SWR)と融着接続機の需要急拡大で情報通信事業が全社営業利益の大半を稼ぎ、次の柱として核融合向け高温超電導(HTS)線材を育成している。",
+   "sector": "電線・ケーブル / 光通信インフラ(電気機器)",
+   "themes": [
+    "AIデータセンター",
+    "光ファイバー(高密度・多芯)",
+    "ハイパースケーラー設備投資",
+    "融着接続機(世界シェア首位)",
+    "米国増産投資",
+    "核融合・高温超電導線材",
+    "データセンター間/サーバー間接続(トラフィック増)",
+    "電線御三家"
+   ],
+   "relatedEntities": [
+    {
+     "name": "NVIDIA / エヌビディア",
+     "relationJa": "AIサーバー/GPU投資の象徴。GPU出荷・データセンター投資見通しが光ファイバ需要の先行指標となり、関連報道で連想買い/売りが起きる",
+     "type": "theme"
+    },
+    {
+     "name": "Google / Alphabet",
+     "relationJa": "フジクラ高密度ファイバ(SWR/WTC)の代表的ハイパースケーラー採用先。Googleのデータセンターcapex動向が受注期待に直結",
+     "type": "customer"
+    },
+    {
+     "name": "Microsoft / Azure",
+     "relationJa": "米ハイパースケーラーの大口データセンター投資主体。capex拡大・抑制の報道がフジクラ光ファイバ需要観測に波及",
+     "type": "customer"
+    },
+    {
+     "name": "Amazon / AWS",
+     "relationJa": "大手ハイパースケーラー。AIデータセンター建設・capex動向がフジクラの受注期待を左右",
+     "type": "customer"
+    },
+    {
+     "name": "Meta",
+     "relationJa": "AIインフラへ大規模投資するハイパースケーラー。データセンター投資報道がフジクラ需要連想に波及",
+     "type": "customer"
+    },
+    {
+     "name": "America Fujikura / AFL",
+     "relationJa": "米国子会社。米国での増産・新工場や多芯ファイバ規格(SDM4 MCF MSA)参画がフジクラの米国AI需要取り込み能力を示す",
+     "type": "subsidiary"
+    },
+    {
+     "name": "Corning / コーニング",
+     "relationJa": "光ファイバ世界シェア首位級の競合。AI向けファイバ価格・供給動向が業界需給観測を動かし、多芯(MCF)規格策定(SDM4 MCF MSA)では共同参画もする",
+     "type": "peer"
+    },
+    {
+     "name": "住友電気工業 / Sumitomo Electric",
+     "relationJa": "電線御三家の一角で光ファイバ・データセンター事業の直接競合。決算・受注・増産報道が同セクター連想で5803に波及",
+     "type": "peer"
+    },
+    {
+     "name": "古河電気工業 / Furukawa Electric",
+     "relationJa": "電線御三家の一角で光ファイバ等の競合。データセンター関連の業績・増強報道が同セクターのセンチメントを動かす",
+     "type": "peer"
+    },
+    {
+     "name": "SWCC",
+     "relationJa": "電線大手4社の一角でデータセンター(光・電力)関連の比較対象。同テーマ物色で連動しやすい",
+     "type": "peer"
+    },
+    {
+     "name": "Commonwealth Fusion Systems / CFS",
+     "relationJa": "フジクラがHTS線材を継続納入する米核融合スタートアップ。CFSの資金調達・実証進展がフジクラ超電導事業の需要観測に直結",
+     "type": "customer"
+    },
+    {
+     "name": "Helical Fusion",
+     "relationJa": "フジクラから高温超電導テープ線材を追加調達する日本の核融合スタートアップ。供給拡大報道が新規事業期待を押し上げる",
+     "type": "customer"
+    },
+    {
+     "name": "精工技研",
+     "relationJa": "光コネクタ・フェルール等の光通信部品メーカーで、融着・光接続テーマの関連銘柄として同方向に物色されやすい",
+     "type": "peer"
+    }
+   ],
+   "peers": [
+    "住友電気工業 (5802)",
+    "古河電気工業 (5801)",
+    "SWCC (5805)",
+    "Corning (GLW)",
+    "精工技研 (6834)"
+   ],
+   "keywords": [
+    "フジクラ",
+    "5803",
+    "Fujikura",
+    "融着接続機",
+    "fusion splicer",
+    "SWR WTC",
+    "多芯ファイバ",
+    "マルチコアファイバ",
+    "SDM4 MCF MSA",
+    "AIデータセンター",
+    "AI data center",
+    "ハイパースケーラー",
+    "hyperscaler",
+    "データセンター capex",
+    "data center capex",
+    "data center investment",
+    "AFL",
+    "America Fujikura",
+    "電線御三家",
+    "住友電工",
+    "古河電工",
+    "SWCC",
+    "Corning",
+    "コーニング",
+    "TeraHop",
+    "核融合 超電導線材",
+    "高温超電導線材",
+    "HTS 線材",
+    "Commonwealth Fusion",
+    "Helical Fusion"
+   ],
+   "source": "seed"
+  },
+  "6584": {
+   "symbol": "6584",
+   "name": "三櫻工業 (Sanoh Industrial)",
+   "businessJa": "自動車向けの車輌配管（ブレーキ・燃料チューブ、パワートレイン配管、安全・環境部品）を手がける独立系チューブメーカー。国内は臼井国際産業・マルヤス工業との寡占で各社シェア3〜4割。近年は配管・継手の漏れ防止技術を活かし、AI/データセンター向けの直接水冷（DLC）配管・水冷モジュール（マニホールド、樹脂配管、逆止弁付きボールバルブ継手）など非自動車の新規事業へ事業転換を進める「液冷テーマ株」。",
+   "sector": "輸送用機器（自動車部品・車輌配管）／データセンター液冷インフラ",
+   "themes": [
+    "AIデータセンター液冷",
+    "直接水冷(DLC)配管",
+    "水冷モジュール・マニホールド",
+    "逆止弁付き継手",
+    "自動車部品サプライヤー",
+    "事業転換ストーリー",
+    "テンバガー候補（液冷テーマ）"
+   ],
+   "relatedEntities": [
+    {
+     "name": "本田技研工業 (Honda)",
+     "relationJa": "売上構成比2割超とされる筆頭顧客であり、約5.5%を保有する大株主でもある。ホンダの生産・EV戦略・リコール・調達計画の変化が同社受注に直結する。",
+     "type": "customer"
+    },
+    {
+     "name": "トヨタ自動車 (Toyota)",
+     "relationJa": "主要顧客の一つ（ただしトヨタ向け車輌配管シェアはマルヤス工業が大半で同社は相対的に小さい）。トヨタ系の生産計画・連れ高で株価が反応しやすい。",
+     "type": "customer"
+    },
+    {
+     "name": "日産自動車 (Nissan)",
+     "relationJa": "臼井国際産業と分け合う主要顧客。日産の生産変動・再建状況が配管受注に影響する。",
+     "type": "customer"
+    },
+    {
+     "name": "SUBARU",
+     "relationJa": "燃料チューブ等を供給する主要顧客。スバルの北米販売・生産動向が業績に波及する。",
+     "type": "customer"
+    },
+    {
+     "name": "ゲットワークス (GetWorks)",
+     "relationJa": "コンテナ型データセンター運営会社。同社の水冷モジュール一式（マニホールド・樹脂配管・ボールバルブ継手）受注に至った提携・顧客先で、新規事業の実績の核。",
+     "type": "customer"
+    },
+    {
+     "name": "NTTデータ",
+     "relationJa": "NTTデータと日比谷総合設備の液冷検証施設『Data Center Trial Field』に参画し直接水冷(DLC)配管モデルを公開。同施設・NTT系DC構想の報道が受注期待につながる。",
+     "type": "customer"
+    },
+    {
+     "name": "NVIDIA",
+     "relationJa": "最新GPUサーバーが液冷前提設計で、AIデータセンター液冷需要の象徴。エヌビディア関連の設備投資・新製品報道が液冷テーマ物色のトリガーになる。",
+     "type": "theme"
+    },
+    {
+     "name": "富岳 (Fugaku/理研・富士通スパコン)",
+     "relationJa": "スパコン富岳に冷却水用樹脂配管が採用された実績が液冷事業の信頼性の裏付け。関連報道が事業価値の証左として材料視される。",
+     "type": "theme"
+    },
+    {
+     "name": "日本マスタートラスト信託銀行（信託口）",
+     "relationJa": "2025年9月末時点で約9.49%を保有する筆頭株主（信託口）。需給・パッシブ資金動向の参考。",
+     "type": "holding"
+    },
+    {
+     "name": "さくらインターネット (3778)",
+     "relationJa": "データセンター・液冷テーマの代表株。同社等が物色されると『AI液冷の隠れ本命』として6584も連動して買われやすい。",
+     "type": "peer"
+    },
+    {
+     "name": "臼井国際産業 (6373)",
+     "relationJa": "国内車輌配管の寡占を構成する直接競合。同社の受注・決算・次世代車対応が業界読みとして6584に波及する。",
+     "type": "peer"
+    },
+    {
+     "name": "マルヤス工業 (7320)",
+     "relationJa": "国内燃料チューブ最大手の直接競合（特にトヨタ向けで優位）。同業動向が6584の評価に影響する。",
+     "type": "peer"
+    }
+   ],
+   "peers": [
+    "臼井国際産業 (6373)",
+    "マルヤス工業 (7320)",
+    "TI Fluid Systems",
+    "さくらインターネット (3778)"
+   ],
+   "keywords": [
+    "三櫻工業",
+    "三桜工業",
+    "Sanoh Industrial",
+    "6584",
+    "ブレーキチューブ",
+    "燃料チューブ",
+    "車輌配管",
+    "データセンター 液冷",
+    "水冷モジュール",
+    "直接水冷 DLC",
+    "DLC配管",
+    "逆止弁付き継手",
+    "ゲットワークス",
+    "GetWorks 三桜",
+    "NTTデータ Data Center Trial Field",
+    "富岳 冷却配管",
+    "臼井国際産業",
+    "マルヤス工業"
+   ],
+   "source": "seed"
+  },
+  "285A": {
+   "symbol": "285A",
+   "name": "キオクシアホールディングス",
+   "businessJa": "NAND型フラッシュメモリ専業の半導体メーカーで、世界シェア3位級。AIデータセンター向けエンタープライズSSDやスマートフォン・PC向けメモリを製造・販売する。東芝メモリを源流とし、ベインキャピタル主導の連合の傘下で2024年12月に東証プライムへ上場した。",
+   "sector": "半導体（NAND型フラッシュメモリ）",
+   "themes": [
+    "AIデータセンター需要",
+    "NAND価格上昇",
+    "エンタープライズSSD",
+    "メモリ供給逼迫",
+    "設備投資・経産省助成",
+    "半導体メモリ市況",
+    "AIサーバー"
+   ],
+   "relatedEntities": [
+    {
+     "name": "SanDisk (サンディスク)",
+     "relationJa": "四日市・北上工場のJV『Flash Ventures』の折半パートナー。2025年2月にウエスタンデジタルから分離・独立した。2026年1月にJV契約を2034年末まで延長し、生産能力・供給・コスト構造に直結するため株価連動性が高い",
+     "type": "investee"
+    },
+    {
+     "name": "東芝",
+     "relationJa": "個別筆頭株主（2025年11月時点 議決権ベース約21.9%）。東芝による保有株の売出し・処分の動きは需給悪化要因として株価を直接動かす",
+     "type": "parent"
+    },
+    {
+     "name": "Bain Capital (ベインキャピタル)",
+     "relationJa": "買収主導の連合を率いる最大株主（連合合計で約37%、2026年2月時点に低下）。段階的なブロック売却・エグジット観測がオーバーハングとなり株価を圧迫する",
+     "type": "holding"
+    },
+    {
+     "name": "SK Hynix (SKハイニックス)",
+     "relationJa": "買収時に転換社債で出資した間接株主（議決権ベース約15%、2028年まで15%超制限・情報遮断あり）かつNAND/メモリ競合。同社の増産・価格戦略・市況コメントが業界需給観測を通じて株価に波及",
+     "type": "peer"
+    },
+    {
+     "name": "Samsung Electronics (サムスン電子)",
+     "relationJa": "NAND世界首位の競合。設備投資・減産/増産方針がNAND価格と業界需給を左右し市況連動で株価に影響",
+     "type": "peer"
+    },
+    {
+     "name": "Micron (マイクロン)",
+     "relationJa": "NAND/DRAM競合。決算ガイダンスとメモリ価格見通しが半導体メモリ市況のバロメーターとなり同社株に波及",
+     "type": "peer"
+    },
+    {
+     "name": "東京エレクトロン",
+     "relationJa": "前工程の主要装置サプライヤ。NAND設備投資サイクルを共有し、同社の受注・市況コメントがメモリ需要観測として相互連動する（業界全般向けで連動はやや間接的）",
+     "type": "supplier"
+    },
+    {
+     "name": "Nvidia (エヌビディア)",
+     "relationJa": "AIデータセンター投資の主軸。同社のGPU需要・データセンター設備投資がエンタープライズSSD需要を間接的に牽引する需要ドライバー（直接の販売先ではない）",
+     "type": "theme"
+    },
+    {
+     "name": "NAND価格 (NAND flash 価格)",
+     "relationJa": "主力製品のスポット/契約価格。価格上昇・逼迫報道が業績ドライバーで株価に最も直接的に効く",
+     "type": "commodity"
+    },
+    {
+     "name": "経済産業省",
+     "relationJa": "北上・四日市工場の先端3D NAND設備投資に最大2,429億円の助成を認定。政策支援・助成の決定が増産計画と収益性を左右する",
+     "type": "regulator"
+    }
+   ],
+   "peers": [
+    "SanDisk (SNDK)",
+    "Samsung Electronics",
+    "SK Hynix",
+    "Micron (MU)",
+    "Western Digital (WDC)"
+   ],
+   "keywords": [
+    "キオクシア",
+    "Kioxia",
+    "285A",
+    "NANDフラッシュ",
+    "NAND flash",
+    "NAND価格",
+    "エンタープライズSSD",
+    "enterprise SSD",
+    "BiCS FLASH",
+    "四日市工場",
+    "北上工場",
+    "Flash Ventures",
+    "サンディスク",
+    "SanDisk",
+    "東芝 キオクシア",
+    "ベインキャピタル",
+    "Bain Capital Kioxia",
+    "SKハイニックス",
+    "SK Hynix",
+    "サムスン NAND",
+    "Micron NAND",
+    "東京エレクトロン",
+    "Nvidia データセンター",
+    "AIデータセンター SSD",
+    "メモリ供給逼迫",
+    "経産省 半導体 助成"
+   ],
+   "source": "seed"
+  },
+  "9501": {
+   "symbol": "9501",
+   "name": "東京電力ホールディングス",
+   "businessJa": "首都圏を地盤とする日本最大級の総合電力会社。持株会社の下に送配電(東京電力パワーグリッド)、小売(エナジーパートナー)、再エネ(リニューアブルパワー)を展開し、火力・燃料は中部電力との折半出資JERA経由で担う。福島第一原発の廃炉・賠償と柏崎刈羽原発の再稼働が最大の経営課題。原子力損害賠償・廃炉等支援機構(NDF=実質政府)が議決権の過半(約50%、優先株転換で最大約75%)を握る。",
+   "sector": "電力・ガス(公益)",
+   "themes": [
+    "柏崎刈羽 再稼働",
+    "福島第一 廃炉・賠償",
+    "ALPS処理水・中国水産物規制",
+    "JERA持分・上場思惑",
+    "LNG・燃料費調整",
+    "電力需要(AI・データセンター)",
+    "脱炭素・GX"
+   ],
+   "relatedEntities": [
+    {
+     "name": "柏崎刈羽原子力発電所 (Kashiwazaki-Kariwa)",
+     "relationJa": "再稼働の進捗が9501最大の株価カタリスト。6号機は2026年4月に営業運転入り(震災後初)、7号機は特重施設の期限未達で後ろ倒し。原発1基稼働でLNG焚き減・収益改善が直結する。",
+     "type": "theme"
+    },
+    {
+     "name": "JERA",
+     "relationJa": "中部電力との折半出資の火力・LNG合弁(世界最大級のLNGバイヤー)。9501の持分利益・キャッシュフローの主柱で、持株会社化(2028年目処)・IPO思惑や燃料調達ニュースが評価に直結。",
+     "type": "investee"
+    },
+    {
+     "name": "中部電力 (Chubu Electric)",
+     "relationJa": "JERAの折半出資パートナー。JERA再編・上場・燃料戦略の動向は両社で連動するため、中部電のニュースが9501に波及する。",
+     "type": "peer"
+    },
+    {
+     "name": "原子力損害賠償・廃炉等支援機構 (NDF)",
+     "relationJa": "議決権の過半(約50%、優先株転換で最大約75%)を握る実質政府の筆頭株主かつ賠償・廃炉の資金枠組み主体。総合特別事業計画の認定や出資・優先株の動向が配当再開や希薄化に直結。",
+     "type": "parent"
+    },
+    {
+     "name": "福島第一原子力発電所 (Fukushima Daiichi)",
+     "relationJa": "廃炉・燃料デブリ取り出し・賠償が巨額の費用負担源。進捗の遅延や事故・特別損失計上のニュースが業績と株価を大きく動かす。",
+     "type": "theme"
+    },
+    {
+     "name": "ALPS処理水 海洋放出",
+     "relationJa": "海洋放出の各回実施や中国・周辺国の水産物輸入規制・解除は風評・賠償・対外関係リスクとして9501に波及する。",
+     "type": "theme"
+    },
+    {
+     "name": "中国 日本産水産物輸入規制",
+     "relationJa": "ALPS処理水を理由とする日本産水産物の輸入規制は、2025年6月に一部再開後、同年11月に再び事実上停止。規制・解除の動きが賠償負担・対外リスクとして9501に波及する。",
+     "type": "theme"
+    },
+    {
+     "name": "LNG (液化天然ガス)",
+     "relationJa": "JERA経由の主要燃料。LNGスポット価格や調達コストの変動が燃料費調整と火力採算を通じて9501の業績に影響する。",
+     "type": "commodity"
+    },
+    {
+     "name": "原子力規制委員会 (NRA)",
+     "relationJa": "原発の安全審査・運転認可を握る規制当局。柏崎刈羽の審査・運転制限や行政指導の判断が再稼働シナリオを左右する。",
+     "type": "regulator"
+    },
+    {
+     "name": "新潟県知事 (花角英世)",
+     "relationJa": "柏崎刈羽の地元同意の鍵を握る県知事・県議会。再稼働の地元了解や同意撤回の動きが株価カタリストになる。",
+     "type": "regulator"
+    },
+    {
+     "name": "東京電力パワーグリッド",
+     "relationJa": "首都圏送配電を担う中核子会社。系統増強投資・託送料金・データセンター向け接続のニュースが規制収益と成長に直結する。",
+     "type": "subsidiary"
+    }
+   ],
+   "peers": [
+    "中部電力 (9502)",
+    "関西電力 (9503)",
+    "九州電力 (9508)",
+    "東北電力 (9506)",
+    "中国電力 (9504)"
+   ],
+   "keywords": [
+    "東京電力",
+    "東電HD",
+    "9501",
+    "TEPCO",
+    "Tokyo Electric Power",
+    "柏崎刈羽",
+    "Kashiwazaki-Kariwa",
+    "原発再稼働",
+    "福島第一",
+    "Fukushima Daiichi",
+    "燃料デブリ",
+    "ALPS処理水",
+    "中国 水産物 輸入",
+    "JERA",
+    "中部電力",
+    "原子力規制委員会",
+    "新潟県 花角",
+    "原賠機構",
+    "原子力損害賠償・廃炉等支援機構",
+    "燃料費調整",
+    "東京電力パワーグリッド",
+    "総合特別事業計画"
+   ],
+   "source": "seed"
+  },
+  "6330": {
+   "symbol": "6330",
+   "name": "東洋エンジニアリング (Toyo Engineering)",
+   "businessJa": "石油・ガス、石油化学、肥料(尿素・アンモニア)、LNG、電力などの産業プラントを設計・調達・建設するEPC専業大手で、日揮・千代田化工と並ぶ「エンジ御三家」の一角。世界トップ級の自社尿素・アンモニア技術ライセンスを持ち、近年はグリーンアンモニア/燃料アンモニア・e-メタノール・CCUS・南鳥島沖の海洋レアアース採鉱システムなど非EPC・脱炭素分野に軸足を移しつつある。2026年3月期はブラジル・ガス火力案件の約205億円損失で最終赤字・無配転落。",
+   "sector": "建設業 / プラントエンジニアリング (EPC)",
+   "themes": [
+    "LNG",
+    "green ammonia / 燃料アンモニア",
+    "尿素・肥料 urea/fertilizer",
+    "e-methanol / g-Methanol",
+    "CCUS / CO2回収",
+    "海洋レアアース 経済安全保障",
+    "脱炭素 decarbonization",
+    "中東・グローバルサウス受注",
+    "プラントEPC受注採算",
+    "優先株転換 希薄化"
+   ],
+   "relatedEntities": [
+    {
+     "name": "インテグラル / Integral",
+     "relationJa": "事実上の筆頭株主(インテグラルTeam投資事業有限責任組合が約29.99%、A種優先株の普通株転換で最大約34.65%)。保有・転換・売却方針が需給と支配構造に直結し、2026年4月には優先株転換による希薄化懸念で年初来安値を更新した。",
+     "type": "parent"
+    },
+    {
+     "name": "日揮ホールディングス / JGC Holdings",
+     "relationJa": "エンジ御三家の最大手で直接の競合。LNG・アンモニア等の受注環境や採算悪化報道はセクター全体の連想物色・売りを誘発。",
+     "type": "peer"
+    },
+    {
+     "name": "千代田化工建設 / Chiyoda",
+     "relationJa": "同じEPC専業の競合。LNG偏重で過去に大型工事損失を計上した経緯があり、同業の採算・損失報道は6330にも波及。",
+     "type": "peer"
+    },
+    {
+     "name": "Petronet LNG",
+     "relationJa": "インドの主要LNG顧客。ダヘジ受入基地で通算5件目を受注(2027年完工予定)。同社の設備投資・発注動向が受注残・売上に直結。",
+     "type": "customer"
+    },
+    {
+     "name": "Pupuk Indonesia",
+     "relationJa": "インドネシア肥料公社で、伊藤忠と組むグリーンアンモニア『Project GAIA』(アチェ)のパートナー兼発注主体。FID・着工報道が脱炭素案件の進捗を左右。",
+     "type": "customer"
+    },
+    {
+     "name": "伊藤忠商事 / ITOCHU",
+     "relationJa": "インドネシア・グリーンアンモニア事業(GAIA)の共同事業パートナーでアンモニア燃料のオフテイカー。商社の投資判断やオフテイク方針が案件成立を左右。",
+     "type": "customer"
+    },
+    {
+     "name": "Petrobras",
+     "relationJa": "ブラジル・ガス火力発電プラント(ランプサム契約)の顧客で、支払い留保・仲裁により約205億円の損失計上=2026年3月期の赤字・無配の主因。仲裁の進展・追加費用報道が業績見通しを直撃。",
+     "type": "customer"
+    },
+    {
+     "name": "JAMSTEC / 内閣府SIP",
+     "relationJa": "南鳥島沖の深海レアアース泥採鉱システム(解泥・揚泥機の設計・製作)を受託開発。引き揚げ試験成功や2027年処理施設・接続試験の報道がテーマ買いを誘発。",
+     "type": "customer"
+    },
+    {
+     "name": "アンモニア / ammonia",
+     "relationJa": "尿素・燃料アンモニアの主原料兼製品。アンモニア需要・脱炭素燃料化の進展が同社の中核技術ライセンス収益に直結。",
+     "type": "commodity"
+    },
+    {
+     "name": "尿素 / urea",
+     "relationJa": "世界100件超の実績を持つ中核ライセンス製品。肥料需給・新設プラント投資が技術ライセンス・EPC受注を動かす。",
+     "type": "commodity"
+    }
+   ],
+   "peers": [
+    "日揮ホールディングス / JGC Holdings (196",
+    "千代田化工建設 / Chiyoda (6366)",
+    "三菱重工業 (7011)",
+    "Saipem",
+    "Technip Energies"
+   ],
+   "keywords": [
+    "東洋エンジニアリング",
+    "東洋エンジ",
+    "Toyo Engineering",
+    "6330",
+    "インテグラル 東洋エンジ",
+    "Integral Toyo",
+    "Petronet LNG",
+    "Pupuk Indonesia",
+    "Project GAIA",
+    "グリーンアンモニア 東洋エンジ",
+    "green ammonia Toyo",
+    "燃料アンモニア",
+    "fuel ammonia",
+    "g-Methanol",
+    "e-methanol",
+    "東洋エンジ ブラジル",
+    "Toyo Brazil gas power",
+    "南鳥島 レアアース",
+    "レアアース泥 採鉱",
+    "JAMSTEC レアアース",
+    "東洋エンジ 尿素",
+    "urea licensing",
+    "東洋エンジ 無配",
+    "東洋エンジ 優先株転換",
+    "東洋エンジ 受注"
+   ],
+   "source": "seed"
+  },
+  "NVDA": {
+   "symbol": "NVDA",
+   "name": "NVIDIA",
+   "businessJa": "AIアクセラレータGPU(Blackwell/Vera Rubin)とCUDAソフト・ネットワーク機器を設計し、データセンター向けに供給する世界最大の半導体企業。製造はTSMC等に委託するファブレスで、売上の大半はデータセンター(AI学習・推論)用GPUが占める。",
+   "sector": "半導体 / AIインフラ (Semiconductors / AI Infrastructure)",
+   "themes": [
+    "AI設備投資(capex)",
+    "データセンター",
+    "HBMメモリ需給",
+    "ハイパースケーラー支出",
+    "ソブリンAI",
+    "対中輸出規制",
+    "カスタムASIC競争(脱NVIDIA)",
+    "AI循環取引(circular financing)",
+    "推論需要",
+    "電力・データセンター電力"
+   ],
+   "relatedEntities": [],
+   "peers": [
+    "AMD",
+    "AVGO (Broadcom)",
+    "TSM (TSMC)",
+    "INTC (Intel)",
+    "MRVL (Marvell)",
+    "GOOGL (Google TPU)"
+   ],
+   "keywords": [
+    "NVIDIA",
+    "NVDA",
+    "エヌビディア",
+    "Jensen Huang",
+    "ジェンスン・フアン",
+    "Blackwell",
+    "Vera Rubin",
+    "GB300",
+    "HBM4",
+    "AI capex",
+    "AI設備投資",
+    "ハイパースケーラー",
+    "hyperscaler AI",
+    "AIデータセンター",
+    "OpenAI Nvidia",
+    "Anthropic Nvidia",
+    "xAI Nvidia",
+    "CoreWeave",
+    "Nebius",
+    "TSMC CoWoS",
+    "SK Hynix HBM",
+    "Samsung HBM4",
+    "Micron HBM",
+    "AMD MI350",
+    "AMD MI400",
+    "Broadcom ASIC",
+    "Google TPU",
+    "AWS Trainium",
+    "custom AI chip",
+    "カスタムAIチップ"
+   ],
+   "source": "seed"
+  },
+  "AAPL": {
+   "symbol": "AAPL",
+   "name": "Apple Inc.",
+   "businessJa": "iPhone・Mac・iPad・Apple Watch・AirPodsなどのハードウェアと、App Store・iCloud・Apple Music・広告・決済などのサービスを展開する世界最大級のテクノロジー企業。サービス事業の成長と、Apple Intelligence(AI)・Siri刷新(2026年春のGemini採用版)を成長の柱に据えている。",
+   "sector": "Technology — Consumer Electronics / Hardware & Services",
+   "themes": [
+    "AI / Apple Intelligence / Siri刷新(Gemini採",
+    "サービス収益の成長",
+    "iPhone買い替えサイクル",
+    "中国販売・地政学リスク",
+    "サプライチェーン脱中国(インド・ベトナム移管)",
+    "トランプ関税・貿易摩擦",
+    "EU DMA / 各国独禁・App Store規制",
+    "Google検索デフォルト料(独禁リスク・約200億ドル)",
+    "自社モデム内製化(C1/C2でQualcomm依存縮小)",
+    "巨大時価総額・指数採用・自社株買い"
+   ],
+   "relatedEntities": [
+    {
+     "name": "Google / Alphabet (グーグル / アルファベット)",
+     "relationJa": "Safari検索デフォルトで年約200億ドルをAppleに支払う最大の収益パートナー(ほぼ純利益でサービス利益の柱)。加えて新Siriにmonthly Gemini採用(年約10億ドル)。2025年9月の独禁判決で支払いは継続容認も非独占化、DOJの控訴審(2026後半-27)で揺らげばApple収益・AI戦略に直撃。",
+     "type": "customer"
+    },
+    {
+     "name": "TSMC (台湾積体電路製造)",
+     "relationJa": "A/Mシリーズ自社設計チップの独占的受託製造元。TSMCの先端プロセス進捗・生産能力・台湾地政学ニュースはAppleの製品ロードマップとコストに直結。",
+     "type": "supplier"
+    },
+    {
+     "name": "Foxconn / 鴻海 (ホンハイ)",
+     "relationJa": "iPhoneの主要組立(EMS)パートナー。中国/インド工場の稼働・出荷動向がiPhone供給と販売の先行指標。",
+     "type": "supplier"
+    },
+    {
+     "name": "Qualcomm (クアルコム)",
+     "relationJa": "現行iPhoneモデムの主要供給元だが、AppleのC1/C1X内製化でシェアは2026年に約20%まで低下、2027年に全廃予定。供給比率・特許ライセンス契約(2027まで)の動向がBOMコストに影響。",
+     "type": "supplier"
+    },
+    {
+     "name": "Broadcom (ブロードコム)",
+     "relationJa": "無線通信・カスタムチップ等の主要部品供給元。供給・価格・取引継続の動向がAppleの製品コストに波及。",
+     "type": "supplier"
+    },
+    {
+     "name": "Sony (ソニー)",
+     "relationJa": "iPhoneカメラ用CMOSイメージセンサーの主要供給元。カメラ性能・部品供給ニュースが製品競争力と調達に関わる。",
+     "type": "supplier"
+    },
+    {
+     "name": "Berkshire Hathaway (バークシャー・ハサウェイ)",
+     "relationJa": "Apple株を保有する最大級の株主(依然バークシャー最大の保有銘柄、約620億ドル)。近年ピークから7割超を売却中で、保有増減・売却ニュースは需給・センチメントに影響。Buffett引退後はGreg Abel体制。",
+     "type": "holding"
+    },
+    {
+     "name": "中国 / China (中国市場・政府)",
+     "relationJa": "最大級の販売市場かつ主要生産拠点。中国の景気・現地スマホ競争(華為等)・政府の規制や報復措置がAppleの売上と供給を左右する。",
+     "type": "customer"
+    },
+    {
+     "name": "インド / India (インド製造・市場)",
+     "relationJa": "脱中国の最重要組立拠点(iPhone生産の約25%、米国向け中心)かつ成長市場。生産能力・誘致策・関税がApple供給網の地政学リスク分散の核。",
+     "type": "supplier"
+    },
+    {
+     "name": "Huawei (華為)",
+     "relationJa": "中国市場でのiPhone最大の競合。Huaweiの新機種・シェア回復ニュースは中国でのApple販売シェアに直接響く。",
+     "type": "peer"
+    },
+    {
+     "name": "OpenAI / ChatGPT",
+     "relationJa": "Apple IntelligenceにChatGPTを統合済みだがGemini採用で優遇的地位を喪失、OpenAIは法的措置を検討との報道。提携の縮小・法廷化やWWDCでのモデル選択化はAIニュースとして注目される(materialityは低下傾向)。",
+     "type": "supplier"
+    },
+    {
+     "name": "トランプ関税 / Trump tariffs",
+     "relationJa": "対中・対インド関税はAppleの製造コストと製品価格に直結。関税の発動・免除のニュースが株価のスイング要因。",
+     "type": "theme"
+    },
+    {
+     "name": "EU DMA / European Commission (欧州デジタル市場法)",
+     "relationJa": "App Store手数料・サイドローディング・デフォルト変更を強制する規制。EUや各国の独禁措置・制裁金ニュースがサービス収益モデルを脅かす。",
+     "type": "regulator"
+    }
+   ],
+   "peers": [
+    "Samsung Electronics (005930.KS",
+    "Microsoft (MSFT)",
+    "Alphabet/Google (GOOGL)",
+    "Huawei",
+    "Xiaomi (1810.HK)",
+    "Sony (6758.T)"
+   ],
+   "keywords": [
+    "Apple",
+    "アップル",
+    "AAPL",
+    "iPhone",
+    "アイフォン",
+    "Apple Watch",
+    "AirPods",
+    "Vision Pro",
+    "Apple Intelligence",
+    "Siri",
+    "Tim Cook",
+    "ティム・クック",
+    "App Store",
+    "アップストア",
+    "Apple Gemini",
+    "Apple Siri Gemini",
+    "Apple OpenAI",
+    "Apple ChatGPT",
+    "TSMC Apple",
+    "台湾積体電路 Apple",
+    "Foxconn iPhone",
+    "鴻海 iPhone",
+    "Qualcomm Apple modem",
+    "クアルコム Apple モデム",
+    "Apple C1 modem",
+    "Apple自社モデム",
+    "Broadcom Apple",
+    "Sony CMOS iPhone",
+    "ソニー イメージセンサー Apple",
+    "Berkshire Apple"
+   ],
+   "source": "seed"
+  },
+  "TSLA": {
+   "symbol": "TSLA",
+   "name": "Tesla, Inc.",
+   "businessJa": "電気自動車(Model 3/Y/S/X、Cybertruck)の設計・製造・販売を中核に、蓄電池(Powerwall/Megapack)と太陽光などのエネルギー事業を展開する。近年は完全自動運転(FSD)・ロボタクシー(Robotaxi/Cybercab)・人型ロボット(Optimus)・自社AIチップ(AI5/AI6)などAI・自律走行領域へ事業の重心を移しつつある。",
+   "sector": "Automotive / Clean Energy / AI & Robotics",
+   "themes": [
+    "robotaxi/自動運転",
+    "FSD",
+    "Optimus/ヒューマノイド",
+    "EV需要",
+    "AIチップ(AI5/AI6)",
+    "蓄電池/Megapack",
+    "Grok/xAI連携",
+    "EV補助金・政策",
+    "中国EV市場",
+    "リチウム/電池原料"
+   ],
+   "relatedEntities": [
+    {
+     "name": "Elon Musk / イーロン・マスク",
+     "relationJa": "CEO兼筆頭の個人株主(約12.9%)。報酬パッケージ・xAI/SpaceXとの絡み・政治的発言・株売却観測などマスク個人の動向が株価を最も大きく揺らす。",
+     "type": "theme"
+    },
+    {
+     "name": "xAI / Grok",
+     "relationJa": "マスク傘下のAI企業。Grokは2025年7月以降に車載AIアシスタントとして統合済み(対応車両に標準搭載)。xAIの資金調達・統合観測・Grok性能はTSLAのAIナラティブに直結。",
+     "type": "theme"
+    },
+    {
+     "name": "Panasonic / パナソニック",
+     "relationJa": "ネバダGigafactoryでの2170セル長年の電池サプライヤー(2026年も継続)。生産能力・歩留まり・米EV需要鈍化に伴うランプ調整がTeslaのEV生産・コストに影響。",
+     "type": "supplier"
+    },
+    {
+     "name": "CATL / 寧徳時代",
+     "relationJa": "上海工場のLFP電池主要供給元。協業・価格・米中政策の影響を受け、Teslaの中国生産とコスト構造を左右する(近年はSunwoda追加で依存度分散の動き)。",
+     "type": "supplier"
+    },
+    {
+     "name": "LG Energy Solution / LGエナジーソリューション",
+     "relationJa": "2026年確定の約43億ドルLFP供給契約(ミシガン製、Megapack 3向け、2027〜2030年納入)。Teslaのエネルギー蓄電池の脱中国・国産化の柱。",
+     "type": "supplier"
+    },
+    {
+     "name": "Samsung SDI / サムスンSDI",
+     "relationJa": "2025年締結の約21億ドル蓄電(ESS/Megapack・Powerwall向けLFP)3年供給契約。供給拡大はエネルギー事業の量産能力と脱中国に影響。",
+     "type": "supplier"
+    },
+    {
+     "name": "TSMC / 台湾積体電路",
+     "relationJa": "TeslaのAI5チップをアリゾナ工場で受託製造する主要ファウンドリ(Samsungとの二重調達)。先端プロセスの能力・歩留まりがFSD/ロボタクシー/Optimusの量産可否を左右。",
+     "type": "supplier"
+    },
+    {
+     "name": "Samsung Electronics / サムスン電子",
+     "relationJa": "2025年7月締結のテキサス(Taylor)工場での約165億ドル規模AI6チップ受託製造契約(2033年末まで、AI4も製造)。Teslaの自社AIチップ供給網の柱で、稼働遅延等が自律走行ロードマップに波及。",
+     "type": "supplier"
+    },
+    {
+     "name": "Nvidia / エヌビディア",
+     "relationJa": "TeslaのAI学習インフラ(Cortex/Cortex 2.0、H100/H200多数)向けGPU供給元。GPU調達価格・供給逼迫はAI設備投資コストと学習能力に影響。",
+     "type": "supplier"
+    },
+    {
+     "name": "リチウム / Lithium",
+     "relationJa": "EV電池の主原料コモディティ。リチウム価格の上下がTeslaの電池コスト・粗利率に直接影響する。",
+     "type": "commodity"
+    },
+    {
+     "name": "The Vanguard Group",
+     "relationJa": "最大の機関投資家(約7.2%保有)。同社の保有動向・パッシブ資金フローが需給に影響。",
+     "type": "holding"
+    },
+    {
+     "name": "BlackRock / ブラックロック",
+     "relationJa": "第2位級の機関株主(約5.9%保有)。保有・議決権行使・ESG姿勢がガバナンス論点に波及。",
+     "type": "holding"
+    },
+    {
+     "name": "BYD / 比亜迪",
+     "relationJa": "世界EV販売でTeslaと首位を争う中国の競合。BYDの価格攻勢・販売台数・海外展開がTeslaの市場シェアと値下げ圧力に直結。",
+     "type": "peer"
+    },
+    {
+     "name": "Waymo",
+     "relationJa": "ロボタクシー商用化で先行する競合(Alphabet傘下)。Waymoの展開都市拡大・安全実績がTeslaの自律走行ナラティブの相対評価に影響。",
+     "type": "peer"
+    }
+   ],
+   "peers": [
+    "BYD",
+    "Rivian (RIVN)",
+    "Lucid (LCID)",
+    "NIO",
+    "Li Auto",
+    "XPeng",
+    "General Motors (GM)",
+    "Ford (F)"
+   ],
+   "keywords": [
+    "Tesla",
+    "TSLA",
+    "テスラ",
+    "Elon Musk",
+    "イーロン・マスク",
+    "robotaxi",
+    "ロボタクシー",
+    "Cybercab",
+    "FSD",
+    "完全自動運転",
+    "Optimus",
+    "オプティマス",
+    "Cybertruck",
+    "Model Y",
+    "AI5チップ",
+    "AI6チップ",
+    "Dojo",
+    "xAI",
+    "Grok",
+    "CATL",
+    "寧徳時代",
+    "LG Energy Solution",
+    "Samsung SDI",
+    "TSMC",
+    "Megapack",
+    "Powerwall",
+    "BYD",
+    "Waymo",
+    "NHTSA",
+    "EV補助金"
+   ],
+   "source": "seed"
+  },
+  "META": {
+   "symbol": "META",
+   "name": "Meta Platforms, Inc.",
+   "businessJa": "Facebook・Instagram・WhatsApp・Messengerなど世界最大級のSNS群(Family of Apps)を運営し、売上の約98%をデジタル広告から得る。加えてReality Labs部門でVR/ARデバイス(Quest、Ray-Ban Meta)とLlama系AIモデル・Meta Superintelligence Labsを通じたAI事業に巨額投資している。",
+   "sector": "Communication Services / Interactive Media & Advertising (大型テック)",
+   "themes": [
+    "デジタル広告",
+    "AI/生成AI",
+    "AI capex/データセンター投資",
+    "Llamaオープンソースモデル",
+    "スマートグラス/ウェアラブルAI",
+    "メタバース/VR・AR",
+    "AIエージェント/広告自動化(Advantage+)",
+    "カスタムAIシリコン(MTIA)",
+    "superintelligence(超知能)",
+    "電力/エネルギー需要"
+   ],
+   "relatedEntities": [
+    {
+     "name": "Nvidia / エヌビディア",
+     "relationJa": "MetaはAI学習用GPUの最大級顧客。Nvidiaの新世代(Blackwell/Vera Rubin)供給・価格・AI需要見通しのニュースはMetaのcapex負担とAI能力に直結し、両社株が連動しやすい。",
+     "type": "supplier"
+    },
+    {
+     "name": "AMD / アドバンスト・マイクロ・デバイセズ",
+     "relationJa": "Metaと6ギガワット規模・複数世代のInstinct GPU(MI300/MI350/MI450)供給で拡大提携(2026年2月発表、総額600億ドル規模と報道)。AMDのAI GPUロードマップ・受注ニュースはMetaのチップ調達多様化とNvidia依存低減観測に直結する。",
+     "type": "supplier"
+    },
+    {
+     "name": "Broadcom / ブロードコム",
+     "relationJa": "MetaのカスタムAIチップMTIAを共同開発する中核パートナー(2026年4月に複数世代・1GW超展開で拡大提携)。Broadcomのカスタムシリコン受注・先端プロセス進捗のニュースはMetaの自前チップ戦略とコスト削減見通しを左右する。",
+     "type": "supplier"
+    },
+    {
+     "name": "TSMC / 台湾積体電路製造",
+     "relationJa": "MTIAおよびNvidia/Broadcom/AMDチップの実製造を担う先端ファウンドリ。3nm/CoWoS供給能力や地政学リスクのニュースはMetaのAIチップ調達計画に波及する。",
+     "type": "supplier"
+    },
+    {
+     "name": "Scale AI / スケールAI",
+     "relationJa": "Metaが49%(約143億ドル)を出資し、創業者Alexandr WangがMetaのCAO兼Superintelligence Labs責任者に就任。Scale AIの事業・データ供給・人材動向のニュースはMetaのAI開発体制に直結する。",
+     "type": "investee"
+    },
+    {
+     "name": "EssilorLuxottica / エシロールルックスオティカ",
+     "relationJa": "Ray-Ban Meta/Oakley MetaをMetaと共同開発・製造するパートナーで、Metaは約3%(35億ドル規模)を出資。スマートグラスの生産能力拡大(2026年末1000万台/年計画)・販売動向のニュースはMetaのReality Labs/ウェアラブルAI戦略を左右する。",
+     "type": "supplier"
+    },
+    {
+     "name": "Google Cloud / Alphabet (TPU)",
+     "relationJa": "Metaは自前チップに加えGoogleのTPU容量に巨額(数十億ドル規模、2027年から)を支払う一方、広告市場では最大の競合。GoogleのTPU供給・AI/広告動向のニュースはMetaのコストと競争環境の両面で材料になる。",
+     "type": "peer"
+    },
+    {
+     "name": "Apple / アップル",
+     "relationJa": "iOSのプライバシー(ATT)変更で過去にMeta広告ターゲティングが打撃を受けた経緯があり、Apple Intelligenceやスマートグラス参入はMeta広告精度とウェアラブル競争の脅威。Appleのプラットフォーム/AIニュースは材料化しやすい。",
+     "type": "peer"
+    },
+    {
+     "name": "Blue Owl Capital / ブルーオウル",
+     "relationJa": "MetaのHyperionデータセンター(ルイジアナ)を約270億ドルのJV(Meta 20%/Blue Owl 80%)で開発する資金提供パートナー。AIインフラのオフバランス/SPV調達スキームのニュースはMetaのcapex財務構造の観測点になる。",
+     "type": "supplier"
+    },
+    {
+     "name": "Nebius / ネビウス",
+     "relationJa": "MetaとAIインフラ(クラウドコンピュート)で大型契約(最大約270億ドル、2026年3月発表)を結ぶ供給側。AIコンピュート外部調達のニュースはMetaの能力確保見通しに波及する。",
+     "type": "supplier"
+    },
+    {
+     "name": "OpenAI / オープンAI",
+     "relationJa": "生成AI/AIアシスタント/AI人材で競合し、Llamaとの覇権争いの軸。OpenAIのモデル発表・資金調達・人材流出入のニュースはMetaのAI競争ポジションの相対評価を動かす。",
+     "type": "peer"
+    },
+    {
+     "name": "TikTok / ByteDance",
+     "relationJa": "Instagram Reelsと若年層の利用時間・広告予算を奪い合う直接競合。TikTok米国事業の身売り(2026年1月クローズ)後も継続運営し、利用・広告動向のニュースはMetaの広告シェア見通しに直結する。",
+     "type": "peer"
+    },
+    {
+     "name": "電力/エネルギー(power/electricity)",
+     "relationJa": "数GW〜10GW規模のAIデータセンターは膨大な電力を要し、電力供給・電気料金・送電制約のニュースはMetaのAIインフラ拡張コストと実行可能性に波及する。",
+     "type": "commodity"
+    }
+   ],
+   "peers": [
+    "Alphabet (GOOGL)",
+    "Snap (SNAP)",
+    "Pinterest (PINS)",
+    "ByteDance/TikTok",
+    "Amazon (AMZN)",
+    "Microsoft (MSFT)",
+    "Apple (AAPL)"
+   ],
+   "keywords": [
+    "Meta Platforms",
+    "META",
+    "Facebook",
+    "Instagram",
+    "インスタグラム",
+    "WhatsApp",
+    "Zuckerberg",
+    "ザッカーバーグ",
+    "Reality Labs",
+    "Llama",
+    "Meta AI",
+    "Superintelligence Labs",
+    "MTIA",
+    "Ray-Ban Meta",
+    "Meta Glasses",
+    "スマートグラス",
+    "Meta Quest",
+    "Nvidia",
+    "エヌビディア",
+    "AMD Instinct",
+    "Broadcom",
+    "ブロードコム",
+    "TSMC",
+    "台湾積体電路",
+    "Scale AI",
+    "Alexandr Wang",
+    "EssilorLuxottica",
+    "エシロールルックスオティカ",
+    "Blue Owl",
+    "Nebius"
+   ],
+   "source": "seed"
+  }
+ }
+}

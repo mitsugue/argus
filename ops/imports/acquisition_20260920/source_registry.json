@@ -1,0 +1,1684 @@
+{
+  "schema_version": "argus-marketdata-source-registry-v1",
+  "research_as_of": "2026-09-20",
+  "target_product_family": "v13.7",
+  "artifact_kind": "ACQUISITION_SPECIFICATION_NOT_HISTORICAL_DATA",
+  "contains_full_10y_observations": false,
+  "current_production_audited": false,
+  "target_from": "2016-09-20",
+  "target_through": "2026-09-18",
+  "warmup_policy": "At least 250 actual prior sessions for 200-day features; more for long-window percentile features. An entire 10y percentile at the start needs 10 additional prior years or must be unavailable.",
+  "required_features_policy": "These 43 registry entries are groups/series for the agreed scope, not proof every feature in current production is enumerated. Diff current required-feature manifest before claiming completeness.",
+  "source_access_note": "Primary-source webpages, specifications and selected daily pages checked. CSV links verified where stated; bulk CSV bytes, authenticated API responses and current production imports not verified in this session.",
+  "sources": {
+    "NIK_GUIDE": {
+      "title": "日経平均プロフィル 利用の手引き",
+      "url": "https://indexes.nikkei.co.jp/nkave/archives/file/users_guide_jp.pdf",
+      "verified": "公式PDFの定義・遡及期間・更新目安を確認",
+      "scope": "日次指標2004-09-30以降。指数ベースPER/EPS定義。通常CSVの期間とは別。"
+    },
+    "NIK_ARCHIVE": {
+      "title": "日経平均 日次サマリー",
+      "url": "https://indexes.nikkei.co.jp/nkave/archives/summary?dt=20161226",
+      "verified": "2016-12-26の実在する日次行を確認",
+      "scope": "日付指定アーカイブの実データ。日付変更で個別確認可能。全10年の取得成功を証明するものではない。"
+    },
+    "NIK_PER": {
+      "title": "日経平均 投資指標 PER",
+      "url": "https://indexes.nikkei.co.jp/nkave/archives/data?list=per",
+      "verified": "公式の加重平均・指数ベースの列分離を確認",
+      "scope": "時系列の定義と列名。表示ページの最新日をシステム日付の最新値と誤認しない。"
+    },
+    "NIK_DATA": {
+      "title": "日経指数 データサービス",
+      "url": "https://indexes.nikkei.co.jp/nkave/data/",
+      "verified": "公式の無料・有料サービス区分を確認",
+      "scope": "通常CSVは日次3年／月次10年。プレミアムを契約すれば日次PER10年が必ず含まれるとは公表記述だけでは確認できない。"
+    },
+    "NIK_BULK": {
+      "title": "日経NEEDS データ配信サービス",
+      "url": "https://needs.nikkei.co.jp/services/bulk/",
+      "verified": "HTTPS/SFTPと過去データ提供・カスタム配信の説明を確認",
+      "scope": "日経平均の指数ベースPER/EPSの具体的項目コード・提供期間・元版保存は個別確認が必要。原則法人向け。"
+    },
+    "JQ_COVER": {
+      "title": "J-Quants プラン別データ期間",
+      "url": "https://jpx-jquants.com/ja/spec/data-spec",
+      "verified": "公式データ格納期間・プラン制限確認",
+      "scope": "データの開始日と契約のローリング上限の交差が実際の取得可能範囲。"
+    },
+    "JQ_V2": {
+      "title": "J-Quants API Reference",
+      "url": "https://jpx-jquants.com/ja/spec",
+      "verified": "V1終了・V2への移行記載確認",
+      "scope": "V1終了2026-06-01。V2 base=https://api.jquants.com/v2。認証x-api-key。"
+    },
+    "JQ_PLAN": {
+      "title": "J-Quants 個人向けプラン",
+      "url": "https://jpx-jquants.com/ja",
+      "verified": "Standard/Premiumの価格と期間の公開表示確認",
+      "scope": "Standard月3300円、Premium月16500円（税込）。購入やアカウント確認は未実施。"
+    },
+    "JQ_BULK": {
+      "title": "J-Quants ファイルダウンロード",
+      "url": "https://jpx-jquants.com/ja/spec/bulk",
+      "verified": "CSV.gz提供仕様確認",
+      "scope": "バルク株価は調整済み株価を含まない。アクション係数の処理が別途必要。"
+    },
+    "JQ_LIST": {
+      "title": "J-Quants bulk/list",
+      "url": "https://jpx-jquants.com/ja/spec/bulk-list",
+      "verified": "GET /bulk/list のパラメータと応答確認",
+      "scope": "Key, LastModified, Size。認証付き実リクエストは未実施。"
+    },
+    "JQ_GET": {
+      "title": "J-Quants bulk/get",
+      "url": "https://jpx-jquants.com/ja/spec/bulk-get",
+      "verified": "GET /bulk/get の仕様確認",
+      "scope": "返却urlは5分有効。直ちに保存する。認証情報を署名URL先へ転送しない。"
+    },
+    "JQ_MARGIN": {
+      "title": "J-Quants 信用取引週末残高",
+      "url": "https://jpx-jquants.com/ja/spec/mkt-margin-int",
+      "verified": "2012開始・株数・4/5桁コード・パラメータ・フィールド確認",
+      "scope": "Dateは残高基準日。売買残はShrtVol/LongVol。日証金残・逆日歩とは異なる。"
+    },
+    "JQ_INVESTOR": {
+      "title": "J-Quants 投資部門別情報",
+      "url": "https://jpx-jquants.com/ja/spec/eq-investor-types",
+      "verified": "原単位千円・PubDate・訂正履歴制限確認",
+      "scope": "2023-04-03以前公表の訂正は訂正前を提供しない。from/toは公表日。4月3日境界はプロバイダ原文に従い個別確認。"
+    },
+    "JQ_FIN": {
+      "title": "J-Quants 財務情報",
+      "url": "https://jpx-jquants.com/ja/spec/fin-summary",
+      "verified": "開示日・時刻・番号などの応答確認",
+      "scope": "会社予想と公表実績。日経の指数EPS／アナリストコンセンサスそのものではない。"
+    },
+    "JPX_MARGIN": {
+      "title": "JPX 信用取引 現在・過去推移",
+      "url": "https://www.jpx.co.jp/markets/statistics-equities/margin/06.html",
+      "verified": "公式過去推移表への経路確認",
+      "scope": "総額を保有済みrawから検収。2市場買残・売残の金額系列。"
+    },
+    "JPX_RELEASE": {
+      "title": "JPX 信用取引公表予定",
+      "url": "https://www.jpx.co.jp/markets/statistics-equities/margin/07.html",
+      "verified": "公表日程ページ確認",
+      "scope": "休日と制度変更を反映した公表日程。固定の曜日・時刻を10年間に遡って捏造しない。"
+    },
+    "JSF_FAQ": {
+      "title": "日本証券金融 よくあるご質問",
+      "url": "https://www.taisyaku.jp/about/faq/",
+      "verified": "公開遡及3年、速報・確報、逆日歩に関する注意確認",
+      "scope": "公開経路だけで10年を満たさない。市場全体信用残の代用不可。"
+    },
+    "JSF_USAGE": {
+      "title": "日本証券金融 貸借データCSV",
+      "url": "https://www.taisyaku.jp/about/usage/",
+      "verified": "CSVと更新目安の仕様確認",
+      "scope": "逆日歩・品貸日数・申込日・速報確報の区別。"
+    },
+    "PNL_RAKUTEN": {
+      "title": "楽天証券 信用評価損益率の説明",
+      "url": "https://www.rakuten-sec.co.jp/smartphone/domestic/special/check/01.html",
+      "verified": "二市場と自社顧客の指標を区別する説明確認",
+      "scope": "このページ自体を10年の機械取得先とは認定しない。"
+    },
+    "PNL_MATSUI": {
+      "title": "松井証券 信用評価損益率等",
+      "url": "https://www.matsui.co.jp/info/netstock-info-01/",
+      "verified": "二市場と店内データの別系列を確認",
+      "scope": "証券会社の顧客集団を市場全体として連結しない。"
+    },
+    "MOF_JGB": {
+      "title": "財務省 国債金利情報",
+      "url": "https://www.mof.go.jp/jgbs/reference/interest_rate/index.htm",
+      "verified": "1974年以降の履歴CSVリンク確認",
+      "scope": "CSVの全バイト取得・年別検収はこの調査では未実施。"
+    },
+    "MOF_TIME": {
+      "title": "財務省 国債金利情報FAQ",
+      "url": "https://www.mof.go.jp/faq/jgbs/04hf.htm",
+      "verified": "公表時刻の説明確認",
+      "scope": "原則翌営業日9時30分。観測日の大引け時点で公表済みにしない。"
+    },
+    "BOJ_API": {
+      "title": "日本銀行 API公開のお知らせ",
+      "url": "https://www.boj.or.jp/statistics/outline/notice_2026/not260218a.htm",
+      "verified": "2026-02-18の公式API公開確認",
+      "scope": "時系列統計データ検索サイトのAPI。"
+    },
+    "BOJ_MANUAL": {
+      "title": "日本銀行 APIマニュアル",
+      "url": "https://www.stat-search.boj.or.jp/info/api_manual.pdf",
+      "verified": "getMetadata/getDataCode、FM01コード例・ページング・日付形式確認",
+      "scope": "JSONはUTF-8。日次要求のstartDate/endDateは年月YYYYMM。実ネットワーク呼出検証は未実施。"
+    },
+    "BOJ_RIGHTS": {
+      "title": "日本銀行 API利用条件",
+      "url": "https://www.stat-search.boj.or.jp/info/api_notice.pdf",
+      "verified": "出典表記とサービス提供時の注意確認",
+      "scope": "個人分析と対外サービスを区別して権利情報を保存。"
+    },
+    "FED_H15": {
+      "title": "Federal Reserve H.15",
+      "url": "https://www.federalreserve.gov/releases/h15/",
+      "verified": "公式H15金利表と更新説明確認",
+      "scope": "公表時刻と観測日を分離。同一日と決め打ちしない。"
+    },
+    "FRED_API": {
+      "title": "FRED series/observations API",
+      "url": "https://fred.stlouisfed.org/docs/api/fred/series_observations.html",
+      "verified": "観測値・日付・ページング・vintage指定確認",
+      "scope": "api_keyは環境変数。欠損記号.を0に変換しない。"
+    },
+    "FRED_DGS10": {
+      "title": "FRED DGS10",
+      "url": "https://fred.stlouisfed.org/series/DGS10",
+      "verified": "FRB原典、日次、percent、系列の長期掲載を確認",
+      "scope": "他年限の系列は同様にメタデータで期間確認。"
+    },
+    "ALFRED": {
+      "title": "ALFRED Help",
+      "url": "https://alfred.stlouisfed.org/help",
+      "verified": "ヴィンテージの仕組み確認",
+      "scope": "ヴィンテージ日と市場で知り得た時刻は別。全10年の全訂正版を保証しない。"
+    },
+    "FRED_SPX": {
+      "title": "FRED S&P500",
+      "url": "https://fred.stlouisfed.org/series/SP500",
+      "verified": "10年ローリング、日次終値、価格指数、権利表記確認",
+      "scope": "10年の始点にさらに200営業日の助走を要する場合、これ単独では不足。OHLCの代用にもならない。"
+    },
+    "FRED_FX": {
+      "title": "FRED DEXJPUS",
+      "url": "https://fred.stlouisfed.org/series/DEXJPUS",
+      "verified": "NY正午レートと原系列を確認",
+      "scope": "東京17時USDJPYへ無表示で代用しない。"
+    },
+    "CBOE_VIX": {
+      "title": "Cboe VIX Historical Data",
+      "url": "https://www.cboe.com/tradable-products/vix/vix-historical-data",
+      "verified": "1990年以降の公式CSVリンク確認",
+      "scope": "全バイト取得と期間検収は未実施。VIX先物やETFで代用しない。"
+    },
+    "EIA_API": {
+      "title": "EIA Open Data",
+      "url": "https://www.eia.gov/opendata/",
+      "verified": "公式APIの入口確認",
+      "scope": "原油スポットと期近先物は異なる。選択するシリーズと10年範囲は追加確認。"
+    }
+  },
+  "indicators": [
+    {
+      "id": "nikkei_ohlc",
+      "name_ja": "日経平均・直接指数OHLC",
+      "group": "価格・評価",
+      "priority": "P0",
+      "provider": "Nikkei",
+      "frequency": "日次",
+      "documented_start": "OHLC 1985年〜",
+      "research_status": "ARCHIVE_CONFIRMED_BULK_TBD",
+      "status_ja": "公式日次履歴確認／一括経路を確定",
+      "endpoint_or_download": "https://indexes.nikkei.co.jp/nkave/archives/summary?dt=YYYYMMDD",
+      "source_fields": "日付/始値/高値/安値/終値",
+      "normalized_unit": "index_points",
+      "source_ids": [
+        "NIK_GUIDE",
+        "NIK_ARCHIVE",
+        "NIK_DATA"
+      ],
+      "source_urls": [
+        "https://indexes.nikkei.co.jp/nkave/archives/file/users_guide_jp.pdf",
+        "https://indexes.nikkei.co.jp/nkave/archives/summary?dt=20161226",
+        "https://indexes.nikkei.co.jp/nkave/data/"
+      ],
+      "required_action": "既存契約配信を優先。なければ権限ある日次アーカイブ取得を初回だけ実行・原文保存。全対象日検収。",
+      "pit_and_definition_caveat": "ETF1321、先物、CFDを直接指数として扱わない。通常日次CSV3年を10年完成にしない。",
+      "plan_or_entitlement": "利用中の権限を確認・継承",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "nikkei_index_per",
+      "name_ja": "日経平均・指数ベースPER",
+      "group": "価格・評価",
+      "priority": "P0",
+      "provider": "Nikkei",
+      "frequency": "日次",
+      "documented_start": "2004-09-30",
+      "research_status": "ARCHIVE_CONFIRMED_BULK_TBD",
+      "status_ja": "公式日次履歴確認／一括経路を確定",
+      "endpoint_or_download": "https://indexes.nikkei.co.jp/nkave/archives/data?list=per",
+      "source_fields": "日付/PER「指数ベース」列",
+      "normalized_unit": "multiple",
+      "source_ids": [
+        "NIK_GUIDE",
+        "NIK_PER",
+        "NIK_BULK"
+      ],
+      "source_urls": [
+        "https://indexes.nikkei.co.jp/nkave/archives/file/users_guide_jp.pdf",
+        "https://indexes.nikkei.co.jp/nkave/archives/data?list=per",
+        "https://needs.nikkei.co.jp/services/bulk/"
+      ],
+      "required_action": "同日サマリーまたは許諾済み配信で指数ベース列を取得。NEEDS等へ項目コード・10年日次を明示して照会。",
+      "pit_and_definition_caveat": "加重平均PERとの混同禁止。原則19時は更新目安であり各過去日の実公表時刻ではない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "nikkei_index_eps_est",
+      "name_ja": "日経平均・逆算指数EPS",
+      "group": "価格・評価",
+      "priority": "P0",
+      "provider": "Derived(Nikkei)",
+      "frequency": "日次",
+      "documented_start": "上流に依存",
+      "research_status": "DERIVED_AFTER_INGEST",
+      "status_ja": "原データ取込後に計算",
+      "endpoint_or_download": "LOCAL: nikkei_close / index_per",
+      "source_fields": "same-date close / index_per",
+      "normalized_unit": "index_points_per_multiple",
+      "source_ids": [
+        "NIK_GUIDE"
+      ],
+      "source_urls": [
+        "https://indexes.nikkei.co.jp/nkave/archives/file/users_guide_jp.pdf"
+      ],
+      "required_action": "同じ指数・同じ日・同じ版の終値と指数PERだけで計算。EPS再計算用の全入力と精度を保存。",
+      "pit_and_definition_caveat": "公開PERは表示桁数に制約。逆算値は推定値として保存し、公式EPSの原精度と偽らない。会社予想EPSの単純集計は禁止。",
+      "plan_or_entitlement": "",
+      "dependencies": [
+        "nikkei_ohlc",
+        "nikkei_index_per"
+      ],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "nikkei_index_eps_exact",
+      "name_ja": "日経平均・原精度EPS（精度要件）",
+      "group": "価格・評価",
+      "priority": "P0-精度確認",
+      "provider": "Nikkei authorised feed",
+      "frequency": "日次",
+      "documented_start": "項目の期間を照会",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "契約配信/個別確認",
+      "source_fields": "公式index EPS・精度・予想年度・revision",
+      "normalized_unit": "index_points_per_multiple",
+      "source_ids": [
+        "NIK_GUIDE",
+        "NIK_BULK"
+      ],
+      "source_urls": [
+        "https://indexes.nikkei.co.jp/nkave/archives/file/users_guide_jp.pdf",
+        "https://needs.nikkei.co.jp/services/bulk/"
+      ],
+      "required_action": "完全に同一の公式EPSが必要な場合、原精度EPS項目の有無と遡及範囲を確認。逆算推定と別ステータスにする。",
+      "pit_and_definition_caveat": "取得不能ならEPS_ESTIMATEDのまま明示。推定列を公式原数値に昇格しない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "nikkei_index_pbr",
+      "name_ja": "日経平均・指数ベースPBR/BPS",
+      "group": "価格・評価",
+      "priority": "P1",
+      "provider": "Nikkei",
+      "frequency": "日次",
+      "documented_start": "2004-09-30",
+      "research_status": "ARCHIVE_CONFIRMED_BULK_TBD",
+      "status_ja": "公式日次履歴確認／一括経路を確定",
+      "endpoint_or_download": "https://indexes.nikkei.co.jp/nkave/archives/data?list=pbr",
+      "source_fields": "指数ベースPBR、BPS_est=close/PBR",
+      "normalized_unit": "multiple/index_points",
+      "source_ids": [
+        "NIK_GUIDE",
+        "NIK_BULK"
+      ],
+      "source_urls": [
+        "https://indexes.nikkei.co.jp/nkave/archives/file/users_guide_jp.pdf",
+        "https://needs.nikkei.co.jp/services/bulk/"
+      ],
+      "required_action": "PERと同じ版・基準で取得。加重平均PBRを別基準と明示して混ぜない。",
+      "pit_and_definition_caveat": "2016-06-01の計算方法変更は助走期間の比較に影響し得る。BPS逆算も精度表示。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "topix_ohlc",
+      "name_ja": "TOPIX・直接指数OHLC",
+      "group": "価格・評価",
+      "priority": "P0",
+      "provider": "J-Quants",
+      "frequency": "日次",
+      "documented_start": "2008-05-07",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.jquants.com/v2/indices/bars/daily/topix",
+      "source_fields": "Date/Open/High/Low/Close（実schema照合）",
+      "normalized_unit": "index_points",
+      "source_ids": [
+        "JQ_COVER",
+        "JQ_V2",
+        "JQ_BULK"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec",
+        "https://jpx-jquants.com/ja/spec",
+        "https://jpx-jquants.com/ja/spec/bulk"
+      ],
+      "required_action": "公式対応エンドポイントで初回CSV.gz、日々差分。",
+      "pit_and_definition_caveat": "ETF1306との自動代替不可。",
+      "plan_or_entitlement": "Standard以上",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "sp500_close",
+      "name_ja": "S&P500・価格指数終値",
+      "group": "価格・評価",
+      "priority": "P0",
+      "provider": "FRED / S&P",
+      "frequency": "米国日次",
+      "documented_start": "ローリング10年",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.stlouisfed.org/fred/series/observations?series_id=SP500",
+      "source_fields": "date/value",
+      "normalized_unit": "index_points",
+      "source_ids": [
+        "FRED_SPX",
+        "FRED_API"
+      ],
+      "source_urls": [
+        "https://fred.stlouisfed.org/series/SP500",
+        "https://fred.stlouisfed.org/docs/api/fred/series_observations.html"
+      ],
+      "required_action": "FREDで許諾範囲の10年終値。助走・OHLC・固定始点を満たさない部分はS&P許諾配信で補う。",
+      "pit_and_definition_caveat": "日本の大引けには当日の米国終値は未判明。SPY/配当込をSPXと同一視しない。",
+      "plan_or_entitlement": "FREDキー＋S&P利用条件",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "sp500_ohlc_warmup",
+      "name_ja": "S&P500・OHLCと10年前より前の助走",
+      "group": "価格・評価",
+      "priority": "P0-履歴補完",
+      "provider": "S&P authorised provider",
+      "frequency": "米国日次",
+      "documented_start": "契約供給元確認",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "許諾配信を既存プロバイダから特定",
+      "source_fields": "SPX価格指数OHLC・原公表時刻",
+      "normalized_unit": "index_points",
+      "source_ids": [
+        "FRED_SPX"
+      ],
+      "source_urls": [
+        "https://fred.stlouisfed.org/series/SP500"
+      ],
+      "required_action": "FREDの終値のみ・ローリング10年という制約を埋める。実際の既存権限と元指数IDを監査。",
+      "pit_and_definition_caveat": "ETFや先物、TR指数で黙って補完しない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "jp_stock_ohlcv",
+      "name_ja": "日本個別株・1570・当時の全上場銘柄OHLCV",
+      "group": "価格・評価",
+      "priority": "P0",
+      "provider": "J-Quants",
+      "frequency": "日次",
+      "documented_start": "2008-05-07",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.jquants.com/v2/equities/bars/daily",
+      "source_fields": "Date/Code/OHLC/Volume/AdjustmentFactor; schema照合",
+      "normalized_unit": "JPY/shares",
+      "source_ids": [
+        "JQ_COVER",
+        "JQ_BULK",
+        "JQ_V2"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec",
+        "https://jpx-jquants.com/ja/spec/bulk",
+        "https://jpx-jquants.com/ja/spec"
+      ],
+      "required_action": "上場廃止を含む当時の全対象を取得。バルクは調整前価格なので分割調整を実装し検収。",
+      "pit_and_definition_caveat": "今の銘柄だけで10年前の値上がり数や需給を作らない。分割を暴落として学習しない。",
+      "plan_or_entitlement": "Standard、助走範囲はPremium等",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "jp_master_history",
+      "name_ja": "当時の上場銘柄・市場区分・業種",
+      "group": "母集団",
+      "priority": "P0",
+      "provider": "J-Quants",
+      "frequency": "日次/変更",
+      "documented_start": "2008-05-07",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.jquants.com/v2/equities/master",
+      "source_fields": "Date/Code/market/sector/product; schema照合",
+      "normalized_unit": "categorical",
+      "source_ids": [
+        "JQ_COVER",
+        "JQ_V2"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec",
+        "https://jpx-jquants.com/ja/spec"
+      ],
+      "required_action": "as-of銘柄マスターを保存し生存者バイアスを防ぐ。ETF/普通株を区別。",
+      "pit_and_definition_caveat": "現在225社で全過去を遡らない。日経採用履歴とは別。",
+      "plan_or_entitlement": "Standard以上",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "nikkei_members_factors",
+      "name_ja": "日経225採用履歴・換算係数・除数",
+      "group": "母集団",
+      "priority": "P1",
+      "provider": "Nikkei",
+      "frequency": "変更/日次",
+      "documented_start": "10年項目確認",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "契約配信/NEEDS/公式変更公告",
+      "source_fields": "members/factors/divisor/effective date/announcement date",
+      "normalized_unit": "mixed",
+      "source_ids": [
+        "NIK_GUIDE",
+        "NIK_DATA",
+        "NIK_BULK"
+      ],
+      "source_urls": [
+        "https://indexes.nikkei.co.jp/nkave/archives/file/users_guide_jp.pdf",
+        "https://indexes.nikkei.co.jp/nkave/data/",
+        "https://needs.nikkei.co.jp/services/bulk/"
+      ],
+      "required_action": "指数変化を業績要因に解釈する際の構造変化フラグ用に確保。通常商品で10年揃うとは未確認。",
+      "pit_and_definition_caveat": "現在ウェイトで過去EPSを再構成しない。公表と適用日を区別。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "jp_market_credit",
+      "name_ja": "二市場合計・信用買残/売残（総額）",
+      "group": "信用・需給",
+      "priority": "P0",
+      "provider": "JPX + existing archive",
+      "frequency": "週次",
+      "documented_start": "既存報告2002-08-02〜",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://www.jpx.co.jp/markets/statistics-equities/margin/06.html",
+      "source_fields": "week_end/long_yen/short_yen",
+      "normalized_unit": "JPY",
+      "source_ids": [
+        "JPX_MARGIN",
+        "JPX_RELEASE"
+      ],
+      "source_urls": [
+        "https://www.jpx.co.jp/markets/statistics-equities/margin/06.html",
+        "https://www.jpx.co.jp/markets/statistics-equities/margin/07.html"
+      ],
+      "required_action": "既存2002年以降アーカイブを先に回収・ハッシュ照合し不足週のみ追補。現在13.7の実保有を確認。",
+      "pit_and_definition_caveat": "旧報告2434行=1217週×売買2系列。2434週ではない。原単位を実表で確認。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "jp_market_credit_ratio",
+      "name_ja": "二市場合計信用倍率",
+      "group": "信用・需給",
+      "priority": "P0",
+      "provider": "Derived(JPX)",
+      "frequency": "週次",
+      "documented_start": "上流に依存",
+      "research_status": "DERIVED_AFTER_INGEST",
+      "status_ja": "原データ取込後に計算",
+      "endpoint_or_download": "LOCAL: long_yen/short_yen",
+      "source_fields": "long_yen/short_yen",
+      "normalized_unit": "multiple",
+      "source_ids": [
+        "JPX_MARGIN"
+      ],
+      "source_urls": [
+        "https://www.jpx.co.jp/markets/statistics-equities/margin/06.html"
+      ],
+      "required_action": "金額同士で計算。公表後にのみ日次featureへcarry-forward。",
+      "pit_and_definition_caveat": "週次1点を営業日分に複製して生データ5点と数えない。",
+      "plan_or_entitlement": "",
+      "dependencies": [
+        "jp_market_credit"
+      ],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "stock_weekly_credit",
+      "name_ja": "1570・個別銘柄の週末信用買残/売残",
+      "group": "信用・需給",
+      "priority": "P0",
+      "provider": "J-Quants",
+      "frequency": "週次",
+      "documented_start": "2012-02-10",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.jquants.com/v2/markets/margin-interest",
+      "source_fields": "Date/Code/ShrtVol/LongVol/ShrtNegVol/LongNegVol/ShrtStdVol/LongStdVol",
+      "normalized_unit": "shares",
+      "source_ids": [
+        "JQ_MARGIN",
+        "JQ_COVER"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/mkt-margin-int",
+        "https://jpx-jquants.com/ja/spec/data-spec"
+      ],
+      "required_action": "1570と15700を正規化。code指定＋from/toでページングまたはbulkで初回全期間。",
+      "pit_and_definition_caveat": "Dateは基準日で公表日ではない。制度・一般を混同しない。金額総残とは別。",
+      "plan_or_entitlement": "Standard以上",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "leveraged_etf_credit_ratio",
+      "name_ja": "1570信用倍率",
+      "group": "信用・需給",
+      "priority": "P0",
+      "provider": "Derived(J-Quants)",
+      "frequency": "週次",
+      "documented_start": "上流に依存",
+      "research_status": "DERIVED_AFTER_INGEST",
+      "status_ja": "原データ取込後に計算",
+      "endpoint_or_download": "LOCAL: LongVol/ShrtVol",
+      "source_fields": "Code1570/15700; LongVol/ShrtVol",
+      "normalized_unit": "multiple",
+      "source_ids": [
+        "JQ_MARGIN"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/mkt-margin-int"
+      ],
+      "required_action": "売残ゼロはundefinedフラグ。比率と買残・売残の変化を併記。",
+      "pit_and_definition_caveat": "比率だけ改善した時の分母縮小と実需給改善を区別する。",
+      "plan_or_entitlement": "",
+      "dependencies": [
+        "stock_weekly_credit"
+      ],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "jsf_finance_lending",
+      "name_ja": "日証金・貸借融資/貸株残",
+      "group": "信用・需給",
+      "priority": "P1",
+      "provider": "JSF",
+      "frequency": "日次",
+      "documented_start": "公開3年",
+      "research_status": "ARCHIVE_REQUEST",
+      "status_ja": "旧履歴の供給元照会が必要",
+      "endpoint_or_download": "https://www.taisyaku.jp/",
+      "source_fields": "申込日/融資/貸株/速報確報",
+      "normalized_unit": "shares/JPY per source",
+      "source_ids": [
+        "JSF_FAQ",
+        "JSF_USAGE"
+      ],
+      "source_urls": [
+        "https://www.taisyaku.jp/about/faq/",
+        "https://www.taisyaku.jp/about/usage/"
+      ],
+      "required_action": "公開3年を保存。残り7年は保有アーカイブ/許諾ベンダーへ特定期間を照会。",
+      "pit_and_definition_caveat": "日証金の残高を市場全体信用残・JQ週末信用残へ代用しない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "jsf_reverse_fee",
+      "name_ja": "1570・個別逆日歩/品貸日数",
+      "group": "信用・需給",
+      "priority": "P1",
+      "provider": "JSF",
+      "frequency": "日次",
+      "documented_start": "公開3年",
+      "research_status": "ARCHIVE_REQUEST",
+      "status_ja": "旧履歴の供給元照会が必要",
+      "endpoint_or_download": "https://www.taisyaku.jp/about/usage/",
+      "source_fields": "申込日/品貸料率/品貸日数/対象株数/確報区分",
+      "normalized_unit": "JPY/share + days",
+      "source_ids": [
+        "JSF_FAQ",
+        "JSF_USAGE"
+      ],
+      "source_urls": [
+        "https://www.taisyaku.jp/about/faq/",
+        "https://www.taisyaku.jp/about/usage/"
+      ],
+      "required_action": "日額と合計額を区別。3年より古い原データの提供元と提供範囲を照会。",
+      "pit_and_definition_caveat": "取れない7年を0にしない。特殊記号を0にしない。週次信用APIで逆日歩は取得できない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "market_credit_pnl",
+      "name_ja": "二市場合計・信用評価損益率",
+      "group": "信用・需給",
+      "priority": "P1",
+      "provider": "Nikkei/authorized statistic vendor",
+      "frequency": "週次",
+      "documented_start": "10年連続API未確認",
+      "research_status": "ARCHIVE_REQUEST",
+      "status_ja": "旧履歴の供給元照会が必要",
+      "endpoint_or_download": "許諾元の二市場合計系列を明示して照会",
+      "source_fields": "観測週/公表日/評価損益率/母集団/計算方式",
+      "normalized_unit": "percent",
+      "source_ids": [
+        "PNL_RAKUTEN",
+        "PNL_MATSUI",
+        "NIK_BULK"
+      ],
+      "source_urls": [
+        "https://www.rakuten-sec.co.jp/smartphone/domestic/special/check/01.html",
+        "https://www.matsui.co.jp/info/netstock-info-01/",
+        "https://needs.nikkei.co.jp/services/bulk/"
+      ],
+      "required_action": "元統計の識別と10年週次原版を照会。定義が同じものだけ採用。",
+      "pit_and_definition_caveat": "松井・楽天の店内日次を市場全体として連結しない。信用残金額だけから厳密再現不可。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "foreign_cash_flow",
+      "name_ja": "海外・個人・投信・信託銀行等の現物売買",
+      "group": "信用・需給",
+      "priority": "P0",
+      "provider": "J-Quants/JPX",
+      "frequency": "週次",
+      "documented_start": "2008-01-16",
+      "research_status": "VINTAGE_PARTIAL",
+      "status_ja": "数値履歴あり／過去訂正版が不足",
+      "endpoint_or_download": "https://api.jquants.com/v2/equities/investor-types",
+      "source_fields": "PubDate/StDate/EnDate/Section/FrgnBuy/FrgnSell/FrgnBal; others",
+      "normalized_unit": "JPY (raw thousand JPY ×1000)",
+      "source_ids": [
+        "JQ_INVESTOR",
+        "JQ_COVER"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/eq-investor-types",
+        "https://jpx-jquants.com/ja/spec/data-spec"
+      ],
+      "required_action": "全対象市場区分、期間、公表日をキーに保存。旧訂正の原版はJPX保有原資料等から補完。",
+      "pit_and_definition_caveat": "from/toは公表日。2023-04-03以前公表の訂正前はAPI非提供。2022-04-04市場再編を無視しない。",
+      "plan_or_entitlement": "Standard以上",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "foreign_futures_flow",
+      "name_ja": "海外投資家・株価指数先物売買",
+      "group": "信用・需給",
+      "priority": "P1",
+      "provider": "JPX investor-type derivatives",
+      "frequency": "週次",
+      "documented_start": "対象商品別に確認",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "https://www.jpx.co.jp/markets/statistics-derivatives/sector/index.html",
+      "source_fields": "公表日/週/取引所/商品/参加者/売買差引",
+      "normalized_unit": "contract/JPY per source",
+      "source_ids": [
+        "JQ_COVER"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec"
+      ],
+      "required_action": "現物とは別の統計として商品・円換算方式・10年範囲を確認。",
+      "pit_and_definition_caveat": "JQの先物OHLCに投資家別フローが含まれるとは認定しない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "sector_short_ratio",
+      "name_ja": "33業種別空売り比率",
+      "group": "信用・需給",
+      "priority": "P1",
+      "provider": "J-Quants",
+      "frequency": "日次",
+      "documented_start": "2008-11-05",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.jquants.com/v2/markets/short-ratio",
+      "source_fields": "Date/sector/turnover fields; schema照合",
+      "normalized_unit": "percent",
+      "source_ids": [
+        "JQ_COVER",
+        "JQ_V2"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec",
+        "https://jpx-jquants.com/ja/spec"
+      ],
+      "required_action": "API/バルク仕様の内訳・代金定義を確認して取得。",
+      "pit_and_definition_caveat": "信用売残はストック、空売り比率は売買フロー。加算しない。",
+      "plan_or_entitlement": "Standard以上",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "market_short_ratio",
+      "name_ja": "市場全体・空売り比率",
+      "group": "信用・需給",
+      "priority": "P0",
+      "provider": "JPX",
+      "frequency": "日次",
+      "documented_start": "10年原資料・市場範囲確認",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "https://www.jpx.co.jp/markets/statistics-equities/short-selling/index.html",
+      "source_fields": "date/short turnover/total turnover/market basis",
+      "normalized_unit": "percent",
+      "source_ids": [
+        "JQ_COVER"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec"
+      ],
+      "required_action": "公式全体統計を取得。業種内訳からの再構成は母集団と分母が完全一致する場合だけ。",
+      "pit_and_definition_caveat": "業種比率の単純平均は禁止。分母・市場区分が異なる系列を連結しない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "short_position_reports",
+      "name_ja": "公表対象の空売り残高報告",
+      "group": "信用・需給",
+      "priority": "P1",
+      "provider": "J-Quants",
+      "frequency": "イベント",
+      "documented_start": "2013-11-07",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.jquants.com/v2/markets/short-sale-report",
+      "source_fields": "date/code/reporting entity/position; schema照合",
+      "normalized_unit": "shares/percent",
+      "source_ids": [
+        "JQ_COVER"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec"
+      ],
+      "required_action": "公表対象しきい値と変更履歴を保持。",
+      "pit_and_definition_caveat": "全空売りの残高ではない。非掲載をゼロと断定しない。",
+      "plan_or_entitlement": "Standard以上",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "daily_margin_watch",
+      "name_ja": "日々公表銘柄の信用残",
+      "group": "信用・需給",
+      "priority": "P1",
+      "provider": "J-Quants",
+      "frequency": "日次対象限定",
+      "documented_start": "2008-05-08",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.jquants.com/v2/markets/margin-alert",
+      "source_fields": "Date/Code/credit balances/reason; schema照合",
+      "normalized_unit": "shares",
+      "source_ids": [
+        "JQ_COVER"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec"
+      ],
+      "required_action": "対象銘柄に限る観測として導入。",
+      "pit_and_definition_caveat": "全銘柄の日次信用残はこのAPIでは揃わない。非対象日はmissingではなくNOT_APPLICABLE。",
+      "plan_or_entitlement": "Standard以上",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "trade_breakdown",
+      "name_ja": "現物・信用新規/返済等の売買内訳",
+      "group": "信用・需給",
+      "priority": "P1",
+      "provider": "J-Quants",
+      "frequency": "日次",
+      "documented_start": "2015-04-01",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.jquants.com/v2/markets/breakdown",
+      "source_fields": "取引日/銘柄/内訳項目; schema照合",
+      "normalized_unit": "shares/JPY",
+      "source_ids": [
+        "JQ_COVER",
+        "JQ_BULK"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec",
+        "https://jpx-jquants.com/ja/spec/bulk"
+      ],
+      "required_action": "現物・信用など内訳の定義を固定し10年取得。",
+      "pit_and_definition_caveat": "売買内訳から未観測の投資家属性や注文動機を捏造しない。",
+      "plan_or_entitlement": "Premium",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "jp_yield_curve",
+      "name_ja": "日本国債・1〜40年金利カーブ",
+      "group": "金利・為替",
+      "priority": "P0",
+      "provider": "MOF",
+      "frequency": "日次",
+      "documented_start": "履歴1974年〜（年限別差）",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://www.mof.go.jp/jgbs/reference/interest_rate/data/jgbcm_all.csv",
+      "source_fields": "日付/1,2,3,4,5,6,7,8,9,10,15,20,25,30,40年",
+      "normalized_unit": "percent",
+      "source_ids": [
+        "MOF_JGB",
+        "MOF_TIME"
+      ],
+      "source_urls": [
+        "https://www.mof.go.jp/jgbs/reference/interest_rate/index.htm",
+        "https://www.mof.go.jp/faq/jgbs/04hf.htm"
+      ],
+      "required_action": "全期間CSVを一度保存し対象年限の2/5/10/20/30/40年を検収。年限別開始日を実ファイルで確認。",
+      "pit_and_definition_caveat": "負金利を拒否しない。原則翌営業日9:30公表。観測日の日本引け判断に混入させない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "jp_overnight",
+      "name_ja": "無担保コール翌日物金利",
+      "group": "金利・為替",
+      "priority": "P0",
+      "provider": "BOJ",
+      "frequency": "日次",
+      "documented_start": "メタデータで確認",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://www.stat-search.boj.or.jp/api/v1/getDataCode",
+      "source_fields": "db=FM01; code=STRDCLUCON",
+      "normalized_unit": "percent",
+      "source_ids": [
+        "BOJ_API",
+        "BOJ_MANUAL"
+      ],
+      "source_urls": [
+        "https://www.boj.or.jp/statistics/outline/notice_2026/not260218a.htm",
+        "https://www.stat-search.boj.or.jp/info/api_manual.pdf"
+      ],
+      "required_action": "getMetadataで開始・終了を確認。YYYYMM指定・STATUS/NEXTPOSITIONを処理。",
+      "pit_and_definition_caveat": "実際の翌日物レートと金融政策の誘導目標を同一系列にしない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "jp_usdjpy_17",
+      "name_ja": "ドル円・東京17時",
+      "group": "金利・為替",
+      "priority": "P0",
+      "provider": "BOJ",
+      "frequency": "日次",
+      "documented_start": "FM08メタデータで確認",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "https://www.stat-search.boj.or.jp/api/v1/getMetadata?db=FM08&format=csv&lang=jp",
+      "source_fields": "FM08で17時・USDJPYコードを選定",
+      "normalized_unit": "JPY per USD",
+      "source_ids": [
+        "BOJ_API",
+        "BOJ_MANUAL",
+        "FRED_FX"
+      ],
+      "source_urls": [
+        "https://www.boj.or.jp/statistics/outline/notice_2026/not260218a.htm",
+        "https://www.stat-search.boj.or.jp/info/api_manual.pdf",
+        "https://fred.stlouisfed.org/series/DEXJPUS"
+      ],
+      "required_action": "公式メタデータの名称で17時コードを一意決定し日次10年取得。コードを推測しない。",
+      "pit_and_definition_caveat": "9時・17時・NY正午を混ぜない。JPY/USDとUSD/JPYの逆数に注意。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "us_yield_curve",
+      "name_ja": "米国債2/5/10/20/30年利回り",
+      "group": "金利・為替",
+      "priority": "P0",
+      "provider": "FRB/FRED",
+      "frequency": "米国日次",
+      "documented_start": "各系列メタデータ確認・長期履歴",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.stlouisfed.org/fred/series/observations",
+      "source_fields": "DGS2,DGS5,DGS10,DGS20,DGS30",
+      "normalized_unit": "percent",
+      "source_ids": [
+        "FRED_API",
+        "FRED_DGS10",
+        "FED_H15",
+        "ALFRED"
+      ],
+      "source_urls": [
+        "https://fred.stlouisfed.org/docs/api/fred/series_observations.html",
+        "https://fred.stlouisfed.org/series/DGS10",
+        "https://www.federalreserve.gov/releases/h15/",
+        "https://alfred.stlouisfed.org/help"
+      ],
+      "required_action": "系列ごとに10年＋助走を取得し欠損・年限・vintageを検収。",
+      "pit_and_definition_caveat": "公表時刻は観測日と分離。米休日、冬夏時間、欠損.の処理。実績金利と政策目標を混ぜない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "us_policy_rates",
+      "name_ja": "米政策目標レンジ・実効FF",
+      "group": "金利・為替",
+      "priority": "P0",
+      "provider": "FRB/FRED",
+      "frequency": "日次/政策イベント",
+      "documented_start": "系列メタデータ確認",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "https://api.stlouisfed.org/fred/series/observations",
+      "source_fields": "候補DFEDTARL/DFEDTARU/DFF、各メタデータ照合",
+      "normalized_unit": "percent",
+      "source_ids": [
+        "FRED_API",
+        "FED_H15"
+      ],
+      "source_urls": [
+        "https://fred.stlouisfed.org/docs/api/fred/series_observations.html",
+        "https://www.federalreserve.gov/releases/h15/"
+      ],
+      "required_action": "ターゲット上下限と実効を分離。会合発表時刻を別eventとして取得。",
+      "pit_and_definition_caveat": "目標の変更適用日とFOMC発表時刻は別。政策予想はこの実績系列から捏造しない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "jp_policy_events",
+      "name_ja": "日銀政策・YCC/付利/誘導目標変更",
+      "group": "イベント",
+      "priority": "P0",
+      "provider": "BOJ decisions",
+      "frequency": "イベント",
+      "documented_start": "公式文書10年を抽出",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "https://www.boj.or.jp/mopo/outlook/index.htm",
+      "source_fields": "政策変更/発表日時/適用日/対象/決定内容",
+      "normalized_unit": "categorical/percent",
+      "source_ids": [
+        "BOJ_API"
+      ],
+      "source_urls": [
+        "https://www.boj.or.jp/statistics/outline/notice_2026/not260218a.htm"
+      ],
+      "required_action": "金融政策決定会合公表資料の専用履歴を構築。各文書URLは取得時に検証。",
+      "pit_and_definition_caveat": "一つの政策金利数値だけでYCC・マイナス金利・解除を表現しない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "vix_ohlc",
+      "name_ja": "VIX・現物指数OHLC",
+      "group": "リスク",
+      "priority": "P0",
+      "provider": "Cboe",
+      "frequency": "米国日次",
+      "documented_start": "1990年〜",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv",
+      "source_fields": "DATE/OPEN/HIGH/LOW/CLOSE; schema照合",
+      "normalized_unit": "index_points",
+      "source_ids": [
+        "CBOE_VIX"
+      ],
+      "source_urls": [
+        "https://www.cboe.com/tradable-products/vix/vix-historical-data"
+      ],
+      "required_action": "公式全期間CSVを保存し対象10年・助走を切り出す。原データと導出MACDは別保存。",
+      "pit_and_definition_caveat": "VIX先物/VXX/VIXYで代用しない。12/26/9はARGUS候補で原典確認済みではない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "ns_nt_usd",
+      "name_ja": "NS/NT/ドル建て日経/相対強弱",
+      "group": "派生",
+      "priority": "P0",
+      "provider": "Derived",
+      "frequency": "日次as-of",
+      "documented_start": "上流に依存",
+      "research_status": "DERIVED_AFTER_INGEST",
+      "status_ja": "原データ取込後に計算",
+      "endpoint_or_download": "LOCAL: NK/SPX; NK/TOPIX; NK/USDJPY",
+      "source_fields": "最新knownAt<=cutoffの入力",
+      "normalized_unit": "ratio/index_points",
+      "source_ids": [
+        "FRED_SPX",
+        "NIK_GUIDE",
+        "BOJ_MANUAL"
+      ],
+      "source_urls": [
+        "https://fred.stlouisfed.org/series/SP500",
+        "https://indexes.nikkei.co.jp/nkave/archives/file/users_guide_jp.pdf",
+        "https://www.stat-search.boj.or.jp/info/api_manual.pdf"
+      ],
+      "required_action": "各入力のセッション・時刻を保存してas-of結合。基準比率・変化率を使い銘柄単位を保持。",
+      "pit_and_definition_caveat": "日米同じ日付で機械joinすると未来の米国終値混入。相対上昇から実際の買い戻し注文を断定しない。",
+      "plan_or_entitlement": "",
+      "dependencies": [
+        "nikkei_ohlc",
+        "sp500_close",
+        "topix_ohlc",
+        "jp_usdjpy_17"
+      ],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "yield_spreads",
+      "name_ja": "日米金利差・長短金利差",
+      "group": "派生",
+      "priority": "P0",
+      "provider": "Derived",
+      "frequency": "日次as-of",
+      "documented_start": "上流に依存",
+      "research_status": "DERIVED_AFTER_INGEST",
+      "status_ja": "原データ取込後に計算",
+      "endpoint_or_download": "LOCAL: US10-JP10; US10-US2; JP10-JP2",
+      "source_fields": "同年限・最新利用可能観測",
+      "normalized_unit": "percentage_points/bps",
+      "source_ids": [
+        "MOF_TIME",
+        "FED_H15"
+      ],
+      "source_urls": [
+        "https://www.mof.go.jp/faq/jgbs/04hf.htm",
+        "https://www.federalreserve.gov/releases/h15/"
+      ],
+      "required_action": "百分率の差を保存。bps化は×100。時刻差フラグを保持。",
+      "pit_and_definition_caveat": "1%=100bp。0.01と1.00を単位不明のまま混在させない。",
+      "plan_or_entitlement": "",
+      "dependencies": [
+        "jp_yield_curve",
+        "us_yield_curve"
+      ],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "sector_style_indices",
+      "name_ja": "日本33業種/サイズ/Value・Growth等",
+      "group": "セクター",
+      "priority": "P1",
+      "provider": "JPX/J-Quants",
+      "frequency": "日次",
+      "documented_start": "指数ごとに確認",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "https://api.jquants.com/v2/indices/bars/daily",
+      "source_fields": "正式配信コード/Date/OHLC",
+      "normalized_unit": "index_points",
+      "source_ids": [
+        "JQ_COVER"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec"
+      ],
+      "required_action": "コード一覧で各必要指数を照合。対象指数・算出開始・バックキャスト・TR/価格を個別登録。",
+      "pit_and_definition_caveat": "指数APIなら日経・すべてのスタイルがあるとは仮定しない。コード一覧は今回アクセス確認できず。",
+      "plan_or_entitlement": "Standard/Premium、指数別",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "jp_breadth",
+      "name_ja": "騰落銘柄数・騰落レシオ",
+      "group": "セクター",
+      "priority": "P1",
+      "provider": "JPX official / Derived point-in-time universe",
+      "frequency": "日次",
+      "documented_start": "母集団・履歴別",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "公式統計またはPIT銘柄マスター×日次価格",
+      "source_fields": "advance/decline/unchanged/universe",
+      "normalized_unit": "count/percent",
+      "source_ids": [
+        "JQ_COVER"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec"
+      ],
+      "required_action": "旧東証1部とPrimeを区別。5/6/10/25日レシオは原AD数を保存して計算。",
+      "pit_and_definition_caveat": "当前の生存銘柄だけの計算や、日別比率平均でレシオを代用しない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "earnings_guidance",
+      "name_ja": "個別決算・会社予想・変更履歴",
+      "group": "決算・反応",
+      "priority": "P0",
+      "provider": "J-Quants",
+      "frequency": "開示イベント",
+      "documented_start": "2008-07-07",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.jquants.com/v2/fins/summary",
+      "source_fields": "DiscDate/DiscTime/DiscNo/Code/DocType/financials/guidance",
+      "normalized_unit": "JPY/per_share/percent",
+      "source_ids": [
+        "JQ_FIN",
+        "JQ_COVER"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/fin-summary",
+        "https://jpx-jquants.com/ja/spec/data-spec"
+      ],
+      "required_action": "公表時刻で版管理、決算前に公表された会社予想と比較。価格反応1/3/5日を未来ラベルとして分離。",
+      "pit_and_definition_caveat": "会社予想≠アナリストコンセンサス≠日経集計予想。最新版を過去へ上書きしない。",
+      "plan_or_entitlement": "Standard以上",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "consensus_history",
+      "name_ja": "決算・マクロ事前コンセンサス",
+      "group": "決算・反応",
+      "priority": "P1",
+      "provider": "authorized consensus vendor",
+      "frequency": "イベント/改定",
+      "documented_start": "供給元・契約確認",
+      "research_status": "ARCHIVE_REQUEST",
+      "status_ja": "旧履歴の供給元照会が必要",
+      "endpoint_or_download": "既存契約ベンダーの時点別履歴",
+      "source_fields": "event/forecast_at/median/actual/revision/sample",
+      "normalized_unit": "per metric",
+      "source_ids": [
+        "JQ_FIN"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/fin-summary"
+      ],
+      "required_action": "10年の時点別予想・実績・訂正履歴を確保。取得できなければサプライズ分析の未観測を維持。",
+      "pit_and_definition_caveat": "前年比増益を予想超過と呼ばない。最新コンセンサスや後日改定実績を発表時サプライズに使わない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "earnings_dates",
+      "name_ja": "決算予定・実発表日時",
+      "group": "イベント",
+      "priority": "P0",
+      "provider": "J-Quants",
+      "frequency": "イベント",
+      "documented_start": "2014-09-01",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.jquants.com/v2/fins/earnings-date",
+      "source_fields": "予定公表版/銘柄/予定日; 実日程はDiscDate/Time",
+      "normalized_unit": "date/time",
+      "source_ids": [
+        "JQ_COVER",
+        "JQ_FIN"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec",
+        "https://jpx-jquants.com/ja/spec/fin-summary"
+      ],
+      "required_action": "過去履歴ありの新エンドポイントを使用し仕様の公表時刻を照合。",
+      "pit_and_definition_caveat": "旧equities/earnings-calendarは直近のみ。過去予定が当時判明していたかを別管理。",
+      "plan_or_entitlement": "Standard以上",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "dividend_events",
+      "name_ja": "権利落ち・配当・権利付最終",
+      "group": "イベント",
+      "priority": "P1",
+      "provider": "J-Quants",
+      "frequency": "イベント",
+      "documented_start": "2013-02-20",
+      "research_status": "DOC_CONFIRMED",
+      "status_ja": "取得仕様確認済み（実データ未検収）",
+      "endpoint_or_download": "https://api.jquants.com/v2/fins/dividend",
+      "source_fields": "基準日/落日/配当額/公表日/訂正; schema照合",
+      "normalized_unit": "JPY/share/date",
+      "source_ids": [
+        "JQ_COVER"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec"
+      ],
+      "required_action": "実カレンダーと公表履歴で配当イベントまでの営業日数を作る。",
+      "pit_and_definition_caveat": "9月末をすべての銘柄に固定しない。後日確定配当額を当時の予想として使わない。",
+      "plan_or_entitlement": "Premium",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "market_calendar_sq",
+      "name_ja": "日本/米国取引暦・SQ/FOMC等",
+      "group": "イベント",
+      "priority": "P0",
+      "provider": "JPX + exchanges + FRB",
+      "frequency": "calendar/event",
+      "documented_start": "JPX2008-01-01、他別確認",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "https://api.jquants.com/v2/markets/calendar",
+      "source_fields": "Date/HolDiv + official event announcements",
+      "normalized_unit": "date/time",
+      "source_ids": [
+        "JQ_COVER",
+        "FED_H15"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec",
+        "https://www.federalreserve.gov/releases/h15/"
+      ],
+      "required_action": "日本カレンダー、米国休場、SQ、FOMC、BOJを別ソースで作成。変更は版保持。",
+      "pit_and_definition_caveat": "イベント日だけで結果や市場予想を補完しない。JPX暦は米国暦の代用ではない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "oil_spot_futures",
+      "name_ja": "WTI/Brent原油・スポット/先物",
+      "group": "周辺監視",
+      "priority": "P2",
+      "provider": "EIA + futures provider",
+      "frequency": "日次",
+      "documented_start": "系列ごとに確認",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "https://www.eia.gov/opendata/",
+      "source_fields": "スポットor先物/通貨/期近/ロール規則",
+      "normalized_unit": "USD/barrel",
+      "source_ids": [
+        "EIA_API"
+      ],
+      "source_urls": [
+        "https://www.eia.gov/opendata/"
+      ],
+      "required_action": "用途を決めシリーズを登録。動画の先物と現物スポットは別。10年連続・利用条件確認。",
+      "pit_and_definition_caveat": "先物限月交代やマイナス価格の処理。スポットを期近先物として接続しない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    },
+    {
+      "id": "global_style_context",
+      "name_ja": "米セクター/SOX/世界指数/金・暗号等",
+      "group": "周辺監視",
+      "priority": "P2",
+      "provider": "respective index owners / authorised feeds",
+      "frequency": "日次",
+      "documented_start": "系列ごとに確認",
+      "research_status": "MAPPING_REQUIRED",
+      "status_ja": "系列・範囲の追加確認が必要",
+      "endpoint_or_download": "13.7の実required-featuresから個別登録",
+      "source_fields": "index/product identity/calendar/price-vs-TR",
+      "normalized_unit": "per metric",
+      "source_ids": [
+        "JQ_COVER",
+        "FRED_API",
+        "EIA_API"
+      ],
+      "source_urls": [
+        "https://jpx-jquants.com/ja/spec/data-spec",
+        "https://fred.stlouisfed.org/docs/api/fred/series_observations.html",
+        "https://www.eia.gov/opendata/"
+      ],
+      "required_action": "「全指標」の対象一覧を実コードと突合。ここは未展開グループであり全指標搭載済みとは呼ばない。",
+      "pit_and_definition_caveat": "このグループ1行を個々の未登録系列の検収の代用にしない。",
+      "plan_or_entitlement": "",
+      "dependencies": [],
+      "period_target": {
+        "from": "2016-09-20",
+        "through": "2026-09-18",
+        "warmup": "2015-09-01 or earlier if feature window requires"
+      },
+      "actual_download_verified": false,
+      "production_loaded_verified": false,
+      "complete_10y": false
+    }
+  ]
+}

@@ -1,0 +1,270 @@
+import copy
+import json
+from concurrent.futures import ThreadPoolExecutor
+import pytest
+
+import argus_analysis_history as history
+import argus_market_brief as composer
+import scanner
+
+
+def brief(at='2026-09-13T00:00:00Z', material='VIX 20を観測'):
+    item = composer.compose_brief(now_iso=at)
+    item['facts'] = [{'text': material, 'source': 'official_sensor', 'priority': 'P1', 'verification': 'VERIFIED'}]
+    context = composer.unified_context(item)
+    ref = context['facts'][0]['evidenceId']
+    raw = {key: {'textJa': '市場の反応を確認します。', 'evidenceIds': [ref], 'kind': 'INFERENCE'} for key in composer.UNIFIED_SECTIONS}
+    for key in ('impact', 'changes'): raw[key] = {'textJa':'未確認です。','evidenceIds':[],'kind':'UNKNOWN'}
+    item.update(unifiedContext=context, unifiedSummary=composer.validate_unified_ai(raw, context),
+                unifiedStatus='GENERATED', aiDiagnostics={'completedAt':at, 'requestedModel':'gpt-6-astra', 'returnedModel':'gpt-6-astra'},
+                aiText={'nowJa':'市場の反応を確認します。','whyJa':'需給の変化を確認します。','nextJa':'価格の反応を確認します。'})
+    return item
+
+
+def test_input_update_keeps_original_explanation_and_calculation(tmp_path):
+    path = tmp_path/'history.sqlite'; history.initialize(path)
+    first = history.make_record(brief(), {'5': {'epsInput': 3000, 'forecastLine': [100, 101]}})
+    second = history.make_record(brief('2026-09-14T00:00:00Z', 'VIX 21を観測'), {'5': {'epsInput':3100,'forecastLine':[100,102]}})
+    assert history.append(path, first)['inserted']
+    assert history.append(path, second)['inserted']
+    assert history.read_record(path, first['recordId']) == first
+    assert history.read_record(path) == second
+    assert first['inputSnapshotDigest'] != second['inputSnapshotDigest']
+    assert history.read_record(path, first['recordId'])['calculations']['5']['epsInput'] == 3000
+    assert not history.append(path, first)['inserted']
+    page = history.read_page(path,limit=1)
+    assert page['hasMore'] and page['rows'][0]['recordId'] == second['recordId']
+    assert history.read_page(path,before_sequence=page['nextBeforeSequence'])['rows'][0]['recordId'] == first['recordId']
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_record_does_not_alias_mutable_inputs_or_admit_changed_old_values(tmp_path):
+    b = brief(); calc = {'5':{'epsInput':3000}}
+    row = history.make_record(b,calc); calc['5']['epsInput']=9999; b['facts'][0]['text']='changed'
+    assert row['calculations']['5']['epsInput']==3000
+    changed = copy.deepcopy(row); changed['calculations']['5']['epsInput']=9999
+    with pytest.raises(ValueError): history.validate_record(changed)
+    path=tmp_path/'history.sqlite'; history.initialize(path); history.append(path,row)
+    with pytest.raises(ValueError): history.append(path,changed)
+    assert history.read_record(path)==row
+
+
+def test_read_missing_storage_does_not_initialize_it(tmp_path):
+    path=tmp_path/'missing.sqlite'
+    with pytest.raises(FileNotFoundError): history.read_page(path)
+    assert not path.exists()
+
+
+def test_concurrent_first_writes_keep_each_distinct_record(tmp_path):
+    path=tmp_path/'history.sqlite'
+    def add(day):
+        history.initialize(path)
+        return history.append(path,history.make_record(brief(f'2026-09-{day:02d}T00:00:00Z'),{}))
+    with ThreadPoolExecutor(max_workers=4) as pool: list(pool.map(add,range(13,17)))
+    assert len(history.read_page(path)['rows'])==4
+
+
+@pytest.mark.parametrize('field,value', [('unifiedStatus','INVALID_RESPONSE'),('sdaAuthority',True)])
+def test_only_accepted_non_authoritative_views_are_recorded(field,value):
+    b=brief(); b[field]=value
+    with pytest.raises(ValueError): history.make_record(b,{})
+
+
+def test_public_history_does_not_accept_private_owner_context():
+    b=brief(); b['unifiedContext']['ownerContextAvailable']=True
+    with pytest.raises(ValueError): history.make_record(b,{})
+
+
+def test_worker_restart_restores_previous_inputs_and_history_read_is_readonly(tmp_path,monkeypatch):
+    path=tmp_path/'history.sqlite'; monkeypatch.setattr(scanner,'_market_brief_history_path',lambda:str(path))
+    original=brief(); original['calculationSnapshots']={'5':{'epsInput':3000}}
+    scanner._market_brief_history_save(original)
+    assert original['analysisHistory']['status']=='LOCAL_DURABLE'
+    state={};monkeypatch.setattr(scanner,'_MARKET_BRIEF',state)
+    scanner._market_brief_history_restore()
+    assert state['lastSuccessful']['unifiedContext']==original['unifiedContext']
+    assert state['lastSuccessful']['calculationSnapshots']==original['calculationSnapshots']
+    def forbidden(*args,**kwargs):raise AssertionError('public request must not write or call AI')
+    monkeypatch.setattr(history,'initialize',forbidden);monkeypatch.setattr(history,'append',forbidden)
+    monkeypatch.setattr(scanner,'_openai_prose',forbidden)
+    with scanner.app.test_request_context('/api/argus/market-brief?history=1'):
+        result=scanner.api_argus_market_brief().get_json()
+    assert result['rows'][0]['recordId']==original['analysisHistory']['recordId']
+    assert result['remoteRecoveryVerified'] is False
+
+
+def test_missing_history_does_not_destroy_current_view_and_reports_save_failure(tmp_path,monkeypatch):
+    monkeypatch.setattr(scanner,'_market_brief_history_path',lambda:str(tmp_path/'absent'/'history.sqlite'))
+    b=brief(); scanner._market_brief_history_save(b)
+    assert b['unifiedStatus']=='GENERATED' and b['analysisHistory']['status']=='SAVE_FAILED'
+
+
+def test_later_result_is_appended_and_wrong_session_or_preissue_data_cannot_score(tmp_path):
+    b=brief('2026-09-13T00:00:00Z')
+    calculation={'comparison':{'schemaVersion':'jp-market-comparison-v1','anchorDate':'2026-09-11',
+        'actualAnchorPrice':100,'unit':'ANCHOR_100','forecast':{'horizonSessions':1,
+        'line':[{'offsetSessions':1,'value':102}],'flatThresholdPct':1,'validationStatus':'UNVALIDATED'}}}
+    record=history.make_record(b,{'1':calculation})
+    path=tmp_path/'history.sqlite';history.initialize(path);history.append(path,record)
+    assert history.outcome_candidates(record,[{'date':'2026-09-14','close':98}],received_at='2026-09-14T06:00:00Z')==[]
+    assert history.outcome_candidates(record,[{'date':'2026-09-15','close':98}],received_at='2026-09-15T07:00:00Z')==[]
+    result=history.outcome_candidates(record,[{'date':'2026-09-14','close':98}],received_at='2026-09-14T07:00:00Z')
+    assert result[0]['actualClass']=='down' and result[0]['forecastValue']==102
+    assert result[0]['comparisonUnit']=='ANCHOR_100' and result[0]['actualComparisonValue']==98
+    assert history.append_outcomes(path,result)==1
+    assert history.append_outcomes(path,history.outcome_candidates(record,[{'date':'2026-09-14','close':98}],received_at='2026-09-15T07:00:00Z'))==0
+    corrected=history.outcome_candidates(record,[{'date':'2026-09-14','close':97}],received_at='2026-09-16T07:00:00Z')
+    assert history.append_outcomes(path,corrected)==1
+    assert len(history.read_outcomes(path,record['recordId']))==2
+    assert history.read_record(path,record['recordId'])==record
+    after_close=history.make_record(brief('2026-09-14T08:00:00Z'),{'1':calculation})
+    assert history.outcome_candidates(after_close,[{'date':'2026-09-14','close':98}],received_at='2026-09-15T07:00:00Z')==[]
+
+
+def test_recovered_history_invalidates_startup_cache_without_ai_or_data_fetch(tmp_path,monkeypatch):
+    path=tmp_path/'history.sqlite'
+    monkeypatch.setattr(scanner,'_market_brief_history_path',lambda:str(path))
+    saved=brief(); saved['calculationSnapshots']={'5':{'epsInput':3000}}
+    scanner._market_brief_history_save(saved)
+    cached={'unifiedStatus':'AWAITING_AI','calculationSnapshots':{}}
+    state={'data':cached,'composedAt':scanner.time.time()}
+    monkeypatch.setattr(scanner,'_MARKET_BRIEF',state)
+    scanner._market_brief_history_restore()
+    assert state['composedAt']==0 and state['data'] is cached
+    def forbidden(*args,**kwargs):raise AssertionError('read must not generate or acquire')
+    monkeypatch.setattr(scanner,'_openai_prose',forbidden)
+    monkeypatch.setattr(scanner,'_jp_market_comparison_cached',forbidden)
+    monkeypatch.setattr(scanner,'_jp_market_internals_cached',forbidden)
+    monkeypatch.setattr(scanner,'_compose_market_brief',lambda:composer.compose_brief(now_iso='2026-09-14T00:00:00Z'))
+    with scanner.app.test_request_context('/api/argus/market-brief'):
+        received=scanner.api_argus_market_brief().get_json()
+    assert received['retainedPresentation']['calculationSnapshots']['5']['epsInput']==3000
+    assert received['calculationSnapshots']=={}, 'saved prose must not borrow pending calculations'
+    assert received['lastSuccessfulAiAt']==saved['aiDiagnostics']['completedAt']
+    assert state['composedAt']==0 and state['data'] is cached, 'reading does not recompose the cache'
+    assert history.read_record(path,saved['analysisHistory']['recordId'])['calculations']['5']['epsInput']==3000
+
+
+def test_verified_remote_head_survives_a_restart_and_skips_the_full_restore(tmp_path, monkeypatch):
+    """The first synchronisation of a process used to pass last_verified_head=None
+    and restore the whole remote archive; the head is now read back from a
+    sidecar beside the local file."""
+    import argus_analysis_history_backup as backup
+    path = tmp_path / 'history.sqlite'
+    history.initialize(str(path))
+    monkeypatch.setattr(scanner, '_market_brief_history_path', lambda: str(path))
+    monkeypatch.setenv('ARGUS_LAYER2B_PRIVATE_REPO', 'owner/private-history')
+    monkeypatch.setenv('ARGUS_LAYER2B_PRIVATE_TOKEN', 'test-only-token')
+    monkeypatch.setattr(scanner, '_gh_private_headers', lambda: {})
+    monkeypatch.setattr(backup, 'GitHubStore', lambda **kwargs: object())
+    seen = []
+
+    def fake_sync(local_path, remote, *, last_verified_head=None):
+        seen.append(last_verified_head)
+        return {'status': 'VERIFIED', 'headVersion': 'sha-v1', 'latestRecordId': 'a' * 64,
+                'archiveSha256': 'b' * 64, 'counts': {'views': 3, 'outcomes': 0},
+                'restoredCounts': None if last_verified_head == 'sha-v1' else {'views': 3, 'outcomes': 0}}
+    monkeypatch.setattr(backup, 'synchronize', fake_sync)
+    fresh = lambda: {"status": "NOT_RUN", "lastVerifiedAt": None, "lastAttemptAt": None, "headVersion": None}
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF_HISTORY_REMOTE', fresh())
+    scanner._market_brief_history_sync()
+    assert seen == [None]
+    assert scanner._MARKET_BRIEF_HISTORY_REMOTE['status'] == 'VERIFIED'
+    assert (tmp_path / 'history.sqlite.head.json').is_file()
+    # A restart: the in-memory state is gone, the files are not.
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF_HISTORY_REMOTE', fresh())
+    scanner._market_brief_history_sync()
+    assert seen == [None, 'sha-v1']
+    assert scanner._MARKET_BRIEF_HISTORY_REMOTE['restoredCounts'] is None
+    # Without the local file the sidecar is not trusted and a restore happens.
+    path.unlink()
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF_HISTORY_REMOTE', fresh())
+    scanner._market_brief_history_sync()
+    assert seen[-1] is None
+    status = scanner._market_brief_history_remote_status()
+    assert 'headVersion' not in status and 'test-only-token' not in json.dumps(status)
+
+
+def test_outcome_walk_reads_the_index_without_parsing_page_bodies(tmp_path, monkeypatch):
+    path = tmp_path/'history.sqlite'
+    monkeypatch.setattr(scanner, '_market_brief_history_path', lambda: str(path))
+    for n in range(3):
+        saved = brief(); saved['generatedAt'] = f'2026-09-1{n}T00:00:00Z'
+        saved['calculationSnapshots'] = {'5': {'epsInput': 3000 + n}}
+        scanner._market_brief_history_save(saved)
+    page = history.read_page_index(str(path), limit=2)
+    assert [set(r) for r in page['rows']] == [{'sequence', 'recordId'}] * 2 and page['hasMore'] is True
+    calls = []
+    real = history.read_record
+    monkeypatch.setattr(history, 'read_record', lambda *a, **k: (calls.append(a), real(*a, **k))[1])
+    monkeypatch.setattr(history, 'read_page', lambda *a, **k: (_ for _ in ()).throw(AssertionError('full page must not be read')))
+    monkeypatch.setattr(scanner, '_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE', {'^N225': {'acquiredAt': '2026-09-20T00:00:00Z', 'data': []}})
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', {'outcomeBeforeSequence': None})
+    scanner._market_brief_history_outcomes()
+    assert len(calls) == 3 and scanner._MARKET_BRIEF.get('outcomeError') is None
+
+
+def _one_day(anchor, value):
+    return {'1': {'comparison': {'schemaVersion': 'jp-market-comparison-v1', 'anchorDate': anchor,
+        'actualAnchorPrice': 100, 'unit': 'ANCHOR_100', 'forecast': {'horizonSessions': 1,
+        'line': [{'offsetSessions': 1, 'value': value}], 'flatThresholdPct': 0.5, 'validationStatus': 'UNVALIDATED'}}}}
+
+
+def _issue(path, at, anchor, value, closes, received):
+    record = history.make_record(brief(at), _one_day(anchor, value))
+    history.append(path, record)
+    history.append_outcomes(path, history.outcome_candidates(record, closes, received_at=received))
+    return record
+
+
+def test_track_record_counts_the_first_forecast_issued_before_the_session_it_is_scored_on(tmp_path):
+    path = tmp_path/'history.sqlite'; history.initialize(path)
+    # Anchor Fri 9/11, scored on Mon 9/14: the weekend view counts, the later rewrite of the same anchor does not.
+    _issue(path, '2026-09-13T00:00:00Z', '2026-09-11', 102, [{'date':'2026-09-14','close':98}], '2026-09-14T07:00:00Z')
+    _issue(path, '2026-09-13T05:00:00Z', '2026-09-11', 97, [{'date':'2026-09-14','close':98}], '2026-09-14T07:00:00Z')
+    # Issued at 10:00 JST on Tue 9/15 after the session it is scored on had opened: never counted.
+    _issue(path, '2026-09-15T01:00:00Z', '2026-09-14', 103, [{'date':'2026-09-15','close':104}], '2026-09-15T07:00:00Z')
+    result = history.track_record(path)
+    one = result['horizons']['1']
+    assert one['scoredForecasts'] == 1 and one['directionalForecasts'] == 1 and one['hits'] == 0
+    assert one['status'] == 'INSUFFICIENT_SAMPLE' and one['naiveMajorityRate'] == 1.0
+    assert result['predictiveProbabilities'] is None and result['actionAuthority'] is False
+    assert result['horizons']['5']['directionalForecasts'] == 0 and result['horizons']['5']['hitRate'] is None
+
+
+def test_track_record_uses_the_corrected_close_and_needs_the_lower_bound_above_the_naive_rate(tmp_path, monkeypatch):
+    path = tmp_path/'history.sqlite'; history.initialize(path)
+    record = _issue(path, '2026-09-13T00:00:00Z', '2026-09-11', 102, [{'date':'2026-09-14','close':98}], '2026-09-14T07:00:00Z')
+    history.append_outcomes(path, history.outcome_candidates(record, [{'date':'2026-09-14','close':103}], received_at='2026-09-16T07:00:00Z'))
+    monkeypatch.setattr(history, 'TRACK_RECORD_MINIMUM', 1)
+    one = history.track_record(path)['horizons']['1']
+    assert one['hits'] == 1 and one['hitRate'] == 1.0
+    assert one['hitRateWilsonLower95'] < one['naiveMajorityRate'] and one['status'] == 'NOT_ABOVE_BASELINE'
+
+
+def test_flat_forecasts_are_scored_but_not_counted_as_direction_calls(tmp_path):
+    path = tmp_path/'history.sqlite'; history.initialize(path)
+    _issue(path, '2026-09-13T00:00:00Z', '2026-09-11', 100.2, [{'date':'2026-09-14','close':103}], '2026-09-14T07:00:00Z')
+    one = history.track_record(path)['horizons']['1']
+    assert one['scoredForecasts'] == 1 and one['directionalForecasts'] == 0 and one['status'] == 'INSUFFICIENT_SAMPLE'
+
+
+
+def test_position_snapshot_survives_history_and_restart_without_rewriting_old_records(tmp_path,monkeypatch):
+    import argus_market_position_memory as memory
+    path=tmp_path/'history.sqlite';history.initialize(path)
+    old=history.make_record(brief(),{});history.append(path,old)
+    b=brief('2026-10-15T02:00:00Z');m=memory.empty();memory.ingest_news(m,[
+        {'eventId':'synthetic','severity':'HIGH','eventType':'INFLATION','headlineJa':'CPI関連報道',
+        'sourceReceivedAt':'2026-10-14T13:00:00Z'}])
+    b['marketPosition']=memory.snapshot(m,now_iso=b['generatedAt'])
+    b['marketPosition']['privateUnregistered']='must-not-serialize'
+    record=history.make_record(b,{});history.append(path,record)
+    assert record['brief']['marketPosition']['entryCount']==1
+    assert 'privateUnregistered' not in record['brief']['marketPosition']
+    assert history.read_record(path,old['recordId'])==old
+    assert history.read_record(path)==record
+    monkeypatch.setattr(scanner,'_market_brief_history_path',lambda:str(path))
+    state={};monkeypatch.setattr(scanner,'_MARKET_BRIEF',state)
+    scanner._market_brief_history_restore()
+    assert state['lastSuccessful']['marketPosition']==record['brief']['marketPosition']

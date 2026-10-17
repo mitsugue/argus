@@ -1,0 +1,463 @@
+import csv
+import hashlib
+import io
+import json
+from pathlib import Path
+
+import pytest
+
+import jp_market_acquisition as m
+import jp_market_features as features
+import jp_market_valuation as valuation
+
+AT = '2026-09-20T02:00:00Z'
+LATER = '2026-09-21T02:00:00Z'
+
+
+def mof(value='-0.1', day='R8.9.17'):
+    header = ['基準日'] + [str(n) + '年' for n in (*range(1, 11), 15, 20, 25, 30, 40)]
+    return ('国債金利情報,,,,,,,,,,,,,,,(単位 : %)\n' + ','.join(header) + '\n' +
+            ','.join([day] + [value] * 15) + '\n' + ',' * 15 + '\n').encode('cp932')
+
+
+def vix(close='15.0'):
+    return ('DATE,OPEN,HIGH,LOW,CLOSE\n09/18/2026,15,18,12,' + close + '\n').encode()
+
+
+def test_native_units_missing_and_negative_rates():
+    row = m.parse(mof(), url=m.MOF_HISTORY, received_at=AT)[0]
+    assert row['values']['10'] == -.1 and row['unit'] == 'PERCENT'
+    assert m.parse(mof('-'), url=m.MOF_HISTORY, received_at=AT)[0]['values']['10'] is None
+    assert m.feature_rows([dict(row, knownAt=AT)], 'jp_yield_curve')[0]['value'] == -.1
+
+
+@pytest.mark.parametrize('raw,url', [(mof('nan'), m.MOF_HISTORY), (mof(day='H31.5.1'), m.MOF_CURRENT),
+                                   (vix('19'), m.VIX_HISTORY), (vix() + vix().split(b'\n')[1], m.VIX_HISTORY)])
+def test_invalid_data_rejected(raw, url):
+    with pytest.raises(ValueError): m.parse(raw, url=url, received_at=AT)
+
+
+def test_vintages_restart_idempotence_and_original_retained(tmp_path):
+    path = tmp_path/'source.sqlite3'; db = m.connect(path)
+    first = m.ingest(db, mof(), url=m.MOF_CURRENT, received_at=AT)
+    assert first['changedObservations'] == 1
+    assert m.ingest(db, mof(), url=m.MOF_CURRENT, received_at=LATER)['changedObservations'] == 0
+    assert m.ingest(db, mof('.2'), url=m.MOF_CURRENT, received_at=LATER)['changedObservations'] == 1
+    assert db.execute('SELECT count(*) FROM observations').fetchone()[0] == 2
+    db.close(); db = m.connect(path); m.verify_raw(db)
+    row = m.latest_rows(db, 'jp_yield_curve')[0]
+    assert row['revision'] == 1 and row['values']['10'] == .2
+    assert row['supersedesRawId'] == first['rawId']
+    assert row['knownAt'] == LATER and row['publishedAt'] is None
+    assert not row['historicalVintageVerified']
+    history = m.history_rows(db, 'jp_yield_curve')
+    assert [item['revision'] for item in history] == [0, 1]
+    features = m.feature_rows(history, 'jp_yield_curve')
+    assert [item['value'] for item in features] == [-.1, .2]
+    # 2026-09-30: the original observation is dated from the publisher's
+    # schedule (the next calendar day), the correction from its receipt; the
+    # receipt stays on both rows and the raw store is untouched.
+    assert [item['knownAt'] for item in features] == ['2026-09-18T00:00:00Z', LATER]
+    assert [item['availableFrom'] for item in features] == ['2026-09-18T00:00:00Z', LATER]
+    assert [item['receivedAt'] for item in features] == [AT, LATER]
+    assert [item['availabilityBasis'] for item in features] == ['SCHEDULED_PUBLICATION', 'UNKNOWN']
+    assert [item['knownAt'] for item in history] == [AT, LATER]
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_source_cache_keeps_revision_as_an_appended_feature_input(tmp_path):
+    path = tmp_path/'source.sqlite3'; current = {'rate': '-0.1'}
+    def get(url, **kwargs):
+        raw = vix() if url == m.VIX_HISTORY else mof(current['rate'])
+        return Response(raw)
+    first = m.SourceCache(); first.warm(path, get=get, now=lambda: AT)
+    original = list(first.rows['jp_yield_curve'])
+    current['rate'] = '.2'
+    revised = m.SourceCache(); revised.warm(path, get=get, now=lambda: LATER)
+    assert revised.rows['jp_yield_curve'][:len(original)] == original
+    assert revised.rows['jp_yield_curve'][-1]['revision'] == 1
+    assert revised.rows['jp_yield_curve'][-1]['knownAt'] == LATER
+    before = features.build_feature_history(
+        cutoffs=[AT], price_series={'jp10y': original})
+    before['status'] = 'AVAILABLE'
+    after = features.build_feature_history(
+        cutoffs=[AT, LATER], previous_history=before,
+        price_series={'jp10y': revised.rows['jp_yield_curve']})
+    assert after['calculationWork'] == {'reusedCutoffs': 1, 'evaluatedCutoffs': 1}
+    assert after['reuseDecision'] == {
+        'reason': 'unchanged_source_prefix', 'source': None}
+
+
+def test_corrupt_normalized_data_detected_from_raw(tmp_path):
+    db = m.connect(tmp_path/'source.sqlite3')
+    m.ingest(db, mof(), url=m.MOF_CURRENT, received_at=AT)
+    db.execute("UPDATE observations SET body=replace(body,'-0.1','1.0')")
+    db.commit()
+    with pytest.raises(ValueError, match='normalized_integrity'): m.verify_raw(db)
+
+
+def test_raw_verifier_accepts_integrity_checked_record_owned_by_shared_adapter(tmp_path):
+    db = m.connect(tmp_path/'source.sqlite3')
+    m.ingest(db, mof(), url=m.MOF_CURRENT, received_at=AT)
+    url = 'https://api.jquants.com/v2/markets/margin-interest'
+    raw = b'{"data":[]}'
+    digest = hashlib.sha256(raw).hexdigest()
+    raw_id = hashlib.sha256((url + ':' + digest).encode()).hexdigest()
+    db.execute('INSERT INTO raw_sources VALUES(?,?,?,?,?)',
+               (raw_id, url, digest, AT, raw))
+    db.commit()
+
+    m.verify_raw(db)
+    db.execute('UPDATE raw_sources SET sha256=? WHERE id=?', ('0' * 64, raw_id))
+    db.commit()
+    with pytest.raises(ValueError, match='source_raw_integrity'):
+        m.verify_raw(db)
+
+
+class Response:
+    def __init__(self, raw, status=200): self.raw = raw; self.status_code = status
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def iter_content(self, _): yield self.raw
+
+
+def test_bootstrap_once_then_only_small_current_month_and_read_without_io(tmp_path):
+    path = tmp_path/'source.sqlite3'; calls = []
+    def get(url, **kwargs):
+        calls.append(url)
+        assert kwargs['allow_redirects'] is False
+        return Response(vix() if url == m.VIX_HISTORY else mof())
+    cache = m.SourceCache(); cache.warm(path, get=get, now=lambda: AT)
+    assert calls == [m.MOF_HISTORY, m.VIX_HISTORY, m.MOF_CURRENT]
+    assert cache.status['status'] == 'AVAILABLE'
+    snapshot = cache.snapshot(); snapshot['sources'].clear()
+    assert cache.snapshot()['sources']
+    restored = m.SourceCache(); restored.warm(path, get=get, now=lambda: AT)
+    assert len(calls) == 3 and restored.rows == cache.rows
+    restored.next_attempt = 0; restored.warm(path, get=get, now=lambda: LATER)
+    assert calls == [m.MOF_HISTORY, m.VIX_HISTORY, m.MOF_CURRENT, m.MOF_CURRENT]
+    assert restored.status['automaticAiCalls'] == 0
+
+
+def test_denied_no_retry_on_same_day_even_restart(tmp_path):
+    path = tmp_path/'source.sqlite3'; calls = []
+    def get(url, **kw): calls.append(url); return Response(b'', 403)
+    cache = m.SourceCache(); cache.warm(path, get=get, now=lambda: AT)
+    assert len(calls) == 3 and cache.status['status'] == 'PARTIAL'
+    m.SourceCache().warm(path, get=get, now=lambda: AT)
+    assert len(calls) == 3
+
+
+def test_download_does_not_rewrite_historical_features(tmp_path):
+    """Originals follow the publisher's schedule (2026-09-30), so a cutoff
+    after the scheduled day sees them; a correction downloaded later is
+    available from its receipt only and never rewrites what an earlier
+    cutoff saw."""
+    db = m.connect(tmp_path/'source.sqlite3')
+    for day in range(10, 18):
+        m.ingest(db, mof(str(day/100), 'R8.9.'+str(day)), url=m.MOF_CURRENT, received_at=AT)
+    rates = m.feature_rows(m.latest_rows(db, 'jp_yield_curve'), 'jp_yield_curve')
+    # At 09-15 00:00Z only 09-10..09-14 are scheduled available: five rows, no five-day change yet.
+    before_schedule = features.build_market_features(cutoff='2026-09-15T00:00:00Z', price_series={'jp10y': rates})
+    assert 'rate.jp10y_change5' in before_schedule['missingFeatures']
+    early = features.build_market_features(cutoff='2026-09-18T00:00:00Z', price_series={'jp10y': rates})
+    row = next(r for r in early['features'] if r['seriesId'] == 'rate.jp10y_change5')
+    assert row['value'] == pytest.approx(.05)
+    assert row['unit'] == 'PERCENTAGE_POINTS' and not early['actionAuthority']
+    # A correction of 09-17 received at LATER: the 09-18 cutoff keeps .17.
+    m.ingest(db, mof('0.99', 'R8.9.17'), url=m.MOF_CURRENT, received_at=LATER)
+    revised = m.feature_rows(m.history_rows(db, 'jp_yield_curve'), 'jp_yield_curve')
+    early_again = features.build_market_features(cutoff='2026-09-18T00:00:00Z', price_series={'jp10y': revised})
+    assert next(r for r in early_again['features'] if r['seriesId'] == 'rate.jp10y_change5')['value'] == pytest.approx(.05)
+    after = features.build_market_features(cutoff=LATER, price_series={'jp10y': revised})
+    assert next(r for r in after['features'] if r['seriesId'] == 'rate.jp10y_change5')['value'] == pytest.approx(.99 - .12)
+
+
+def test_overlap_does_not_invent_cross_provider_revision():
+    legacy = [{'date':'2026-09-18', 'value':15, 'instrumentId':'VIX', 'availableFrom':AT}]
+    official = [{'date':'2026-09-18', 'value':16, 'instrumentId':'VIX', 'availableFrom':LATER}]
+    assert m.merge_feature_sources(legacy, official) == [dict(legacy[0], seriesId='close')]
+
+
+def export(per='20', basis='INDEX_WEIGHT_BASIS'):
+    text = io.StringIO(); writer = csv.writer(text)
+    writer.writerow(['date','nikkei_close','index_per','per_basis','source_url','source_sha256'])
+    writer.writerow(['2026-09-18','40000',per,basis,valuation.SOURCE,'a'*64])
+    return text.getvalue().encode()
+
+
+def test_export_uses_existing_vintage_store_without_claiming_original_pit(tmp_path):
+    rows = valuation.parse_export(export(), received_at=AT)
+    row = rows[0]; path = tmp_path/'valuation.sqlite3'; valuation.initialize(path)
+    valuation.append(path, row)
+    assert valuation.latest(path, AT) == row and row['indexClose']/row['per'] == 2000
+    assert row['sourceExportSha256'] != row['claimedOriginalSha256']
+    assert row['publishedAt'] is None and row['originalHashVerified'] is False
+    assert valuation.latest(path, '2026-09-19T00:00:00Z') is None
+
+
+@pytest.mark.parametrize('per,basis', [('0','INDEX_WEIGHT_BASIS'), ('NaN','INDEX_WEIGHT_BASIS'), ('20','WEIGHTED_AVERAGE')])
+def test_bad_exports_never_enter_store(per,basis):
+    with pytest.raises(ValueError): valuation.parse_export(export(per,basis), received_at=AT)
+
+
+def test_supplied_registry_hashes_and_scope_are_not_completion_claims():
+    import hashlib
+    root=Path(__file__).parent/'ops/imports/acquisition_20260920'
+    manifest=json.loads((root/'provenance.json').read_text())
+    for path,digest in manifest['importedFiles'].items():
+        assert hashlib.sha256((root/path).read_bytes()).hexdigest()==digest
+    registry=json.loads((root/'source_registry.json').read_text())
+    assert len(registry['indicators'])==43
+    assert not manifest['allIndicators10yComplete'] and not manifest['predictivePowerVerified']
+
+
+def test_background_runtime_passes_saved_sources_into_existing_feature_calculation(monkeypatch):
+    import scanner
+    from types import SimpleNamespace
+    monkeypatch.setattr(scanner, '_cost_policy_durable_enabled', lambda: False)
+    monkeypatch.setattr(scanner, '_N225_ANALOG_HISTORY', {'data':[{'date':'2026-09-18'}]})
+    monkeypatch.setattr(scanner, '_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE', {})
+    monkeypatch.setattr(scanner, '_JP_MARKET_FEATURE_HISTORY', {})
+    monkeypatch.setattr(scanner, '_JP_OFFICIAL_SOURCE_CACHE', SimpleNamespace(rows={
+        'jp_yield_curve':[{'date':'2026-09-17','instrumentId':'JP10Y','value':2.993,'unit':'PERCENT'}],
+        'vix_ohlc':[{'date':'2026-09-18','instrumentId':'VIX','value':14.81}]}))
+    captured = {}
+    def build(**kwargs):
+        captured.update(kwargs)
+        return {'features':[], 'conditions':[]}
+    monkeypatch.setattr(scanner.jp_market_features, 'build_feature_history', build)
+    monkeypatch.setattr(scanner.requests, 'get', lambda *a,**kw: pytest.fail('feature calculation cannot fetch'))
+    scanner._jp_market_feature_history_warm()
+    assert captured['price_series']['jp10y'][0]['value'] == 2.993
+    assert captured['price_series']['vix'][0]['value'] == 14.81
+    assert scanner._JP_MARKET_FEATURE_HISTORY['status'] == 'AVAILABLE'
+
+
+def test_rolling_provider_cache_retains_selected_prefix_and_revisions(tmp_path):
+    path = tmp_path/'sources.sqlite3'
+    def row(day, value, source):
+        return {'date':day, 'close':value, 'availableFrom':AT, 'sourceRef':source}
+    official = [row('2026-09-17', 16, 'official'), row('2026-09-18', 15, 'official')]
+    yahoo = [row('2026-09-18', 15.1, 'yahoo')]
+    initial = m.merge_feature_sources(yahoo, official, path=path, received_at=AT)
+    new = row('2026-09-21', 14, 'yahoo')
+    appended = m.merge_feature_sources([new], official, path=path, received_at=LATER)
+    assert appended[:-1] == initial  # Dropped Yahoo date retains exact provider and vintage.
+    assert m.merge_feature_sources([], official, path=path, received_at=LATER) == appended
+    corrected = m.merge_feature_sources([row('2026-09-18', 15.2, 'yahoo')], official,
+                                         path=path, received_at=LATER)
+    assert corrected[1]['availableFrom'] == LATER and corrected[1]['close'] == 15.2
+    with m.connect(path) as db:
+        assert db.execute('SELECT count(*) FROM selected_vix_inputs').fetchone()[0] == 4
+        original = json.loads(db.execute("SELECT body FROM selected_vix_inputs WHERE session='2026-09-18' ORDER BY seq LIMIT 1").fetchone()[0])
+        # The table keeps the row as received; the returned row is read with
+        # the next-day schedule and the receipt as receivedAt (2026-10-04).
+        assert original == {k: v for k, v in initial[1].items()
+                            if k not in ('knownAt', 'publishedAt', 'receivedAt', 'availabilityBasis')} | {'availableFrom': AT}
+        assert initial[1]['availableFrom'] == '2026-09-19T00:00:00Z' and initial[1]['receivedAt'] == AT
+
+
+def test_stored_official_vix_rows_are_visible_from_their_schedule(tmp_path):
+    """2026-10-04: the selection was seeded on 2026-09-20 with official Cboe
+    rows whose knownAt was their receipt; returned unchanged, 2016-2024 was
+    invisible to every past cutoff (VIX features and D06 from late 2024)."""
+    path = tmp_path / 'sources.sqlite3'
+    seeded = [{'date': '2018-02-05', 'close': 37.32, 'value': 37.32, 'instrumentId': 'VIX', 'unit': 'INDEX_POINTS',
+               'sourceRef': m.VIX_HISTORY, 'knownAt': '2026-09-19T17:40:46Z', 'availableFrom': '2026-09-19T17:40:46Z'}]
+    m.merge_feature_sources([], seeded, path=path, received_at='2026-09-20T00:00:00Z')
+    yahoo = [{'date': '2018-02-05', 'close': 37.32, 'availableFrom': '2018-02-06T00:00:00Z', 'sourceRef': 'yahoo:chart:^VIX'}]
+    rows = m.merge_feature_sources(yahoo, [], path=path, received_at=LATER)
+    assert rows[0]['sourceRef'] == m.VIX_HISTORY                    # the first provider is kept
+    assert rows[0]['knownAt'] == rows[0]['availableFrom'] == '2018-02-06T00:00:00Z'
+    assert rows[0]['receivedAt'] == '2026-09-19T17:40:46Z'
+    assert rows[0]['availabilityBasis'] == 'SCHEDULED_PUBLICATION'
+    correction = {**seeded[0], 'availabilityBasis': 'RECEIVED_CORRECTION'}
+    assert m._scheduled_selection(correction) == correction          # a correction keeps its receipt
+
+
+def test_selection_record_stays_within_the_window_instead_of_raising(tmp_path):
+    """2026-09-28: the store was seeded with a full 3000-session window on
+    2026-09-20, so the first new session made len(saved) 3001 and every
+    feature-history rebuild after it raised. The window is the bound; the
+    record evicts the oldest session rather than refusing all future ones."""
+    from datetime import date, timedelta
+    path = tmp_path / 'selected.sqlite3'
+    day0 = date(2014, 1, 1)
+    def rows(n):
+        return [{'date': (day0 + timedelta(days=i)).isoformat(), 'value': 10 + (i % 7),
+                 'instrumentId': 'VIX', 'availableFrom': AT} for i in range(n)]
+    first = m.merge_feature_sources([], rows(3000), path=path, received_at=AT)
+    assert len(first) == 3000
+    second = m.merge_feature_sources([], rows(3001), path=path, received_at=LATER)
+    assert len(second) == 3000
+    assert second[-1]['date'] == (day0 + timedelta(days=3000)).isoformat()
+    assert second[0]['date'] == (day0 + timedelta(days=1)).isoformat()
+    # Idempotent on the next call, and the evicted session is still on record.
+    third = m.merge_feature_sources([], rows(3001), path=path, received_at=LATER)
+    assert third == second
+    db = m.connect(path)
+    assert db.execute('SELECT count(DISTINCT session) FROM selected_vix_inputs').fetchone()[0] == 3001
+
+
+def test_intraday_update_inside_availability_bound_is_not_a_time_order_violation(tmp_path):
+    """2026-09-29: the VIX bar for the current session (Yahoo, dated available
+    from the next day 00:00Z) changes during the extended session. Comparing
+    the receipt time with that conservative bound raised
+    selected_source_revision_time_order from 07:59Z until midnight, and the
+    feature history reported FAILED for the whole evening. A forming session
+    is recorded as a provisional update that keeps its availability bound."""
+    path = tmp_path / 'selected.sqlite3'
+    bound = '2026-09-30T00:00:00Z'
+    first = [{'date': '2026-09-29', 'close': 16.1, 'availableFrom': bound, 'sourceRef': 'yahoo'}]
+    initial = m.merge_feature_sources(first, [], path=path, received_at='2026-09-29T07:20:00Z')
+    assert initial[0]['availableFrom'] == bound
+    moved = [{'date': '2026-09-29', 'close': 16.4, 'availableFrom': bound, 'sourceRef': 'yahoo'}]
+    updated = m.merge_feature_sources(moved, [], path=path, received_at='2026-09-29T07:59:00Z')
+    assert updated[0]['close'] == 16.4
+    assert updated[0]['availableFrom'] == bound  # cutoffs before midnight still never see it
+    assert updated[0]['knownAt'] == '2026-09-29T07:59:00Z'
+    assert updated[0]['availabilityBasis'] == 'PROVISIONAL_SESSION_UPDATE'
+    # A later receipt of the same provisional session is again accepted...
+    again = m.merge_feature_sources([{**moved[0], 'close': 16.2}], [], path=path,
+                                    received_at='2026-09-29T20:30:00Z')
+    assert again[0]['close'] == 16.2 and again[0]['availableFrom'] == bound
+    # ...but a receipt not after the recorded one is still a time-order violation.
+    with pytest.raises(ValueError, match='selected_source_revision_time_order'):
+        m.merge_feature_sources([{**moved[0], 'close': 16.3}], [], path=path,
+                                received_at='2026-09-29T20:30:00Z')
+    # After the bound, a change is a correction of a published observation.
+    corrected = m.merge_feature_sources([{**moved[0], 'close': 16.5}], [], path=path,
+                                        received_at='2026-09-30T01:00:00Z')
+    assert corrected[0]['availabilityBasis'] == 'RECEIVED_CORRECTION'
+    assert corrected[0]['availableFrom'] == '2026-09-30T01:00:00Z'
+
+
+def test_scheduled_availability_makes_official_history_visible_to_past_cutoffs(tmp_path):
+    """Before 2026-09-30 an imported ten-year history was dated available
+    from its download, so no past comparison cutoff could use it (the JGB
+    yield feature existed for the current day only). The original row is
+    now available from the day after its observation; a receipt earlier than
+    that schedule is never moved later than the receipt."""
+    from jp_market_engine import point_in_time_rows
+    db = m.connect(tmp_path / 'source.sqlite3')
+    m.ingest(db, mof(day='R8.9.17'), url=m.MOF_CURRENT, received_at=AT)
+    rows = m.feature_rows(m.history_rows(db, 'jp_yield_curve'), 'jp_yield_curve')
+    visible, _ = point_in_time_rows(rows, '2026-09-18T00:00:00Z')
+    assert [r['value'] for r in visible] == [-.1]
+    visible_before, _ = point_in_time_rows(rows, '2026-09-17T23:59:59Z')
+    assert visible_before == []
+    assert m.scheduled_availability('vix_ohlc', '2026-09-18') == '2026-09-19T00:00:00Z'
+    # Received before the schedule (same-day receipt): the receipt stands.
+    early = m.connect(tmp_path / 'early.sqlite3')
+    m.ingest(early, mof(day='R8.9.20'), url=m.MOF_CURRENT, received_at=AT)
+    row = m.feature_rows(m.history_rows(early, 'jp_yield_curve'), 'jp_yield_curve')[0]
+    assert row['knownAt'] == AT and row['availabilityBasis'] == 'UNKNOWN'
+
+
+def test_scheduled_official_rows_do_not_trip_the_selection_time_order(tmp_path):
+    path = tmp_path / 'selected.sqlite3'
+    receipt = '2026-09-21T10:00:00Z'
+    official = [{'date': '2026-09-21', 'close': 15.0, 'availableFrom': '2026-09-22T00:00:00Z',
+                 'knownAt': '2026-09-22T00:00:00Z', 'receivedAt': receipt,
+                 'availabilityBasis': 'SCHEDULED_PUBLICATION', 'sourceRef': 'official'}]
+    first = m.merge_feature_sources([], official, path=path, received_at=receipt)
+    assert first[0]['knownAt'] == '2026-09-22T00:00:00Z'
+    # The scheduled knowledge time lies ahead of the receipt; a change received
+    # after the first receipt is compared with the receipt, not the schedule.
+    updated = m.merge_feature_sources([], [{**official[0], 'close': 15.2}], path=path,
+                                      received_at='2026-09-21T12:00:00Z')
+    assert updated[0]['close'] == 15.2 and updated[0]['availabilityBasis'] == 'PROVISIONAL_SESSION_UPDATE'
+    assert updated[0]['availableFrom'] == '2026-09-22T00:00:00Z'
+    corrected = m.merge_feature_sources([], [{**official[0], 'close': 15.3}], path=path,
+                                        received_at='2026-09-23T00:00:00Z')
+    assert corrected[0]['availabilityBasis'] == 'RECEIVED_CORRECTION'
+
+
+def test_generic_scheduled_availability_applies_to_originals_only():
+    receipt = '2026-09-22T08:00:00Z'
+    rows = [
+        {'periodEnd': '2026-09-11', 'knownAt': receipt, 'availableFrom': receipt, 'value': 1},   # history: scheduled
+        {'periodEnd': '2026-09-18', 'knownAt': receipt, 'availableFrom': receipt, 'value': 2},   # schedule 09-24 > receipt: keep
+        {'periodEnd': '2026-09-04', 'knownAt': receipt, 'availableFrom': receipt, 'value': 3, 'revision': 1},  # correction: keep
+        'not-a-row',
+    ]
+    out = m.apply_scheduled_availability(rows, lag_days=6, source_label='jpx-weekly-margin')
+    assert [r.get('knownAt') for r in out] == ['2026-09-17T00:00:00Z', receipt, receipt]
+    assert out[0]['availableFrom'] == '2026-09-17T00:00:00Z' and out[0]['receivedAt'] == receipt
+    assert out[0]['availabilityBasis'] == 'SCHEDULED_PUBLICATION' and out[0]['availabilityRule'] == 'jpx-weekly-margin'
+    assert 'availabilityBasis' not in out[1] and 'availabilityBasis' not in out[2]
+    with pytest.raises(ValueError, match='scheduled_lag_bound'):
+        m.apply_scheduled_availability(rows, lag_days=30, source_label='x')
+
+
+def test_session_publication_floor_follows_real_sessions_and_holidays():
+    sessions = ['2026-09-17', '2026-09-18', '2026-09-24', '2026-09-25', '2026-09-28', '2026-09-29']
+    rows = [
+        {'periodEnd': '2026-09-18', 'publishedAt': '2026-09-23T15:00:00+09:00',
+         'availableFrom': '2026-09-23T15:00:00+09:00', 'value': 1},          # silver week: raised
+        {'periodEnd': '2026-09-11', 'availableFrom': '2026-09-30T00:00:00Z', 'value': 2},   # later receipt: kept
+        {'periodEnd': '2026-09-25', 'availableFrom': '2026-09-29T06:00:00Z', 'value': 3},   # the source rule changed: second session, 16 JST
+        'not-a-row',
+    ]
+    out = m.enforce_session_publication(rows, sessions=sessions, sessions_after=3,
+                                        utc_time='06:00:00', source_label='jpx-two-market-third-session')
+    assert out[0]['publishedAt'] == out[0]['availableFrom'] == '2026-09-28T06:00:00Z'
+    assert out[0]['availabilityFloor'] == 'jpx-two-market-third-session'
+    assert out[1] == rows[1]
+    assert out[2]['availableFrom'] == '2026-09-29T07:00:00Z'
+    with pytest.raises(ValueError, match='session_publication_bound'):
+        m.enforce_session_publication(rows, sessions=sessions, sessions_after=0, utc_time='00:00:00', source_label='x')
+
+
+def test_two_market_rule_cutover_preserves_legacy_and_uses_second_session_16jst():
+    sessions = ['2026-09-24', '2026-09-25', '2026-09-28', '2026-09-29']
+    rows = [
+        {'periodEnd': '2026-09-18', 'availableFrom': '2026-09-23T06:00:00Z', 'value': 1},
+        {'periodEnd': '2026-09-25', 'availableFrom': '2026-09-29T06:00:00Z', 'value': 2},
+        {'periodEnd': '2026-10-02', 'availableFrom': '2026-10-06T07:45:00Z', 'value': 3},
+    ]
+    out = m.enforce_two_market_publication(rows, sessions=sessions)
+    assert out[0]['availableFrom'] == '2026-09-28T06:00:00Z'
+    assert out[1]['availableFrom'] == '2026-09-29T07:00:00Z'
+    assert out[1]['availabilityFloor'] == 'jpx-two-market-second-session-16jst'
+    assert out[2] == rows[2]  # Keep the actual receipt, not the nominal schedule.
+    assert rows[1]['availableFrom'] == '2026-09-29T06:00:00Z'  # No raw mutation.
+
+
+def test_two_market_calendar_accounts_for_holiday_after_price_cache_ends():
+    row = {'periodEnd': '2026-10-09', 'knownAt': '2026-10-13T07:00:00Z',
+           'availableFrom': '2026-10-13T07:00:00Z', 'publishedAt': None, 'receivedAt': '2026-10-13T07:00:00Z'}
+    out = m.enforce_two_market_publication([row], sessions=['2026-10-09'])[0]
+    assert out['knownAt'] == out['availableFrom'] == '2026-10-14T07:00:00Z'
+    assert out['receivedAt'] == row['receivedAt'] and out['publishedAt'] is None
+
+
+def test_two_market_unknown_calendar_fails_instead_of_guessing_weekdays(monkeypatch):
+    import argus_market_clock as clock
+    def unavailable(*args):
+        raise clock.CalendarUnavailableError('no_calendar')
+    monkeypatch.setattr(clock, 'canonical_trading_day', unavailable)
+    with pytest.raises(ValueError, match='calendar_unavailable'):
+        m.enforce_two_market_publication([{'periodEnd': '2026-10-02'}], sessions=[])
+
+
+def test_two_market_invalid_missing_and_late_stamps_are_not_made_known():
+    rows = [
+        {'periodEnd': '2026-10-02', 'availableFrom': 'invalid', 'knownAt': 'invalid'},
+        {'periodEnd': '2026-10-02', 'value': 1},
+        {'periodEnd': '2026-10-02', 'availableFrom': '2026-10-07T08:00:00Z', 'knownAt': '2026-10-07T08:00:00Z'},
+    ]
+    assert m.enforce_two_market_publication(rows, sessions=[]) == rows
+
+
+def test_existing_two_market_consumer_gets_new_rule_without_changing_other_series():
+    rows = [{'periodEnd': '2026-10-09', 'availableFrom': '2026-10-13T07:00:00Z'}]
+    credit = m.enforce_session_publication(
+        iter(rows), sessions=['2026-10-09'], sessions_after=3, utc_time='06:00:00',
+        source_label='jpx-two-market-third-session')
+    assert credit[0]['availableFrom'] == '2026-10-14T07:00:00Z'
+    other = m.enforce_session_publication(
+        rows, sessions=['2026-10-09'], sessions_after=3, utc_time='06:00:00',
+        source_label='jpx-weekly-margin-fourth-session-open')
+    assert other[0]['availableFrom'] == '2026-10-14T06:00:00Z'

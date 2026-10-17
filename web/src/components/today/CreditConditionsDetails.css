@@ -1,0 +1,7 @@
+.credit-conditions { margin-block: 10px; min-width: 0; font-size: .85rem; }
+.credit-conditions__notice { color: var(--text-sub); line-height: 1.5; }
+.credit-conditions details > div { margin-block: 12px; }
+.credit-conditions p, .credit-conditions small { overflow-wrap: anywhere; line-height: 1.5; }
+.credit-conditions small { display: block; color: var(--text-muted); }
+.credit-conditions dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; }
+.credit-conditions dd { margin: 0; }

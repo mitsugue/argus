@@ -1,0 +1,324 @@
+name: release-gate
+# v12.2.5: main push+PRで完全ゲート。manifestはCIのGITHUB_SHAに対して生成し
+# artifactとして公開(コミットされた古いmanifestを真実にしない)。
+# オーナー設定要件(手動): main branch protectionでci/release-gateを必須化+
+# Render Auto-Deploy = "After CI Checks Pass"。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+
+jobs:
+  classify:
+    name: exact-admission-scope
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      base_sha: ${{ steps.scope.outputs.base_sha }}
+      candidate_sha: ${{ steps.scope.outputs.candidate_sha }}
+      candidate_tree: ${{ steps.scope.outputs.candidate_tree }}
+      classification: ${{ steps.scope.outputs.classification }}
+      classification_digest: ${{ steps.scope.outputs.classification_digest }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - id: scope
+        name: Classify exact product versus Recovery authority
+        run: |
+          python3 -B scripts/recovery_admission.py classify \
+            --repo . \
+            --base-sha '${{ github.event.pull_request.base.sha }}' \
+            --head-sha '${{ github.event.pull_request.head.sha }}' \
+            --out artifacts/admission-scope/classification.json \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Publish release-gate scope evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-scope-${{ github.event.pull_request.head.sha }}
+          path: artifacts/admission-scope/classification.json
+          if-no-files-found: error
+          retention-days: 90
+
+  release_checks:
+    name: release-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - uses: actions/setup-node@v5
+        with: {node-version: "22"}
+      - name: Enforce Render deploy-plane contract
+        env:
+          ARGUS_RENDER_EVENT: ${{ github.event_name }}
+          ARGUS_RENDER_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ARGUS_RENDER_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ARGUS_RENDER_SKIP_TEXT: ${{ github.event.pull_request.title || github.event.head_commit.message || '' }}
+        run: python3 -B scripts/render_deploy_guard.py
+      - name: Install deps (ci.ymlと同一セット)
+        run: >-
+          pip install --quiet anthropic openai==3.19.2 flask flask-cors requests pytz
+          python-dotenv json-repair pytest pytest-xdist==3.8.0 cryptography==49.0.0 pywebpush==2.3.0 webauthn==2.7.1 openpyxl==3.1.5 xlrd==2.0.2
+      - name: Install web deps
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: cd web && npm ci --no-audit --no-fund
+      - name: Validate control-plane scripts and workflows
+        env:
+          # Keep py_compile output outside the checkout so the subsequent
+          # exact clean-tree release gate measures source changes only.
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/argus-pycache
+        run: |
+          shellcheck --version
+          python3 -c 'import importlib.metadata as m; assert m.version("cryptography") == "49.0.0"'
+          python3 -c 'import importlib.metadata as m; assert m.version("openai") == "3.19.2"'
+          python3 -m py_compile \
+            argus_remote_nonce_anchor.py \
+            argus_remote_recovery.py \
+            scripts/production_release_manifest.py \
+            scripts/render_deployment_identity.py \
+            scripts/verify_manifest_publication.py \
+            scripts/verify_production_backend_release.py \
+            scripts/argus_build_identity.py \
+            scripts/resolve_backend_identity.py \
+            scripts/argus_mission_tick.py \
+            scripts/argus_remote_journal_rearm.py \
+            scripts/argus_watchtower_writer_dispatch.py \
+            scripts/remote_receipt_drain.py \
+            scripts/remote_journal_publish_policy.py \
+            scripts/v13_5_release_certificate.py \
+            scripts/v13_5_source_provenance.py \
+            scripts/v13_5_pre_mutation_rehearsal.py \
+            scripts/recovery_admission.py
+          node web/scripts/acceptance-runtime.test.mjs
+          node web/scripts/release-state-machine.mjs validate-contract \
+            --contract release/v13-snapshot-readiness-contract.json
+          node web/scripts/release-state-machine.test.mjs
+          bash -n scripts/install_argus_mission_timer.sh \
+            scripts/install_argus_remote_journal_rearm.sh \
+            scripts/install_argus_watchtower_writer.sh
+          shellcheck scripts/install_argus_mission_timer.sh \
+            scripts/install_argus_remote_journal_rearm.sh \
+            scripts/install_argus_watchtower_writer.sh \
+            scripts/check_argus_mission_timer.sh
+          SYSTEMD_VERIFY_ROOT=$(mktemp -d)
+          install -d \
+            "$SYSTEMD_VERIFY_ROOT/etc/systemd/system" \
+            "$SYSTEMD_VERIFY_ROOT/etc" \
+            "$SYSTEMD_VERIFY_ROOT/opt/argus-watchtower-writer" \
+            "$SYSTEMD_VERIFY_ROOT/usr/bin"
+          install -m 0755 scripts/argus_watchtower_writer_dispatch.py \
+            "$SYSTEMD_VERIFY_ROOT/opt/argus-watchtower-writer/argus_watchtower_writer_dispatch.py"
+          install -m 0755 /usr/bin/python3 \
+            "$SYSTEMD_VERIFY_ROOT/usr/bin/python3"
+          install -m 0644 ops/systemd/argus-watchtower-writer.service \
+            ops/systemd/argus-watchtower-writer.timer \
+            "$SYSTEMD_VERIFY_ROOT/etc/systemd/system/"
+          for unit in \
+            basic.target \
+            network-online.target \
+            shutdown.target \
+            sysinit.target \
+            time-set.target \
+            time-sync.target \
+            timers.target; do
+            printf '%s\n' \
+              '[Unit]' \
+              "Description=Deterministic CI fixture for $unit" \
+              'DefaultDependencies=no' \
+              > "$SYSTEMD_VERIFY_ROOT/etc/systemd/system/$unit"
+          done
+          touch "$SYSTEMD_VERIFY_ROOT/etc/argus-remote-journal-rearm.env"
+          systemd-analyze --root="$SYSTEMD_VERIFY_ROOT" verify \
+            argus-watchtower-writer.service \
+            argus-watchtower-writer.timer
+          ruby -e 'require "yaml"; Dir[".github/workflows/*.yml"].each { |f| YAML.parse_file(f) }'
+      - name: Full gate for exact SHA
+        run: |
+          bash scripts/release_gate.sh || true
+          cat artifacts/release_manifest.json
+      - name: Verify manifest matches exact CI SHA (stale=ineligible)
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          m = json.load(open("artifacts/release_manifest.json"))
+          if m["commitSha"] != os.environ["GITHUB_SHA"]:
+              print("STALE MANIFEST: manifest sha != CI sha"); sys.exit(1)
+          sys.exit(0 if m["eligibleForDeploy"] else 1)
+          PY
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+      - name: Publish manifest artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest-${{ github.sha }}
+          path: |
+            artifacts/release_manifest.json
+            artifacts/pytest-failure.log
+          if-no-files-found: warn
+
+  premerge_admission:
+    name: premerge-admission
+    if: github.event_name == 'pull_request'
+    needs: classify
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    timeout-minutes: 35
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          # Reproduce production's shallow checkout. The shared rehearsal must
+          # intentionally acquire the older accepted source itself.
+          fetch-depth: 2
+      - id: candidate
+        name: Pin exact pre-merge candidate
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - name: Bind the authorized proof-certificate producer
+        if: (needs.classify.outputs.classification == 'PRODUCT' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py collect-authority \
+            --repo '${{ github.repository }}' \
+            --candidate-sha '${{ github.event.pull_request.head.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --out artifacts/premerge-admission/producer-authority.json \
+            --timeout-seconds 1500
+      - name: Fetch certificate from the completed detached producer workflow
+        if: (needs.classify.outputs.classification == 'PRODUCT' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py fetch-admission \
+            --repo '${{ github.repository }}' \
+            --candidate-sha '${{ github.event.pull_request.head.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --consumer-run-id '${{ github.run_id }}' \
+            --consumer-run-attempt '${{ github.run_attempt }}' \
+            --producer-authority artifacts/premerge-admission/producer-authority.json \
+            --out artifacts/premerge-admission/certificate.json \
+            --receipt-out artifacts/premerge-admission/retrieval-receipt.json \
+            --timeout-seconds 1500
+      - id: runtime
+        if: (needs.classify.outputs.classification == 'PRODUCT' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
+        uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ github.event.pull_request.head.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/premerge-admission/runtime-proof.json
+      - id: rehearsal
+        name: Execute the exact mutation-free production rehearsal
+        if: (needs.classify.outputs.classification == 'PRODUCT' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
+        uses: ./.github/actions/v13-5-pre-mutation-rehearsal
+        with:
+          owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          candidate-sha: ${{ github.event.pull_request.head.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          build-sha: ${{ github.event.pull_request.head.sha }}
+          certificate-path: artifacts/premerge-admission/certificate.json
+          retrieval-receipt-path: artifacts/premerge-admission/retrieval-receipt.json
+          runtime-proof-path: artifacts/premerge-admission/runtime-proof.json
+          evidence-dir: artifacts/premerge-admission
+      - id: recovery_scope
+        name: Independently re-establish exact Recovery scope
+        if: (needs.classify.outputs.classification == 'RECOVERY_ONLY' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
+        run: |
+          git fetch --no-tags --unshallow origin
+          python3 -B scripts/recovery_admission.py classify \
+            --repo . \
+            --base-sha '${{ needs.classify.outputs.base_sha }}' \
+            --head-sha '${{ needs.classify.outputs.candidate_sha }}' \
+            --out artifacts/premerge-admission/recovery-classification.json \
+            --github-output "$GITHUB_OUTPUT"
+          test '${{ needs.classify.outputs.classification_digest }}' = \
+            "$(python3 -c 'import json; print(json.load(open("artifacts/premerge-admission/recovery-classification.json"))["classificationDigest"])')"
+      - name: Bind the authorized recovery-certificate producer
+        if: (needs.classify.outputs.classification == 'RECOVERY_ONLY' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/recovery_admission.py collect-authority \
+            --repository '${{ github.repository }}' \
+            --base-sha '${{ steps.recovery_scope.outputs.base_sha }}' \
+            --candidate-sha '${{ steps.recovery_scope.outputs.candidate_sha }}' \
+            --candidate-tree '${{ steps.recovery_scope.outputs.candidate_tree }}' \
+            --classification-digest '${{ steps.recovery_scope.outputs.classification_digest }}' \
+            --timeout-seconds 1500 \
+            --out artifacts/premerge-admission/recovery-producer-authority.json
+      - name: Fetch the exact detached Recovery certificate
+        if: (needs.classify.outputs.classification == 'RECOVERY_ONLY' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B scripts/recovery_admission.py fetch-authority \
+            --repository '${{ github.repository }}' \
+            --authority artifacts/premerge-admission/recovery-producer-authority.json \
+            --certificate-out artifacts/premerge-admission/recovery-certificate.json \
+            --classification-out artifacts/premerge-admission/recovery-authority-classification.json \
+            --evidence-out artifacts/premerge-admission/recovery-evidence.json \
+            --receipt-out artifacts/premerge-admission/recovery-retrieval-receipt.json
+      - name: Verify the Recovery certificate against local exact scope
+        if: (needs.classify.outputs.classification == 'RECOVERY_ONLY' || needs.classify.outputs.classification == 'PRODUCT_AND_RECOVERY')
+        run: |
+          cmp \
+            artifacts/premerge-admission/recovery-classification.json \
+            artifacts/premerge-admission/recovery-authority-classification.json
+          python3 -B scripts/recovery_admission.py verify \
+            --certificate artifacts/premerge-admission/recovery-certificate.json \
+            --classification artifacts/premerge-admission/recovery-classification.json \
+            --evidence artifacts/premerge-admission/recovery-evidence.json
+      - name: Reject MIXED scope without choosing either authority
+        if: needs.classify.outputs.classification == 'MIXED'
+        run: |
+          echo "MIXED product and Recovery scope is denied."
+          exit 1
+      - name: Publish pre-merge admission evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v13-5-premerge-admission-consumer-${{ github.event.pull_request.head.sha }}
+          path: |
+            artifacts/premerge-admission
+            web/dist
+          if-no-files-found: error
+          retention-days: 90
+
+  gate:
+    name: gate
+    if: always()
+    needs: [release_checks, premerge_admission]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require clean release checks and pre-merge admission
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_CHECKS_RESULT: ${{ needs.release_checks.result }}
+          PREMERGE_ADMISSION_RESULT: ${{ needs.premerge_admission.result }}
+        run: |
+          test "$RELEASE_CHECKS_RESULT" = success
+          if test "$EVENT_NAME" = pull_request; then
+            test "$PREMERGE_ADMISSION_RESULT" = success
+          else
+            test "$PREMERGE_ADMISSION_RESULT" = skipped
+          fi

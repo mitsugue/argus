@@ -1,0 +1,750 @@
+name: memory-attribution
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - ".github/workflows/memory-attribution.yml"
+      - ".github/workflows/market-public-acceptance.yml"
+      - "web/scripts/release-state-machine.mjs"
+      - "web/scripts/release-state-machine.test.mjs"
+      - "web/scripts/canonical-snapshot-selection.mjs"
+      - "web/scripts/public-market-acceptance.mjs"
+      - "web/scripts/mobile-today-acceptance.mjs"
+      - "web/index.html"
+      - "web/src/components/today/ArgusTodayPanel.tsx"
+      - "web/src/lib/verifiedSnapshot.ts"
+      - "web/src/lib/assetChartCache.ts"
+      - "web/src/hooks/useChartIntelligence.ts"
+      - "web/src/lib/snapshotFreshness.ts"
+      - "docs/ops/v13-final-release-state-machine.md"
+      - "argus_memory_attribution.py"
+      - "argus_asset_chart_cache.py"
+      - "argus_verified_snapshot.py"
+      - "argus_checkpoint_v2_isolated.py"
+      - "test_argus_checkpoint_v2_isolated.py"
+      - "docs/argus-deep-memory-attribution.md"
+      - "scanner.py"
+      - "argus_recovery_measurement.py"
+      - "argus_recovery_measurement_storage.py"
+      - "argus_recovery_phase_a_adapter.py"
+      - "argus_remote_journal.py"
+      - "argus_remote_nonce_anchor.py"
+      - "argus_remote_recovery.py"
+      - "argus_remote_receipt_queue.py"
+      - "argus_state_journal.py"
+      - "argus_tick_durability.py"
+      - "argus_persistent_storage.py"
+      - "requirements.txt"
+      - "scripts/deep_memory_attribution_probe.py"
+      - "scripts/memory_attribution_probe.py"
+      - "scripts/normalized_hash_resource_probe.py"
+      - "scripts/remote_recovery_resource_probe.py"
+      - "scripts/recovery_measurement_benchmark.py"
+      - "scripts/recovery_measurement_retention_benchmark.py"
+      - "argus_market_clock.py"
+      - "argus_market_data_truth.py"
+      - "argus_market_replay.py"
+      - "argus_chart_intelligence.py"
+      - "argus_today_intelligence.py"
+      - "argus_decision_evidence_bundle.py"
+      - "argus_decision_ledger.py"
+      - "jp_market_engine.py"
+      - "argus_research_compute.py"
+      - "argus_risk_discipline.py"
+      - "argus_single_decision.py"
+      - "scripts/run_prediction_ledger.py"
+      - "scripts/run_round2_research.py"
+      - "scripts/round2_resource_probe.py"
+      - "scripts/truth_ledger_benchmark.py"
+      - "test_argus_market_data_truth.py"
+      - "test_argus_market_replay_pit.py"
+      - "test_argus_chart_intelligence.py"
+      - "test_argus_today_intelligence.py"
+      - "test_argus_decision_evidence_bundle.py"
+      - "test_argus_prediction_ledger_v2.py"
+      - "test_jp_market_engine.py"
+      - "test_argus_research_compute.py"
+      - "test_argus_risk_discipline.py"
+      - "test_argus_single_decision.py"
+      - "test_round2_macro_authority.py"
+      - "test_run_prediction_ledger.py"
+      - "test_prediction_ledger_workflow.py"
+      - "test_truth_ledger_benchmark.py"
+      - ".github/workflows/prediction-ledger.yml"
+      - ".github/workflows/closepin-pin.yml"
+      - ".github/workflows/event-ledger.yml"
+      - "test_argus_memory_attribution.py"
+      - "test_argus_normalized_hash.py"
+      - "test_argus_asset_chart_cache.py"
+      - "test_argus_verified_snapshot.py"
+      - "test_argus_recovery_measurement.py"
+      - "test_argus_recovery_measurement_storage.py"
+      - "test_argus_recovery_phase_a_adapter.py"
+      # Remote Journal recurrence changes must receive fresh exact-head
+      # normalized-hash, contributor #2 and exact-4-GiB regression evidence.
+      - ".github/workflows/caos-watchtower.yml"
+      - ".github/workflows/caos-scan.yml"
+      - "ops/systemd/argus-remote-journal-rearm.service"
+      - "ops/systemd/argus-remote-journal-rearm.timer"
+      - "scripts/argus_remote_journal_rearm.py"
+      - "scripts/install_argus_mission_timer.sh"
+      - "scripts/install_argus_remote_journal_rearm.sh"
+      - "scripts/remote_journal_publish_policy.py"
+      - "scripts/prepare_remote_journal_publish.py"
+      - "test_remote_journal_liveness.py"
+      - "test_remote_journal_rearm.py"
+      - "test_argus_identity_installer.py"
+      - "test_remote_journal_publish.py"
+      - "test_argus_v13_4_2_remote_receipts.py"
+      - "test_remote_nonce_anchor.py"
+      - "test_remote_nonce_anchor_scanner.py"
+      - "test_remote_recovery_nonce.py"
+      - "test_remote_recovery_nonce_bootstrap.py"
+      - "test_remote_recovery_hkdf.py"
+      - "test_remote_recovery_ops_sequence.py"
+      - "test_remote_recovery_producer.py"
+      - "test_remote_recovery_publish.py"
+      - "test_remote_recovery_restore.py"
+      - ".github/workflows/memory-attribution.yml"
+  push:
+    branches:
+      - "codex/normalized-hash-memory-hotfix"
+      - "codex/recovery-*"
+    paths:
+      - ".github/workflows/memory-attribution.yml"
+      - "argus_memory_attribution.py"
+      - "argus_asset_chart_cache.py"
+      - "argus_verified_snapshot.py"
+      - "argus_checkpoint_v2_isolated.py"
+      - "test_argus_checkpoint_v2_isolated.py"
+      - "docs/argus-deep-memory-attribution.md"
+      - "scanner.py"
+      - "argus_recovery_measurement.py"
+      - "argus_recovery_measurement_storage.py"
+      - "argus_recovery_phase_a_adapter.py"
+      - "argus_remote_journal.py"
+      - "argus_remote_nonce_anchor.py"
+      - "argus_remote_recovery.py"
+      - "argus_remote_receipt_queue.py"
+      - "argus_state_journal.py"
+      - "argus_tick_durability.py"
+      - "argus_persistent_storage.py"
+      - "requirements.txt"
+      - "scripts/deep_memory_attribution_probe.py"
+      - "scripts/memory_attribution_probe.py"
+      - "scripts/normalized_hash_resource_probe.py"
+      - "scripts/remote_recovery_resource_probe.py"
+      - "argus_market_clock.py"
+      - "argus_market_data_truth.py"
+      - "argus_market_replay.py"
+      - "argus_chart_intelligence.py"
+      - "argus_today_intelligence.py"
+      - "argus_decision_evidence_bundle.py"
+      - "argus_decision_ledger.py"
+      - "jp_market_engine.py"
+      - "argus_research_compute.py"
+      - "argus_risk_discipline.py"
+      - "argus_single_decision.py"
+      - "scripts/run_prediction_ledger.py"
+      - "scripts/run_round2_research.py"
+      - "scripts/round2_resource_probe.py"
+      - "scripts/truth_ledger_benchmark.py"
+      - "test_argus_market_data_truth.py"
+      - "test_argus_market_replay_pit.py"
+      - "test_argus_chart_intelligence.py"
+      - "test_argus_today_intelligence.py"
+      - "test_argus_decision_evidence_bundle.py"
+      - "test_argus_prediction_ledger_v2.py"
+      - "test_jp_market_engine.py"
+      - "test_argus_research_compute.py"
+      - "test_argus_risk_discipline.py"
+      - "test_argus_single_decision.py"
+      - "test_round2_macro_authority.py"
+      - "test_run_prediction_ledger.py"
+      - "test_prediction_ledger_workflow.py"
+      - "test_truth_ledger_benchmark.py"
+      - ".github/workflows/prediction-ledger.yml"
+      - ".github/workflows/closepin-pin.yml"
+      - ".github/workflows/event-ledger.yml"
+      - "test_argus_memory_attribution.py"
+      - "test_argus_normalized_hash.py"
+      - "test_argus_asset_chart_cache.py"
+      - "test_argus_verified_snapshot.py"
+      - ".github/workflows/caos-watchtower.yml"
+      - ".github/workflows/caos-scan.yml"
+      - "ops/systemd/argus-remote-journal-rearm.service"
+      - "ops/systemd/argus-remote-journal-rearm.timer"
+      - "scripts/argus_remote_journal_rearm.py"
+      - "scripts/install_argus_mission_timer.sh"
+      - "scripts/install_argus_remote_journal_rearm.sh"
+      - "scripts/prepare_remote_journal_publish.py"
+      - "scripts/remote_journal_publish_policy.py"
+      - "test_argus_v13_4_2_remote_receipts.py"
+      - "test_remote_journal_liveness.py"
+      - "test_remote_journal_publish.py"
+      - "test_remote_journal_rearm.py"
+      - "test_argus_identity_installer.py"
+      - "test_remote_nonce_anchor.py"
+      - "test_remote_nonce_anchor_scanner.py"
+      - "test_remote_recovery_nonce.py"
+      - "test_remote_recovery_nonce_bootstrap.py"
+      - "test_remote_recovery_hkdf.py"
+      - "test_remote_recovery_ops_sequence.py"
+      - "test_remote_recovery_producer.py"
+      - "test_remote_recovery_publish.py"
+      - "test_remote_recovery_restore.py"
+      - ".github/workflows/memory-attribution.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-telemetry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: >-
+          pip install --quiet anthropic flask flask-cors requests pytz
+          python-dotenv json-repair pytest cryptography==49.0.0 pywebpush==2.3.0
+      - name: Diagnostic unit and privacy tests
+        run: >-
+          pytest -q test_argus_memory_attribution.py
+          test_argus_normalized_hash.py test_argus_asset_chart_cache.py
+          test_argus_verified_snapshot.py test_remote_recovery_restore.py
+      - name: 32-cycle modes and 100-record bound
+        run: |
+          python scripts/memory_attribution_probe.py \
+            --cycles 32 --bounded-cycles 100 \
+            --output memory-attribution-proof.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: memory-attribution-proof-${{ github.sha }}
+          path: memory-attribution-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-4gib-deep-attribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Actual legacy lifecycle and inter-mission proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            sh -c 'pip install --quiet -r requirements.txt pytest && \
+              python3 -B -m pytest -q test_argus_memory_attribution.py \
+                test_argus_normalized_hash.py \
+                test_argus_asset_chart_cache.py test_argus_verified_snapshot.py \
+                test_remote_recovery_restore.py && \
+              python3 -B scripts/deep_memory_attribution_probe.py \
+                --cycles 32 \
+                --output artifacts/deep-memory-attribution-proof.json \
+                --quiet'
+      - name: Publish bounded deep-attribution proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deep-memory-attribution-proof-${{ github.sha }}
+          path: artifacts/deep-memory-attribution-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-4gib-encrypted-recovery-producer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Encrypted producer source gate
+        run: >-
+          python3 -B -m py_compile argus_remote_nonce_anchor.py
+          scripts/remote_recovery_resource_probe.py
+      - name: Eight-cycle encrypted producer proof in exact 4 GiB cgroup
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 256 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            sh -c 'pip install --quiet \
+              anthropic flask flask-cors requests pytz cryptography==49.0.0 && \
+              python3 -B scripts/remote_recovery_resource_probe.py \
+                --cycles 8 \
+                --require-cgroup-max-bytes 4294967296 \
+                --output artifacts/encrypted-recovery-resource-proof.json \
+                --quiet'
+      - name: Scalar artifact privacy and terminal gates
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PY'
+          import json
+          import pathlib
+
+          path = pathlib.Path(
+              "artifacts/encrypted-recovery-resource-proof.json")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          allowed = {
+              "schemaVersion", "processTopology", "cycles",
+              "verifiedCycleCount", "walCompactionCount", "uniqueNonceCount",
+              "uniqueKeyDerivationSaltCount",
+              "fixedEncryptedBodyBytes", "maximumSidecarBytes",
+              "targetCoverageCount", "opsJournalCount",
+              "opsJournalMetaCount", "opsJournalCompactedCount",
+              "opsSequenceCount", "missionsCount", "missionWindowsCount",
+              "forecastsCount", "outcomesCount", "incidentsCount",
+              "postmortemsCount", "periodicReportsCount",
+              "challengerRunsCount", "agentQueueCount", "soakFieldCount",
+              "processPeakRssBytes", "cgroupObservedPeakBytes",
+              "cgroupSampledPeakBytes", "cgroupMaxBytes", "oomDelta",
+              "oomKillDelta", "temporaryRootRemoved", "abnormalExitCount",
+              "passed",
+          }
+          assert set(report) == allowed
+          assert all(not isinstance(value, (dict, list, tuple, set))
+                     for value in report.values())
+          assert report["schemaVersion"] == \
+              "argus-encrypted-producer-resource-proof-v1"
+          assert report["processTopology"] == \
+              "single-process-temporary-production-path"
+          boolean_fields = {"temporaryRootRemoved", "passed"}
+          assert all(type(report[key]) is bool for key in boolean_fields)
+          assert all(type(value) is int for key, value in report.items()
+                     if key not in boolean_fields | {
+                         "schemaVersion", "processTopology"})
+          assert report["cycles"] == 8
+          assert report["verifiedCycleCount"] == 8
+          assert report["walCompactionCount"] == 8
+          assert report["uniqueNonceCount"] == 8
+          assert report["uniqueKeyDerivationSaltCount"] == 8
+          assert report["cgroupMaxBytes"] == 4294967296
+          assert report["oomDelta"] == 0
+          assert report["oomKillDelta"] == 0
+          assert report["temporaryRootRemoved"] is True
+          assert report["abnormalExitCount"] == 0
+          assert report["passed"] is True
+          PY
+      - name: Publish encrypted producer resource proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-recovery-resource-proof-${{ github.sha }}
+          path: artifacts/encrypted-recovery-resource-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-4gib-recovery-measurement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Measurement accounting and retention in exact 4 GiB cgroup
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 512 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            sh -c 'set -u
+              test "$(cat /sys/fs/cgroup/memory.max)" = "4294967296"
+              test "$(cat /sys/fs/cgroup/memory.swap.max)" = "0"
+              cp /sys/fs/cgroup/memory.events artifacts/round1-memory-events-before.txt
+              pip install --quiet -r requirements.txt pytest
+              workload_status=0
+              python3 -B -m pytest -q \
+                test_argus_recovery_registry.py \
+                test_argus_recovery_measurement.py \
+                test_argus_recovery_measurement_storage.py \
+                test_argus_recovery_phase_a_adapter.py \
+                test_argus_v13_4_2_remote_receipts.py || workload_status=$?
+              python3 -B scripts/recovery_measurement_benchmark.py \
+                > artifacts/recovery-measurement-benchmark.json || workload_status=$?
+              python3 -B scripts/recovery_measurement_retention_benchmark.py \
+                > artifacts/recovery-measurement-retention-benchmark.json || workload_status=$?
+              cp /sys/fs/cgroup/memory.current artifacts/round1-memory-current.txt
+              cp /sys/fs/cgroup/memory.peak artifacts/round1-memory-peak.txt
+              cp /sys/fs/cgroup/memory.max artifacts/round1-memory-max.txt
+              cp /sys/fs/cgroup/memory.swap.max artifacts/round1-memory-swap-max.txt
+              cp /sys/fs/cgroup/memory.events artifacts/round1-memory-events-after.txt
+              printf "%s\n" "$workload_status" \
+                > artifacts/round1-workload-exit-code.txt
+              exit "$workload_status"'
+      - name: Exact-cgroup and benchmark terminal gates
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PY'
+          import json
+          import pathlib
+
+          root = pathlib.Path("artifacts")
+          accounting = json.loads((
+              root / "recovery-measurement-benchmark.json").read_text())
+          retention = json.loads((
+              root / "recovery-measurement-retention-benchmark.json").read_text())
+
+          def scalar(name):
+              return int((root / name).read_text().strip())
+
+          def events(name):
+              return {
+                  key: int(value)
+                  for key, value in (
+                      line.split() for line in (
+                          root / name).read_text().splitlines())
+              }
+
+          before = events("round1-memory-events-before.txt")
+          after = events("round1-memory-events-after.txt")
+          report = {
+              "schemaVersion": "argus-round1-recovery-measurement-cgroup-v1",
+              "memoryMaxBytes": scalar("round1-memory-max.txt"),
+              "swapMaxBytes": scalar("round1-memory-swap-max.txt"),
+              "memoryCurrentBytes": scalar("round1-memory-current.txt"),
+              "memoryPeakBytes": scalar("round1-memory-peak.txt"),
+              "workloadExitCode": scalar("round1-workload-exit-code.txt"),
+              "oomDelta": after.get("oom", 0) - before.get("oom", 0),
+              "oomKillDelta": (
+                  after.get("oom_kill", 0) - before.get("oom_kill", 0)),
+              "accountingPassed": accounting.get("passed") is True,
+              "retentionPassed": retention.get("passed") is True,
+          }
+          report["passed"] = all((
+              report["memoryMaxBytes"] == 4 * 1024 ** 3,
+              report["swapMaxBytes"] == 0,
+              report["memoryPeakBytes"] < report["memoryMaxBytes"],
+              report["workloadExitCode"] == 0,
+              report["oomDelta"] == 0,
+              report["oomKillDelta"] == 0,
+              report["accountingPassed"],
+              report["retentionPassed"],
+          ))
+          (root / "round1-recovery-measurement-cgroup.json").write_text(
+              json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n")
+          assert report["passed"] is True, report
+          PY
+      - name: Publish Round 1 measurement resource proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round1-recovery-measurement-proof-${{ github.sha }}
+          path: |
+            artifacts/recovery-measurement-benchmark.json
+            artifacts/recovery-measurement-retention-benchmark.json
+            artifacts/round1-recovery-measurement-cgroup.json
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-4gib-normalized-hash:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Source and syntax safety gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          event_name='${{ github.event_name }}'
+          pr_base='${{ github.event.pull_request.base.sha }}'
+          before='${{ github.event.before }}'
+          if [[ "$event_name" == "pull_request" ]]; then
+            base_sha="$pr_base"
+          elif [[ "$before" =~ ^0+$ ]]; then
+            base_sha="$(git merge-base "$GITHUB_SHA" origin/main)"
+          else
+            base_sha="$before"
+          fi
+          git cat-file -e "${base_sha}^{commit}"
+          git diff --check "$base_sha" "$GITHUB_SHA"
+          python3 -B -m py_compile \
+            scripts/normalized_hash_resource_probe.py \
+            scripts/deep_memory_attribution_probe.py
+          if grep -nE \
+            'malloc_trim[[:space:]]*\(|gc\.collect[[:space:]]*\(|os\.(exec|kill)[a-z_]*[[:space:]]*\(' \
+            scripts/normalized_hash_resource_probe.py
+          then
+            echo "forbidden runtime-control call in normalized-hash scope" >&2
+            exit 1
+          fi
+          if git diff --unified=0 "$base_sha" "$GITHUB_SHA" -- \
+            argus_asset_chart_cache.py argus_verified_snapshot.py scanner.py | \
+            grep -E '^\+.*(malloc_trim[[:space:]]*\(|gc\.collect[[:space:]]*\(|os\.(exec|kill)[a-z_]*[[:space:]]*\()'
+          then
+            echo "forbidden runtime-control addition in hotfix diff" >&2
+            exit 1
+          fi
+      - name: Fresh-process normalized-hash proof in exact 4 GiB cgroup
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 128 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            python3 -B scripts/normalized_hash_resource_probe.py \
+              --cycles 32 \
+              --verified-bars-per-record 9140 \
+              --asset-bars-per-record 5024 \
+              --require-cgroup-max-bytes 4294967296 \
+              --output artifacts/normalized-hash-resource-proof.json \
+              --quiet
+      - name: Artifact privacy and terminal gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -c 'import json, pathlib; p = pathlib.Path("artifacts/normalized-hash-resource-proof.json"); r = json.loads(p.read_text()); assert r["passed"] is True; assert r["digestMatchPercent"] == 100.0; assert r["abnormalExitCount"] == 0; assert r["oomCount"] == 0; text = p.read_text(); assert not any(value in text for value in ("LOCAL", "local-report", "dataset-", "symbol", "payload", "token="))'
+      - name: Publish normalized-hash resource proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: normalized-hash-resource-proof-${{ github.sha }}
+          path: artifacts/normalized-hash-resource-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-4gib-truth-ledger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact checked-out head
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_head='${{ github.event.pull_request.head.sha || github.sha }}'
+          test "$(git rev-parse HEAD)" = "$expected_head"
+          printf 'ROUND2_HEAD_SHA=%s\n' "$expected_head" >> "$GITHUB_ENV"
+      - name: Truth and ledger proof in exact 4 GiB cgroup
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          docker run --rm \
+            --memory 4g --memory-swap 4g --pids-limit 128 \
+            --volume "$PWD:/work" --workdir /work \
+            python:3.12-slim \
+            sh -c 'set -eu
+              test "$(cat /sys/fs/cgroup/memory.max)" = "4294967296"
+              test "$(cat /sys/fs/cgroup/memory.swap.max)" = "0"
+              cp /sys/fs/cgroup/memory.events \
+                artifacts/round2-macro-memory-events-before.txt
+              pip install --quiet pytest
+              python3 -B -m pytest -q \
+                test_argus_market_data_truth.py \
+                test_argus_market_replay_pit.py \
+                test_argus_chart_intelligence.py \
+                test_argus_today_intelligence.py \
+                test_argus_decision_evidence_bundle.py \
+                test_argus_prediction_ledger_v2.py \
+                test_jp_market_engine.py \
+                test_argus_research_compute.py \
+                test_argus_risk_discipline.py \
+                test_argus_single_decision.py \
+                test_round2_macro_authority.py \
+                test_run_prediction_ledger.py \
+                test_prediction_ledger_workflow.py \
+                test_truth_ledger_benchmark.py
+              python3 -B scripts/round2_resource_probe.py \
+                --require-exact-4g \
+                --output artifacts/round2-macro-resource-proof.json \
+                --quiet
+              python3 -B scripts/truth_ledger_benchmark.py \
+                --require-exact-4g \
+                > artifacts/truth-ledger-benchmark.json
+              cp /sys/fs/cgroup/memory.events \
+                artifacts/round2-macro-memory-events-after.txt
+              cp /sys/fs/cgroup/memory.peak \
+                artifacts/round2-macro-memory-peak.txt
+              cp /sys/fs/cgroup/memory.max \
+                artifacts/round2-macro-memory-max.txt
+              cp /sys/fs/cgroup/memory.swap.max \
+                artifacts/round2-macro-memory-swap-max.txt'
+      - name: Exact-head truth and ledger terminal gate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          root = pathlib.Path("artifacts")
+          report = json.loads((
+              root / "truth-ledger-benchmark.json").read_text(
+                  encoding="utf-8"))
+          macro = json.loads((
+              root / "round2-macro-resource-proof.json").read_text(
+                  encoding="utf-8"))
+          cgroup = report["resources"]["cgroup"]
+          counts = report["counts"]
+          sizes = report["canonicalJsonBytes"]
+          caps = report["caps"]["marketTruth"]
+          expected_digest = (
+              "13556938f3259f49e2c8127c4a1b969f5b66be2aa7d3a3012c2d38ad6c348297")
+          assert report["schemaVersion"] == \
+              "argus-truth-ledger-benchmark-v1"
+          assert report["mode"] == "bounded"
+          assert report["deterministicDigest"] == expected_digest
+          assert report["passed"] is True
+          assert counts["requestCount"] == 32
+          assert counts["selectedCount"] == 32
+          assert counts["predictionCount"] == 32
+          assert counts["outcomeCount"] == 32
+          assert counts["evaluationCount"] == 32
+          assert sizes["decisionSnapshot"] <= caps["maxSnapshotBytes"]
+          assert cgroup["required"] is True
+          assert cgroup["enforcementStatus"] == "PASS"
+          assert cgroup["memoryMaxBytes"] == 4294967296
+          assert cgroup["swapMaxBytes"] == 0
+          assert cgroup["memoryPeakBytes"] < cgroup["memoryMaxBytes"]
+          assert cgroup["oomDelta"] == 0
+          assert cgroup["oomKillDelta"] == 0
+          assert cgroup["passed"] is True
+
+          allowed_macro = {
+              "schemaVersion", "fixtureVersion", "mode",
+              "researchIdentity", "inputIdentity", "artifactId",
+              "artifactDigest",
+              "workloadDigest", "barCount", "eventCount",
+              "artifactBytes", "artifactCapBytes", "eventDetailCount",
+              "eventDetailCap", "counterfactualDetailCount",
+              "counterfactualDetailCap", "turtleSignalDetailCount",
+              "turtleSignalDetailCap", "proofCapBytes", "reportBytes",
+              "deterministicRebuild", "artifactVerified",
+              "rawOhlcRetained", "ownerPnlPresent", "cgroupRequired",
+              "cgroupEnforcementStatus", "memoryMaxBytes",
+              "swapMaxBytes", "memoryPeakBytes", "oomDelta",
+              "oomKillDelta", "passed",
+          }
+          assert set(macro) == allowed_macro
+          assert all(not isinstance(value, (dict, list, tuple, set))
+                     for value in macro.values())
+          assert macro["schemaVersion"] == \
+              "argus-round2-macro-resource-proof-v1"
+          assert macro["mode"] == "bounded"
+          assert macro["barCount"] == 201
+          assert macro["eventCount"] == 3
+          assert len(macro["artifactDigest"]) == 64
+          assert all(char in "0123456789abcdef"
+                     for char in macro["artifactDigest"])
+          assert macro["artifactId"] == \
+              "ra-" + macro["artifactDigest"][:32]
+          assert len(macro["workloadDigest"]) == 64
+          assert all(char in "0123456789abcdef"
+                     for char in macro["workloadDigest"])
+          assert macro["researchIdentity"].startswith("rr-")
+          assert macro["inputIdentity"].startswith("ri-")
+          assert macro["deterministicRebuild"] is True
+          assert macro["artifactVerified"] is True
+          assert macro["rawOhlcRetained"] is False
+          assert macro["ownerPnlPresent"] is False
+          assert macro["artifactBytes"] <= macro["artifactCapBytes"]
+          assert macro["eventDetailCount"] <= macro["eventDetailCap"]
+          assert macro["counterfactualDetailCount"] <= \
+              macro["counterfactualDetailCap"]
+          assert macro["turtleSignalDetailCount"] <= \
+              macro["turtleSignalDetailCap"]
+          assert macro["reportBytes"] <= macro["proofCapBytes"]
+          assert macro["reportBytes"] == (
+              root / "round2-macro-resource-proof.json").stat().st_size
+          assert macro["cgroupRequired"] is True
+          assert macro["cgroupEnforcementStatus"] == "PASS"
+          assert macro["memoryMaxBytes"] == 4294967296
+          assert macro["swapMaxBytes"] == 0
+          assert macro["memoryPeakBytes"] < macro["memoryMaxBytes"]
+          assert macro["oomDelta"] == 0
+          assert macro["oomKillDelta"] == 0
+          assert macro["passed"] is True
+
+          def scalar(name):
+              return int((root / name).read_text(encoding="ascii").strip())
+
+          def events(name):
+              return {
+                  key: int(value)
+                  for key, value in (
+                      line.split() for line in (
+                          root / name).read_text(
+                              encoding="ascii").splitlines())
+              }
+
+          overall_before = events(
+              "round2-macro-memory-events-before.txt")
+          overall_after = events("round2-macro-memory-events-after.txt")
+          overall_oom_delta = (
+              overall_after.get("oom", 0) - overall_before.get("oom", 0))
+          overall_oom_kill_delta = (
+              overall_after.get("oom_kill", 0)
+              - overall_before.get("oom_kill", 0))
+          overall_memory_max = scalar("round2-macro-memory-max.txt")
+          overall_swap_max = scalar("round2-macro-memory-swap-max.txt")
+          overall_memory_peak = scalar("round2-macro-memory-peak.txt")
+          assert overall_memory_max == 4294967296
+          assert overall_swap_max == 0
+          assert overall_memory_peak < overall_memory_max
+          assert overall_oom_delta == 0
+          assert overall_oom_kill_delta == 0
+
+          proof = {
+              "schemaVersion": "argus-round2-truth-ledger-ci-proof-v1",
+              "headSha": os.environ["ROUND2_HEAD_SHA"],
+              "benchmarkDigest": report["deterministicDigest"],
+              "requestCount": counts["requestCount"],
+              "selectedCount": counts["selectedCount"],
+              "predictionCount": counts["predictionCount"],
+              "outcomeCount": counts["outcomeCount"],
+              "evaluationCount": counts["evaluationCount"],
+              "snapshotBytes": sizes["decisionSnapshot"],
+              "memoryMaxBytes": cgroup["memoryMaxBytes"],
+              "swapMaxBytes": cgroup["swapMaxBytes"],
+              "memoryPeakBytes": cgroup["memoryPeakBytes"],
+              "oomDelta": cgroup["oomDelta"],
+              "oomKillDelta": cgroup["oomKillDelta"],
+              "macroArtifactDigest": macro["artifactDigest"],
+              "macroInputIdentity": macro["inputIdentity"],
+              "macroWorkloadDigest": macro["workloadDigest"],
+              "macroArtifactBytes": macro["artifactBytes"],
+              "macroReportBytes": macro["reportBytes"],
+              "overallMemoryPeakBytes": overall_memory_peak,
+              "overallOomDelta": overall_oom_delta,
+              "overallOomKillDelta": overall_oom_kill_delta,
+              "passed": True,
+          }
+          (root / "round2-truth-ledger-ci-proof.json").write_text(
+              json.dumps(proof, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8")
+          PY
+      - name: Publish exact-head Round 2 truth and ledger proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round2-truth-ledger-proof-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            artifacts/truth-ledger-benchmark.json
+            artifacts/round2-macro-resource-proof.json
+            artifacts/round2-truth-ledger-ci-proof.json
+          if-no-files-found: error
+          retention-days: 14

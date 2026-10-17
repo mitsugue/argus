@@ -1,0 +1,363 @@
+name: Market public acceptance
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pages_run_id:
+        description: Pages run containing the pre-deploy warm profile
+        required: true
+        type: string
+      frontend_sha:
+        description: Exact deployed Pages commit SHA
+        required: true
+        type: string
+      backend_sha:
+        description: Exact deployed Render commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+
+jobs:
+  scope:
+    name: exact-admission-scope
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      base_sha: ${{ steps.scope.outputs.base_sha }}
+      candidate_sha: ${{ steps.scope.outputs.candidate_sha }}
+      candidate_tree: ${{ steps.scope.outputs.candidate_tree }}
+      classification: ${{ steps.scope.outputs.classification }}
+      classification_digest: ${{ steps.scope.outputs.classification_digest }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - id: scope
+        name: Classify the exact base-to-candidate diff
+        run: |
+          python3 -B scripts/recovery_admission.py classify \
+            --repo . \
+            --base-sha '${{ github.event.pull_request.base.sha }}' \
+            --head-sha '${{ github.event.pull_request.head.sha }}' \
+            --out artifacts/admission-scope/classification.json \
+            --github-output "$GITHUB_OUTPUT"
+      - name: MIXED scope is denied before either certificate authority
+        env:
+          CLASSIFICATION: ${{ steps.scope.outputs.classification }}
+        run: test "$CLASSIFICATION" != MIXED
+
+  full_release_simulation_1:
+    name: zero-install-runtime-proof-1
+    if: >-
+      github.event_name == 'pull_request' &&
+      (needs.scope.outputs.classification == 'PRODUCT' || needs.scope.outputs.classification == 'PRODUCT_AND_RECOVERY')
+    needs: scope
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    timeout-minutes: 25
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - id: candidate
+        name: Pin candidate tree
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - id: runtime
+        uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ github.event.pull_request.head.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/zero-install-runtime-proof-1.json
+      - name: Build exact candidate artifact
+        env:
+          DEPLOY_BASE: /argus/
+          VITE_ARGUS_BACKEND_URL: http://127.0.0.1:4199
+          VITE_ARGUS_BUILD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npm run build
+        working-directory: web
+      - name: Full cold-start release simulation 1
+        env:
+          ARGUS_SIM_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/full-release-simulation.mjs --run 1 --out ../artifacts/full-release-simulation-1.json
+        working-directory: web
+      - name: Publish simulation 1 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zero-install-runtime-proof-1-${{ github.event.pull_request.head.sha }}
+          path: |
+            artifacts/zero-install-runtime-proof-1.json
+            artifacts/full-release-simulation-1.json
+          if-no-files-found: error
+          retention-days: 30
+
+  full_release_simulation_2:
+    name: zero-install-runtime-proof-2
+    if: >-
+      github.event_name == 'pull_request' &&
+      (needs.scope.outputs.classification == 'PRODUCT' || needs.scope.outputs.classification == 'PRODUCT_AND_RECOVERY')
+    needs: scope
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    timeout-minutes: 25
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - id: candidate
+        name: Pin candidate tree
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - id: runtime
+        uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ github.event.pull_request.head.sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/zero-install-runtime-proof-2.json
+      - name: Build exact candidate artifact
+        env:
+          DEPLOY_BASE: /argus/
+          VITE_ARGUS_BACKEND_URL: http://127.0.0.1:4199
+          VITE_ARGUS_BUILD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npm run build
+        working-directory: web
+      - name: Full cold-start release simulation 2
+        env:
+          ARGUS_SIM_EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/full-release-simulation.mjs --run 2 --out ../artifacts/full-release-simulation-2.json
+        working-directory: web
+      - name: Publish simulation 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zero-install-runtime-proof-2-${{ github.event.pull_request.head.sha }}
+          path: |
+            artifacts/zero-install-runtime-proof-2.json
+            artifacts/full-release-simulation-2.json
+          if-no-files-found: error
+          retention-days: 30
+
+  proof_certificate:
+    name: proof-certificate
+    if: >-
+      github.event_name == 'pull_request' &&
+      (needs.scope.outputs.classification == 'PRODUCT' || needs.scope.outputs.classification == 'PRODUCT_AND_RECOVERY')
+    needs: [scope, full_release_simulation_1, full_release_simulation_2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - id: candidate
+        name: Pin exact certificate candidate tree
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v5
+        with:
+          name: zero-install-runtime-proof-1-${{ github.event.pull_request.head.sha }}
+          path: artifacts/simulation-1
+      - uses: actions/download-artifact@v5
+        with:
+          name: zero-install-runtime-proof-2-${{ github.event.pull_request.head.sha }}
+          path: artifacts/simulation-2
+      - name: Generate pre-merge admission certificate for the exact candidate
+        run: |
+          python3 -B scripts/v13_5_release_certificate.py generate-admission \
+            --simulation-one artifacts/simulation-1/full-release-simulation-1.json \
+            --simulation-two artifacts/simulation-2/full-release-simulation-2.json \
+            --runtime-proof-one artifacts/simulation-1/zero-install-runtime-proof-1.json \
+            --runtime-proof-two artifacts/simulation-2/zero-install-runtime-proof-2.json \
+            --out artifacts/v13-release-proof/certificate.json
+          python3 -B scripts/v13_5_source_provenance.py \
+            --accepted-source f79548bb274c5c5acc4075c181195834c252d54d \
+            --accepted-tree bdba7c970872b92b88bc6e7cc7b0b8afe4785a96 \
+            --candidate-sha '${{ github.event.pull_request.head.sha }}' \
+            --candidate-tree '${{ steps.candidate.outputs.tree }}' \
+            --certificate artifacts/v13-release-proof/certificate.json \
+            --out artifacts/v13-release-proof/source-provenance.json
+          python3 -B scripts/v13_5_release_certificate.py verify-admission \
+            --certificate artifacts/v13-release-proof/certificate.json \
+            --runtime-proof artifacts/simulation-1/zero-install-runtime-proof-1.json \
+            --source-provenance artifacts/v13-release-proof/source-provenance.json
+      - name: Publish detached pre-merge admission certificate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v13-5-premerge-admission-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/v13-release-proof
+          if-no-files-found: error
+          retention-days: 90
+
+  recovery_evidence:
+    name: focused-recovery-evidence
+    if: (needs.scope.outputs.classification == 'RECOVERY_ONLY' || needs.scope.outputs.classification == 'PRODUCT_AND_RECOVERY')
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.12"}
+      - name: Install exact Recovery test dependencies
+        run: >-
+          pip install --quiet anthropic flask flask-cors requests pytz
+          python-dotenv json-repair pytest cryptography==49.0.0 pywebpush==2.3.0
+      - name: Re-establish exact scope locally
+        run: |
+          python3 -B scripts/recovery_admission.py classify \
+            --repo . \
+            --base-sha '${{ needs.scope.outputs.base_sha }}' \
+            --head-sha '${{ needs.scope.outputs.candidate_sha }}' \
+            --out artifacts/recovery-admission/classification.json
+      - name: Run focused fail-closed Recovery admission evidence
+        run: |
+          pytest -q \
+            test_recovery_admission.py \
+            test_argus_v13_4_2_remote_receipts.py \
+            test_remote_receipt_drain.py \
+            test_remote_journal_rearm.py \
+            test_argus_identity_installer.py \
+            test_remote_recovery_publish.py \
+            test_remote_recovery_nonce_bootstrap.py \
+            test_remote_recovery_restore.py \
+            test_argus_v12_3_2.py \
+            test_argus_recovery_phase_a_adapter.py \
+            test_caos_workflow_recovery.py \
+            test_argus_public_operational_boundary.py \
+            --junitxml=artifacts/recovery-admission/junit.xml
+      - name: Bind test evidence to exact candidate and classification
+        run: |
+          python3 -B scripts/recovery_admission.py record-evidence \
+            --classification artifacts/recovery-admission/classification.json \
+            --junit artifacts/recovery-admission/junit.xml \
+            --check exact-scope-classifier \
+            --check focused-recovery-tests \
+            --check product-authority-separation \
+            --out artifacts/recovery-admission/evidence.json
+      - name: Publish exact Recovery evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-evidence-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/recovery-admission
+          if-no-files-found: error
+          retention-days: 90
+
+  recovery_certificate:
+    name: recovery-certificate
+    if: (needs.scope.outputs.classification == 'RECOVERY_ONLY' || needs.scope.outputs.classification == 'PRODUCT_AND_RECOVERY')
+    needs: [scope, recovery_evidence]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v5
+        with:
+          name: recovery-evidence-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/recovery-admission
+      - name: Recompute exact scope and reject detached evidence drift
+        run: |
+          python3 -B scripts/recovery_admission.py classify \
+            --repo . \
+            --base-sha '${{ needs.scope.outputs.base_sha }}' \
+            --head-sha '${{ needs.scope.outputs.candidate_sha }}' \
+            --out artifacts/recovery-admission/recomputed-classification.json
+          cmp \
+            artifacts/recovery-admission/classification.json \
+            artifacts/recovery-admission/recomputed-classification.json
+      - name: Issue and independently verify exact Recovery certificate
+        run: |
+          python3 -B scripts/recovery_admission.py issue \
+            --classification artifacts/recovery-admission/classification.json \
+            --evidence artifacts/recovery-admission/evidence.json \
+            --out artifacts/recovery-admission/certificate.json
+          python3 -B scripts/recovery_admission.py verify \
+            --certificate artifacts/recovery-admission/certificate.json \
+            --classification artifacts/recovery-admission/classification.json \
+            --evidence artifacts/recovery-admission/evidence.json
+      - name: Publish exact detached Recovery certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-admission-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/recovery-admission/certificate.json
+            artifacts/recovery-admission/classification.json
+            artifacts/recovery-admission/evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
+  public-acceptance:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    timeout-minutes: 45
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.frontend_sha }}
+          fetch-depth: 0
+      - id: candidate
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "tree=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: ${{ inputs.frontend_sha }}
+          candidate-tree: ${{ steps.candidate.outputs.tree }}
+          evidence-path: artifacts/manual-public-acceptance-runtime.json
+      - name: Resolve independent release versions
+        id: release
+        run: |
+          node -p '"frontend_version=" + require("./web/package.json").version' >> "$GITHUB_OUTPUT"
+          python3 -c 'import json; print("backend_version=" + json.load(open("backend-version.json"))["version"])' >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/warm-profile-consumer
+        with:
+          owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          owner-origin: https://mitsugue.github.io
+          owner-password: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
+          owner-artifact-key: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+          profile-artifact-name: market-warm-profile-${{ inputs.frontend_sha }}
+          evidence-artifact-name: market-public-acceptance-${{ inputs.frontend_sha }}
+          candidate-sha: ${{ inputs.frontend_sha }}
+          public-url: https://mitsugue.github.io/argus/
+          mode: accept
+          expected-version: ${{ steps.release.outputs.frontend_version }}
+          expected-backend-version: ${{ steps.release.outputs.backend_version }}
+          expected-backend-sha: ${{ inputs.backend_sha }}
+          source-run-id: ${{ inputs.pages_run_id }}
+          github-token: ${{ github.token }}

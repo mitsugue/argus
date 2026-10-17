@@ -1,0 +1,35 @@
+# Counts-only AI usage report (owner request 2026-10-16).
+#
+# Reads the owner-only AI cost document and prints calls, correction calls,
+# rejection reasons and tokens per UTC day to the run page. The repository and
+# its logs are public: scripts/ai_usage_report.py removes every money field
+# before printing, and the raw document is never uploaded or echoed.
+name: ai-usage-report
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Read the owner-only document and print counts only
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          DOC="$RUNNER_TEMP/ai-cost.json"
+          code=$(curl -sS -o "$DOC" -w "%{http_code}" --max-time 150 \
+            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "https://argus-backend-3j2m.onrender.com/api/argus/ai-cost?calls=1")
+          echo "http=$code"
+          test "$code" = "200"
+          python3 -B scripts/ai_usage_report.py "$DOC" | tee -a "$GITHUB_STEP_SUMMARY"
+          rm -f "$DOC"

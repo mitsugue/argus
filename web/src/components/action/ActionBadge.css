@@ -1,0 +1,55 @@
+.action-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  background: var(--abg-bg);
+  color: var(--abg-fg);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  border-radius: 4px;
+}
+
+.action-pill::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--abg-fg);
+  flex-shrink: 0;
+}
+
+.action-pill--sm {
+  padding: 2px 7px;
+  font-size: 10px;
+}
+.action-pill--sm::before {
+  width: 4px;
+  height: 4px;
+}
+
+.action-pill--lg {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.action-pill--lg::before {
+  width: 6px;
+  height: 6px;
+}
+
+/* Hero rendering — flat type, no pill background. */
+.action-hero {
+  display: inline-block;
+  color: var(--abg-fg);
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 44px;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+}

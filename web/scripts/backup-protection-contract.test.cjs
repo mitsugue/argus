@@ -1,0 +1,275 @@
+#!/usr/bin/env node
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const Module = require('node:module');
+const path = require('node:path');
+const esbuild = require('esbuild');
+
+function loadBundled(entry) {
+  const output = esbuild.buildSync({
+    entryPoints: [entry], bundle: true, write: false, platform: 'node', format: 'cjs',
+    define: { __APP_VERSION__: JSON.stringify('backup-contract-test'), 'import.meta.env': '{"VITE_ARGUS_BACKEND_URL":"https://backend.example"}' },
+    logLevel: 'silent',
+  }).outputFiles[0].text;
+  const bundled = new Module(entry, module);
+  bundled.filename = entry;
+  bundled.paths = module.paths;
+  bundled._compile(output, entry);
+  return bundled.exports;
+}
+
+class MemoryLocalStorage {
+  constructor() { this.values = new Map(); }
+  getItem(key) { return this.values.get(key) ?? null; }
+  setItem(key, value) { this.values.set(key, String(value)); }
+  removeItem(key) { this.values.delete(key); }
+  clear() { this.values.clear(); }
+}
+
+global.localStorage = new MemoryLocalStorage();
+global.window = {};
+
+const downloads = [];
+let pendingBlob = null;
+global.document = {
+  createElement(tag) {
+    assert.equal(tag, 'a');
+    return {
+      href: '', download: '',
+      click() { downloads.push({ filename: this.download, blob: pendingBlob }); },
+    };
+  },
+};
+global.URL.createObjectURL = (blob) => { pendingBlob = blob; return `blob:test-${downloads.length}`; };
+global.URL.revokeObjectURL = () => {};
+
+const root = path.join(__dirname, '..', 'src');
+const backup = loadBundled(path.join(root, 'lib', 'backup.ts'));
+const portfolio = loadBundled(path.join(root, 'lib', 'portfolioSync.ts'));
+const safety = loadBundled(path.join(root, 'lib', 'backupSafety.ts'));
+
+const now = Date.now();
+const oldEnvelopeAt = now - 120_000;
+const postEnvelopeEditAt = now - 30_000;
+const oldCompleteExportAt = new Date(now - 90_000).toISOString();
+const asset = {
+  id: 'asset-5803', market: 'JP', assetType: 'jp_equity', source: 'manual',
+  symbol: '5803', displayName: 'Fujikura', displayNameJa: 'フジクラ',
+  quantity: 10, avgCost: 1000, memo: 'core', updatedAt: postEnvelopeEditAt,
+};
+const snapshot = {
+  schemaVersion: 'portfolio-snapshot-v1', snapshotId: 'snap-test', portfolioId: 'default',
+  asOf: new Date(now).toISOString().slice(0, 10), createdAt: new Date(now).toISOString(),
+};
+const decision = {
+  schemaVersion: 'decision-audit-v1', id: 'decision-test', asOf: new Date(now).toISOString(),
+  symbol: '5803', market: 'JP', decisionContext: 'hold', ownerAction: null,
+  reasonCodes: ['test'], flowClass: null, positionRisk: null, marketRegime: null,
+  priceAtDecision: 1000, futureReturn1d: null, futureReturn3d: null,
+  futureReturn5d: null, futureReturn20d: null, reviewNote: null, privacyLevel: 'local_only',
+};
+
+const protectedStores = {
+  'argus.locale.v1': 'ja',
+  'argus.notificationPreferences.v1': { action: true, catalyst: false, risk: true, authority: true, recovery: true },
+  'argus.analysisNameMigration.v1': {},
+  'argus.assets.v1': [asset],
+  'argus.judgmentLog.v1': [{ id: 'judgment-test', note: 'owner judgment' }],
+  'argus.trades.v1': [{ id: 'trade-test', symbol: '5803', quantity: 1 }],
+  'argus.research.v1': [{ id: 'research-test', symbol: '5803', note: 'post-envelope research' }],
+  'argus.assetTombstones.v1': {},
+  'argus.portfolio.snapshots.v1': [snapshot],
+  'argus.decision.audit.v1': [decision],
+  'argus.portfolioSync.meta.v1': { lastExportAt: oldCompleteExportAt },
+  'argus.notifications.v1': [{ id: 'notification-test', title: 'local notice' }],
+  'argus.backupSafety.meta.v1': {
+    restoreVerified: true, restoreContractVersion: backup.BACKUP_CONTRACT_VERSION,
+    lastDrillAt: new Date(now - 60_000).toISOString(),
+  },
+  'argus.fireCore.v1': { monthlyContributionTotal: 100_000, note: 'post-envelope FIRE edit' },
+  // v13.5.13: append-only device SDA ledger rides the vault (quantity/PL-free).
+  'argus.sda.deviceLedger.v1': {
+    schemaVersion: 'argus-device-local-sda-ledger-v1',
+    privacyClass: 'DEVICE_LOCAL_DERIVED',
+    appendMode: 'APPEND_ONLY', retention: 'BOUNDED_TAIL', entries: [],
+  },
+};
+for (const [key, value] of Object.entries(protectedStores)) {
+  localStorage.setItem(key, key === 'argus.locale.v1' ? value : JSON.stringify(value));
+}
+localStorage.setItem('argus.vaultPass.v1', 'read-only-envelope-pass');
+localStorage.setItem('argus.lastCloudBackup.v1', String(oldEnvelopeAt));
+localStorage.setItem('argus.lastLocalEditAt.v1', String(postEnvelopeEditAt));
+
+async function main() {
+  const locale = loadBundled(path.join(root, 'i18n', 'index.ts'));
+  for (const language of ['en', 'ja']) {
+    locale.setLocale(language);
+    const payload = backup.buildBackupPayload(false, {deviceId:'locale-contract'});
+    assert.equal(payload.data['argus.locale.v1'], language);
+    assert.equal(backup.verifyBackupRoundTrip(payload).passed, true);
+    assert.equal(localStorage.getItem('argus.locale.v1'), language);
+  }
+  localStorage.setItem('argus.locale.v1', '"en"');
+  assert.equal(loadBundled(path.join(root, 'i18n', 'index.ts')).getLocale(), 'en');
+  assert.equal(backup.buildBackupPayload(false, {deviceId:'locale-contract'}).data['argus.locale.v1'], 'en');
+  locale.setLocale('ja');
+
+  // Exact old failure: the partial portfolio action may download its file, but
+  // cannot advance the global complete-backup timestamp or protected state.
+  portfolio.downloadPortfolioBackup([asset], 'test');
+  const partialMeta = portfolio.syncMeta();
+  assert.equal(partialMeta.lastExportAt, oldCompleteExportAt);
+  assert.ok(Date.parse(partialMeta.lastPortfolioExportAt) >= postEnvelopeEditAt);
+  const afterPartial = safety.assessBackupSafety([asset]);
+  assert.notEqual(afterPartial.protectionLevel, 'protected');
+  assert.equal(afterPartial.exportAgeDays, null);
+  assert.ok(afterPartial.riskFlags.includes('no_export_backup'));
+
+  const partialDownload = downloads.at(-1);
+  const partialPayload = JSON.parse(await partialDownload.blob.text());
+  assert.match(partialDownload.filename, /^argus-portfolio-/);
+  assert.deepEqual(Object.keys(partialPayload).sort(), [
+    'app', 'appVersion', 'decisionAudit', 'exportedAt', 'kind',
+    'positions', 'schemaVersion', 'snapshots',
+  ]);
+  assert.equal(partialPayload.data, undefined);
+
+  // Portfolio Decision Audit and snapshots now execute a real merge import.
+  const portfolioFile = portfolio.buildPortfolioBackup([asset], 'test');
+  localStorage.setItem('argus.decision.audit.v1', '[]');
+  localStorage.setItem('argus.portfolio.snapshots.v1', '[]');
+  const applied = portfolio.applyImport(portfolioFile, [asset], 'merge', {
+    updateHolding() {}, add() { return null; },
+  });
+  assert.equal(applied.decisionAuditMerged, 1);
+  assert.equal(applied.snapshotsMerged, 1);
+  assert.equal(portfolio.listAudit()[0].id, decision.id);
+  assert.equal(portfolio.listSnapshots()[0].snapshotId, snapshot.snapshotId);
+
+  // The drill invokes the same full restore path against isolated storage.
+  assert.equal(localStorage.getItem('argus.deviceId.v1'), null);
+  const drill = safety.runRecoveryDrill([asset], 'test');
+  assert.equal(drill.passed, true);
+  assert.match(drill.resultJa, /隔離領域へ実復元/);
+  assert.equal(safety.drillMeta().restoreContractVersion, backup.BACKUP_CONTRACT_VERSION);
+  assert.equal(localStorage.getItem('argus.deviceId.v1'), null);
+
+  // Only a complete, proven round-trip download advances global protection.
+  localStorage.setItem('argus.lastLocalEditAt.v1', String(Date.now() - 1));
+  const exportedCount = backup.downloadBackup(false);
+  assert.equal(exportedCount, backup.BACKUP_KEYS.length);
+  const completeMeta = portfolio.syncMeta();
+  assert.ok(Date.parse(completeMeta.lastExportAt) >= Number(localStorage.getItem('argus.lastLocalEditAt.v1')));
+  assert.equal(completeMeta.lastExportContractVersion, backup.BACKUP_CONTRACT_VERSION);
+  assert.equal(completeMeta.lastPortfolioExportAt, partialMeta.lastPortfolioExportAt);
+
+  const completeDownload = downloads.at(-1);
+  const completePayload = JSON.parse(await completeDownload.blob.text());
+  assert.match(completeDownload.filename, /^argus-backup-/);
+  assert.deepEqual(Object.keys(completePayload.data).sort(), [...backup.BACKUP_KEYS].sort());
+  for (const key of ['argus.trades.v1', 'argus.research.v1', 'argus.fireCore.v1',
+    'argus.decision.audit.v1', 'argus.assets.v1', 'argus.portfolio.snapshots.v1']) {
+    assert.notEqual(completePayload.data[key], undefined, `${key} must be in the complete export`);
+  }
+  const proof = backup.verifyBackupRoundTrip(completePayload);
+  assert.equal(proof.passed, true);
+  assert.deepEqual(proof.restoredKeys.sort(), [...backup.BACKUP_KEYS].sort());
+  assert.equal(safety.assessBackupSafety([asset]).protectionLevel, 'protected');
+
+  // An unreadable protected store blocks certification instead of being
+  // silently omitted while lastExportAt advances.
+  const certifiedAt = portfolio.syncMeta().lastExportAt;
+  const downloadCount = downloads.length;
+  localStorage.setItem('argus.research.v1', '{broken-json');
+  assert.equal(backup.downloadBackup(false), 0);
+  assert.equal(portfolio.syncMeta().lastExportAt, certifiedAt);
+  assert.equal(downloads.length, downloadCount);
+
+  // The exported production import restores every covered store, not only the
+  // isolated verifier's projection.
+  localStorage.clear();
+  assert.equal(backup.restoreBackup(completePayload), backup.BACKUP_KEYS.length);
+  for (const key of backup.BACKUP_KEYS) {
+    assert.notEqual(localStorage.getItem(key), null, `${key} must survive production restore`);
+  }
+  assert.equal(localStorage.getItem('argus.locale.v1'), 'ja');
+  assert.equal(JSON.parse(localStorage.getItem('argus.trades.v1'))[0].id, 'trade-test');
+  assert.equal(JSON.parse(localStorage.getItem('argus.research.v1'))[0].id, 'research-test');
+  assert.equal(JSON.parse(localStorage.getItem('argus.fireCore.v1')).monthlyContributionTotal, 100_000);
+  assert.equal(JSON.parse(localStorage.getItem('argus.decision.audit.v1'))[0].id, decision.id);
+
+  // Reject an unsupported history before any JSON-import write, including
+  // holdings, deletion markers and backup timestamps.
+  const unsupported = structuredClone(completePayload);
+  unsupported.data['argus.sda.deviceLedger.v1'].schemaVersion = 'unsupported-history-v0';
+  const protectedBefore = [...localStorage.values];
+  assert.throws(() => backup.restoreBackup(unsupported), /判断履歴を検証できません/);
+  assert.deepEqual([...localStorage.values], protectedBefore);
+  assert.equal(backup.verifyBackupRoundTrip(unsupported).passed, false);
+
+  // The same preflight applies to real encrypted cloud restore and automatic
+  // pull. A valid envelope is still decryptable and keeps the normal restore.
+  const vault = loadBundled(path.join(root, 'lib', 'vault.ts'));
+  const passphrase = 'isolated-test-backup-passphrase';
+  const originalFetch = global.fetch;
+  const sealedUnsupported = await vault.encryptBackup(passphrase, unsupported);
+  global.fetch = async (url) => (String(url).startsWith('https://backend.example/api/argus/vault-relay')
+    ? { ok: true, json: async () => ({ blob: sealedUnsupported }) } : { ok: false, json: async () => ({}) });
+  assert.deepEqual(await vault.decryptBackup(passphrase, sealedUnsupported), unsupported);
+  assert.throws(() => backup.assertBackupHistoryReadable(unsupported), /判断履歴/);
+  await assert.rejects(vault.cloudRestore(passphrase), /判断履歴/);
+  assert.deepEqual([...localStorage.values], protectedBefore);
+  vault.setVaultPass(passphrase);
+  const beforePull = [...localStorage.values];
+  assert.equal(await vault.cloudSyncNow({ rawFallback: true }), 'noop');
+  assert.equal(vault.lastSyncInfo().historyRestoreBlocked, true);
+  assert.deepEqual([...localStorage.values].filter(([key]) => key !== 'argus.lastSyncInfo.v1'), beforePull);
+  assert.equal(vault.lastSyncInfo().lastPullAppliedAt, undefined);
+  // Large, multilingual device history must survive the actual AES envelope
+  // without expanding the entire ciphertext as one function argument list.
+  const largePayload = structuredClone(completePayload);
+  largePayload.data['argus.research.v1'] = [{ id: 'large-history', note: '市場の根拠と見立て🌐'.repeat(50_000) }];
+  assert.ok(Buffer.byteLength(JSON.stringify(largePayload), 'utf8') > 1_000_000);
+  const beforeLarge = [...localStorage.values];
+  const largeEnvelope = await vault.encryptBackup(passphrase, largePayload);
+  assert.equal(JSON.parse(largeEnvelope).v, 1);
+  assert.deepEqual(await vault.decryptBackup(passphrase, largeEnvelope), largePayload);
+  await assert.rejects(vault.decryptBackup(passphrase + '-incorrect', largeEnvelope));
+  assert.deepEqual([...localStorage.values], beforeLarge);
+  const validEnvelope = await vault.encryptBackup(passphrase, completePayload);
+  global.fetch = async (url) => (String(url).startsWith('https://backend.example/api/argus/vault-relay')
+    ? { ok: true, json: async () => ({ blob: validEnvelope }) } : { ok: false, json: async () => ({}) });
+  global.window.dispatchEvent = () => true;
+  assert.equal(await vault.cloudRestore(passphrase), backup.BACKUP_KEYS.length);
+  assert.equal(vault.lastSyncInfo().historyRestoreBlocked, false);
+  assert.equal(vault.lastSyncInfo().outcome, 'applied');
+  assert.ok(vault.lastSyncInfo().lastPullAppliedAt);
+  await vault.cloudSyncNow({ rawFallback: true });
+  assert.equal(vault.lastSyncInfo().historyRestoreBlocked, false);
+  global.fetch = originalFetch;
+
+  // Protection discovery covers non-portfolio stores even when no holding is
+  // present; FIRE/trade/research-only data must never be labelled no-data.
+  localStorage.clear();
+  localStorage.setItem('argus.fireCore.v1', JSON.stringify({ monthlyContributionTotal: 100_000 }));
+  assert.notEqual(safety.assessBackupSafety([]).protectionLevel, 'unknown');
+
+  const portfolioCard = fs.readFileSync(path.join(root, 'components', 'dashboard', 'PortfolioSyncCard.tsx'), 'utf8');
+  const backupCard = fs.readFileSync(path.join(root, 'components', 'guide', 'BackupCard.tsx'), 'utf8');
+  const backupOverview = fs.readFileSync(path.join(root, 'components', 'system', 'BackupStatusOverview.tsx'), 'utf8');
+  assert.match(portfolioCard, /ポートフォリオのみJSONを書き出す/);
+  assert.match(portfolioCard, /部分ファイル/);
+  assert.match(backupCard, /完全バックアップJSONを書き出す/);
+  assert.match(backupOverview, /certifiedCompleteExportAt\(local\)/);
+  assert.doesNotMatch(backupOverview, /local\.lastExportAt/);
+
+  console.log('backup-protection-contract.test: ok (complete certification + isolated round-trip)');
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

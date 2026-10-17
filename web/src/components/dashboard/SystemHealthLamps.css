@@ -1,0 +1,54 @@
+.shl { margin: 6px 0; font-size: 11px; }
+.shl-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: var(--surface-soft, rgba(255,255,255,0.03));
+  border: 1px solid var(--line, rgba(255,255,255,0.08));
+  border-radius: 7px; padding: 5px 10px; cursor: pointer; color: var(--text-sub, #8b98a7);
+}
+.shl--stop .shl-head { border-color: var(--red, #ef4444); }
+.shl-title { font-weight: 600; color: var(--text-main); }
+.shl-overall { color: var(--text-sub, #8b98a7); }
+.shl-badge {
+  margin-left: 2px; font-size: 10px; font-weight: 700; color: #fff;
+  background: var(--amber, #fbbf24); border-radius: 9px; padding: 0 6px; line-height: 16px;
+}
+.shl--stop .shl-badge { background: var(--red, #ef4444); }
+.shl-caret { margin-left: auto; font-size: 9px; opacity: 0.6; }
+.shl-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 5px currentColor; }
+.shl-dot--ok   { background: var(--green, #34d399); color: var(--green, #34d399); }
+.shl-dot--warn { background: var(--amber, #fbbf24); color: var(--amber, #fbbf24); }
+.shl-dot--stop { background: var(--red, #ef4444);   color: var(--red, #ef4444);
+                 animation: shl-pulse 1.1s ease-in-out infinite; }
+.shl-dot--off  { background: #5f6b78; color: transparent; box-shadow: none; }
+@keyframes shl-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+.shl-grid {
+  margin-top: 5px; padding: 8px 10px; display: flex; flex-direction: column; gap: 5px;
+  background: var(--surface-soft, rgba(255,255,255,0.02));
+  border: 1px solid var(--line, rgba(255,255,255,0.07)); border-radius: 7px;
+}
+.shl-row { display: flex; align-items: center; gap: 8px; }
+.shl-label { min-width: 92px; color: var(--text-main); font-weight: 500; }
+.shl-detail { color: var(--text-faint, #5f6b78); }
+.shl-note { margin-top: 3px; font-size: 10px; color: var(--text-faint, #5f6b78); line-height: 1.5; }
+
+/* Brand popover (opened by tapping the A.R.G.U.S. logo) — tap overlay to close. */
+.shl-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,0.35); }
+.shl-popover {
+  position: fixed; top: 52px; left: 12px; z-index: 91; width: min(340px, calc(100vw - 24px));
+  background: var(--surface, #11161d); border: 1px solid var(--line, rgba(255,255,255,0.12));
+  border-radius: 12px; padding: 12px 14px; box-shadow: 0 12px 36px rgba(0,0,0,0.5);
+  font-size: 11px; animation: shl-pop-in 0.13s ease;
+}
+@keyframes shl-pop-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.shl-pop-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.shl-pop-title { font-weight: 700; color: var(--text-main); font-size: 12px; }
+.shl-pop-overall { margin-left: auto; color: var(--text-sub, #8b98a7); }
+
+/* Market session lamps (Today header) — green while a market is open, dark when closed. */
+.msl { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 0; font-size: 11.5px; }
+.msl-item { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; letter-spacing: 0.02em; }
+.msl-item--open { color: var(--text-main); }
+.msl-item--closed { color: var(--text-faint, #5f6b78); }
+
+/* Market status heading (v10.120) — clarifies this is status, not tabs */
+.msl-head { font-size: 9px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-faint, #5f6b78); margin-right: 4px; align-self: center; }

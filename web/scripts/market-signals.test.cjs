@@ -1,0 +1,207 @@
+// v13.5.38 — MARKET SIGNALS (SIG-01..07) owner-facing contract.
+//
+// Proves: seven fixed IDs, the numerator is computed from per-signal state
+// (never hard-coded), every signal renders an independent truthful state,
+// DATA_GATED/UNAVAILABLE never count, glossary coverage, and the panel
+// renders the surface from the projection only.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const ts = require('typescript');
+
+require.extensions['.ts'] = (mod, filename) => {
+  const output = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    fileName: filename,
+  }).outputText;
+  mod._compile(output, filename);
+};
+
+const src = path.join(__dirname, '..', 'src');
+const ms = require(path.join(src, 'domain', 'marketSignals.ts'));
+const glossary = require(path.join(src, 'domain', 'glossary.ts'));
+
+const fam = (status, conditionMet) => ({ status, conditionMet });
+
+// 1) seven identities, fixed order, owner vocabulary (no legacy engine name).
+assert.deepEqual(ms.MARKET_SIGNAL_DEFINITIONS.map((d) => d.id),
+  ['SIG-01', 'SIG-02', 'SIG-03', 'SIG-04', 'SIG-05', 'SIG-06', 'SIG-07']);
+for (const d of ms.MARKET_SIGNAL_DEFINITIONS) {
+  assert.ok(!/JP_MARKET_ENGINE/.test(d.nameEn) && !/JP_MARKET_ENGINE/.test(d.nameJa), `${d.id} must not carry the legacy name`);
+}
+
+// 2) numerator computed from state — 0, 3 and 7 all derive from data.
+const derivedZero = ms.marketSignalsView({ families: {
+  D01: fam('AVAILABLE', false), D02: fam('AVAILABLE', false), D03: fam('AVAILABLE', false),
+  D04: fam('AVAILABLE', false), D05: fam('AVAILABLE', false), D06: fam('AVAILABLE', false),
+  D07: fam('AVAILABLE', false) } });
+assert.equal(derivedZero.countLabel, '0 / 7');
+const derivedThree = ms.marketSignalsView({ families: {
+  D01: fam('AVAILABLE', true), D02: fam('AVAILABLE', true), D03: fam('AVAILABLE', true),
+  D04: fam('LICENSE_BLOCKED', null), D05: fam('AVAILABLE', false), D06: fam('AVAILABLE', null),
+  D07: fam('MISSING', null) } });
+assert.equal(derivedThree.countLabel, '3 / 7');
+assert.equal(derivedThree.source, 'derived');
+const derivedSeven = ms.marketSignalsView({ families: Object.fromEntries(
+  ['D01', 'D02', 'D03', 'D04', 'D05', 'D06', 'D07'].map((k) => [k, fam('AVAILABLE', true)])) });
+assert.equal(derivedSeven.countLabel, '7 / 7');
+
+// 3) independent, truthful per-signal states (missing provider => UNAVAILABLE, never CLEAR/zero-silent).
+const states = Object.fromEntries(derivedThree.signals.map((s) => [s.id, s.state]));
+assert.deepEqual(states, {
+  'SIG-01': 'ACTIVE', 'SIG-02': 'ACTIVE', 'SIG-03': 'ACTIVE', 'SIG-04': 'LICENSE_BLOCKED',
+  'SIG-05': 'CLEAR', 'SIG-06': 'DATA_GATED', 'SIG-07': 'UNAVAILABLE',
+});
+assert.equal(ms.marketSignalsView({ families: {} }).signals.every((s) => s.state === 'UNAVAILABLE'), true);
+
+// 4) server projection is preferred but the count is recounted from the rows it shows.
+const server = ms.marketSignalsView({
+  marketSignals: { total: 7, activeCount: 99, countLabel: '99 / 7', signals: [
+    { id: 'SIG-01', state: 'ACTIVE' }, { id: 'SIG-02', state: 'CLEAR' },
+    { id: 'SIG-03', state: 'DATA_GATED' }, { id: 'SIG-04', state: 'LICENSE_BLOCKED' },
+    { id: 'SIG-05', state: 'STALE' }, { id: 'SIG-06', state: 'UNAVAILABLE' },
+    { id: 'SIG-07', state: 'ACTIVE' } ] },
+  families: {},
+});
+assert.equal(server.source, 'server');
+assert.equal(server.countLabel, '2 / 7');
+assert.equal(server.signals.find((s) => s.id === 'SIG-05').stateJa, '古い');
+
+// 5) every rendered state has a Japanese label and a glossary entry.
+for (const state of ['ACTIVE', 'CLEAR', 'DATA_GATED', 'STALE', 'LICENSE_BLOCKED', 'UNAVAILABLE']) {
+  assert.ok(ms.MARKET_SIGNAL_STATE_JA[state], `label for ${state}`);
+  const key = glossary.MARKET_SIGNAL_STATE_GLOSSARY[state];
+  assert.ok(key && glossary.glossaryEntry(key), `glossary entry for ${state}`);
+}
+
+// 6) the panel renders the surface from the projection and never hard-codes a count.
+const panel = fs.readFileSync(path.join(src, 'components', 'today', 'ArgusTodayPanel.tsx'), 'utf8');
+assert.ok(panel.includes('marketSignalsView(decisionEvidence.marketView?.projection ?? null)'), 'panel must derive MARKET SIGNALS from the projection');
+// v13.5.59 (owner iPhone): MARKET SIGNALS is rendered ONCE — at the top of the
+// Primary Action (tap to expand). The second copy in the market view is gone.
+assert.ok(!panel.includes('data-argus-contract="market-signals-v1"'), 'no duplicate MARKET SIGNALS block');
+assert.ok(!panel.includes('className="mv-fams"'), 'the seven family chips no longer repeat the signals');
+assert.ok(panel.includes('`成立している条件 ${topSignals.activeCount}件`'), 'count must come from the view');
+// v13.5.63 (GPT additional item 1): with the US market selected the seven signals
+// are labelled as Japan's and the US conditioning inputs are named instead.
+assert.ok(panel.includes('data-argus-contract="market-signals-market-v1"'), 'US selection labels the signals as Japanese');
+assert.ok(panel.includes('7条件は日本固有（米国は適用外）'), 'US selection says the seven are not applicable');
+assert.ok(!/["'`]\s*1 \/ 7\s*["'`]/.test(panel), 'no hard-coded 1 / 7 literal');
+assert.ok(panel.includes('data-signal-state={row.state}'), 'per-signal state rendered independently');
+
+// 7) v13.5.39: the TOP command area (the block the owner reads first) renders
+//    MARKET SIGNALS x / 7 from the real projection, never a hard-coded count.
+assert.ok(panel.includes('data-argus-contract="market-signals-top-v1"'), 'top block contract marker');
+assert.ok(panel.includes('const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null)'),
+  'top block derives from the projection');
+assert.ok(panel.includes("{topSignals ? `成立している条件 ${topSignals.activeCount}件` : '成立状況を確認中'}"), 'top count from the view or truthful placeholder');
+assert.ok(panel.includes('日本株の7つの警戒条件') && panel.includes('日本株の7条件'), 'new warning direction and legacy names are distinct');
+assert.ok(panel.includes('data-argus-contract="market-signals-top-detail-v1"'), 'seven per-signal states expand at the top');
+assert.ok(!/<b>1 \/ 7<\/b>/.test(panel), 'no hard-coded 1 / 7');
+
+console.log('market-signals.test: SIG-01..07, computed x/7, independent states, top block, glossary ok');
+
+// ── v13.5.44: NOT_APPLICABLE is a distinct, glossaried, non-counting state ──
+const naState = ms.signalStateFromFamily({ status: 'NOT_APPLICABLE', conditionMet: null });
+assert.equal(naState, 'NOT_APPLICABLE');
+assert.equal(ms.MARKET_SIGNAL_STATE_JA.NOT_APPLICABLE, '該当なし');
+assert.ok(glossary.GLOSSARY[glossary.MARKET_SIGNAL_STATE_GLOSSARY.NOT_APPLICABLE], 'glossary entry for NOT_APPLICABLE');
+console.log('market-signals.test: NOT_APPLICABLE state ok');
+
+const reading = require(path.join(src, 'domain', 'sevenSignReading.ts'));
+assert.equal(reading.signalDirectionJa('D01'), '警戒');
+assert.equal(reading.signalDirectionJa('D06'), '上昇を支える');
+assert.equal(reading.signalPerformanceJa('D01', null), '過去の成績：未取得');
+const study = { status:'AVAILABLE', primaryHorizon:5, conditions:{
+  D06:{ expects:'RISE', status:'NOT_ABOVE_BASELINE', horizons:{5:{hitShare:.55,baselineHitShare:.50,evaluated:40}} },
+  D04:{ expects:'FALL', status:'INSUFFICIENT_SAMPLE', horizons:{5:{hitShare:null,baselineHitShare:null,evaluated:0}} },
+  D07:{ status:'NOT_EVALUABLE' },
+}};
+assert.match(reading.signalPerformanceJa('D06',study), /上昇 55.0%（普段 50.0%）・40件・基準を上回らない/);
+assert.match(reading.signalPerformanceJa('D04',study), /下落 —（普段 —）・0件・件数不足/);
+assert.equal(reading.signalPerformanceJa('D07',study), '過去の成績：測定規則なし');
+assert.equal(reading.signalPerformanceJa('D06',{...study,status:'UNAVAILABLE'}), '過去の成績：未取得');
+study.conditions.D06.horizons[5].hitShare=0;
+assert.match(reading.signalPerformanceJa('D06',study), /上昇 0.0%/);
+
+
+// The current PER definition never borrows the old D04 performance.
+assert.match(reading.signalPerformanceJa('D04', study, 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD'), /最新PER.*未定義.*旧方式/);
+const currentPerSignal = ms.marketSignalsView({marketSignals:{signals:ms.MARKET_SIGNAL_DEFINITIONS.map(def => ({
+  ...def, state:'DATA_GATED', status:'AVAILABLE', conditionMet:null,
+  ...(def.family === 'D04' ? {ruleStatus:'RULE_NOT_DEFINED', valuationBasis:'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD',
+                            conditionRuleJa:'最新の推計PER。警戒基準は未定義'} : {})
+}))}});
+assert.equal(currentPerSignal.activeCount, 0);
+assert.equal(currentPerSignal.signals[3].ruleStatus, 'RULE_NOT_DEFINED');
+assert.equal(currentPerSignal.signals[3].valuationBasis, 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD');
+assert.match(currentPerSignal.signals[3].conditionRuleJa, /警戒基準は未定義/);
+
+assert.equal(ms.signalStateFromFamily({status:'AVAILABLE',conditionMet:true,ruleStatus:'RULE_NOT_DEFINED'}), 'DATA_GATED');
+const inconsistentCurrent = ms.marketSignalsView({marketSignals:{signals:ms.MARKET_SIGNAL_DEFINITIONS.map(def => ({
+ ...def, state:def.family === 'D04' ? 'ACTIVE' : 'CLEAR', status:'AVAILABLE', conditionMet:def.family === 'D04',
+ ...(def.family === 'D04' ? {ruleStatus:'RULE_NOT_DEFINED',valuationBasis:'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD'} : {})
+}))}});
+assert.equal(inconsistentCurrent.activeCount, 0);
+const derivedCurrent = ms.marketSignalsView({families:{D04:{status:'AVAILABLE',conditionMet:true,
+ ruleStatus:'RULE_NOT_DEFINED',valuationBasis:'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD',conditionRuleJa:'最新PERの警戒基準は未定義'}}});
+assert.equal(derivedCurrent.activeCount, 0);
+assert.equal(derivedCurrent.signals[3].valuationBasis, 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD');
+
+// The new rule is separate from the old upward-support count and study.
+const at = '2026-10-06T00:00:00Z';
+const warningSignals = {schemaVersion:'jp-warning-conditions-v2',informationCutoff:at,rejectedEvidence:false,
+ countPredictsCrash:false,actionAuthority:false,activeCount:99, signals:ms.MARKET_SIGNAL_DEFINITIONS.map(def=>({
+ id:def.id.replace('SIG-','WARN-'),family:def.family,ruleId:`jp-warning-conditions-v2.${def.family}`,
+ state:['D03','D04','D07'].includes(def.family)?'DATA_GATED':'ACTIVE',status:'AVAILABLE',
+ conditionMet:['D03','D04','D07'].includes(def.family)?null:true,
+ ruleStatus:['D03','D04','D07'].includes(def.family)?'RULE_NOT_DEFINED':'DEFINED',value:0.5,knowledgeTime:at,
+ distance:{signedFromBoundary:-.5,unit:'RATIO',operator:'>=',atBoundary:false,boundaryCounts:true}
+ }))};
+const view=ms.marketSignalsView({informationCutoff:at,warningSignals,marketSignals:{...server,activeCount:7}});
+assert.equal(view.kind,'warning');assert.equal(view.activeCount,4);assert.equal(view.measurableCount,4);
+assert.equal(view.signals[4].nameJa,'海外投資家の売り越し');
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:{...warningSignals,schemaVersion:'unknown'},families:{D01:fam('AVAILABLE',true)}}).activeCount,0);
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:{...warningSignals,informationCutoff:'different'}}).activeCount,0);
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:{...warningSignals,signals:[...warningSignals.signals.slice(1),warningSignals.signals[1]]}}).activeCount,0);
+const corrupted=structuredClone(warningSignals);corrupted.signals[2].state='ACTIVE';corrupted.signals[2].conditionMet=true;corrupted.signals[2].ruleStatus='DEFINED';
+corrupted.signals[4].knowledgeTime='2026-10-06T00:00:01Z';
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:corrupted}).activeCount,3);
+const adopted=structuredClone(warningSignals);adopted.schemaVersion='jp-warning-conditions-v3';
+for (const r of adopted.signals.filter(r=>['D03','D04','D07'].includes(r.family))) {
+  r.ruleId=`jp-warning-conditions-v3.${r.family}`;r.lineage='ARGUS_VALIDATION_RULE';
+  r.ruleStatus='DEFINED';r.state='CLEAR';r.status='AVAILABLE';r.conditionMet=false;
+  r.value=100;r.knowledgeTime=at;
+  r.performance={ruleId:r.ruleId,status:'UNVALIDATED',evaluated:0};
+}
+const adoptedView=ms.marketSignalsView({informationCutoff:at,warningSignals:adopted});
+assert.equal(adoptedView.measurableCount,7);
+assert.equal(adoptedView.signals[3].lineage,'ARGUS_VALIDATION_RULE');
+assert.equal(adoptedView.signals[3].performance.evaluated,0);
+const wrongLineage=structuredClone(adopted);wrongLineage.signals[3].lineage='ORIGINAL_DIRECTION';
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:wrongLineage}).signals[3].state,'DATA_GATED');
+const staleGrade=structuredClone(adopted);staleGrade.signals[3].performance.ruleId='jp-warning-conditions-v2.D04';
+assert.equal(ms.marketSignalsView({informationCutoff:at,warningSignals:staleGrade}).signals[3].performance,undefined);
+assert.equal(reading.warningDistanceJa({...view.signals[0],state:'CLEAR',distance:{signedFromBoundary:0,unit:'JPY',operator:'<',atBoundary:true,boundaryCounts:false}}),'基準ちょうど・まだ成立していません');
+assert.equal(reading.warningDistanceJa({...view.signals[1],state:'CLEAR',distance:{signedFromBoundary:-.25,unit:'RATIO',operator:'>=',atBoundary:false,boundaryCounts:true}}),'成立まであと0.25倍の上昇');
+assert.equal(reading.warningDistanceJa({...view.signals[1],state:'STALE'}),null);
+assert.equal(reading.warningDistanceJa({...view.signals[3],state:'CLEAR',distance:{signedFromBoundary:12.5,unit:'JPY_EPS',operator:'<',atBoundary:false,boundaryCounts:false}}),'基準まであと12.5円（下回ると成立）');
+assert.equal(reading.warningDistanceJa({...view.signals[2],state:'ACTIVE',distance:{signedFromBoundary:-.01,unit:'INDEX_RATIO',operator:'<',atBoundary:false,boundaryCounts:false}}),'基準より指数比の差 0.01低い・成立中');
+assert.equal(reading.warningDistanceJa({...view.signals[6],state:'CLEAR',distance:{signedFromBoundary:-.1,unit:'FRACTION',operator:'>=',atBoundary:false,boundaryCounts:true}}),'成立まであと10ポイントの上昇');
+assert.match(reading.warningDistanceJa({...view.signals[5],state:'CLEAR',distance:{signedFromBoundary:-1e-10,unit:'MACD_GAP',operator:'>',atBoundary:false,boundaryCounts:false}}),/0.0000000001/);
+console.log('警戒v2：旧支持規則の非流用・版/時点/重複/未定義拒否・距離境界 PASS');
+
+require.extensions['.tsx']=(mod,filename)=>mod._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'),{
+ compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX},fileName:filename}).outputText,filename);
+const React=require('react');
+const {renderToStaticMarkup}=require('react-dom/server');
+const {WarningConditionsDetails}=require(path.join(src,'components/today/WarningConditionsDetails.tsx'));
+const html=renderToStaticMarkup(React.createElement(WarningConditionsDetails,{view}));
+assert.match(html,/基準未確定/);
+assert.match(html,/条件の計算が動くことと、下落を予測できることは別/);
+assert.match(html,/時間がたつだけで検証済みにはなりません/);
+assert.match(html,/測定できる条件 4件/);
+assert.match(html,/成績：まだ採点できる記録がありません/);
+assert.match(html,/3・4・7番は判定基準の確定待ち/);
+
+assert.equal(reading.warningDistanceJa({...view.signals[6],state:'CLEAR',distance:{signedFromBoundary:-1,unit:'CASES',operator:'>=',atBoundary:false,boundaryCounts:true}}),'最低件数まであと1件（5件以上で株価反応を判定）');

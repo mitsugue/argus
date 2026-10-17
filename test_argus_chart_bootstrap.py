@@ -1,0 +1,657 @@
+"""v13.5.42 — boot-time asset chart bootstrap (argus_chart_bootstrap) tests.
+
+The host is a fake module exposing the scanner functions the bootstrap
+relies on; no network, no real scheduler.
+"""
+from __future__ import annotations
+
+import threading
+import types
+
+import argus_asset_chart_cache
+import argus_chart_bootstrap as boot
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_product_stores():
+    """Module stores (boot warm, derived valuation, statements state) must never
+    leak into other auto-discovered suites (e.g. D07 expects MISSING when cold)."""
+    import argus_chart_bootstrap as _boot
+    import argus_japan_valuation as _val
+    _boot._reset_for_tests(); _val._reset_for_tests()
+    yield
+    _boot._reset_for_tests(); _val._reset_for_tests()
+
+
+
+def _report(symbol, market):
+    """Minimal report accepted by argus_asset_chart_cache._valid_report."""
+    return {"reportId": f"{symbol}-daily", "status": "ok", "market": market, "symbol": symbol,
+            "indicators": {"bars": [{"date": "2026-09-02", "close": 1.0}]}}
+
+
+def _host(targets, missing):
+    """Fake scanner host: reports exist for every target except `missing`."""
+    store = argus_asset_chart_cache.empty_store()
+    host = types.SimpleNamespace()
+    host._ASSET_CHART_REPORTS = store
+    host.calls = []
+    host.restored = 0
+
+    def _restore():
+        host.restored += 1
+
+    def _targets():
+        return list(targets)
+
+    def _tick(deadline_monotonic=None):
+        cursor = int(store.get("cursor") or 0) % len(targets)
+        symbol, market = targets[cursor]
+        store["cursor"] = (cursor + 1) % len(targets)
+        host.calls.append((symbol, market, deadline_monotonic))
+        if (symbol, market) in missing:
+            missing.discard((symbol, market))
+            report = _report(symbol, market)
+            nxt, _pub = argus_asset_chart_cache.publish(
+                argus_asset_chart_cache.normalize_store(store), market=market, symbol=symbol,
+                timeframe="daily", dataset_hash="h1", method_version="m1", report=report,
+                published_at="2026-09-03T07:00:00Z")
+            store.clear(); store.update(nxt)
+            return {"status": "published"}
+        return {"status": "unchanged"}
+
+    host._osint_restore_once = _restore
+    host._asset_chart_targets = _targets
+    host._precompute_asset_chart_tick = _tick
+    return host
+
+
+def test_bootstrap_declines_unsupported_hosts_and_kill_switch():
+    boot._reset_for_tests()
+    assert boot.ensure_started(types.SimpleNamespace(), environ={}) == "HOST_UNSUPPORTED"
+    assert boot.ensure_started(None, environ={"ARGUS_CHART_BOOTSTRAP": "0"}) == "DISABLED"
+    assert boot.status()["status"] == "NOT_STARTED"
+
+
+def test_bootstrap_walks_every_target_once_after_restore_and_is_idempotent():
+    boot._reset_for_tests()
+    targets = [("5803", "JP"), ("9984", "JP"), ("NVDA", "US")]
+    missing = {("5803", "JP"), ("NVDA", "US")}
+    host = _host(targets, missing)
+    # publish 9984 up front so the bootstrap only has to fill the gaps
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="9984",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("9984", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    done = threading.Event()
+    sleeps = []
+
+    def _sleep(seconds):
+        sleeps.append(seconds)
+
+    token = boot.ensure_started(host, environ={}, delay_seconds=0.0, per_symbol_seconds=7.0,
+                                pause_seconds=0.0, sleeper=_sleep, clock=lambda: 100.0)
+    assert token == "STARTED"
+    boot._STATE["thread"].join(timeout=5)
+    summary = boot.status()
+    assert summary["status"] == "DONE"
+    assert host.restored == 1
+    assert summary["missingBefore"] == 2 and summary["missingAfter"] == 0
+    assert summary["published"] == 2
+    assert all(call[2] == 107.0 for call in host.calls)          # bounded per-symbol deadline
+    assert len(host.calls) <= len(targets)
+    assert boot.ensure_started(host, environ={}) == "DONE"       # single run per process
+    assert host.restored == 1
+
+
+def test_bootstrap_tolerates_tick_exceptions():
+    boot._reset_for_tests()
+    targets = [("5803", "JP")]
+    host = _host(targets, {("5803", "JP")})
+
+    def _boom(deadline_monotonic=None):
+        raise RuntimeError("provider down")
+
+    host._precompute_asset_chart_tick = _boom
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    summary = boot.status()
+    assert summary["status"] == "DONE" and summary["degraded"] == 1 and summary["missingAfter"] == 1
+
+
+# ── v13.5.44: boot warm (JP_MARKET_ENGINE inputs, interest history, derived valuation) ──
+def test_boot_warm_warms_jp_market_engine_and_interest_history_and_publishes_valuation():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    targets = [("5803", "JP")]
+    host = _host(targets, set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    host.jp_market_engine_calls = []
+    host._jp_market_engine_pit_inputs = lambda warm=False: (host.jp_market_engine_calls.append(warm) or
+                                               {"sourceStatus": {"margin1570": "jquants_weekly"}})
+    host.history_calls = []
+    host._jq_price_history = lambda code: (host.history_calls.append(code) or {"closes": [4951.0, 5090.0]})
+    host._DECISION_EVIDENCE_CACHE = {"6965": {}, "314A": {}, "NVDA": {}, "6330": {}}
+    host._SD_EXTRA_SYMBOLS = {"6330": {"market": "JP"}, "AAPL": {"market": "US"}}
+    host._JP_SEEN_SYMBOLS = {"7203": 1.0}
+    host._JP_WATCHLIST = [{"symbol": "8058"}, {"symbol": "5803"}]
+    host._JP_MARKET_ENGINE_STATEMENTS_CACHE = {"rows": [
+        {"LocalCode": "58030", "DisclosedDate": "2026-08-05", "ForecastEarningsPerShare": "250.0"}],
+        "source": "jquants"}
+    host._JP_CACHE = {"data": {"stocks": [{"symbol": "5803", "price": 4951.0}]}}
+    host._JQ_HISTORY_CACHE = {"8058": {"data": {"closes": [5059.0]}}}
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert warm["status"] == "DONE" and warm["cycles"] == 1
+    assert host.jp_market_engine_calls == [True]
+    assert warm["jpMarketEngineSourceStatus"]["margin1570"] == "jquants_weekly"
+    # interest = 5803 + curated + device-requested JP codes (US symbols excluded), bounded
+    assert warm["interestSymbols"][:2] == ["5803", "8058"]
+    assert set(warm["interestSymbols"]) == {"5803", "8058", "6965", "314A", "6330", "7203"}
+    assert warm["interestRegistrySize"] == 4                      # registry keeps device codes
+    assert set(warm["interestSymbols"]) <= set(host.history_calls)
+    assert "1321" in host.history_calls                          # SIG-03 proxy history
+    assert warm["historyWarmed"] == len(warm["interestSymbols"])
+    evidence = val.current_evidence()
+    assert evidence["status"] == "AVAILABLE" and evidence["coverage"] == 1
+    # no V2 fetch seam on this host → the feed is not "read for real": D07 stays MISSING
+    assert val.statements_state()["rowCount"] == 0 and val.statements_state()["warmedAt"] is None
+    assert boot.interest_symbols(host)[0] == "5803"
+
+
+def test_boot_warm_is_isolated_from_host_failures():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+
+    def _boom(warm=False):
+        raise RuntimeError("provider down")
+
+    host._jp_market_engine_pit_inputs = _boom
+    host._jq_price_history = _boom
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert warm["status"] == "DONE" and warm["errorClass"].startswith("jp_market_engine_warm:")
+    assert warm["historyWarmed"] == 0 and warm["cycles"] == 1
+
+
+
+def test_interest_registry_outlives_host_cache_expiry_and_is_symbol_safe():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._DECISION_EVIDENCE_CACHE = {"6965": {}}
+    boot.scan_interest(host, 100.0)
+    host._DECISION_EVIDENCE_CACHE = {}                           # host cache expired (120 s TTL)
+    assert boot.interest_symbols(host, 200.0)[-1] == "6965"      # registry remembers it
+    boot.scan_interest(host, 100.0 + boot.INTEREST_TTL_SECONDS + 1)
+    assert "6965" not in boot.interest_symbols(host)             # 7-day TTL
+    safe = boot.warm_status_safe()
+    assert "interestSymbols" not in safe and "interestCount" in safe and "chart" in safe
+
+
+def test_warm_cycle_warms_curated_reference_and_statements_when_offered():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    calls = {"curated": 0, "jq": [], "us": [], "stmt": []}
+    host.get_japan_watchlist_snapshot = lambda **kw: calls.__setitem__("curated", calls["curated"] + 1)
+    host._jq_price_history = lambda code: (calls["jq"].append(code) or {"closes": [1.0]})
+    host._us_price_history = lambda code: (calls["us"].append(code) or {"closes": [1.0]})
+    host._jquants_paginated = lambda path, params, max_pages=2, request_timeout=8: (
+        calls["stmt"].append(params["code"]) or [
+            {"LocalCode": params["code"] + "0", "DisclosedDate": "2026-08-10", "ForecastEarningsPerShare": "100"}])
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._JP_MARKET_ENGINE_STATEMENTS_CACHE = {"rows": [], "source": "jquants"}
+    host._JQ_HISTORY_CACHE = {"5803": {"data": {"closes": [4951.0]}}}
+    host._JP_WATCHLIST = [{"symbol": "5803"}]
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert calls["curated"] == 1 and warm["curatedWarmedAt"]
+    assert "1321" in calls["jq"] and calls["us"] == ["SPY"] and warm["referenceWarmed"] == 2   # no TD seam → Finnhub fallback
+    assert calls["stmt"] == ["5803"] and warm["statementsFetched"] == 1
+    assert warm["statementsPath"] == "/fins/summary"
+    assert host._JP_MARKET_ENGINE_STATEMENTS_CACHE["source"] == "jquants_v2_summary_boot"
+    assert warm["statementsPublished"] == 1 and val.statements_state()["warmedAt"]
+    evidence = val.current_evidence()
+    assert evidence["status"] == "AVAILABLE" and evidence["coverage"] == 1   # per-code statements merged
+
+
+
+def test_statements_fetch_is_retried_across_cycles_and_records_failures():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    host._JP_WATCHLIST = [{"symbol": s} for s in ("8058", "9984", "5801", "6584", "285A", "9501", "7203", "6965")]
+    attempts = []
+
+    def _stmt(path, params, max_pages=8, request_timeout=8):
+        attempts.append(params["code"])
+        if params["code"] == "9984":
+            raise RuntimeError("jquants_pagination_limit")
+        return [{"LocalCode": params["code"] + "0", "DisclosedDate": "2026-08-10", "ForecastEarningsPerShare": "100"}]
+
+    host._jquants_paginated = _stmt
+    host._jq_price_history = lambda code: {"closes": [1000.0]}
+    host._us_price_history = lambda code: None
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._JP_MARKET_ENGINE_STATEMENTS_CACHE = {"rows": [], "source": "jquants"}
+    host._JQ_HISTORY_CACHE = {c: {"data": {"closes": [1000.0]}} for c in ("5803", "8058", "9984", "5801", "6584", "285A", "9501", "7203", "6965")}
+    boot._STATE["warmMaxCycles"] = 2
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert warm["cycles"] == 2
+    assert len(attempts) == 9 and len(set(attempts)) == 9          # 6 first cycle + 3 second, no repeats
+    assert warm["statementsFetched"] == 8                           # 9984 failed, recorded, not retried
+    assert "RuntimeError:jquants_pagination" in warm["statementsErrorClass"]
+    assert warm["referenceErrorClass"] == "us:empty"
+    evidence = val.current_evidence()
+    assert evidence["status"] == "AVAILABLE" and evidence["coverage"] == 8
+    assert boot.warm_status_safe()["statementsErrorClass"] == warm["statementsErrorClass"]
+
+
+
+def test_statements_fall_back_to_the_v1_path_and_stay_missing_when_nothing_fetches():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    host._JP_WATCHLIST = [{"symbol": "5803"}]
+    seen = []
+
+    def _stmt(path, params, max_pages=8, request_timeout=8):
+        seen.append(path)
+        raise RuntimeError("jquants_http_403")
+
+    host._jquants_paginated = _stmt
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    host._JP_MARKET_ENGINE_STATEMENTS_CACHE = {"rows": [], "source": "no_universe_disclosures"}
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert seen == ["/fins/summary", "/fins/statements"]          # both paths tried once for the code
+    assert warm["statementsFetched"] == 0 and warm["statementsPath"] is None
+    assert warm["statementsErrorClass"].startswith("/fins/statements:RuntimeError:jquants_http_403")
+    assert host._JP_MARKET_ENGINE_STATEMENTS_CACHE["source"] == "no_universe_disclosures"   # host cache untouched
+    assert val.statements_state()["warmedAt"] is None             # D07 stays MISSING, not NOT_APPLICABLE
+
+
+
+def test_us_reference_prefers_the_twelve_data_history_cache():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    calls = []
+    host._td_price_history = lambda code: (calls.append(("td", code)) or {"closes": [1.0]})
+    host._us_price_history = lambda code: (calls.append(("finnhub", code)) or None)
+    host._jq_price_history = lambda code: {"closes": [1.0]}
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert calls == [("td", "SPY")] and warm["referenceWarmed"] == 2 and warm["referenceErrorClass"] is None
+
+
+def test_us_and_crypto_interest_warm_fills_the_twelve_data_cache_with_aliases():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    host._US_WATCHLIST = [{"symbol": "NVDA"}, {"symbol": "AAPL"}]
+    host._DECISION_EVIDENCE_CACHE = {"AMD": {}, "BTC": {}, "6965": {}, "XRP": {}}
+    host._SD_EXTRA_SYMBOLS = {"PLTR": {"market": "US"}}
+    calls = []
+    host._TD_HISTORY_CACHE = {}
+
+    def _td(sym):
+        calls.append(sym)
+        host._TD_HISTORY_CACHE[sym] = {"data": {"closes": [1.0]}, "expires": 9e9}
+        return host._TD_HISTORY_CACHE[sym]["data"]
+
+    host._td_price_history = _td
+    host._jq_price_history = lambda code: {"closes": [1.0]}
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert warm["usHistoryWarmed"] == 4 and {"NVDA", "AAPL", "AMD", "PLTR"} <= set(calls)
+    assert warm["cryptoHistoryWarmed"] == 2 and {"BTC/USD", "XRP/USD"} <= set(calls)
+    assert host._TD_HISTORY_CACHE["BTC"]["data"]["closes"] == [1.0]      # alias for the chart route
+    assert "6965" not in calls and "BTC" not in calls                    # JP → J-Quants; crypto only as pair
+    safe = boot.warm_status_safe()
+    assert safe["usHistoryWarmed"] == 4 and safe["cryptoHistoryWarmed"] == 2
+
+
+def test_translation_drain_is_hourly_bounded_and_switchable():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    calls = []
+    host._translate_pending_headlines = lambda cap=60, queue_first=False: (calls.append((cap, queue_first)) or {"translated": 2, "pending": 2})
+    host._jq_price_history = lambda code: {"closes": [1.0]}
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    boot._STATE["warmMaxCycles"] = 2
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert calls == [(20, True)]                              # once per hour, not per cycle
+    assert warm["translate"]["status"] == "OK" and warm["translate"]["translated"] == 2
+    boot._reset_for_tests()
+    calls.clear()
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={"ARGUS_BOOT_TRANSLATE": "0"}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    assert calls == [] and boot.warm_status()["translate"] == {"status": "DISABLED"}
+
+
+def test_index_chart_warm_tries_candidates_and_records_the_working_symbol():
+    import argus_japan_valuation as val
+    boot._reset_for_tests(); val._reset_for_tests()
+    host = _host([("5803", "JP")], set())
+    host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+        argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS), market="JP", symbol="5803",
+        timeframe="daily", dataset_hash="h0", method_version="m1",
+        report=_report("5803", "JP"), published_at="2026-09-03T06:00:00Z")[0])
+    calls = []
+
+    def _yahoo(symbol, instrument_id, fetch=False, **kwargs):
+        calls.append((symbol, instrument_id, fetch, tuple(sorted(kwargs))))
+        if symbol == "^TPX":
+            return []                                   # unknown on the provider → next candidate
+        return [{"date": "2026-09-02", "close": 1.0}] * 40
+
+    host._yahoo_index_ohlcv = _yahoo
+    host._jq_price_history = lambda code: {"closes": [1.0]}
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    warm = boot.warm_status()
+    assert warm["indexCharts"] == {"N225": "^N225:40", "TOPIX": "998405.T:40", "SPX": "^GSPC:40", "NDX": "^IXIC:40"}
+    assert ("^N225", "NIKKEI_225_INDEX", True, ("available_hour_utc",)) in calls
+    assert ("^GSPC", "SP500_INDEX", True, ("next_day_available",)) in calls
+    assert boot.warm_status_safe()["indexCharts"]["TOPIX"] == "998405.T:40"
+
+
+def _refresh_host(count=4):
+    import argus_market_replay
+    targets = [(str(5803 + i), "JP") for i in range(count)]
+    host = _host(targets, set())
+    host._DURABLE_CHECKPOINT_LOCK = threading.RLock()
+    host._STARTUP = {"state": "ready"}
+    host._OSINT_PERSIST_STATE = {"restored": True}
+    host._ASSET_CHART_METHOD_VERSION = "m1"
+    host._chart_history_cached = lambda symbol, market: [
+        {"date": "2026-09-09", "close": 5493.0}]
+    for symbol, market in targets:
+        host._ASSET_CHART_REPORTS.update(argus_asset_chart_cache.publish(
+            argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS),
+            market=market, symbol=symbol, timeframe="daily", dataset_hash="old",
+            method_version="m1", report=_report(symbol, market),
+            published_at="2026-09-07T21:46:31Z")[0])
+
+    host.journal_calls = []
+    def journal(*args):
+        assert not host._DURABLE_CHECKPOINT_LOCK._is_owned()
+        host.journal_calls.append(args)
+    host._journal = journal
+
+    def tick(deadline_monotonic=None, *, defer_journal=False):
+        assert defer_journal is True
+        assert host._DURABLE_CHECKPOINT_LOCK._is_owned()
+        symbol, market = targets[host._ASSET_CHART_REPORTS["cursor"]]
+        host.calls.append((symbol, deadline_monotonic))
+        rows = host._chart_history_cached(symbol, market)
+        for timeframe in ("daily", "weekly"):
+            report = _report(symbol, market)
+            report["indicators"]["bars"] = rows
+            store, _ = argus_asset_chart_cache.publish(
+                argus_asset_chart_cache.normalize_store(host._ASSET_CHART_REPORTS),
+                market=market, symbol=symbol, timeframe=timeframe,
+                dataset_hash=argus_market_replay.dataset_hash(rows), method_version="m1",
+                report=report, published_at="2026-09-09T12:00:00Z")
+            host._ASSET_CHART_REPORTS.clear()
+            host._ASSET_CHART_REPORTS.update(store)
+        return {"status": "published", "generated": True}
+    host._precompute_asset_chart_tick = tick
+    return host
+
+
+def test_collected_bars_refresh_existing_reports_without_provider_seed_and_are_bounded():
+    host = _refresh_host()
+    before = len(host._ASSET_CHART_REPORTS["records"])
+    first = boot._refresh_warm_charts(host, clock=lambda: 100.0)
+    assert first["published"] == 3 and first["bounded"]
+    assert all(deadline == 100.0 for _, deadline in host.calls)
+    second = boot._refresh_warm_charts(host, clock=lambda: 100.0)
+    assert second["published"] == 1
+    assert boot._refresh_warm_charts(host, clock=lambda: 100.0)["published"] == 0
+    assert len(host.calls) == 4
+    assert len(host.journal_calls) == 2
+    assert [len(call[3]["publications"]) for call in host.journal_calls] == [3, 1]
+    assert len(host._ASSET_CHART_REPORTS["records"]) >= before
+    record = argus_asset_chart_cache.current(host._ASSET_CHART_REPORTS, "JP", "5803", "daily")
+    assert record["payload"]["indicators"]["bars"][-1]["close"] == 5493.0
+
+
+def test_chart_refresh_does_not_publish_before_restore_or_during_mission():
+    host = _refresh_host(1)
+    host._OSINT_PERSIST_STATE["restored"] = False
+    assert boot._refresh_warm_charts(host, clock=lambda: 0.0)["status"] == "restore_pending"
+    host._OSINT_PERSIST_STATE["restored"] = True
+    held, release = threading.Event(), threading.Event()
+    def mission():
+        with host._DURABLE_CHECKPOINT_LOCK:
+            held.set()
+            release.wait(5)
+    thread = threading.Thread(target=mission)
+    thread.start()
+    try:
+        assert held.wait(2)
+        assert boot._refresh_warm_charts(host, clock=lambda: 0.0)["status"] == "busy"
+        assert not host.calls
+    finally:
+        release.set()
+        thread.join(2)
+
+
+def test_chart_refresh_preserves_existing_report_when_collected_data_missing():
+    host = _refresh_host(1)
+    host._chart_history_cached = lambda *args: []
+    before = argus_asset_chart_cache.state_hash(host._ASSET_CHART_REPORTS)
+    assert boot._refresh_warm_charts(host, clock=lambda: 0.0)["published"] == 0
+    assert argus_asset_chart_cache.state_hash(host._ASSET_CHART_REPORTS) == before
+    assert not host.calls
+
+
+def test_chart_refresh_releases_authority_lock_after_failure():
+    host = _refresh_host(1)
+    host._precompute_asset_chart_tick = lambda **kwargs: (_ for _ in ()).throw(ValueError("bad data"))
+    assert boot._refresh_warm_charts(host, clock=lambda: 0.0)["errorClass"] == "ValueError"
+    assert not host._DURABLE_CHECKPOINT_LOCK._is_owned()
+
+
+def test_failed_chart_does_not_starve_other_cached_symbols():
+    host = _refresh_host(2)
+    original_tick = host._precompute_asset_chart_tick
+    def tick(**kwargs):
+        if host._ASSET_CHART_REPORTS["cursor"] == 0:
+            raise ValueError("asset_chart_publication_report_invalid")
+        return original_tick(**kwargs)
+    host._precompute_asset_chart_tick = tick
+    result = boot._refresh_warm_charts(host, clock=lambda: 100.0)
+    assert result["status"] == "partial"
+    assert result["failed"] == 1 and result["published"] == 1
+    assert result["checked"] == 2
+    assert len(host.journal_calls) == 1
+    assert not host._DURABLE_CHECKPOINT_LOCK._is_owned()
+    record = argus_asset_chart_cache.current(host._ASSET_CHART_REPORTS, "JP", "5804", "daily")
+    assert record["payload"]["indicators"]["bars"][-1]["close"] == 5493.0
+
+
+@pytest.mark.parametrize("initial_status", ["busy", "restore_pending", "bounded"])
+def test_warm_loop_retries_deferred_cached_charts_without_repeating_providers(monkeypatch, initial_status):
+    host = _refresh_host(4 if initial_status == "bounded" else 1)
+    host._JP_WATCHLIST = []
+    elapsed = [0.0]
+    providers, translations, indexes, attempts = [], [], [], []
+    monkeypatch.setattr(boot, "_warm_cycle", lambda *a, **k: providers.append(elapsed[0]))
+    monkeypatch.setattr(boot, "_warm_index_charts", lambda *a: indexes.append(elapsed[0]))
+    monkeypatch.setattr(boot, "_drain_translations", lambda *a: translations.append(elapsed[0]))
+    original_refresh = boot._refresh_warm_charts
+    held, release = threading.Event(), threading.Event()
+    def mission():
+        with host._DURABLE_CHECKPOINT_LOCK:
+            held.set()
+            release.wait(5)
+    thread = None
+    if initial_status == "busy":
+        thread = threading.Thread(target=mission)
+        thread.start()
+        assert held.wait(2)
+    elif initial_status == "restore_pending":
+        host._OSINT_PERSIST_STATE["restored"] = False
+    def refresh(*args, **kwargs):
+        result = original_refresh(*args, **kwargs)
+        attempts.append((elapsed[0], result))
+        return result
+    monkeypatch.setattr(boot, "_refresh_warm_charts", refresh)
+    def sleep(seconds):
+        elapsed[0] += seconds
+        release.set()
+        if thread:
+            thread.join(2)
+        host._OSINT_PERSIST_STATE["restored"] = True
+    try:
+        boot._warm_loop(host, sleeper=sleep, now=lambda: elapsed[0], max_cycles=2, environ={})
+    finally:
+        release.set()
+        if thread:
+            thread.join(2)
+    # A deferred publication resumes after one existing interest scan, while
+    # external collection retains its ten-minute cadence and AI is not retried.
+    assert [stamp for stamp, _ in attempts] == [0.0, 60.0, 600.0]
+    assert attempts[1][1]["status"] == "published"
+    assert attempts[1][1]["published"] == 1
+    assert providers == [0.0, 600.0]
+    assert translations == [0.0] and indexes == [0.0]
+    assert len(host.calls) == (4 if initial_status == "bounded" else 1)
+    record = argus_asset_chart_cache.current(host._ASSET_CHART_REPORTS, "JP", "5803", "daily")
+    assert record["payload"]["indicators"]["bars"][-1]["close"] == 5493.0
+
+
+@pytest.mark.parametrize("status, expected_attempts", [("busy", 11), ("unchanged", 2), ("degraded", 2)])
+def test_warm_retry_is_bounded_and_does_not_spin_on_permanent_failures(monkeypatch, status, expected_attempts):
+    host = types.SimpleNamespace(_JP_WATCHLIST=[])
+    elapsed, attempts = [0.0], []
+    monkeypatch.setattr(boot, "_warm_cycle", lambda *a, **k: None)
+    monkeypatch.setattr(boot, "_warm_index_charts", lambda *a: None)
+    monkeypatch.setattr(boot, "_drain_translations", lambda *a: None)
+    def refresh(*args, **kwargs):
+        attempts.append(elapsed[0])
+        return {"status": status, "published": 0}
+    monkeypatch.setattr(boot, "_refresh_warm_charts", refresh)
+    def sleep(seconds):
+        elapsed[0] += seconds
+    boot._warm_loop(host, sleeper=sleep, now=lambda: elapsed[0], max_cycles=2, environ={})
+    assert len(attempts) == expected_attempts
+    assert attempts[0] == 0.0 and attempts[-1] == 600.0
+    assert all(b - a >= 60.0 for a, b in zip(attempts, attempts[1:]))
+
+
+@pytest.mark.parametrize('sp500_fails', [False, True])
+def test_shared_index_inputs_precede_single_feature_replay(monkeypatch, sp500_fails):
+    """Cold startup must not calculate an empty S&P500 prefix then replay it."""
+    from datetime import date, timedelta
+    import jp_market_features as features
+    host = types.SimpleNamespace(_JP_WATCHLIST=[], _JP_MARKET_FEATURE_HISTORY={})
+    source_cache, computed, calls = {}, [], []
+    days = [str(date(2026, 1, 1) + timedelta(days=i)) for i in range(45)]
+    def fetch(symbol, instrument_id, **kwargs):
+        calls.append(symbol)
+        if symbol == '^GSPC' and sp500_fails:
+            raise RuntimeError('provider unavailable')
+        rows = [{'instrumentId': instrument_id, 'date': day, 'field': 'close',
+                 'close': 100 + i, 'availableFrom': day + 'T07:00:00Z'}
+                for i, day in enumerate(days)]
+        source_cache[symbol] = rows
+        return rows
+    host._yahoo_index_ohlcv = fetch
+    def calculate():
+        history = features.build_feature_history(
+            cutoffs=[day + 'T23:59:59Z' for day in days],
+            price_series={'nikkei': source_cache.get('^N225', []),
+                          'sp500': source_cache.get('^GSPC', [])})
+        host._JP_MARKET_FEATURE_HISTORY = dict(history, status='AVAILABLE')
+        computed.append(history)
+    host._jp_market_feature_history_warm = calculate
+    def inputs(warm=False):
+        assert warm
+        # The collection pass was attempted even when an upstream feed failed.
+        assert '^GSPC' in calls
+        calculate()
+        return {'sourceStatus': {'sp500': 'missing' if sp500_fails else 'available'}}
+    host._jp_market_engine_pit_inputs = inputs
+    monkeypatch.setattr(boot, '_refresh_warm_charts', lambda *a, **k: {'status': 'unchanged'})
+    monkeypatch.setattr(boot, '_drain_translations', lambda *a: None)
+    boot._warm_loop(host, sleeper=lambda _: None, now=lambda: 0, max_cycles=1, environ={})
+    assert boot.warm_status()['status'] == 'DONE'
+    assert len(computed) == 1
+    assert calls.count('^GSPC') == 1
+    assert computed[0]['calculationWork']['evaluatedCutoffs'] == 45
+    actual = {row['seriesId']: row for row in computed[0]['latest']['features']}
+    assert ('relative_jp_us.return20' in actual) is (not sp500_fails)
+    assert boot.warm_status()['marketFeatures'] == 'AVAILABLE'

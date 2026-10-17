@@ -1,0 +1,331 @@
+"""ARGUS v12.3.2 — EC2 primary scheduler and source-independent Soak."""
+import importlib.util
+import io
+import json
+import os
+import pathlib
+import unittest
+from unittest import mock
+
+import argus_runtime as runtime
+import argus_scheduler as scheduler
+
+
+ROOT = pathlib.Path(__file__).parent
+
+
+class SchedulerAuthorityTests(unittest.TestCase):
+    def test_source_priority_and_legacy_normalization(self):
+        self.assertEqual(scheduler.normalize_trigger_source("schedule"),
+                         "github_schedule")
+        self.assertEqual(scheduler.scheduler_source_priority("ec2_systemd"), 1)
+        self.assertEqual(scheduler.scheduler_source_priority("github_schedule"), 2)
+        self.assertEqual(scheduler.scheduler_source_priority("manual"), 3)
+        self.assertIsNone(scheduler.normalize_trigger_source("unknown"))
+
+    def test_first_valid_lease_wins_across_sources(self):
+        rows = []
+        ec2 = scheduler.mission_window(
+            observed_at="2026-07-20T00:07:02Z",
+            trigger_source="ec2_systemd",
+            scheduled_for="2026-07-20T00:07:00Z")
+        record, run = scheduler.begin_mission_window(
+            rows, window=ec2, build_sha="abc1234",
+            runtime_version="12.3.2", started_at="2026-07-20T00:07:02Z")
+        self.assertTrue(run)
+        self.assertEqual(record["leaseOwner"], "ec2_systemd")
+        self.assertEqual(record["leaseExpiresAt"], "2026-07-20T00:17:02Z")
+        scheduler.finish_mission_window(
+            record, completed_at="2026-07-20T00:07:05Z", status="completed")
+        github = scheduler.mission_window(
+            observed_at="2026-07-20T00:08:00Z",
+            trigger_source="github_schedule",
+            scheduled_for="2026-07-20T00:07:00Z")
+        duplicate, run_again = scheduler.begin_mission_window(
+            rows, window=github, build_sha="abc1234",
+            runtime_version="12.3.2", started_at="2026-07-20T00:08:00Z")
+        self.assertFalse(run_again)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(duplicate["leaseOwner"], "ec2_systemd")
+        self.assertEqual(duplicate["duplicateSuppressed"], 1)
+        self.assertEqual(duplicate["lastDuplicateSource"], "github_schedule")
+        self.assertEqual(duplicate["finalStatus"], "completed")
+
+    def test_window_record_contains_required_operational_fields(self):
+        window = scheduler.mission_window(
+            observed_at="2026-07-20T00:07:02Z",
+            trigger_source="ec2_systemd")
+        record, _ = scheduler.begin_mission_window(
+            [], window=window, build_sha="abc1234",
+            runtime_version="12.3.2", started_at="2026-07-20T00:07:02Z")
+        for key in ("missionWindowId", "triggerSource", "scheduledFor",
+                    "receivedAt", "delaySeconds", "leaseOwner",
+                    "leaseExpiresAt", "duplicateSuppressed", "finalStatus",
+                    "buildSha", "runtimeVersion"):
+            self.assertIn(key, record)
+
+
+class SoakSourceIndependenceTests(unittest.TestCase):
+    def _heartbeat(self, *, source, expected, observed, delay=2):
+        return runtime.soak_heartbeat(
+            soak_id="soak-final", build_sha="abc1234",
+            runtime_version="12.3.2", expected_at=expected,
+            observed_at=observed, source=source, health_status="ok",
+            ready_status="ready", restore_outcome="restored",
+            durable_integrity="ok", journal_status="verified",
+            read_back_verified=True, scheduler_delay_seconds=delay,
+            evidence_type="scheduled_mission", now_iso=observed)
+
+    def test_fresh_ec2_keeps_running_when_github_is_missing(self):
+        first = self._heartbeat(
+            source="ec2_systemd", expected="2026-07-20T00:07:00Z",
+            observed="2026-07-20T00:07:02Z")
+        second = self._heartbeat(
+            source="ec2_systemd", expected="2026-07-20T00:37:00Z",
+            observed="2026-07-20T00:37:02Z")
+        soak = {"soakId": "soak-final", "buildSha": "abc1234",
+                "startedAt": "2026-07-20T00:07:02Z", "heartbeats": []}
+        self.assertTrue(runtime.append_soak_heartbeat(soak, first))
+        self.assertTrue(runtime.append_soak_heartbeat(soak, second))
+        state = runtime.build_soak_state(
+            soak=soak, now_iso="2026-07-20T00:38:00Z",
+            current_build_sha="abc1234")
+        self.assertEqual(state["state"], "running")
+        self.assertEqual(state["warningSource"], "github_schedule")
+        self.assertEqual(state["referenceHeartbeatSource"], "ec2_systemd")
+        self.assertIsNone(state["failureClass"])
+
+    def test_failure_classes_are_explicit(self):
+        good = self._heartbeat(
+            source="ec2_systemd", expected="2026-07-20T00:07:00Z",
+            observed="2026-07-20T00:07:02Z")
+        cases = (
+            ({**good, "buildSha": "other"}, "build_mismatch"),
+            ({**good, "healthStatus": "failed"}, "application_failure"),
+            ({**good, "durableIntegrity": "corrupt"},
+             "durable_integrity_failure"),
+            ({**good, "journalStatus": "hash_mismatch"}, "journal_failure"),
+        )
+        for heartbeat, expected in cases:
+            soak = {"soakId": "soak-final",
+                    "buildSha": heartbeat["buildSha"],
+                    "startedAt": "2026-07-20T00:07:02Z",
+                    "heartbeats": [heartbeat]}
+            state = runtime.build_soak_state(
+                soak=soak, now_iso="2026-07-20T00:08:00Z",
+                current_build_sha="abc1234")
+            self.assertEqual(state["failureClass"], expected)
+
+    def test_manual_diagnostic_is_not_soak_evidence(self):
+        heartbeat = self._heartbeat(
+            source="manual", expected="2026-07-20T00:07:00Z",
+            observed="2026-07-20T00:07:02Z")
+        soak = {"soakId": "soak-final", "buildSha": "abc1234",
+                "startedAt": "2026-07-20T00:07:02Z", "heartbeats": []}
+        self.assertFalse(runtime.append_soak_heartbeat(soak, heartbeat))
+        self.assertEqual(soak["heartbeats"], [])
+
+    def test_backup_build_pin_mismatch_does_not_interrupt_soak(self):
+        primary = self._heartbeat(
+            source="ec2_systemd", expected="2026-07-20T00:07:00Z",
+            observed="2026-07-20T00:07:02Z")
+        rejected_backup = {
+            **self._heartbeat(
+                source="github_schedule",
+                expected="2026-07-20T00:37:00Z",
+                observed="2026-07-20T00:37:02Z"),
+            "healthStatus": "build_mismatch",
+        }
+        soak = {"soakId": "soak-final", "buildSha": "abc1234",
+                "startedAt": "2026-07-20T00:07:02Z", "heartbeats": []}
+        self.assertTrue(runtime.append_soak_heartbeat(soak, primary))
+        self.assertFalse(runtime.append_soak_heartbeat(soak, rejected_backup))
+        state = runtime.build_soak_state(
+            soak=soak, now_iso="2026-07-20T00:38:00Z",
+            current_build_sha="abc1234")
+        self.assertNotEqual(state["state"], "interrupted")
+        self.assertNotEqual(state["failureClass"],
+                            "scheduler_configuration_mismatch")
+        self.assertEqual(state["lastHeartbeatSource"], "ec2_systemd")
+
+        authoritative_mismatch = {
+            **self._heartbeat(
+                source="ec2_systemd",
+                expected="2026-07-20T02:07:00Z",
+                observed="2026-07-20T02:07:02Z"),
+            "healthStatus": "build_mismatch",
+        }
+        self.assertTrue(
+            runtime.append_soak_heartbeat(soak, authoritative_mismatch))
+        interrupted = runtime.build_soak_state(
+            soak=soak, now_iso="2026-07-20T02:08:00Z",
+            current_build_sha="abc1234")
+        self.assertEqual(interrupted["state"], "interrupted")
+        self.assertEqual(interrupted["failureClass"],
+                         "scheduler_configuration_mismatch")
+
+
+class SystemdContractTests(unittest.TestCase):
+    def test_timer_contract(self):
+        timer = (ROOT / "ops/systemd/argus-mission-tick.timer").read_text()
+        self.assertIn("OnCalendar=*-*-* *:07,37:00 UTC", timer)
+        self.assertIn("Persistent=true", timer)
+        self.assertIn("AccuracySec=1s", timer)
+        self.assertIn("RandomizedDelaySec=0", timer)
+
+    def test_service_reuses_secret_file_without_command_line_secret(self):
+        service = (ROOT / "ops/systemd/argus-mission-tick.service").read_text()
+        self.assertIn("EnvironmentFile=/etc/argus-bridge.env", service)
+        self.assertNotIn("ARGUS_ADMIN_TOKEN=", service)
+        self.assertNotIn("--token", service)
+        self.assertIn("NoNewPrivileges=true", service)
+        self.assertIn("ExecStartPre=+/opt/argus/scripts/argus_build_identity.py",
+                      service)
+        self.assertNotIn("StateDirectory=argus-build-identity", service)
+        installer = (ROOT / "scripts/install_argus_mission_timer.sh").read_text()
+        self.assertIn("-o root -g root -m 0700 /var/lib/argus-build-identity",
+                      installer)
+        self.assertIn("PassEnvironment=ARGUS_TRIGGER_SOURCE", service)
+        env = (ROOT / "ops/systemd/argus-mission-tick.env.example").read_text()
+        self.assertIn("ARGUS_TICK_TIMEOUT_SECONDS=180", env)
+        self.assertIn("ARGUS_TRUSTED_BUILD_REF_URL=", env)
+
+    def test_remote_journal_rearm_is_separate_and_bounded(self):
+        mission = (ROOT / "ops/systemd/argus-mission-tick.service").read_text()
+        service = (ROOT / "ops/systemd/argus-remote-journal-rearm.service").read_text()
+        timer = (ROOT / "ops/systemd/argus-remote-journal-rearm.timer").read_text()
+        mission_installer = (
+            ROOT / "scripts/install_argus_mission_timer.sh").read_text()
+        installer = (
+            ROOT / "scripts/install_argus_remote_journal_rearm.sh").read_text()
+        self.assertNotIn("GH_WORKFLOW_PAT", mission)
+        self.assertNotIn("argus-trigger.env", mission)
+        self.assertIn(
+            "EnvironmentFile=/etc/argus-remote-journal-rearm.env", service)
+        self.assertNotIn("argus-trigger.env", service)
+        self.assertNotIn("GH_WORKFLOW_PAT", service)
+        self.assertIn(
+            "ExecStart=/usr/bin/python3 /opt/argus-rearm/"
+            "argus_remote_journal_rearm.py", service)
+        self.assertNotIn("/opt/argus/scripts/", service)
+        self.assertIn("TimeoutStartSec=60", service)
+        self.assertIn("Restart=no", service)
+        self.assertIn("UMask=0077", service)
+        self.assertIn("OnCalendar=*-*-* *:13,33,53:00 UTC", timer)
+        self.assertIn("Persistent=true", timer)
+        self.assertIn("AccuracySec=1us", timer)
+        self.assertIn("RandomizedDelaySec=0", timer)
+        self.assertIn("scripts/argus_remote_journal_rearm.py", installer)
+        self.assertIn(
+            'ENV_FILE="/etc/argus-remote-journal-rearm.env"', installer)
+        self.assertIn('CREDENTIAL_OWNER="root"', installer)
+        self.assertIn('CREDENTIAL_GROUP="$SERVICE_USER"', installer)
+        self.assertIn('SERVICE_USER="argus-rearm"', installer)
+        self.assertIn("640|440", installer)
+        self.assertIn(
+            "^ARGUS_REMOTE_JOURNAL_REARM_PAT=[^[:space:]#]+$", installer)
+        self.assertNotIn("GH_WORKFLOW_PAT", installer)
+        self.assertIn(
+            "no daemon-reload/enable/start/restart/dispatch was executed",
+            installer)
+        self.assertNotIn("argus_remote_journal_rearm.py", mission_installer)
+        self.assertNotIn("argus-remote-journal-rearm.service", mission_installer)
+
+    def test_invoker_emits_stable_utc_window_and_no_secret(self):
+        path = ROOT / "scripts/argus_mission_tick.py"
+        spec = importlib.util.spec_from_file_location("mission_tick", path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        scheduled, window_id = module._window(
+            module.dt.datetime(2026, 7, 20, 0, 36, 59,
+                               tzinfo=module.UTC))
+        self.assertEqual(scheduled, "2026-07-20T00:07:00Z")
+        self.assertEqual(window_id, "mw-2026-07-20T00:07:00Z")
+        source = path.read_text()
+        self.assertIn('"ec2_systemd"', source)
+        self.assertIn('"ARGUS_TICK_TIMEOUT_SECONDS", "180"', source)
+        self.assertNotIn('print(token', source)
+
+    def test_invoker_success_log_is_structured_and_secret_free(self):
+        path = ROOT / "scripts/argus_mission_tick.py"
+        spec = importlib.util.spec_from_file_location("mission_tick_run", path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "status": "completed",
+                    "missionWindow": {
+                        "missionWindowId": "mw-2026-07-20T00:07:00Z",
+                        "triggerSource": "ec2_systemd",
+                        "finalStatus": "completed",
+                    },
+                    "outcomeRetry": {"evaluated": 1, "resolved": 0,
+                                     "outcomeCount": 10,
+                                     "duplicateCount": 0},
+                    "soak": {"soakId": "soak-abc", "state": "running",
+                             "heartbeatCount": 2},
+                    "remoteJournal": {"readBackVerified": True},
+                    "costPolicy": {"automaticAiEnabled": False,
+                                   "automaticAiExecutions": 0},
+                }).encode()
+
+        output = io.StringIO()
+        env = {"ARGUS_ADMIN_TOKEN": "super-secret-test-value",
+               "ARGUS_TICK_MAX_ATTEMPTS": "1",
+               "ARGUS_EXPECTED_BUILD_SHA": "abc1234",
+               "ARGUS_BUILD_IDENTITY_DECISION_FILE":
+               "/definitely/missing/argus-build-identity.json"}
+        with mock.patch.dict(os.environ, env, clear=False), \
+                mock.patch.object(module.urllib.request, "urlopen",
+                                  return_value=Response()), \
+                mock.patch("sys.stdout", output):
+            self.assertEqual(module.main(), 0)
+        record = json.loads(output.getvalue())
+        self.assertEqual(record["status"], "success")
+        self.assertEqual(record["triggerSource"], "ec2_systemd")
+        self.assertTrue(record["readBackVerified"])
+        self.assertEqual(record["outcomeDuplicateCount"], 0)
+        self.assertEqual(record["automaticAiExecutions"], 0)
+        self.assertNotIn("super-secret-test-value", output.getvalue())
+
+    def test_stale_pin_soak_is_preserved_as_interrupted_history(self):
+        decision = runtime.soak_restore_decision(
+            persisted={
+                "soakId": "soak-old", "buildSha": "abc1234",
+                "startedAt": "2026-07-22T06:00:00Z",
+                "heartbeats": [
+                    {"healthStatus": "build_mismatch"},
+                    {"healthStatus": "ok"}],
+                "lastHeartbeat": {"healthStatus": "ok"}},
+            current_build_sha="def5678",
+            boot_iso="2026-07-22T07:00:00Z")
+        previous = decision["previousSoakSummary"]
+        self.assertEqual(previous["status"], "interrupted")
+        self.assertEqual(previous["failureClass"],
+                         "scheduler_configuration_mismatch")
+        self.assertEqual(previous["reason"],
+                         "stale_ec2_expected_build_sha")
+
+    def test_version_contract(self):
+        package = json.loads((ROOT / "web/package.json").read_text())
+        lock = json.loads((ROOT / "web/package-lock.json").read_text())
+        self.assertGreaterEqual(tuple(int(x) for x in package["version"].split(".")),
+                                (12, 3, 2))
+        self.assertEqual(lock["version"], package["version"])
+        self.assertEqual(lock["packages"][""]["version"], package["version"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,76 @@
+import unittest
+
+from scripts import render_deploy_guard
+
+
+class RenderDeployGuardTests(unittest.TestCase):
+    def test_frontend_only_requires_documented_skip_phrase(self):
+        accepted, reason = render_deploy_guard.validate(
+            ["web/src/App.tsx"], "fix: frontend")
+        self.assertFalse(accepted)
+        self.assertEqual("frontend_only_change_requires_skip_render", reason)
+
+    def test_frontend_only_accepts_skip_render(self):
+        accepted, reason = render_deploy_guard.validate(
+            ["web/src/App.tsx"], "[skip render] fix: frontend")
+        self.assertTrue(accepted)
+        self.assertEqual("frontend_only_render_skip_confirmed", reason)
+
+    def test_frontend_acceptance_script_is_frontend_only(self):
+        accepted, _ = render_deploy_guard.validate(
+            ["web/scripts/public-market-acceptance.mjs"],
+            "[render skip] fix: acceptance")
+        self.assertTrue(accepted)
+
+    def test_shared_warm_profile_action_is_frontend_only(self):
+        accepted, reason = render_deploy_guard.validate(
+            [".github/actions/warm-profile-seed/action.yml"],
+            "[skip render] fix: acceptance")
+        self.assertTrue(accepted)
+        self.assertEqual("frontend_only_render_skip_confirmed", reason)
+
+    def test_backend_change_rejects_skip_phrase(self):
+        accepted, reason = render_deploy_guard.validate(
+            ["scanner.py"], "[skip render] fix: backend")
+        self.assertFalse(accepted)
+        self.assertEqual("backend_sensitive_change_must_not_skip_render", reason)
+
+    def test_backend_change_without_skip_deploys(self):
+        accepted, reason = render_deploy_guard.validate(
+            ["argus_market_replay.py"], "fix: replay")
+        self.assertTrue(accepted)
+        self.assertEqual("backend_deploy_expected", reason)
+
+    def test_market_engine_changes_require_backend_delivery(self):
+        accepted, reason = render_deploy_guard.validate(
+            ["jp_market_engine.py"], "fix: market analysis")
+        self.assertTrue(accepted)
+        self.assertEqual("backend_deploy_expected", reason)
+        accepted, reason = render_deploy_guard.validate(
+            ["jp_market_engine.py"], "[skip render] fix: market analysis")
+        self.assertFalse(accepted)
+        self.assertEqual("backend_sensitive_change_must_not_skip_render", reason)
+
+    def test_runtime_migration_helpers_require_backend_delivery(self):
+        for path in ("scripts/analysis_migration_restore.py",
+                     "scripts/migrate_analysis_names.py",
+                     "argus_product_naming.py"):
+            with self.subTest(path=path):
+                accepted, reason = render_deploy_guard.validate(
+                    [path], "fix: runtime migration")
+                self.assertTrue(accepted)
+                self.assertEqual("backend_deploy_expected", reason)
+                accepted, reason = render_deploy_guard.validate(
+                    [path], "[skip render] fix: runtime migration")
+                self.assertFalse(accepted)
+                self.assertEqual(
+                    "backend_sensitive_change_must_not_skip_render", reason)
+
+    def test_render_blueprint_change_never_skips(self):
+        accepted, _ = render_deploy_guard.validate(
+            ["render.yaml"], "[skip render] chore: blueprint")
+        self.assertFalse(accepted)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,40 @@
+/* V11.21.0 — mobile-only compact command bar. Hidden on desktop. */
+.msc, .msc-spacer { display: none; }
+
+/* v13.5.1: Today stays mounted on other routes, so its body-portal bar must be
+   gated by the active route stamped on <body> — Today only. */
+body:not([data-argus-route='command']) > .msc { display: none !important; }
+
+@media (max-width: 720px) {
+  .msc {
+    position: fixed;
+    bottom: var(--argus-mobile-nav-height);
+    left: 0;
+    right: 0;
+    z-index: 39;
+    display: grid;
+    align-content: center;
+    gap: 1px;
+    min-height: var(--argus-mobile-sticky-height);
+    padding: 3px 10px;
+    box-sizing: border-box;
+    height: var(--argus-mobile-sticky-height);
+    line-height: 13px;
+    background: var(--bg-card, #0d1117);
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+    color: var(--text-sub);
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  /* content never hides behind the bar */
+  .msc-spacer { display: block; height: var(--argus-mobile-sticky-height); }
+
+  .msc__name { font-weight: 700; color: var(--text-main); }
+  .msc__name, .msc__when { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .msc__when { color: var(--text-sub); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msc { transition: none; }
+}

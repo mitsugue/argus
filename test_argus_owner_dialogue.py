@@ -1,0 +1,296 @@
+from copy import deepcopy
+import pytest
+import argus_owner_dialogue as dialogue
+import argus_jp_fiscal_monitor as fiscal
+import argus_market_brief as brief
+
+AT='2026-09-13T00:00:00Z'
+
+
+def market_brief():
+    base={'facts':[{'text':f'日経平均・{h}営業日先の参考値100。','source':'price_path_calculation','priority':'P2','verification':'UNCONFIRMED','provenance':{'eventId':f'n225-price-path-{h}'}} for h in (1,5,10,20)]}
+    base['unifiedContext']=brief.unified_context(base);return base
+
+
+def owner():return {'symbol':'5803','market':'JP','state':'HELD','quantity':100,'averageCost':5000,'purchaseReason':'長期の需要を確認するため','holdingPeriod':'数か月','reportedAt':AT}
+
+
+def context(**kwargs):
+    return dialogue.build_context(brief=market_brief(),symbol='5803',market='JP',horizon=5,question='市場と銘柄の違いは？',received_at=AT,**kwargs)
+
+
+def answer():return {key:{'textJa':'根拠を確認できていません。','kind':'UNKNOWN','evidenceIds':[]} for key in brief.UNIFIED_SECTIONS}
+
+
+def test_private_fiscal_assumption_uses_saved_case_without_changing_official_history():
+    from test_argus_jp_fiscal_monitor import rows, AT as fiscal_at
+    measured = fiscal.calculate(rows(), as_of=fiscal_at)
+    reference = {'id':'saved-fiscal-environment','status':'AVAILABLE',
+        'cases':{'baseline':{'fiscal':{'id':measured['id'],'status':'AVAILABLE',
+            'values':measured['values'],'definition':measured['definition']}}},
+        'sources':[{'sourceHash':'a'*64,'knownAt':fiscal_at}]}
+    original = deepcopy(reference)
+    snapshot = market_brief()
+    public = snapshot['unifiedContext']
+    public['fiscalEnvironment'] = reference
+    public['contextId'] = dialogue.digest({key:value for key,value in public.items() if key!='contextId'})
+    result = dialogue.build_context(brief=snapshot,symbol='N225',market='JP',horizon=5,
+        question='政府の実効金利が4%になったら？',received_at=fiscal_at,
+        hypothesis={'kind':'FISCAL_ASSUMPTION','effectiveRatePct':4})
+    calculation = result['calculatedHypothesis']
+    assert calculation['status']=='AVAILABLE'
+    assert calculation['sourceCaseId']==measured['id']
+    assert calculation['baselinePressurePoints']==pytest.approx(measured['values']['pressurePoints'])
+    assert calculation['value']==pytest.approx((4-3)/103*200+5)
+    assert calculation['officialHistoryWriteAllowed'] is False
+    assert calculation['notificationAllowed'] is False
+    assert calculation['stockPriceForecast'] is None
+    assert result['officialPredictionMutation'] is False
+    assert reference==original
+    assert any('政府の実効金利' in row['text'] for row in result['facts'])
+    with pytest.raises(ValueError, match='fiscal_assumption_fields_invalid'):
+        dialogue.hypothesis_calculation({'kind':'FISCAL_ASSUMPTION','marketYieldPct':4},
+            fiscal_reference=reference,cutoff=fiscal_at)
+    assert fiscal.reference_scenario(reference,as_of='2026-09-15T00:00:00Z',
+        growth_pct=2)['status']=='UNAVAILABLE'
+
+
+@pytest.mark.parametrize('mutation', [None, 'future', 'wrong_event', 'missing_source', 'legacy'])
+def test_event_outcomes_validate_time_source_and_saved_legacy_compatibility(tmp_path, mutation):
+    import argus_causal_event_memory as cem
+    from test_argus_causal_event_memory import build_event, news, ledger_state, T1
+    initial=build_event(news(event_type='INFLATION'))
+    _, state=ledger_state(tmp_path / 'base',initial)
+    view=cem.event_view(state['events'][initial['eventId']])
+    outcome=cem.build_outcome_window(event=view,
+        hypothesis_id=view['causalHypotheses'][0]['hypothesisId'],horizon='5D',
+        target_at=T1,observed_at=T1,known_at=T1,
+        metrics=[{'metric':'RETURN','instrument':'QQQ','value':-2.0,'unit':'%'}],
+        truth_refs=['truth:public-price'])
+    _, state=ledger_state(tmp_path / 'result',initial,outcome)
+    memory=cem.reasoning_retrieval(state,family='INFLATION_RATES',as_of=AT)
+    record=memory['records'][0]
+    if mutation=='future':record['outcomeWindows'][0]['knownAt']='2027-01-01T00:00:00Z'
+    if mutation=='wrong_event':record['outcomeWindows'][0]['eventId']='unrelated-event'
+    if mutation=='missing_source':record['outcomeWindows'][0]['truthRefs']=[]
+    if mutation=='legacy':
+        memory['policyVersion']='bounded-event-history-v1'
+        memory['outcomeLookupStatus']='NOT_INCLUDED_IN_THIS_LOOKUP'
+        memory.pop('maximumOutcomeWindowsPerEvent')
+        for old in memory['records']:
+            old.pop('outcomeWindows');old.pop('outcomeCoverage')
+    record['snapshotSha256']=dialogue.digest({k:v for k,v in record.items() if k!='snapshotSha256'})
+    memory['selection'][0]['snapshotSha256']=record['snapshotSha256']
+    memory['retrievalDigest']=dialogue.digest({k:v for k,v in memory.items() if k!='retrievalDigest'})
+    original=deepcopy(memory)
+    c=context(focus_event_id='calendar-cpi',event_snapshot={'eventId':'calendar-cpi','relatedMemory':memory})
+    saved=c['eventFocus']['snapshot']['relatedMemory']
+    assert memory==original and any(f['source']=='price_path_calculation' for f in c['facts'])
+    if mutation in ('future','wrong_event','missing_source'):
+        assert saved['status']=='UNAVAILABLE'
+        assert not any(f['source']=='related_event_memory' for f in c['facts'])
+    else:
+        assert saved==memory
+        assert dialogue.reasoning_context(c)['eventFocus']['snapshot']['relatedMemory']['recordsEvidenceReferences']
+        if mutation is None:assert saved['records'][0]['outcomeWindows']==[outcome]
+
+
+def test_event_history_retrieval_is_saved_with_current_facts_and_coverage(tmp_path):
+    import argus_causal_event_memory as cem
+    from test_argus_causal_event_memory import build_event, news, ledger_state
+    _, state = ledger_state(tmp_path, build_event(news(event_type='INFLATION')))
+    memory = cem.reasoning_retrieval(state, family='INFLATION_RATES', as_of=AT)
+    snapshot = {'eventId':'calendar-cpi', 'eventCode':'US_CPI', 'title':'CPI', 'relatedMemory':memory}
+    original = deepcopy(snapshot)
+    c = context(focus_event_id='calendar-cpi', event_snapshot=snapshot)
+    assert snapshot == original
+    assert c['retrievalRecord']['archiveSearchStatus'] == 'BOUNDED_EVENT_MEMORY'
+    assert c['retrievalRecord']['counterevidenceSearchStatus'] == 'HISTORICAL_ORIGINAL_HYPOTHESES_ONLY'
+    assert c['retrievalRecord']['eventMemoryLookup']['retrievalDigest'] == memory['retrievalDigest']
+    assert c['eventFocus']['snapshot']['relatedMemory'] == memory
+    assert any(f['source']=='price_path_calculation' for f in c['facts'])
+    assert any(f['source']=='related_event_memory' for f in c['facts'])
+    selection=c['retrievalRecord']['selection']
+    assert selection['relatedHistorical']
+    assert not set(selection['relatedHistorical']) & set(selection['mandatoryCurrent'])
+    assert c['officialPredictionMutation'] is False
+    short, restore, _ = dialogue.generation_prompt(c)
+    assert 'ORIGINAL_HYPOTHESES_ONLY' in short
+    before = deepcopy(c)
+    prepared = dialogue.reasoning_context(c)
+    compact_memory = prepared['eventFocus']['snapshot']['relatedMemory']
+    assert 'records' not in compact_memory
+    assert c == before and prepared['facts'] == c['facts']
+    import json
+    for ref, original_record in zip(compact_memory['recordsEvidenceReferences'], memory['records']):
+        selected = next(row for row in prepared['facts'] if row['evidenceId']==ref['evidenceId'])
+        assert selected['text'].endswith(': '+json.dumps(original_record,ensure_ascii=False,separators=(',',':')))
+    assert len(json.dumps(prepared)) < len(json.dumps(c))
+    assert dialogue.validate_answer(answer(),c)
+
+
+@pytest.mark.parametrize('invalid', ['future','integrity','too_large'])
+def test_unusable_event_history_keeps_current_context_available(tmp_path, invalid):
+    import argus_causal_event_memory as cem
+    from test_argus_causal_event_memory import build_event, news, ledger_state
+    _, state = ledger_state(tmp_path, build_event(news(event_type='INFLATION')))
+    memory = cem.reasoning_retrieval(state, family='INFLATION_RATES', as_of=AT)
+    if invalid=='future':
+        memory['asOf']='2027-01-01T00:00:00Z'
+        memory['retrievalDigest']=dialogue.digest({k:v for k,v in memory.items() if k!='retrievalDigest'})
+    elif invalid=='too_large':memory['extra']='x'*9000
+    else:memory['records'][0]['headline']='Altered content'
+    c=context(focus_event_id='calendar-cpi',event_snapshot={'eventId':'calendar-cpi','relatedMemory':memory})
+    assert c['retrievalRecord']['archiveSearchStatus']=='UNAVAILABLE'
+    assert not any(f['source']=='related_event_memory' for f in c['facts'])
+    assert any(f['source']=='price_path_calculation' for f in c['facts'])
+    assert any(f['source']=='related_event_memory_coverage' for f in c['facts'])
+
+
+def test_private_context_never_mutates_public_or_owner_and_keeps_only_target_horizon():
+    b=market_brief();o=owner();before=deepcopy((b,o));c=dialogue.build_context(brief=b,symbol='5803',market='JP',horizon=5,question='理由は？',received_at=AT,owner=o)
+    assert (b,o)==before and c['scope']=='OWNER_PRIVATE' and c['ownerContextAvailable'] is True
+    ids=[(f.get('provenance') or {}).get('eventId') for f in c['facts']]
+    assert 'n225-price-path-5' in ids and 'n225-price-path-20' not in ids
+    assert c['owner']['costCurrency']=='JPY' and c['officialPositionMutation'] is False
+    assert any(f.get('evidenceKind')=='OWNER_REPORTED' and f['verification']=='UNCONFIRMED' for f in c['facts'])
+
+
+@pytest.mark.parametrize('patch',[{'symbol':'7203'},{'market':'US'},{'state':'NOT_HELD'},{'quantity':True},{'quantity':-1},{'quantity':0},{'reportedAt':'2026-09-14T00:00:00Z'},{'unknown':'instruction'}])
+def test_conflicting_or_unknown_owner_fields_rejected(patch):
+    with pytest.raises(ValueError):context(owner={**owner(),**patch})
+
+
+def test_missing_owner_and_wrong_period_history_are_explicit():
+    c=context();assert c['ownerContextAvailable'] is False
+    prior=deepcopy(c);prior['horizonSessions']=20
+    current=context(previous=prior)
+    assert current['previousFacts']==[] and not current['changes']['comparisonAvailable']
+    valid=dialogue.validate_answer(answer(),current)
+    assert '登録銘柄ごとの影響' in valid['sections']['impact']['textJa']
+    assert valid['sections']['impact']['kind']=='UNKNOWN'
+
+
+def test_prior_same_scope_requires_integrity_and_preserves_changes():
+    old=context(owner=owner());c=context(owner=owner(),previous=old)
+    assert c['changes']['comparisonAvailable'] and c['previousFacts']==old['facts']
+    old['facts'][0]['text']='changed'
+    with pytest.raises(ValueError,match='integrity'):context(previous=old)
+
+
+def test_retrieval_sends_identical_previous_evidence_once_without_losing_history():
+    old=context(owner=owner());c=context(owner=owner(),previous=old);saved=deepcopy(c)
+    selected=dialogue.reasoning_context(c)
+    assert c==saved and c['previousFacts']==old['facts']
+    assert selected['facts']==c['facts'] and selected['previousFacts']==[]
+    assert selected['previousSharedEvidenceIds']==[f['evidenceId'] for f in old['facts']]
+    record=c['retrievalRecord']
+    assert record['omittedEvidenceCount']==0 and record['additionalAiCalls']==0
+    assert record['archiveSearchStatus']=='NOT_CONNECTED'
+    assert record['counterevidenceSearchStatus']=='CURRENT_AND_PREVIOUS_ONLY'
+    value=answer();f=old['facts'][0]
+    value['changes']={'textJa':f['text'],'kind':'INFERENCE','evidenceIds':[f['evidenceId']]}
+    assert dialogue.validate_answer(value,c) is not None
+
+
+def test_retrieval_preserves_contrary_missing_and_revised_source_evidence():
+    old=context(owner=owner())
+    contrary=dialogue.fact('前回の改善条件は成立していません。','counter_observation',kind='UNKNOWN')
+    old['facts'].append(contrary)
+    revised=old['facts'][0]
+    revised['provenance']={**revised.get('provenance',{}),'receivedAt':'2026-09-12T00:00:00Z'}
+    old['contextId']=dialogue.digest({k:v for k,v in old.items() if k!='contextId'})
+    c=context(owner=owner(),previous=old);selected=dialogue.reasoning_context(c)
+    assert contrary in selected['previousFacts'] and revised in selected['previousFacts']
+    assert selected['facts']==c['facts']
+    c['retrievalRecord']['selection']['previousDistinct']=[]
+    with pytest.raises(ValueError,match='retrieval_record_integrity'):dialogue.reasoning_context(c)
+
+
+def test_retrieval_rejects_future_edition_and_keeps_legacy_context_readable():
+    old=context();old['receivedAt']='2026-09-14T00:00:00Z'
+    old['contextId']=dialogue.digest({k:v for k,v in old.items() if k!='contextId'})
+    with pytest.raises(ValueError,match='previous_context_from_future'):context(previous=old)
+    legacy=context();legacy.pop('retrievalRecord')
+    assert dialogue.reasoning_context(legacy)==legacy
+
+
+def quote():return {'instrumentId':'NIKKEI_225_INDEX','priceBasis':'CASH_INDEX_CLOSE','close':60000,'observedAt':'2026-09-11T06:30:00Z','receivedAt':AT,'sourceResponseSha256':'a'*64}
+
+
+def test_fx_conversion_is_hypothesis_and_cannot_rewrite_yen_price_or_become_fact():
+    q=quote();before=deepcopy(q);c=context(hypothesis={'kind':'FX_TRANSLATION','usdJpy':150,'yenIndexUnchanged':True},index_quote=q)
+    assert q==before and c['calculatedHypothesis']['value']==400 and c['calculatedHypothesis']['unit']=='USD'
+    assert c['officialPredictionMutation'] is False
+    f=next(f for f in c['facts'] if f.get('evidenceKind')=='HYPOTHESIS')
+    value=answer();value['view']={'textJa':'仮定の計算は400 USDです。','kind':'INFERENCE','evidenceIds':[f['evidenceId']]}
+    assert dialogue.validate_answer(value,c)
+    value['view']['textJa']='計算は400 USDです。'
+    assert dialogue.validate_answer(value,c) is None
+    value['view']['kind']='FACT'
+    assert dialogue.validate_answer(value,c) is None
+
+
+@pytest.mark.parametrize('patch',[{'priceBasis':'ETF_CLOSE'},{'receivedAt':'2026-09-14T00:00:00Z'},{'sourceResponseSha256':None}])
+def test_unverified_or_future_scenario_inputs_are_not_calculated(patch):
+    c=context(hypothesis={'kind':'FX_TRANSLATION','usdJpy':150,'yenIndexUnchanged':True},index_quote={**quote(),**patch})
+    assert c['calculatedHypothesis']['status']=='UNAVAILABLE'
+
+
+def test_derived_eps_is_not_published_eps_and_no_fixed_multiple_is_assumed():
+    eps={'instrumentId':'NIKKEI_225_INDEX','definitionVerified':True,'value':3000,'sourceKind':'DERIVED_PRICE_PER',**{k:quote()[k] for k in ('observedAt','receivedAt','sourceResponseSha256')}}
+    c=context(hypothesis={'kind':'EPS_MULTIPLE','per':20},eps_input=eps)
+    assert c['calculatedHypothesis']['status']=='UNAVAILABLE'
+    eps['sourceKind']='PUBLISHED_INDEX_EPS'
+    assert context(hypothesis={'kind':'EPS_MULTIPLE','per':20},eps_input=eps)['calculatedHypothesis']['value']==60000
+
+
+def test_unreferenced_numbers_and_trade_authority_are_rejected():
+    c=context(owner=owner());value=answer();value['view']['textJa']='上昇確率は90%です。'
+    assert dialogue.validate_answer(value,c) is None
+    value=answer();value['reasons']={'textJa':'利益は999です。','kind':'INFERENCE','evidenceIds':[c['facts'][0]['evidenceId']]}
+    assert dialogue.validate_answer(value,c) is None
+
+
+def test_us_context_does_not_inherit_japan_price_forecasts():
+    c=dialogue.build_context(brief=market_brief(),symbol='AAPL',market='US',horizon=5,question='どう見る？',received_at=AT)
+    assert not any(f['source']=='price_path_calculation' for f in c['facts'])
+    assert any(f['source']=='subject_coverage' for f in c['facts'])
+    with pytest.raises(ValueError,match='not_applicable'):
+        dialogue.build_context(brief=market_brief(),symbol='AAPL',market='US',horizon=5,question='どう見る？',received_at=AT,hypothesis={'kind':'EPS_MULTIPLE','per':20})
+
+
+def test_market_context_change_cannot_hide_behind_old_identity():
+    base=market_brief();base['unifiedContext']['facts'][0]['text']='different'
+    with pytest.raises(ValueError,match='market_context_integrity'):
+        dialogue.build_context(brief=base,symbol='5803',market='JP',horizon=5,question='理由は？',received_at=AT)
+
+
+def test_old_hypothesis_stays_explicit_when_discussing_changes():
+    old=context(hypothesis={'kind':'FX_TRANSLATION','usdJpy':150,'yenIndexUnchanged':True},index_quote=quote())
+    current=context(previous=old);value=answer()
+    f=next(f for f in current['previousFacts'] if f.get('evidenceKind')=='HYPOTHESIS')
+    value['changes']={'textJa':'計算は400 USDでした。','kind':'INFERENCE','evidenceIds':[f['evidenceId']]}
+    assert dialogue.validate_answer(value,current) is None
+    value['changes']['textJa']='仮定の計算は400 USDでした。'
+    assert dialogue.validate_answer(value,current)
+
+
+def test_context_rejects_unidentified_market_evidence_before_selection():
+    b=market_brief();b['unifiedContext']['facts'][0].pop('evidenceId')
+    b['unifiedContext']['contextId']=dialogue.digest({k:v for k,v in b['unifiedContext'].items() if k!='contextId'})
+    with pytest.raises(ValueError,match='market_facts_invalid'):
+        dialogue.build_context(brief=b,symbol='N225',market='JP',horizon=5,
+            question='何が変わりましたか？',received_at=AT)
+
+
+def test_history_prompt_keeps_records_when_body_reference_does_not_match(tmp_path):
+    import argus_causal_event_memory as cem
+    from test_argus_causal_event_memory import build_event, news, ledger_state
+    _, state = ledger_state(tmp_path, build_event(news(event_type='INFLATION')))
+    memory = cem.reasoning_retrieval(state, family='INFLATION_RATES', as_of=AT)
+    c=context(focus_event_id='cpi',event_snapshot={'eventId':'cpi','relatedMemory':memory})
+    c['facts']=[f for f in c['facts'] if f['source']!='related_event_memory']
+    c['retrievalRecord']=dialogue.retrieval_record(c)
+    prepared=dialogue.reasoning_context(c)
+    assert prepared['eventFocus']['snapshot']['relatedMemory']['records']==memory['records']

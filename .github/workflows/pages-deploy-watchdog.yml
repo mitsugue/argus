@@ -1,0 +1,63 @@
+name: pages-deploy-watchdog
+
+# 2026-09-29: a Pages release sat with its deploy job queued (never assigned)
+# for seven hours; job timeouts only count after a runner is assigned, so
+# nothing stopped it, and every later merge waited behind it. This watchdog
+# only acts on a deploy job that has NOT started: it cancels that run and
+# dispatches a fresh release of main. A deploy that is running is never
+# touched (cancelling actions/deploy-pages mid-flight leaves a pending
+# deployment, see deploy-pages.yml).
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: pages-deploy-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel and re-dispatch a Pages release whose deploy never started
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          STUCK_MINUTES: '25'
+        run: |
+          set -euo pipefail
+          now=$(date -u +%s)
+          runs=$(gh run list -R "$REPO" --workflow deploy-pages.yml --limit 5 \
+                   --json databaseId,status -q '.[] | select(.status=="in_progress" or .status=="queued") | .databaseId')
+          acted=0
+          for id in $runs; do
+            deploy=$(gh run view "$id" -R "$REPO" --json jobs \
+                       -q '.jobs[] | select(.name=="deploy") | "\(.status) \(.startedAt // "")"' || true)
+            status=${deploy%% *}; started=${deploy#* }
+            [ "$status" = "queued" ] || continue
+            [ -n "$started" ] || continue
+            since=$(date -u -d "$started" +%s 2>/dev/null || echo "$now")
+            age=$(( (now - since) / 60 ))
+            echo "run $id deploy queued for ${age}m"
+            [ "$age" -ge "$STUCK_MINUTES" ] || continue
+            echo "::warning::Pages release $id: deploy job unassigned for ${age}m; cancelling and re-dispatching main"
+            gh run cancel "$id" -R "$REPO" || true
+            for i in $(seq 1 12); do
+              st=$(gh run view "$id" -R "$REPO" --json status -q .status || echo unknown)
+              [ "$st" = "completed" ] && break
+              sleep 10
+            done
+            acted=1
+          done
+          if [ "$acted" = 1 ]; then
+            gh workflow run deploy-pages.yml -R "$REPO" --ref main
+            echo "re-dispatched deploy-pages on main"
+          else
+            echo "no stuck Pages release"
+          fi

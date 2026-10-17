@@ -1,0 +1,695 @@
+import copy
+import hashlib
+import io
+import json
+import re
+import subprocess
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from scripts import recovery_admission as recovery
+
+
+BASE_SHA = "1" * 40
+BASE_TREE = "2" * 40
+CANDIDATE_SHA = "3" * 40
+CANDIDATE_TREE = "4" * 40
+
+
+def _run(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], check=True,
+        stdout=subprocess.PIPE, text=True,
+    ).stdout.strip()
+
+
+def _write(repo: Path, relative: str, value: str) -> None:
+    path = repo / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(value, encoding="utf-8")
+
+
+def _repository(tmp_path: Path) -> tuple[Path, str]:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run(repo, "init")
+    _run(repo, "config", "user.name", "Recovery Test")
+    _run(repo, "config", "user.email", "recovery@example.invalid")
+    _write(repo, "product-version.json", json.dumps({
+        "schemaVersion": "argus-product-version-v1",
+        "productVersion": "13.5.36",
+    }))
+    _write(repo, "README.md", "base\n")
+    _run(repo, "add", ".")
+    _run(repo, "commit", "-m", "base")
+    return repo, _run(repo, "rev-parse", "HEAD")
+
+
+def _commit(repo: Path, message: str = "candidate") -> str:
+    _run(repo, "add", ".")
+    _run(repo, "commit", "-m", message)
+    return _run(repo, "rev-parse", "HEAD")
+
+
+def _classify_temp_recovery(repo: Path, base: str, head: str):
+    payload = [
+        row["path"] for row in
+        recovery._path_entries(repo, base, head)
+        if row["path"] in recovery.RECOVERY_PAYLOAD_PATHS
+    ]
+    expected = recovery._digest_bytes(
+        recovery._patch_bytes(repo, base, head, payload))
+    return recovery.classify_repository(
+        repo, base, head, expected_payload_digest=expected)
+
+
+def _classification() -> dict:
+    product_version = {
+        "schemaVersion": "argus-product-version-v1",
+        "productVersion": "13.5.36",
+    }
+    value = {
+        "schemaVersion": recovery.CLASSIFICATION_SCHEMA,
+        "status": "PASS",
+        "classification": "RECOVERY_ONLY",
+        "base": {"commitSha": BASE_SHA, "treeSha": BASE_TREE},
+        "candidate": {
+            "commitSha": CANDIDATE_SHA,
+            "treeSha": CANDIDATE_TREE,
+        },
+        "changedPathCount": 1,
+        "changedPaths": [{"status": "M", "path": "scanner.py"}],
+        "recoveryPayloadPaths": ["scanner.py"],
+        "recoveryAdmissionPaths": [],
+        "productOrUnknownPaths": [],
+        "recoveryPayloadDiffSha256":
+            recovery.EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256,
+        "recoveryAdmissionDiffSha256": None,
+        "scopePolicySha256": recovery._digest(
+            recovery.scope_policy_document()),
+        "productVersion": {
+            "base": product_version,
+            "candidate": product_version,
+            "unchanged": True,
+        },
+        "authorityAssertions": copy.deepcopy(recovery.AUTHORITY_ASSERTIONS),
+    }
+    value["classificationDigest"] = recovery._digest(value)
+    return value
+
+
+def _junit(path: Path, *, failures: int = 0) -> None:
+    path.write_text(
+        '<testsuites tests="3" failures="{0}" errors="0" skipped="0">'
+        '<testsuite tests="3" failures="{0}" errors="0" skipped="0">'
+        '<testcase name="one"/></testsuite></testsuites>'.format(failures),
+        encoding="utf-8",
+    )
+
+
+def _certificate_documents(tmp_path: Path):
+    classification = _classification()
+    junit = tmp_path / "junit.xml"
+    _junit(junit)
+    evidence = recovery.record_evidence(
+        classification, junit, ["focused-recovery-tests", "scope-classifier"])
+    certificate = recovery.issue_certificate(classification, evidence)
+    return certificate, classification, evidence
+
+
+def _archive(*documents: dict) -> bytes:
+    names = ("certificate.json", "classification.json", "evidence.json")
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as bundle:
+        for name, document in zip(names, documents):
+            info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+            bundle.writestr(info, json.dumps(document))
+    return stream.getvalue()
+
+
+def test_product_only_change_routes_to_existing_product_authority(tmp_path):
+    repo, base = _repository(tmp_path)
+    _write(repo, "README.md", "product\n")
+    head = _commit(repo)
+    result = recovery.classify_repository(repo, base, head)
+    assert result["classification"] == "PRODUCT"
+    assert result["status"] == "PASS"
+    assert result["productOrUnknownPaths"] == ["README.md"]
+
+
+def test_exact_recovery_payload_routes_to_recovery_authority(tmp_path):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "RECOVERY = True\n")
+    head = _commit(repo)
+    result = _classify_temp_recovery(repo, base, head)
+    assert result["classification"] == "RECOVERY_ONLY"
+    assert result["status"] == "PASS"
+    assert result["productOrUnknownPaths"] == []
+    assert result["productVersion"]["unchanged"] is True
+
+
+def test_dual_scope_navigation_test_requires_both_certificate_routes(tmp_path):
+    repo, base = _repository(tmp_path)
+    _write(repo, "test_argus_v12_rc.py", "THIRTEEN_M_NAVIGATION = True\n")
+    head = _commit(repo)
+
+    scope = recovery.classify_repository(repo, base, head)
+
+    assert scope["classification"] == recovery.PAIRED_CLASSIFICATION
+    assert scope["status"] == "PASS"
+    assert scope["dualScopeTestPaths"] == ["test_argus_v12_rc.py"]
+    assert scope["recoveryPayloadPaths"] == []
+    assert scope["productOrUnknownPaths"] == []
+    recovery.validate_classification(scope)
+
+
+def test_dual_scope_recovery_payload_requires_both_certificate_routes(
+        tmp_path, monkeypatch):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "ATOMIC_RESERVATION = True\n")
+    head = _commit(repo)
+    digest = recovery._digest_bytes(recovery._patch_bytes(
+        repo, base, head, ["scanner.py"]))
+    monkeypatch.setattr(
+        recovery, "EXPECTED_DUAL_SCOPE_RECOVERY_PAYLOAD_DIFF_SHA256", digest)
+
+    scope = recovery.classify_repository(repo, base, head)
+
+    assert scope["classification"] == recovery.PAIRED_CLASSIFICATION
+    assert scope["status"] == "PASS"
+    assert scope["dualScopeRecoveryPayloadPaths"] == ["scanner.py"]
+    assert scope["dualScopeRecoveryPayloadDiffSha256"] == digest
+    assert scope["recoveryPayloadPaths"] == []
+    assert scope["productOrUnknownPaths"] == []
+    recovery.validate_classification(scope)
+
+
+@pytest.mark.parametrize("path,value", [
+    ("README.md", "product expansion\n"),
+    ("test_argus_v12_rc.py", "navigation expansion\n"),
+])
+def test_dual_scope_recovery_payload_rejects_expansion(
+        tmp_path, monkeypatch, path, value):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "ATOMIC_RESERVATION = True\n")
+    _write(repo, path, value)
+    head = _commit(repo)
+    scanner_digest = recovery._digest_bytes(recovery._patch_bytes(
+        repo, base, head, ["scanner.py"]))
+    monkeypatch.setattr(
+        recovery, "EXPECTED_DUAL_SCOPE_RECOVERY_PAYLOAD_DIFF_SHA256",
+        scanner_digest)
+
+    scope = recovery.classify_repository(repo, base, head)
+
+    assert scope["classification"] == "MIXED"
+    assert scope["status"] == "REJECTED"
+
+
+@pytest.mark.parametrize("path,value", [
+    ("README.md", "product expansion\n"),
+    ("scanner.py", "RECOVERY = True\n"),
+])
+def test_dual_scope_navigation_test_rejects_product_or_recovery_expansion(
+        tmp_path, path, value):
+    repo, base = _repository(tmp_path)
+    _write(repo, "test_argus_v12_rc.py", "THIRTEEN_M_NAVIGATION = True\n")
+    _write(repo, path, value)
+    head = _commit(repo)
+
+    scope = recovery.classify_repository(repo, base, head)
+
+    assert scope["classification"] == "MIXED"
+    assert scope["status"] == "REJECTED"
+
+
+def test_mixed_product_and_recovery_change_is_explicitly_denied(tmp_path):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "RECOVERY = True\n")
+    _write(repo, "README.md", "mixed\n")
+    head = _commit(repo)
+    result = recovery.classify_repository(repo, base, head)
+    assert result["classification"] == "MIXED"
+    assert result["status"] == "REJECTED"
+
+
+def test_exact_owner_approved_shared_product_routes_only_the_pinned_diff_to_product(
+        tmp_path, monkeypatch):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "PRODUCT_COST_POLICY = True\n")
+    _write(repo, "README.md", "owner-approved product delivery\n")
+    head = _commit(repo)
+    payload = recovery._digest_bytes(
+        recovery._patch_bytes(repo, base, head, ["scanner.py"]))
+    product = recovery._digest_bytes(
+        recovery._patch_bytes(repo, base, head, ["README.md"]))
+    monkeypatch.setattr(
+        recovery, "EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256",
+        payload)
+    monkeypatch.setattr(
+        recovery, "EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256", product)
+
+    scope = recovery.classify_repository(repo, base, head)
+
+    assert scope["classification"] == "PRODUCT"
+    assert scope["status"] == "PASS"
+    assert scope["ownerApprovedSharedProductException"] == {
+        "policy": recovery.OWNER_APPROVED_SHARED_PRODUCT_POLICY,
+        "productDiffSha256": product,
+        "recoveryPayloadDiffSha256": payload,
+    }
+    recovery.validate_classification(scope)
+
+    _write(repo, "README.md", "unreviewed product expansion\n")
+    expanded = _commit(repo, "expanded")
+    rejected = recovery.classify_repository(repo, base, expanded)
+    assert rejected["classification"] == "MIXED"
+    assert rejected["status"] == "REJECTED"
+
+
+def test_owner_approved_shared_product_contract_rejects_tampering(
+        tmp_path, monkeypatch):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "PRODUCT_COST_POLICY = True\n")
+    _write(repo, "README.md", "owner-approved product delivery\n")
+    head = _commit(repo)
+    payload = recovery._digest_bytes(
+        recovery._patch_bytes(repo, base, head, ["scanner.py"]))
+    product = recovery._digest_bytes(
+        recovery._patch_bytes(repo, base, head, ["README.md"]))
+    monkeypatch.setattr(
+        recovery, "EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_PAYLOAD_DIFF_SHA256",
+        payload)
+    monkeypatch.setattr(
+        recovery, "EXPECTED_OWNER_APPROVED_SHARED_PRODUCT_DIFF_SHA256", product)
+    scope = recovery.classify_repository(repo, base, head)
+    scope["ownerApprovedSharedProductException"] = None
+    scope["classificationDigest"] = recovery._digest({
+        key: value for key, value in scope.items()
+        if key != "classificationDigest"
+    })
+
+    with pytest.raises(
+            recovery.AdmissionError,
+            match="owner_approved_shared_product_contract_invalid"):
+        recovery.validate_classification(scope)
+
+
+def _paired_scope(tmp_path, monkeypatch):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "RECOVERY = True\n")
+    _write(repo, "README.md", "migration\n")
+    head = _commit(repo)
+    payload = recovery._digest_bytes(recovery._patch_bytes(repo, base, head, ["scanner.py"]))
+    product = recovery._digest_bytes(recovery._patch_bytes(repo, base, head, ["README.md"]))
+    monkeypatch.setattr(recovery, "EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256", payload)
+    monkeypatch.setattr(recovery, "EXPECTED_PAIRED_PRODUCT_DIFF_SHA256", product)
+    scope = recovery.classify_repository(repo, base, head, expected_payload_digest=payload)
+    return repo, base, head, payload, scope
+
+
+def test_paired_migration_requires_both_pinned_diffs_and_never_claims_standalone_authority(
+        tmp_path, monkeypatch):
+    _, _, _, _, scope = _paired_scope(tmp_path, monkeypatch)
+    assert scope["classification"] == recovery.PAIRED_CLASSIFICATION
+    assert scope["status"] == "PASS"
+    recovery.validate_classification(scope)
+    junit = tmp_path / "paired.xml"
+    _junit(junit)
+    evidence = recovery.record_evidence(scope, junit, ["focused-recovery-tests"])
+    certificate = recovery.issue_certificate(scope, evidence)
+    assert certificate["requiresProductCertificate"] is True
+    assert certificate["classification"] != "RECOVERY_ONLY"
+    recovery.verify_certificate(certificate, scope, evidence)
+    certificate.pop("requiresProductCertificate")
+    certificate.pop("certificateDigest")
+    certificate["certificateDigest"] = recovery._digest(certificate)
+    with pytest.raises(recovery.AdmissionError, match="content_mismatch"):
+        recovery.verify_certificate(certificate, scope, evidence)
+
+
+@pytest.mark.parametrize("alter", ["payload", "product", "version", "missing_pin"])
+def test_paired_migration_cannot_expand_past_its_exact_pins(tmp_path, monkeypatch, alter):
+    repo, base, head, payload, _ = _paired_scope(tmp_path, monkeypatch)
+    if alter == "payload":
+        _write(repo, "scanner.py", "RECOVERY = False\n")
+    elif alter == "product":
+        _write(repo, "README.md", "unreviewed expansion\n")
+    elif alter == "version":
+        _write(repo, "product-version.json", json.dumps({
+            "schemaVersion": "argus-product-version-v1", "productVersion": "99.0.0"}))
+    else:
+        monkeypatch.setattr(recovery, "EXPECTED_PAIRED_PRODUCT_DIFF_SHA256", None)
+    if alter != "missing_pin":
+        head = _commit(repo, "changed")
+    scope = recovery.classify_repository(repo, base, head, expected_payload_digest=payload)
+    assert scope["classification"] == "MIXED"
+    assert scope["status"] == "REJECTED"
+    with pytest.raises(recovery.AdmissionError, match="scope_invalid"):
+        recovery.record_evidence(scope, tmp_path / "absent.xml", ["test"])
+
+
+@pytest.mark.parametrize("field,value", [
+    ("productDiffSha256", "wrong"), ("recoveryPayloadDiffSha256", "wrong"),
+    ("productOrUnknownPaths", []), ("recoveryPayloadPaths", []),
+])
+def test_paired_classification_rejects_tampered_scope_even_with_recomputed_digest(
+        tmp_path, monkeypatch, field, value):
+    *_, scope = _paired_scope(tmp_path, monkeypatch)
+    scope[field] = value
+    scope.pop("classificationDigest")
+    scope["classificationDigest"] = recovery._digest(scope)
+    with pytest.raises(recovery.AdmissionError, match="paired_classification_contract"):
+        recovery.validate_classification(scope)
+
+
+def test_recovery_plus_product_version_change_is_mixed_and_denied(tmp_path):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "RECOVERY = True\n")
+    _write(repo, "product-version.json", json.dumps({
+        "schemaVersion": "argus-product-version-v1",
+        "productVersion": "13.5.37",
+    }))
+    head = _commit(repo)
+    result = recovery.classify_repository(repo, base, head)
+    assert result["classification"] == "MIXED"
+    assert result["status"] == "REJECTED"
+    assert result["productVersion"]["unchanged"] is False
+
+
+def test_admission_only_change_stays_on_product_authority(tmp_path):
+    repo, base = _repository(tmp_path)
+    _write(repo, ".github/workflows/release-gate.yml", "name: changed\n")
+    head = _commit(repo)
+    result = recovery.classify_repository(repo, base, head)
+    assert result["classification"] == "PRODUCT"
+    assert result["status"] == "PASS"
+    assert result["recoveryAdmissionPaths"] == [
+        ".github/workflows/release-gate.yml"]
+
+
+def test_recovery_patch_digest_mismatch_fails_closed(tmp_path):
+    repo, base = _repository(tmp_path)
+    _write(repo, "scanner.py", "UNREVIEWED = True\n")
+    head = _commit(repo)
+    with pytest.raises(recovery.AdmissionError,
+                       match="recovery_payload_digest_mismatch"):
+        recovery.classify_repository(repo, base, head)
+
+
+def test_unrelated_base_is_not_accepted(tmp_path):
+    repo, base = _repository(tmp_path)
+    _run(repo, "checkout", "--orphan", "other")
+    _write(repo, "README.md", "other\n")
+    _run(repo, "add", ".")
+    _run(repo, "commit", "-m", "other")
+    head = _run(repo, "rev-parse", "HEAD")
+    with pytest.raises(recovery.AdmissionError,
+                       match="base_not_candidate_ancestor"):
+        recovery.classify_repository(repo, base, head)
+
+
+def test_evidence_and_certificate_are_exact_identity_bound(tmp_path):
+    certificate, classification, evidence = _certificate_documents(tmp_path)
+    assert recovery.verify_certificate(
+        certificate, classification, evidence) == certificate
+    assert certificate["candidate"] == classification["candidate"]
+    hostile = copy.deepcopy(certificate)
+    hostile["candidate"]["treeSha"] = "9" * 40
+    with pytest.raises(recovery.AdmissionError,
+                       match="certificateDigest_invalid"):
+        recovery.verify_certificate(hostile, classification, evidence)
+
+
+def test_failed_junit_cannot_be_recorded_as_recovery_evidence(tmp_path):
+    junit = tmp_path / "junit.xml"
+    _junit(junit, failures=1)
+    with pytest.raises(recovery.AdmissionError,
+                       match="recovery_evidence_tests_not_passed"):
+        recovery.record_evidence(_classification(), junit, ["focused-tests"])
+
+
+def test_archive_requires_one_of_each_bound_document(tmp_path):
+    certificate, classification, evidence = _certificate_documents(tmp_path)
+    archive = _archive(certificate, classification, evidence)
+    assert recovery._archive_documents(archive) == (
+        certificate, classification, evidence)
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as bundle:
+        bundle.writestr("certificate.json", json.dumps(certificate))
+    with pytest.raises(recovery.AdmissionError,
+                       match="classification.json_count_invalid"):
+        recovery._archive_documents(stream.getvalue())
+
+
+def test_cross_origin_artifact_redirect_strips_bearer():
+    handler = recovery._StripCrossOriginAuthorization()
+    request = recovery.urllib.request.Request(
+        "https://api.github.com/repos/mitsugue/argus/actions/artifacts/1/zip",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": "Bearer secret",
+        },
+    )
+    redirected = handler.redirect_request(
+        request, None, 302, "Found", {},
+        "https://productionresultssa.blob.core.windows.net/result.zip?sig=x",
+    )
+    assert redirected is not None
+    assert redirected.get_header("Accept") == "application/vnd.github+json"
+    assert redirected.get_header("Authorization") is None
+
+
+def test_same_origin_redirect_retains_bearer():
+    handler = recovery._StripCrossOriginAuthorization()
+    request = recovery.urllib.request.Request(
+        "https://api.github.com/repos/mitsugue/argus/actions/artifacts/1/zip",
+        headers={"Authorization": "Bearer secret"},
+    )
+    redirected = handler.redirect_request(
+        request, None, 302, "Found", {},
+        "https://api.github.com/repos/mitsugue/argus/actions/artifacts/1/archive",
+    )
+    assert redirected is not None
+    assert redirected.get_header("Authorization") == "Bearer secret"
+
+
+def test_https_artifact_redirect_cannot_downgrade_transport():
+    handler = recovery._StripCrossOriginAuthorization()
+    request = recovery.urllib.request.Request(
+        "https://api.github.com/repos/mitsugue/argus/actions/artifacts/1/zip",
+        headers={"Authorization": "Bearer secret"},
+    )
+    with pytest.raises(recovery.AdmissionError,
+                       match="github_redirect_insecure"):
+        handler.redirect_request(
+            request, None, 302, "Found", {},
+            "http://example.invalid/result.zip",
+        )
+
+
+def test_authority_is_bound_to_exact_check_workflow_and_artifact(
+        tmp_path, monkeypatch):
+    certificate, classification, evidence = _certificate_documents(tmp_path)
+    archive = _archive(certificate, classification, evidence)
+    repository = "mitsugue/argus"
+    run_id, job_id, artifact_id = 123, 456, 789
+    artifact_name = f"recovery-admission-{CANDIDATE_SHA}-{run_id}-1"
+    archive_url = (
+        f"https://api.github.com/repos/{repository}/actions/artifacts/"
+        f"{artifact_id}/zip"
+    )
+    artifact = {
+        "id": artifact_id,
+        "name": artifact_name,
+        "expired": False,
+        "archive_download_url": archive_url,
+        "digest": f"sha256:{hashlib.sha256(archive).hexdigest()}",
+        "workflow_run": {"id": run_id, "head_sha": CANDIDATE_SHA},
+    }
+    check = {
+        "id": 987,
+        "name": recovery.RECOVERY_CHECK_CONTEXT,
+        "status": "completed",
+        "conclusion": "success",
+        "completed_at": "2026-08-27T00:00:00Z",
+        "details_url": (
+            f"https://github.com/{repository}/actions/runs/{run_id}/job/"
+            f"{job_id}"
+        ),
+    }
+    run = {
+        "id": run_id,
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": CANDIDATE_SHA,
+        "path": recovery.RECOVERY_WORKFLOW_PATH,
+    }
+
+    def fake_json(url, _token):
+        if "/check-runs?" in url:
+            return {"check_runs": [check]}
+        if url.endswith(f"/actions/runs/{run_id}"):
+            return run
+        if f"/actions/runs/{run_id}/artifacts?" in url:
+            return {"artifacts": [artifact]}
+        if url.endswith(f"/actions/artifacts/{artifact_id}"):
+            return artifact
+        raise AssertionError(url)
+
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setattr(recovery, "_api_json", fake_json)
+    monkeypatch.setattr(recovery, "_api_bytes", lambda url, token: archive)
+    authority = recovery.collect_authority(
+        repository=repository,
+        base_sha=BASE_SHA,
+        candidate_sha=CANDIDATE_SHA,
+        candidate_tree=CANDIDATE_TREE,
+        classification_digest=classification["classificationDigest"],
+        timeout_seconds=1,
+    )
+    assert authority["producer"]["workflowPath"] == \
+        recovery.RECOVERY_WORKFLOW_PATH
+    assert authority["artifact"]["artifactId"] == artifact_id
+    assert authority["certificate"]["certificateDigest"] == \
+        certificate["certificateDigest"]
+
+    receipt = recovery.fetch_authority(
+        repository=repository,
+        authority=authority,
+        certificate_out=tmp_path / "fetched-certificate.json",
+        classification_out=tmp_path / "fetched-classification.json",
+        evidence_out=tmp_path / "fetched-evidence.json",
+        receipt_out=tmp_path / "receipt.json",
+    )
+    assert receipt["status"] == "PASS"
+    assert receipt["certificateDigest"] == certificate["certificateDigest"]
+
+
+def test_wrong_recovery_producer_workflow_fails_closed(tmp_path, monkeypatch):
+    certificate, classification, evidence = _certificate_documents(tmp_path)
+    archive = _archive(certificate, classification, evidence)
+    repository = "mitsugue/argus"
+    run_id, artifact_id = 123, 789
+    check = {
+        "id": 987,
+        "name": recovery.RECOVERY_CHECK_CONTEXT,
+        "status": "completed",
+        "conclusion": "success",
+        "completed_at": "2026-08-27T00:00:00Z",
+        "details_url": (
+            f"https://github.com/{repository}/actions/runs/{run_id}/job/456"
+        ),
+    }
+    wrong_run = {
+        "id": run_id,
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": CANDIDATE_SHA,
+        "path": ".github/workflows/recovery-admission.yml",
+    }
+
+    def fake_json(url, _token):
+        if "/check-runs?" in url:
+            return {"check_runs": [check]}
+        if url.endswith(f"/actions/runs/{run_id}"):
+            return wrong_run
+        raise AssertionError(url)
+
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    monkeypatch.setattr(recovery, "_api_json", fake_json)
+    monkeypatch.setattr(recovery, "_api_bytes", lambda url, token: archive)
+    with pytest.raises(recovery.AdmissionError,
+                       match="recovery_authority_workflow_invalid"):
+        recovery.collect_authority(
+            repository=repository,
+            base_sha=BASE_SHA,
+            candidate_sha=CANDIDATE_SHA,
+            candidate_tree=CANDIDATE_TREE,
+            classification_digest=classification["classificationDigest"],
+            timeout_seconds=1,
+        )
+
+
+def test_policy_has_disjoint_explicit_paths_and_pinned_payload():
+    assert not set(recovery.RECOVERY_PAYLOAD_PATHS).intersection(
+        recovery.RECOVERY_ADMISSION_PATHS)
+    assert len(recovery.RECOVERY_PAYLOAD_PATHS) == 41
+    assert set(recovery.DUAL_SCOPE_TEST_PATHS).isdisjoint(
+        recovery.RECOVERY_PAYLOAD_PATHS)
+    assert {
+        "scripts/remote_journal_publish_policy.py",
+        "scripts/argus_watchtower_writer_dispatch.py",
+        "scripts/argus_remote_journal_rearm.py",
+        "scripts/install_argus_watchtower_writer.sh",
+        "ops/systemd/argus-watchtower-writer.service",
+        "ops/systemd/argus-watchtower-writer.timer",
+    }.issubset(recovery.RECOVERY_PAYLOAD_PATHS)
+    assert len(recovery.RECOVERY_ADMISSION_PATHS) == 4
+    policy = recovery.scope_policy_document()
+    assert policy["dualScopeTestPolicy"] == \
+        "BOTH_PRODUCT_AND_RECOVERY_CERTIFICATES_REQUIRED"
+    assert policy["mixedPolicy"] == \
+        "DENY_EXCEPT_EXACT_OWNER_APPROVED_SHARED_PRODUCT"
+    assert policy["ownerApprovedSharedProductPolicy"] == \
+        recovery.OWNER_APPROVED_SHARED_PRODUCT_POLICY
+    assert len(policy["expectedOwnerApprovedSharedProductPayloadDiffSha256"]) == 64
+    assert len(policy["expectedOwnerApprovedSharedProductDiffSha256"]) == 64
+    assert len(recovery.EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256) == 64
+
+
+def test_workflow_contract_keeps_product_and_recovery_authorities_separate():
+    market = Path(".github/workflows/market-public-acceptance.yml").read_text()
+    gate = Path(".github/workflows/release-gate.yml").read_text()
+    assert "needs.scope.outputs.classification == 'PRODUCT'" in market
+    assert "name: proof-certificate" in market
+    assert "name: recovery-certificate" in market
+    assert "needs.scope.outputs.classification == 'RECOVERY_ONLY'" in \
+        market
+    assert "MIXED scope is denied" in market
+    assert "collect-authority" in gate
+    assert "fetch-authority" in gate
+    assert "needs.classify.outputs.classification == 'RECOVERY_ONLY'" in gate
+    assert "needs.classify.outputs.classification == 'PRODUCT'" in gate
+    assert "name: gate" in gate
+
+
+def test_paired_workflow_runs_both_producers_and_both_consumers_before_mutation():
+    market = Path(".github/workflows/market-public-acceptance.yml").read_text()
+    gate = Path(".github/workflows/release-gate.yml").read_text()
+    pages = Path(".github/workflows/deploy-pages.yml").read_text()
+
+    def job(source, name):
+        match = re.search(r"^  " + re.escape(name) + r":\n(.*?)(?=^  [\w-]+:|\Z)",
+                          source, re.M | re.S)
+        assert match, name
+        return match.group(1)
+
+    for name, normal in (("full_release_simulation_1", "PRODUCT"),
+                         ("full_release_simulation_2", "PRODUCT"),
+                         ("proof_certificate", "PRODUCT"),
+                         ("recovery_evidence", "RECOVERY_ONLY"),
+                         ("recovery_certificate", "RECOVERY_ONLY")):
+        assert (f"(needs.scope.outputs.classification == '{normal}' || "
+                "needs.scope.outputs.classification == 'PRODUCT_AND_RECOVERY')") in job(market, name)
+    admission = job(gate, "premerge_admission")
+    assert admission.count("classification == 'PRODUCT_AND_RECOVERY'") == 8
+    assert 'v13_5_release_certificate.py fetch-admission' in admission
+    assert 'recovery_admission.py fetch-authority' in admission
+    assert 'recovery_admission.py verify' in admission
+    assert 'needs: [release_checks, premerge_admission]' in job(gate, "gate")
+    before_deploy = job(pages, "acceptance-runtime-admission")
+    assert 'recovery_admission.py classify' in before_deploy
+    assert 'recovery_admission.py collect-authority' in before_deploy
+    assert 'recovery_admission.py fetch-authority' in before_deploy
+    assert 'recovery_admission.py verify' in before_deploy
+    assert 'recovery-authority-classification.json' in before_deploy
+    assert 'v13_5_release_certificate.py fetch-admission' in before_deploy
+    assert 'classification == \'PRODUCT_AND_RECOVERY\'' in before_deploy
+    assert 'acceptance-runtime-admission' in job(pages, "build")

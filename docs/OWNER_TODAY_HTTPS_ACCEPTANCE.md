@@ -1,0 +1,124 @@
+# Owner authentication: complete Today acceptance
+
+This local acceptance unit depends on the owner server boundary, owner readers,
+browser continuity, and the WebAuthn CI dependency candidate. It is not a release
+or permission to publish those candidates.
+
+## Behavior and integration
+
+The fixed application shell previously covered the sibling owner account bar.
+Account controls now live in a compact `本人設定` disclosure in the actual header.
+The disclosure provides passkey registration, lost-device recovery and logout.
+The locked screen and all existing authentication checks remain in force.
+
+Canonical snapshot acceptance reloads the page as its causal trigger. Owner-mode
+callers explicitly log out before that reload and use the normal password UI
+afterwards. The same request/response observers, three-attempt 429 handling,
+90-second boundary, content-addressed snapshot equality, and state machine remain.
+No token is injected into a page and no administrator token is used for a browser.
+Failed cleanup remains failure, while its fixed diagnostic no longer replaces the
+original acceptance error.
+
+The shared pre-mutation build receives `owner-auth` from the same repository
+variable used by production readers. Only `0` or `1` is accepted; default remains
+`0`. This does not change the server setting, install a password, enable production
+authentication, or demonstrate an old iPhone's update/registration/recovery.
+
+## Dedicated synthetic HTTPS environment
+
+From `web/`, with Node 24 supporting `--use-env-proxy`, Python with the repository
+requirements, OpenSSL and the existing Playwright Chromium available:
+
+```
+ARGUS_TEST_PYTHON=/path/to/python3 node scripts/owner-today-https.mjs 1 /absolute/new-evidence-directory
+ARGUS_TEST_PYTHON=/path/to/python3 node scripts/owner-today-https.mjs 0 /absolute/another-new-evidence-directory
+```
+
+The runner builds the actual React product for the selected mode, starts the
+existing twelve-snapshot release fixture, and places the real Flask owner boundary
+in front of it. Credentials, database and certificate are generated per execution.
+A loopback CONNECT proxy accepts only `argus-fixture.test:443` and maps it to the
+fixture HTTPS listener. Other authorities are rejected. Node trusts the generated
+certificate; Chromium pins its generated public key. Global TLS verification is
+not disabled. The test-only preload is not used by production acceptance.
+
+The original mobile Today engine runs all M01–M15, the twelve research combinations,
+seven viewport geometries, the 225 ms loader boundary, response failure/304/429,
+and offline continuity. In owner mode, offline means locked, stored contents
+unchanged, then fresh online authentication and the same snapshot ID. Results are
+synthetic local evidence, not production acceptance, an iPhone test, a resource
+qualification or a formal 72-hour run.
+
+Ports 4373, 4399, 4473, 4480 and 4499 must be free. No privileged port, production
+endpoint, existing browser profile, original research input, external data source,
+paid API or order endpoint is needed. The runner closes its own services and removes
+only its generated temporary directory. Supply a new evidence directory each time
+so previous failures remain available.
+
+## Rollout and preservation
+
+Keep all authentication candidates local until their exact admission and public
+submission permissions are resolved. Recompute the final candidate's exact scope,
+then run its release gate and both applicable detached proofs. The older candidate's
+manifest/proof is not evidence for this unit. Production activation still requires
+coherent server/build/reader settings, protected acceptance-artifact destinations,
+old PWA data-preserving updates and actual owner device registration/recovery.
+Do not discard stored results or relax acceptance to complete the migration.
+
+## パスキー・紛失・認証DB復旧の専用受入
+
+同じ合成HTTPS構成で、末尾に `passkey` を指定する。
+
+```sh
+ARGUS_TEST_PYTHON=/absolute/python3 node scripts/owner-today-https.mjs 1 /absolute/new-output passkey
+```
+
+Chromiumの仮想CTAP2端末で、通常UIの登録・ログイン・失効・再登録を実行する。
+秘密鍵を取得・保存したり、sessionを画面へ注入したりしない。
+実ブラウザの `credentials.create/get` の署名を、実Flask認証で検証する。
+本人確認フラグを欠く署名は401で拒否し、正常な署名へ戻した後の復帰も確認する。
+紛失復旧では別contextの既存sessionも失効する。
+
+失効前の認証DBを既存CLIでbackupし、元DBを残したまま新しいprivate DBへ
+prepare-restoreする。server停止後に新DBを開き、session/challenge/passkeyが0で、
+過去の端末が復活しないこと、password→新規登録→パスキーログインを確認する。
+元DB件数・backup SHA・復元先0600を照合する。IPCは固定checkpoint/restoreだけ。
+
+各再認証後、同じチャートsnapshot IDと全保存項目を照合する。再取得に伴う
+Today見出しのgeneratedAt/storedAtだけは有効な非後退時刻として別記録し、
+それ以外の変更は失敗にする。生の保存領域hashを等値だったと書き換えない。
+生成password/sessionが成果物に残らないことも検査し、生成した環境だけ終了する。
+
+これは仮想端末の受入であり、iPhoneのFace ID、実機鍵の同期、旧PWAの更新、
+本番DBの復旧・設定切替を実施済みとはしない。実機では保存結果・保有・描画・設定を
+保全した状態で登録、再起動、失効、password復旧を別途確認する。
+
+## 認証設定の一致と移行順序
+
+buildはOWNER_AUTH_REQUIREDの0/1以外を拒否し、HTMLへ認証modeを固定する。
+実行中Reactは別のDOM属性へ自身のコンパイル済みmodeを設定する。
+受入browserは通常login前に実行modeを照合するので、HTMLだけを更新した状態や
+異なるmodeの古いbundleは受入成功にしない。
+
+Pages配信では既存candidate-identity通過後、business-snapshot-triggerの最初に
+`owner-mode-consistency.mjs`を実行する。HTMLのSHA/mode、reader設定、サーバーの
+匿名session応答が一致しなければ、warmとproducerを呼ばず失敗する。
+0は503/owner_auth_disabled、1は401/owner_auth_requiredの厳密組合せを要求する。
+DB障害等の503をdisabledと推定しない。リダイレクト、欠落marker、JSON障害も停止。
+この確認は秘密を送らず、session proofの代わりにはならない。
+
+これは公開後の業務生成前の停止条件であり、Pages公開そのものを防ぐ検査ではない。
+移行時はserver、repository変数、build、readerの設定を同じ承認済み手順で揃える。
+不一致を検出したときは匿名への降格や再生成を行わず、対象設定を照合してから
+通常の修正・再受入へ進む。旧端末データを消して一致扱いにしない。
+
+## 旧PWAから認証への保存保全移行
+
+`ARGUS_TEST_PYTHON=/path/to/python3 node scripts/owner-today-https.mjs 1 /new/output migration`
+をwebから実行する。専用profileに旧本番ソース22478dceのOFFビルドと実SWを登録し、合成描画・設定・保存結果を保持したままONへ更新する。設定だけの変更を検出できることを調べるため、両ビルドに同じ検査用SHAを注入する。これは旧本番配信物の同一バイト再現を意味しない。現在候補の実行SHAとは別に旧ソースSHAを記録する。
+
+HTMLと実行bundleの更新識別は版・製品版・SHA・認証modeの4項目。modeだけの更新で強制修復が必要になってもsnapshot DBを消さない。版/SHAが異なる場合は従来の互換性保護に従ってサーバー由来のキャッシュだけを更新し、描画・設定・履歴は保つ。旧3項目identityは新HTMLの通常修復で移行し、本人データを削除しない。回数/時間上限は従来通り。mode識別はnonce付き認証の代用ではない。
+
+本番移行ではサーバー/reader/buildの一致を確認してから通常更新・再認証し、既存snapshotと描画/設定を確認する。全端末の更新が確認できるまで旧PWA移行済みとはしない。オフラインの旧JSは新しいロックを実行できないため、本人がオンラインで更新する必要がある。データ削除・profile初期化・パスワード廃止を移行手段にしない。更新失敗時は新画面が実行されるまで未受入とし、認証をOFFへ戻して合格にしない。実iPhoneは別途受入が必要。
+
+実行bundleの識別は最初の4秒後の確認を待たず、起動時に記録する。更新直後に終了しても次のoffline起動で新しいshellを誤って消さない。HTMLの値ではなくコンパイルされた版/SHA/modeを記録し、保存不可でも起動を妨げない。

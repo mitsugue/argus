@@ -1,0 +1,233 @@
+import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
+import { useSyncExternalStore } from 'react';
+import { createSharedPollingStore, type SharedPollingStore } from '../lib/sharedPollingStore';
+import type { USWatchlistSnapshot, USStockQuote } from '../types/watch';
+import {
+  normalizeUSWatchSnapshot,
+  type USTruthSnapshot,
+} from '../domain/watchQuoteTruth';
+import { quoteDecisionExpiresAt } from '../domain/liveQuote';
+
+// connecting | live | partial | mock — same model as useJapanWatchlist.
+export type ConnPhase = 'connecting' | 'live' | 'delayed' | 'unknown' | 'partial' | 'mixed' | 'mock';
+
+interface State {
+  data: USTruthSnapshot | null;
+  error: string | null;
+  loading: boolean;
+  phase: ConnPhase;
+  attempt: number;
+}
+
+// Mock fallback — values mirror the backend's _US_WATCHLIST mocks (NOT real
+// quotes). Used when VITE_ARGUS_BACKEND_URL is unset or every attempt fails.
+function mk(symbol: string, name: string, price: number, changeAbs: number, changePct: number, volume: number): USStockQuote {
+  return { symbol, name, price, changeAbs, changePct, volume, date: null, status: 'mock' };
+}
+const MOCK_SNAPSHOT: USWatchlistSnapshot = {
+  status: 'mock',
+  asOf: null,
+  provider: 'twelvedata',
+  stocks: [
+    mk('NVDA', 'NVIDIA', 142.30, -1.32, -0.92, 240_000_000),
+    mk('AAPL', 'Apple', 218.40, -0.74, -0.34, 52_000_000),
+    mk('TSLA', 'Tesla', 178.20, -5.74, -3.12, 98_000_000),
+    mk('META', 'Meta Platforms', 487.10, 3.78, 0.78, 14_000_000),
+  ],
+};
+
+// Render's free tier sleeps the backend; the first request after idle can take
+// 30–60s. Retry a couple of times with a per-attempt timeout, staying in
+// "connecting", and settle on mock only once every attempt fails.
+const MAX_ATTEMPTS = 3;
+const ATTEMPT_TIMEOUT_MS = 8_000;
+const RETRY_DELAYS_MS = [3_000, 6_000];
+
+// Auto-refresh: read initially, then on the relaxed
+// visible-page cadence (pollingPolicy); hidden tabs
+// never poll. Silent — keeps showing the last good data on a failed refresh
+// instead of flashing back to "connecting"/mock. 2 endpoints per cycle stay far
+// inside the per-IP heavy-endpoint limit (30/min).
+const REFRESH_INTERVAL_MS = 30_000;  // cached US price read; no provider or AI call
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+/**
+ * Live snapshot of the watched US names (price / change / volume / date) from
+ * the backend `/api/argus/us-watchlist` (Twelve Data). Falls back to
+ * MOCK_SNAPSHOT (`phase === "mock"`) when the backend is unset or every attempt
+ * fails. Mirrors useJapanWatchlist's connecting/live/mock model.
+ */
+const INITIAL_STATE: State = {
+  data: null,
+  error: null,
+  loading: true,
+  phase: 'connecting',
+  attempt: 0,
+};
+const usWatchlistStores = new Map<string, SharedPollingStore<State>>();
+
+function usWatchlistStore(symKey: string): SharedPollingStore<State> {
+  const existing = usWatchlistStores.get(symKey);
+  if (existing) return existing;
+
+  const store = createSharedPollingStore<State>(INITIAL_STATE, (setState, getState, restored) => {
+    const dynamic = symKey.length > 0;
+    const fallback: USWatchlistSnapshot = dynamic
+      ? { status: 'mock', asOf: null, provider: 'twelvedata', stocks: [] }
+      : MOCK_SNAPSHOT;
+    const normalizedFallback = normalizeUSWatchSnapshot(fallback);
+    const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
+    if (!backend) {
+      setState({ data: normalizedFallback, error: null, loading: false, phase: 'mock', attempt: 0 });
+      return () => {};
+    }
+    const url = backend.replace(/\/$/, '') + '/api/argus/us-watchlist'
+      + (dynamic ? `?symbols=${encodeURIComponent(symKey)}` : '');
+    let cancelled = false;
+    let acquisition: Promise<void> | null = null;
+    let cancelExpiry = () => {};
+    const controllers = new Set<AbortController>();
+
+    function armExpiry(data: USTruthSnapshot) {
+      cancelExpiry();
+      const now = Date.now();
+      const deadlines = data.stocks.map((row) => row.quoteTruth
+        ? quoteDecisionExpiresAt(row.quoteTruth) : null)
+        .filter((value): value is number => value != null);
+      if (!deadlines.length) return;
+      const delay = Math.min(...deadlines) - now;
+      if (delay < 0) {
+        const aged = normalizeUSWatchSnapshot(data as unknown as USWatchlistSnapshot);
+        setState((state) => ({ ...state, data: aged, phase: aged.status }));
+        armExpiry(aged);
+        return;
+      }
+      const handle = window.setTimeout(() => {
+        const current = getState();
+        if (!current.data) return;
+        const aged = normalizeUSWatchSnapshot(
+          current.data as unknown as USWatchlistSnapshot);
+        setState({ ...current, data: aged, phase: aged.status });
+        armExpiry(aged);
+      }, Math.max(1, Math.min(delay + 1, 2_147_000_000)));
+      cancelExpiry = () => window.clearTimeout(handle);
+    }
+
+    function accept(data: USTruthSnapshot, attempt: number) {
+      setState({ data, error: null, loading: false, phase: data.status, attempt });
+      armExpiry(data);
+    }
+
+    function revalidateCurrent() {
+      const current = getState();
+      if (!current.data) return;
+      const aged = normalizeUSWatchSnapshot(
+        current.data as unknown as USWatchlistSnapshot);
+      setState({ ...current, data: aged, phase: aged.status, loading: false });
+      armExpiry(aged);
+    }
+
+    async function fetchSnapshot(): Promise<USTruthSnapshot> {
+      const ctrl = new AbortController();
+      controllers.add(ctrl);
+      const timer = window.setTimeout(() => ctrl.abort(), ATTEMPT_TIMEOUT_MS);
+      try {
+        const response = await fetch(url, { signal: ctrl.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return normalizeUSWatchSnapshot((await response.json()) as USWatchlistSnapshot);
+      } finally {
+        window.clearTimeout(timer);
+        controllers.delete(ctrl);
+      }
+    }
+
+    function acquire(task: () => Promise<void>): Promise<void> {
+      if (acquisition) return acquisition;
+      const current = task().finally(() => {
+        if (acquisition === current) acquisition = null;
+      });
+      acquisition = current;
+      return current;
+    }
+
+    async function run() {
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        if (cancelled) return;
+        setState((s) => ({ ...s, phase: 'connecting', loading: true, attempt, error: null }));
+
+        try {
+          const data = await fetchSnapshot();
+          if (cancelled) return;
+          accept(data, attempt);
+          return;
+        } catch (err: unknown) {
+          if (cancelled) return;
+          const msg = err instanceof Error ? err.message : String(err);
+          if (attempt < MAX_ATTEMPTS) {
+            setState((s) => ({ ...s, error: msg, phase: 'connecting', loading: true, attempt }));
+            await sleep(RETRY_DELAYS_MS[attempt - 1] ?? 6_000);
+            continue;
+          }
+          setState({ data: normalizedFallback, error: msg, loading: false, phase: 'mock', attempt });
+          return;
+        }
+      }
+    }
+
+    // Retain last observed values on transport failure, but re-run timestamp
+    // classification so an old LIVE proof cannot survive indefinitely.
+    async function refresh() {
+      if (cancelled || document.hidden) return;
+      try {
+        const data = await fetchSnapshot();
+        if (cancelled) return;
+        setState((s) => ({ ...s, data, error: null, phase: data.status }));
+        armExpiry(data);
+      } catch (err: unknown) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        setState((s) => {
+          if (!s.data) return { ...s, error: msg };
+          const aged = normalizeUSWatchSnapshot(
+            s.data as unknown as USWatchlistSnapshot,
+          );
+          return { ...s, data: aged, error: msg, phase: aged.status };
+        });
+      }
+    }
+    const refreshTimer = scheduleVisibleInterval(() => void acquire(refresh), REFRESH_INTERVAL_MS);
+    // Age the retained quote on return without an extra network acquisition.
+    const onVisible = () => {
+      if (!document.hidden) {
+        revalidateCurrent();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    const stopInitialRead = subscribeInitialVisibleRead(() => { void acquire(refresh); }, restored);
+
+    if (getState().data) revalidateCurrent();
+    if (!restored) void acquire(run);
+    return () => {
+      cancelled = true;
+      cancelExpiry();
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
+      refreshTimer();
+      document.removeEventListener('visibilitychange', onVisible);
+      stopInitialRead();
+    };
+  }, 'us-watch:' + symKey);
+  usWatchlistStores.set(symKey, store);
+  return store;
+}
+
+export function useUSWatchlist(symbols?: string[]): State {
+  // Dynamic reads cover the authorized universe. Provider batches rotate
+  // independently; an eighth-request cap never truncates this card read.
+  const symKey = symbols && symbols.length ? symbols.slice().sort().join(',') : '';
+  const store = usWatchlistStore(symKey);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+}

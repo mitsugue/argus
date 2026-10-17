@@ -1,0 +1,700 @@
+"""A.R.G.U.S. — Calibration Ledger v4 Phase 2: market-specific forecast clocks.
+
+Pure-stdlib, side-effect-free. Replaces the legacy "everything at 16:05 JST"
+assumption: each asset is forecast against ITS OWN market session/calendar, and
+horizons mean the right thing per market (JP/US trading-day closes; crypto 24/
+72/120h; FX NY-close trading days). Computes the per-prediction timing metadata
+the v4 schema requires, and an eligibility verdict so stale/invalid bases are
+NOT silently recorded.
+
+This module does NOT touch the live ledger branch or the recording workflow —
+Phase 3 wires it in. Holiday tables are best-effort 2026 (JPX / NYSE) and are
+VERSIONED + overridable; they must be verified against the official calendars
+and extended each year (CALENDAR_VERSION).
+
+No external tz libraries: JST is a fixed UTC+9; US Eastern is computed with the
+post-2007 US DST rule (2nd Sun Mar 02:00 → 1st Sun Nov 02:00 local).
+"""
+from __future__ import annotations
+
+from datetime import date, datetime, time as dt_time, timedelta, timezone
+from typing import Any, Dict, Optional, Sequence, Tuple
+from zoneinfo import ZoneInfo
+
+CALENDAR_VERSION = "cal-2026.2"  # ↑ bump when holiday tables are corrected/extended
+CLOCK_VERSION = "clock-v2"
+
+# Markets
+JP_EQUITY = "JP_EQUITY"
+US_EQUITY = "US_EQUITY"
+CRYPTO = "CRYPTO"
+FX = "FX"
+VIX_MKT = "VIX"
+
+_JST = timezone(timedelta(hours=9))
+_ET = ZoneInfo("America/New_York")
+
+# Sensors/known symbols → market. Unknown 4-digit/alnum JP codes default JP.
+_US_TICKERS = {"SPY", "QQQ", "SMH", "IWM", "TLT", "HYG", "GLD",
+               "NVDA", "AAPL", "TSLA", "META", "GOOGL", "AMZN", "MSFT"}
+
+
+def asset_market(symbol: str) -> str:
+    s = (symbol or "").upper()
+    if s == "VIX":
+        return VIX_MKT
+    if s == "USDJPY" or s.endswith("=X"):
+        return FX
+    if s in ("BTC", "ETH", "SOL") or s.endswith("USD") and s not in _US_TICKERS:
+        return CRYPTO
+    if s in _US_TICKERS:
+        return US_EQUITY
+    # JP listing codes: 4 digits, or 4-char alnum like "285A"
+    if len(s) == 4 and (s.isdigit() or (s[:3].isdigit() and s[3].isalpha())):
+        return JP_EQUITY
+    return US_EQUITY  # fallback: treat unknown as US-session
+
+
+# ── Holiday tables ──────────────────────────────────────────────────────────
+# Generated from the rules that define them (owner request 2026-10-02) and
+# asserted equal to the official 2026 JPX/NYSE snapshot by the tests.
+# Japan (TSE): the National Holiday Act as in force since 2020 (fixed days,
+# Happy Monday days, equinox days, substitute holidays, citizens' holidays)
+# plus the exchange's 12/31, 1/2 and 1/3 closure. United States (NYSE): its
+# holiday rules (weekend observance, Good Friday, Juneteenth) and 13:00 early
+# closes. Equinox days are fixed by the government each February for the
+# next year; until then the standard approximation (valid 1980-2099) is used.
+# A law change, an Imperial event or an emergency closure is not foreseeable
+# here: a registered canonical calendar always wins, and the years must be
+# re-checked against the published calendars as they appear.
+HOLIDAY_FIRST_YEAR = 2026
+HOLIDAY_LAST_YEAR = 2041
+
+
+def _hol_nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    first = date(year, month, 1)
+    return first + timedelta(days=(weekday - first.weekday()) % 7 + 7 * (n - 1))
+
+
+def _hol_last_weekday(year: int, month: int, weekday: int) -> date:
+    last = (date(year, month + 1, 1) if month < 12 else date(year + 1, 1, 1)) - timedelta(days=1)
+    return last - timedelta(days=(last.weekday() - weekday) % 7)
+
+
+def _hol_equinox_day(year: int, base: float) -> int:
+    return int(base + 0.242194 * (year - 1980) - int((year - 1980) / 4))
+
+
+def _hol_jp_holidays(year: int) -> Dict[str, str]:
+    """TSE full-day closures for one year, weekends included, with names."""
+    holidays = {
+        date(year, 1, 1): "New Year's Day / 元日",
+        _hol_nth_weekday(year, 1, 0, 2): "Coming of Age Day / 成人の日",
+        date(year, 2, 11): "National Foundation Day / 建国記念の日",
+        date(year, 2, 23): "Emperor's Birthday / 天皇誕生日",
+        date(year, 3, _hol_equinox_day(year, 20.8431)): "Vernal Equinox Day / 春分の日",
+        date(year, 4, 29): "Showa Day / 昭和の日",
+        date(year, 5, 3): "Constitution Memorial Day / 憲法記念日",
+        date(year, 5, 4): "Greenery Day / みどりの日",
+        date(year, 5, 5): "Children's Day / こどもの日",
+        _hol_nth_weekday(year, 7, 0, 3): "Marine Day / 海の日",
+        date(year, 8, 11): "Mountain Day / 山の日",
+        _hol_nth_weekday(year, 9, 0, 3): "Respect for the Aged Day / 敬老の日",
+        date(year, 9, _hol_equinox_day(year, 23.2488)): "Autumnal Equinox Day / 秋分の日",
+        _hol_nth_weekday(year, 10, 0, 2): "Sports Day / スポーツの日",
+        date(year, 11, 3): "Culture Day / 文化の日",
+        date(year, 11, 23): "Labor Thanksgiving Day / 勤労感謝の日",
+    }
+    national = dict(holidays)
+    # A day between two national holidays is itself a holiday.
+    for day in sorted(national):
+        between = day + timedelta(days=1)
+        if between not in national and between + timedelta(days=1) in national and between.weekday() != 6:
+            holidays[between] = "National Holiday / 国民の休日"
+    # A national holiday on a Sunday moves to the next day that is not a holiday.
+    for day in sorted(national):
+        if day.weekday() == 6:
+            substitute = day + timedelta(days=1)
+            while substitute in holidays:
+                substitute += timedelta(days=1)
+            holidays[substitute] = "Substitute Holiday / 振替休日"
+    holidays[date(year, 1, 2)] = "Market Holiday / 年始休業"
+    holidays[date(year, 1, 3)] = "Market Holiday / 年始休業"
+    holidays[date(year, 12, 31)] = "Market Holiday / 年末休業"
+    return {day.isoformat(): name for day, name in sorted(holidays.items())}
+
+
+def _hol_easter(year: int) -> date:
+    """Gregorian Easter Sunday (anonymous Gregorian algorithm)."""
+    a, b, c = year % 19, year // 100, year % 100
+    d, e = b // 4, b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = c // 4, c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = (h + l - 7 * m + 114) % 31 + 1
+    return date(year, month, day)
+
+
+def _hol_observed(day: date) -> date:
+    return day - timedelta(days=1) if day.weekday() == 5 else day + timedelta(days=1) if day.weekday() == 6 else day
+
+
+def _hol_us_holidays(year: int) -> Dict[str, str]:
+    """NYSE full-day closures for one year, with names."""
+    holidays: Dict[date, str] = {}
+    new_year = date(year, 1, 1)
+    # NYSE does not close on Friday 12/31 for a Saturday New Year's Day.
+    if new_year.weekday() != 5:
+        holidays[_hol_observed(new_year)] = "New Year's Day" + (" (Observed)" if new_year.weekday() == 6 else "")
+    holidays[_hol_nth_weekday(year, 1, 0, 3)] = "Martin Luther King Jr. Day"
+    holidays[_hol_nth_weekday(year, 2, 0, 3)] = "Washington's Birthday"
+    holidays[_hol_easter(year) - timedelta(days=2)] = "Good Friday"
+    holidays[_hol_last_weekday(year, 5, 0)] = "Memorial Day"
+    for month, day, name in ((6, 19, "Juneteenth National Independence Day"), (7, 4, "Independence Day"),
+                             (12, 25, "Christmas Day")):
+        actual = date(year, month, day)
+        holidays[_hol_observed(actual)] = name + (" (Observed)" if actual.weekday() >= 5 else "")
+    holidays[_hol_nth_weekday(year, 9, 0, 1)] = "Labor Day"
+    holidays[_hol_nth_weekday(year, 11, 3, 4)] = "Thanksgiving Day"
+    return {day.isoformat(): name for day, name in sorted(holidays.items())}
+
+
+def _hol_us_early_closes(year: int) -> Dict[str, str]:
+    """NYSE 13:00 ET closes: July 3, the day after Thanksgiving, Christmas Eve, when they trade."""
+    closed = _hol_us_holidays(year)
+    candidates = {date(year, 7, 3): "Independence Day Eve",
+                  _hol_nth_weekday(year, 11, 3, 4) + timedelta(days=1): "Day after Thanksgiving",
+                  date(year, 12, 24): "Christmas Eve"}
+    return {day.isoformat(): name for day, name in sorted(candidates.items())
+            if day.weekday() < 5 and day.isoformat() not in closed}
+
+
+def _hol_table(generator, first: int = HOLIDAY_FIRST_YEAR, last: int = HOLIDAY_LAST_YEAR) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for year in range(first, last + 1):
+        out.update(generator(year))
+    return out
+
+
+_JP_HOLIDAY_NAMES_TABLE = _hol_table(_hol_jp_holidays)
+_US_HOLIDAY_NAMES_TABLE = _hol_table(_hol_us_holidays)
+_JP_HOLIDAYS = set(_JP_HOLIDAY_NAMES_TABLE)
+_US_HOLIDAYS = set(_US_HOLIDAY_NAMES_TABLE)
+_US_EARLY_CLOSES = _hol_table(_hol_us_early_closes)
+
+_HOLIDAYS = {
+    JP_EQUITY: _JP_HOLIDAYS,
+    US_EQUITY: _US_HOLIDAYS,
+    VIX_MKT: _US_HOLIDAYS,        # Cboe follows the US holiday calendar
+    FX: set(),                    # FX is independent 24/5
+}
+
+# The static tables above are exchange calendars (an official snapshot for
+# 2026, rule-generated after it), not weekday arithmetic — but they only
+# cover this range. DAILY decision
+# authority must never silently degrade to weekday inference beyond it
+# (owner directive 2026-08-26).
+_STATIC_TABLE_COVERAGE = {
+    JP_EQUITY: (f"{HOLIDAY_FIRST_YEAR}-01-01", f"{HOLIDAY_LAST_YEAR}-12-31"),
+    US_EQUITY: (f"{HOLIDAY_FIRST_YEAR}-01-01", f"{HOLIDAY_LAST_YEAR}-12-31"),
+    VIX_MKT: (f"{HOLIDAY_FIRST_YEAR}-01-01", f"{HOLIDAY_LAST_YEAR}-12-31"),
+}
+
+
+class CalendarUnavailableError(ValueError):
+    """No canonical trading-calendar coverage for the probed date.
+
+    DAILY authority callers must treat this as 'authority unavailable'
+    (conservative data-gate) — never fall back to weekday arithmetic."""
+
+
+# Runtime-registered canonical calendar (JP: the J-Quants /markets/calendar
+# rows the server fetched and PROVED; tests inject synthetic ranges). When a
+# registered range covers a date it outranks the static snapshot.
+_CANONICAL_CALENDARS: Dict[str, Dict[str, Any]] = {}
+
+
+def register_canonical_calendar(market: str, trading_days: Sequence[str], *,
+                                start: str, end: str,
+                                source: str) -> Dict[str, Any]:
+    """Register provider-proven trading days covering [start, end]."""
+    if market not in (JP_EQUITY, US_EQUITY, VIX_MKT):
+        raise ValueError(f"unsupported canonical market: {market}")
+    days = {str(d)[:10] for d in (trading_days or []) if str(d)[:10]}
+    if not (len(str(start)) == 10 and len(str(end)) == 10 and start <= end):
+        raise ValueError("invalid coverage range")
+    entry = {"tradingDays": frozenset(days), "start": str(start),
+             "end": str(end), "source": str(source)[:80]}
+    _CANONICAL_CALENDARS[market] = entry
+    return {"market": market, "days": len(days),
+            "start": entry["start"], "end": entry["end"],
+            "source": entry["source"]}
+
+
+def clear_canonical_calendar(market: Optional[str] = None) -> None:
+    if market is None:
+        _CANONICAL_CALENDARS.clear()
+    else:
+        _CANONICAL_CALENDARS.pop(market, None)
+
+
+def canonical_calendar_status(market: str) -> Optional[Dict[str, Any]]:
+    entry = _CANONICAL_CALENDARS.get(market)
+    if not entry:
+        return None
+    return {"market": market, "start": entry["start"], "end": entry["end"],
+            "days": len(entry["tradingDays"]), "source": entry["source"]}
+
+
+def canonical_trading_day(market: str, d: date,
+                          *, extra_closures: Sequence[str] = ()) -> bool:
+    """AUTHORITY-GRADE calendar verdict: registered canonical calendar first,
+    then the versioned official static snapshot within its coverage. A date
+    outside BOTH raises CalendarUnavailableError — weekday arithmetic never
+    substitutes for the official calendar in daily decision authority."""
+    if market == CRYPTO:
+        return True
+    key = d.isoformat()
+    if key in set(extra_closures or ()):
+        return False
+    entry = _CANONICAL_CALENDARS.get(market)
+    if entry and entry["start"] <= key <= entry["end"]:
+        return key in entry["tradingDays"]
+    coverage = _STATIC_TABLE_COVERAGE.get(market)
+    if coverage and coverage[0] <= key <= coverage[1]:
+        if d.weekday() >= 5:      # exchange weekends are calendar fact
+            return False
+        return key not in _HOLIDAYS.get(market, set())
+    raise CalendarUnavailableError(
+        f"no canonical trading-calendar coverage for {market} on {key}")
+
+_HOLIDAY_NAMES = {
+    JP_EQUITY: _JP_HOLIDAY_NAMES_TABLE,
+    US_EQUITY: _US_HOLIDAY_NAMES_TABLE,
+    VIX_MKT: _US_HOLIDAY_NAMES_TABLE,
+}
+
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    """nth (1-based) weekday (Mon=0) in a month."""
+    d = date(year, month, 1)
+    offset = (weekday - d.weekday()) % 7
+    return d + timedelta(days=offset + 7 * (n - 1))
+
+
+def _first_weekday_after(year: int, month: int, day: int, weekday: int) -> date:
+    d = date(year, month, day)
+    return d + timedelta(days=(weekday - d.weekday()) % 7)
+
+
+def _is_us_dst(dt_utc: datetime) -> bool:
+    """US DST: 2nd Sun Mar 02:00 local → 1st Sun Nov 02:00 local. Approximate the
+    boundary using the UTC instant (close enough for daily post-close timing)."""
+    y = dt_utc.year
+    dst_start = _nth_weekday(y, 3, 6, 2)   # 2nd Sunday of March
+    dst_end = _nth_weekday(y, 11, 6, 1)    # 1st Sunday of November
+    # transitions at 02:00 local ≈ 07:00 UTC (EST start) / 06:00 UTC (EDT end)
+    start_utc = datetime(dst_start.year, dst_start.month, dst_start.day, 7, tzinfo=timezone.utc)
+    end_utc = datetime(dst_end.year, dst_end.month, dst_end.day, 6, tzinfo=timezone.utc)
+    return start_utc <= dt_utc < end_utc
+
+
+def _us_eastern_offset(dt_utc: datetime) -> timedelta:
+    return timedelta(hours=-4) if _is_us_dst(dt_utc) else timedelta(hours=-5)
+
+
+def is_trading_day(market: str, d: date,
+                   *, extra_closures: Sequence[str] = ()) -> bool:
+    """TELEMETRY-GRADE calendar check (schedulers, walkers, display).
+
+    Uses the registered canonical calendar when it covers the date, else the
+    static snapshot, else legacy weekday behavior. DAILY decision authority
+    must use canonical_trading_day()/latest_completed_session_date(), which
+    fail conservatively instead of ever falling back to weekday arithmetic."""
+    if market == CRYPTO:
+        return True  # 24/7
+    try:
+        return canonical_trading_day(
+            market, d, extra_closures=extra_closures)
+    except CalendarUnavailableError:
+        pass
+    if d.weekday() >= 5:  # Sat/Sun
+        return False
+    key = d.isoformat()
+    return (key not in _HOLIDAYS.get(market, set())
+            and key not in set(extra_closures or ()))
+
+
+def add_trading_days(market: str, start: date, n: int) -> date:
+    """The date that is n trading days AFTER `start` (n>=1). Crypto = calendar."""
+    if market == CRYPTO:
+        return start + timedelta(days=n)
+    d = start
+    remaining = n
+    while remaining > 0:
+        d += timedelta(days=1)
+        if is_trading_day(market, d):
+            remaining -= 1
+    return d
+
+
+def _local_close(market: str, d: date, now_utc: datetime) -> datetime:
+    """The UTC instant of `d`'s session close for the market."""
+    if market == JP_EQUITY:
+        # TSE closing auction is 15:30 JST (extended from 15:00 in Nov 2024) =
+        # 06:30 UTC. Using 15:30 avoids treating 15:00–15:30 prices as the close.
+        return datetime(d.year, d.month, d.day, 15, 30, tzinfo=_JST).astimezone(timezone.utc)
+    if market in (US_EQUITY, VIX_MKT, FX):
+        # US regular close 16:00 ET; FX NY close 17:00 ET (use 16:00 for equities/VIX)
+        hour = (17 if market == FX else
+                13 if d.isoformat() in _US_EARLY_CLOSES else 16)
+        return datetime(d.year, d.month, d.day, hour, 0,
+                        tzinfo=_ET).astimezone(timezone.utc)
+    raise ValueError(market)
+
+
+def _origin_trading_date(market: str, now_utc: datetime) -> date:
+    """The most-recent COMPLETED trading session date as of now (post-close).
+
+    AUTHORITY-GRADE: every probed date must be answerable by the canonical
+    calendar (registered range or the versioned official snapshot). Coverage
+    gaps raise CalendarUnavailableError — the caller data-gates instead of
+    inferring sessions from weekdays. The 20-day walk-back bounds even the
+    longest official closures (Golden Week, New Year) with margin."""
+    if market == CRYPTO:
+        return now_utc.date()
+    if market == FX:
+        # FX 24/5 has no exchange holiday calendar; NY-close weekday walk.
+        probe = now_utc.astimezone(_ET).date()
+        for _ in range(10):
+            if probe.weekday() < 5 and now_utc >= _local_close(
+                    FX, probe, now_utc):
+                return probe
+            probe -= timedelta(days=1)
+        return probe
+    local_tz = _JST if market == JP_EQUITY else _ET
+    probe = now_utc.astimezone(local_tz).date()
+    for _ in range(20):
+        if canonical_trading_day(market, probe):
+            close = _local_close(market, probe, now_utc)
+            if now_utc >= close:
+                return probe
+        probe -= timedelta(days=1)
+    raise CalendarUnavailableError(
+        f"no completed session found within 20 days for {market}")
+
+
+def latest_completed_session_date(
+        market: str, now_utc: Optional[datetime] = None) -> date:
+    """Canonical latest completed exchange session for dated EOD evidence.
+
+    Provider adapters use this public clock seam instead of searching backward
+    until any historical row happens to exist.  Missing data for this exact
+    session remains unavailable; an older row is never relabelled current.
+    """
+    if market not in (JP_EQUITY, US_EQUITY, VIX_MKT, FX):
+        raise ValueError(f"unsupported market: {market}")
+    current = now_utc or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("now_utc must be timezone-aware")
+    return _origin_trading_date(market, current.astimezone(timezone.utc))
+
+
+def market_session_bounds(market: str, session_date: date) -> Dict[str, Any]:
+    """Canonical regular-session boundaries for one exchange trading date.
+
+    Schedulers consume this seam instead of owning fixed JST wall-clock rules.
+    A non-session date has no bounds; US DST and versioned early closes are
+    resolved by the same exchange clock used by every other consumer.
+    """
+    if market not in (JP_EQUITY, US_EQUITY, VIX_MKT):
+        raise ValueError(f"unsupported bounded market: {market}")
+    if not isinstance(session_date, date) or isinstance(session_date, datetime):
+        raise ValueError("session_date must be a date")
+    if not is_trading_day(market, session_date):
+        return {
+            "market": market,
+            "sessionDate": session_date.isoformat(),
+            "isTradingDay": False,
+            "regularOpenUtc": None,
+            "regularCloseUtc": None,
+            "regularOpenJst": None,
+            "regularCloseJst": None,
+            "earlyClose": False,
+            "calendarVersion": CALENDAR_VERSION,
+        }
+    local_tz = _JST if market == JP_EQUITY else _ET
+    opened = datetime.combine(
+        session_date,
+        dt_time(9, 0) if market == JP_EQUITY else dt_time(9, 30),
+        tzinfo=local_tz).astimezone(timezone.utc)
+    closed = _local_close(market, session_date, opened)
+    return {
+        "market": market,
+        "sessionDate": session_date.isoformat(),
+        "isTradingDay": True,
+        "regularOpenUtc": _utc_seconds(opened),
+        "regularCloseUtc": _utc_seconds(closed),
+        "regularOpenJst": opened.astimezone(_JST).isoformat(),
+        "regularCloseJst": closed.astimezone(_JST).isoformat(),
+        "earlyClose": (market in (US_EQUITY, VIX_MKT)
+                       and session_date.isoformat() in _US_EARLY_CLOSES),
+        "calendarVersion": CALENDAR_VERSION,
+    }
+
+
+def _utc_seconds(value: datetime) -> str:
+    """Canonical second-precision UTC timestamp for the public session contract."""
+    return value.astimezone(timezone.utc).replace(
+        microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _session_valid_until(market: str, local_now: datetime, *,
+                         trading: bool, session: str) -> datetime:
+    """First instant at which the current canonical session label can change.
+
+    This stays inside the server clock authority. Browser consumers receive the
+    resulting instant and never reproduce exchange hours, DST, or holidays.
+    """
+    next_midnight = datetime.combine(
+        local_now.date() + timedelta(days=1), dt_time(0, 0),
+        tzinfo=local_now.tzinfo)
+    if not trading:
+        return next_midnight.astimezone(timezone.utc)
+    if market == JP_EQUITY:
+        transition = {
+            "PRE_MARKET": dt_time(9, 0),
+            "MORNING_SESSION": dt_time(11, 30),
+            "LUNCH_BREAK": dt_time(12, 30),
+            "AFTERNOON_SESSION": dt_time(15, 30),
+        }.get(session)
+        if transition is not None:
+            return datetime.combine(
+                local_now.date(), transition,
+                tzinfo=local_now.tzinfo).astimezone(timezone.utc)
+        return next_midnight.astimezone(timezone.utc)
+    if market in (US_EQUITY, VIX_MKT):
+        close_hour = (13 if local_now.date().isoformat()
+                      in _US_EARLY_CLOSES else 16)
+        transition = {
+            "PRE_MARKET": dt_time(9, 30),
+            "REGULAR": dt_time(close_hour, 0),
+            "AFTER_HOURS": dt_time(20, 0),
+        }.get(session)
+        if transition is not None:
+            return datetime.combine(
+                local_now.date(), transition,
+                tzinfo=local_now.tzinfo).astimezone(timezone.utc)
+        if session == "OVERNIGHT_CLOSED" and local_now.hour < 4:
+            return datetime.combine(
+                local_now.date(), dt_time(4, 0),
+                tzinfo=local_now.tzinfo).astimezone(timezone.utc)
+        return next_midnight.astimezone(timezone.utc)
+    return next_midnight.astimezone(timezone.utc)
+
+
+def market_session(market: str, now_utc: Optional[datetime] = None, *,
+                   provider_status: Optional[str] = None,
+                   extra_closures: Sequence[str] = ()) -> Dict[str, Any]:
+    """Return official-calendar-first session truth for one market.
+
+    Provider state is auxiliary evidence and never overrides the exchange
+    calendar. extra_closures supports exchange-announced emergency closures.
+    """
+    now_utc = now_utc or datetime.now(timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+    if market == CRYPTO:
+        valid_until = datetime.combine(
+            now_utc.date() + timedelta(days=1), dt_time(0, 0),
+            tzinfo=timezone.utc)
+        return {
+            "market": market, "marketDate": now_utc.date().isoformat(),
+            "isTradingDay": True, "session": "CONTINUOUS",
+            "holidayName": None, "nextTradingDay": None,
+            "timezone": "UTC", "calendarVersion": CALENDAR_VERSION,
+            "officialCalendar": "CRYPTO_24_7",
+            "providerStatus": provider_status, "providerConflict": False,
+            "providerRole": "auxiliary_only",
+            "sessionObservedAt": _utc_seconds(now_utc),
+            "sessionValidUntil": _utc_seconds(valid_until),
+        }
+    local_tz = _JST if market == JP_EQUITY else _ET
+    local_now = now_utc.astimezone(local_tz)
+    market_date = local_now.date()
+    key = market_date.isoformat()
+    emergency = key in set(extra_closures or ())
+    trading = is_trading_day(
+        market, market_date, extra_closures=extra_closures)
+    holiday_name = (_HOLIDAY_NAMES.get(market, {}).get(key)
+                    or ("Emergency exchange closure" if emergency else None))
+    if not trading:
+        session = ("EMERGENCY_CLOSED" if emergency else
+                   "WEEKEND_CLOSED" if market_date.weekday() >= 5 else
+                   "HOLIDAY_CLOSED")
+    elif market == JP_EQUITY:
+        hm = local_now.hour * 60 + local_now.minute
+        session = ("PRE_MARKET" if hm < 9 * 60 else
+                   "MORNING_SESSION" if hm < 11 * 60 + 30 else
+                   "LUNCH_BREAK" if hm < 12 * 60 + 30 else
+                   "AFTERNOON_SESSION" if hm < 15 * 60 + 30 else
+                   "POST_MARKET")
+    elif market in (US_EQUITY, VIX_MKT):
+        hm = local_now.hour * 60 + local_now.minute
+        close_minute = (13 if key in _US_EARLY_CLOSES else 16) * 60
+        session = ("OVERNIGHT_CLOSED" if hm < 4 * 60 else
+                   "PRE_MARKET" if hm < 9 * 60 + 30 else
+                   "REGULAR" if hm < close_minute else
+                   "AFTER_HOURS" if hm < 20 * 60 else
+                   "OVERNIGHT_CLOSED")
+    else:
+        session = "CONTINUOUS"
+    nxt = add_trading_days(market, market_date, 1)
+    open_local = datetime.combine(
+        market_date,
+        dt_time(9, 0) if market == JP_EQUITY else dt_time(9, 30),
+        tzinfo=local_tz)
+    close_local = _local_close(
+        market, market_date, now_utc).astimezone(local_tz)
+    provider = str(provider_status or "").strip().upper() or None
+    provider_open = provider in (
+        "OPEN", "REGULAR", "PREMARKET", "AFTERHOURS")
+    official_open = session in (
+        "MORNING_SESSION", "AFTERNOON_SESSION", "REGULAR")
+    provider_conflict = bool(provider and (
+        (provider_open and not trading)
+        or (provider == "CLOSED" and official_open)))
+    valid_until = _session_valid_until(
+        market, local_now, trading=trading, session=session)
+    return {
+        "market": market, "marketDate": key,
+        "isTradingDay": trading, "session": session,
+        "holidayName": holiday_name, "nextTradingDay": nxt.isoformat(),
+        "timezone": "Asia/Tokyo" if market == JP_EQUITY
+                    else "America/New_York",
+        "regularOpenJst": open_local.astimezone(_JST).isoformat(),
+        "regularCloseJst": close_local.astimezone(_JST).isoformat(),
+        "earlyClose": (market in (US_EQUITY, VIX_MKT)
+                       and key in _US_EARLY_CLOSES),
+        "calendarVersion": CALENDAR_VERSION,
+        "officialCalendar": (
+            "JPX_TSE" if market == JP_EQUITY
+            else "NYSE_NASDAQ" if market in (US_EQUITY, VIX_MKT)
+            else "FX_24_5"),
+        "providerStatus": provider, "providerConflict": provider_conflict,
+        "providerRole": "auxiliary_only",
+        "sessionObservedAt": _utc_seconds(now_utc),
+        "sessionValidUntil": _utc_seconds(valid_until),
+    }
+
+
+def forecast_clock(symbol: str, now_utc: Optional[datetime] = None) -> Dict[str, Any]:
+    """Full per-prediction timing metadata for `symbol` at `now_utc`.
+
+    For equities/VIX/FX: 1D/3D/5D map to the 1st/3rd/5th FUTURE trading-session
+    close on that market's calendar. For crypto: 24h/72h/120h wall-clock anchors.
+    """
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+    market = asset_market(symbol)
+
+    if market == CRYPTO:
+        anchor = now_utc.replace(minute=0, second=0, microsecond=0)
+        targets = {h: (anchor + timedelta(hours=hrs)).isoformat()
+                   for h, hrs in (("1d", 24), ("3d", 72), ("5d", 120))}
+        return {
+            "symbol": symbol, "market": market, "clockVersion": CLOCK_VERSION,
+            "marketCalendar": "crypto_utc_24_7", "timezone": "UTC",
+            "originSession": "utc_anchor", "originTradingDate": anchor.date().isoformat(),
+            "forecastGeneratedAt": now_utc.isoformat(),
+            "horizonDefinition": "elapsed_hours(24/72/120)",
+            "targets": [{"horizon": h, "targetTimestamp": t} for h, t in targets.items()],
+            "calendarVersion": CALENDAR_VERSION,
+        }
+
+    origin = _origin_trading_date(market, now_utc)
+    tz_name = "JST" if market == JP_EQUITY else "ET"
+    cal = {JP_EQUITY: "JPX_TSE", US_EQUITY: "NYSE_NASDAQ",
+           VIX_MKT: "CBOE", FX: "NY_CLOSE"}[market]
+    targets = []
+    for h, n in (("1d", 1), ("3d", 3), ("5d", 5)):
+        td = add_trading_days(market, origin, n)
+        targets.append({
+            "horizon": h, "targetTradingDate": td.isoformat(),
+            "targetClose": _local_close(market, td, now_utc).isoformat(),
+        })
+    return {
+        "symbol": symbol, "market": market, "clockVersion": CLOCK_VERSION,
+        "marketCalendar": cal, "timezone": tz_name,
+        "originSession": "post_close", "originTradingDate": origin.isoformat(),
+        "originClose": _local_close(market, origin, now_utc).isoformat(),
+        "forecastGeneratedAt": now_utc.isoformat(),
+        "horizonDefinition": "trading_session_closes(1/3/5)",
+        "targets": targets,
+        "calendarVersion": CALENDAR_VERSION,
+    }
+
+
+def quote_eligibility(
+    symbol: str,
+    price_as_of: Optional[datetime],
+    now_utc: Optional[datetime] = None,
+    *,
+    max_age_seconds: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Decide whether a base price may anchor a forecast. Stale/missing/invalid
+    → eligible=False so the caller records a MISSING row (with reason), never a
+    silent bad forecast.
+
+    Default freshness budgets: JP/US post-close prices can legitimately be hours
+    old (the close is the close), so the budget is generous; crypto/FX must be
+    fresh. Pass max_age_seconds to override.
+    """
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    market = asset_market(symbol)
+    if price_as_of is None:
+        return {"eligible": False, "quoteStatus": "no_price",
+                "missingReason": "no_price", "market": market}
+    if price_as_of.tzinfo is None:
+        price_as_of = price_as_of.replace(tzinfo=timezone.utc)
+    if price_as_of > now_utc + timedelta(minutes=5):
+        return {"eligible": False, "quoteStatus": "invalid_timestamp",
+                "missingReason": "invalid_timestamp", "market": market}
+    age = (now_utc - price_as_of).total_seconds()
+    budget = max_age_seconds if max_age_seconds is not None else (
+        300 if market in (CRYPTO, FX) else 36 * 3600)
+    if age > budget:
+        if market in (JP_EQUITY, US_EQUITY, VIX_MKT):
+            local_tz = _JST if market == JP_EQUITY else _ET
+            session = market_session(market, now_utc)
+            quote_date = price_as_of.astimezone(local_tz).date()
+            try:
+                origin = _origin_trading_date(market, now_utc)
+            except CalendarUnavailableError:
+                return {"eligible": False,
+                        "quoteStatus": "calendar_unavailable",
+                        "missingReason": "calendar_unavailable",
+                        "market": market,
+                        "sourceFreshnessSeconds": int(age)}
+            if (session["session"] not in (
+                    "MORNING_SESSION", "AFTERNOON_SESSION", "REGULAR")
+                    and quote_date == origin):
+                return {
+                    "eligible": True,
+                    "quoteStatus": "official_close_current",
+                    "market": market,
+                    "sourceFreshnessSeconds": int(age),
+                    "calendarVersion": CALENDAR_VERSION,
+                }
+        return {"eligible": False, "quoteStatus": "stale_quote",
+                "missingReason": "stale_quote", "market": market,
+                "sourceFreshnessSeconds": int(age)}
+    return {"eligible": True, "quoteStatus": "fresh", "market": market,
+            "sourceFreshnessSeconds": int(age)}

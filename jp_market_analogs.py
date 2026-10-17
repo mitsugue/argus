@@ -1,0 +1,500 @@
+"""Japan index analog selection, separate from subsequent reference paths.
+
+Only explicit, past-bounded snapshots reach the selector. Its API accepts no
+forward outcomes. Scores are distances, never probabilities. This descriptive
+candidate method has no trading authority or demonstrated predictive benefit.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+from dataclasses import asdict, dataclass
+from datetime import date
+from typing import Any, Iterable, Mapping, Sequence
+
+from jp_market_engine import _instant, point_in_time_rows
+
+SCHEMA_VERSION = "jp-market-analogs-v1"
+INSTRUMENT = "NIKKEI_225_INDEX"
+# Explicit physical-unit scales are a versioned research specification, not
+# calibrated prediction parameters. Changes require a new policy identity.
+FEATURE_DEFINITIONS = {
+    "credit.ratio": ("RATIO", 2.0),
+    "credit.ratio_change": ("RATIO", .5),
+    "credit.loss_pct": ("PERCENT", 10.0),
+    "margin1570.ratio": ("RATIO", 2.0),
+    "margin1570.long_change_pct": ("PERCENT", 20.0),
+    "margin1570.short_change_pct": ("PERCENT", 20.0),
+    "relative_jp_us.return20": ("PERCENT", 5.0),
+    "vix.level": ("INDEX_POINTS", 10.0),
+    "vix.change5": ("INDEX_POINTS", 5.0),
+    "vix.macd_histogram": ("INDEX_POINTS", 2.0),
+    "foreign_flow.net4w": ("JPY", 1_000_000_000_000.0),
+    "fx.usdjpy_change5": ("PERCENT", 3.0),
+    "rate.jp10y_change5": ("PERCENTAGE_POINTS", .2),
+    "rate.us10y_change5": ("PERCENTAGE_POINTS", .3),
+    "nt.ratio_change5": ("PERCENT", 2.0),
+    "event.sq_sessions": ("TRADING_SESSIONS", 20.0),
+}
+
+
+FEATURE_MAX_AGE_DAYS = {key: (35 if key.startswith(("credit.", "margin1570.")) else
+                              42 if key.startswith("foreign_flow.") else 5)
+                        for key in FEATURE_DEFINITIONS}
+
+
+COMPONENTS = ("priceShape", "marketState", "conditionOrder", "materialReaction")
+
+
+def _policy_material(policy):
+    # Component weights change only how sealed episodes are ranked, not what
+    # an episode contains, so they stay out of the episode's policy identity.
+    material = {key: value for key, value in asdict(policy).items() if key != "component_weights"}
+    return {**material, "features": FEATURE_DEFINITIONS,
+            "maximumFeatureAgeDays": FEATURE_MAX_AGE_DAYS}
+
+
+ROBUST_SCALE_MINIMUM_OBSERVATIONS = 30
+ROBUST_SCALE_BASIS = "ROBUST_MAD_HISTORY"
+DEFAULT_SCALE_BASIS = "FIXED_DEFINITION"
+
+
+def robust_feature_scales(rows: Iterable[Mapping[str, Any]], *,
+                          minimum_observations: int = ROBUST_SCALE_MINIMUM_OBSERVATIONS) -> dict[str, dict[str, Any]]:
+    """One robust unit per market-condition series from its own history.
+
+    scale = 1.4826 * median(|x - median(x)|) over the feature history rows of
+    that series (any cutoff, any date); a series with fewer observations, or a
+    zero spread, keeps the fixed definition scale and says so. 2026-09-30: the
+    fixed scales were hand-set and unvalidated; a unit derived from the ten
+    years the engine compares against is at least a documented, reproducible
+    yardstick. Not a validation of predictive value.
+    """
+    values: dict[str, list[float]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        field = _field(row)
+        value = _finite(row.get("value"))
+        if field in FEATURE_DEFINITIONS and value is not None and row.get("unit") == FEATURE_DEFINITIONS[field][0]:
+            values.setdefault(field, []).append(value)
+    out = {}
+    for field, (unit, default) in FEATURE_DEFINITIONS.items():
+        series = sorted(values.get(field, []))
+        if len(series) >= minimum_observations:
+            centre = series[len(series) // 2] if len(series) % 2 else (series[len(series) // 2 - 1] + series[len(series) // 2]) / 2
+            deviations = sorted(abs(v - centre) for v in series)
+            mad = deviations[len(deviations) // 2] if len(deviations) % 2 else (deviations[len(deviations) // 2 - 1] + deviations[len(deviations) // 2]) / 2
+            scale = 1.4826 * mad
+            if math.isfinite(scale) and scale > 0:
+                out[field] = {"scale": scale, "basis": ROBUST_SCALE_BASIS, "observations": len(series), "unit": unit}
+                continue
+        out[field] = {"scale": default, "basis": DEFAULT_SCALE_BASIS, "observations": len(series), "unit": unit}
+    return out
+
+
+@dataclass(frozen=True)
+class AnalogPolicy:
+    policy_id: str = "jp-index-shape-state-order-reaction-research-v2-robust-scales"
+    lookback_sessions: int = 20
+    maximum_candidates: int = 10
+    minimum_separation_sessions: int = 20
+    # One robust unit per component on average: with history-derived scales a
+    # distance of 1.0 means the candidate differs by about one typical spread.
+    maximum_distance: float = 1.0
+    shape_scale_pct: float = 5.0
+    # ((feature, scale), ...) from robust_feature_scales; empty = fixed definitions.
+    state_scales: tuple = ()
+    # ((component, weight), ...); empty = the plain mean of the available
+    # components (the original rule). Chosen only by out-of-sample validation.
+    component_weights: tuple = ()
+
+    def __post_init__(self):
+        for value, lower, upper in ((self.lookback_sessions, 5, 120),
+                                    (self.maximum_candidates, 1, 10),
+                                    (self.minimum_separation_sessions, 1, 252)):
+            if isinstance(value, bool) or not isinstance(value, int) or not lower <= value <= upper:
+                raise ValueError("invalid_analog_policy_bound")
+        if not self.policy_id or not all(math.isfinite(v) and v > 0 for v in
+                                        (self.maximum_distance, self.shape_scale_pct)):
+            raise ValueError("invalid_analog_policy_scale")
+        scales = dict(self.state_scales)
+        if len(scales) != len(self.state_scales) or any(
+                key not in FEATURE_DEFINITIONS or isinstance(v, bool) or not isinstance(v, (int, float))
+                or not math.isfinite(v) or v <= 0 for key, v in scales.items()):
+            raise ValueError("invalid_analog_policy_state_scales")
+        weights = dict(self.component_weights)
+        if len(weights) != len(self.component_weights) or any(
+                key not in COMPONENTS or isinstance(v, bool) or not isinstance(v, (int, float))
+                or not math.isfinite(v) or v < 0 for key, v in weights.items()) \
+                or (weights and weights.get("priceShape", 1) <= 0):
+            raise ValueError("invalid_analog_policy_component_weights")
+
+    def weight_for(self, component: str) -> float:
+        return dict(self.component_weights).get(component, 1.0)
+
+    def scale_for(self, key: str) -> float:
+        return dict(self.state_scales).get(key, FEATURE_DEFINITIONS[key][1])
+
+    @classmethod
+    def with_scales(cls, scales: Mapping[str, Mapping[str, Any]], **overrides) -> "AnalogPolicy":
+        pairs = tuple(sorted((key, float(v["scale"])) for key, v in scales.items() if key in FEATURE_DEFINITIONS))
+        return cls(state_scales=pairs, **overrides)
+
+
+def _hash(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+                                    allow_nan=False, separators=(",", ":")).encode()).hexdigest()
+
+
+def _finite(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _period(row: Mapping[str, Any]) -> str:
+    return str(row.get("periodEnd") or row.get("date") or "")[:10]
+
+
+def _identity(row: Mapping[str, Any]) -> str:
+    return str(row.get("instrumentId") or row.get("instrument") or "")
+
+
+def _field(row: Mapping[str, Any]) -> str:
+    return str(row.get("seriesId") or row.get("field") or row.get("kind") or
+               ("OHLCV_BAR" if all(key in row for key in ("open", "high", "low", "close", "volume")) else ""))
+
+
+def _receipt(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: row[key] for key in ("publishedAt", "availableFrom", "knownAt",
+                                     "observedAt", "sourceRef", "source", "revision",
+                                     "availabilityBasis", "vintageStatus", "derivationBasis") if key in row}
+
+
+def _visible(rows: Iterable[Mapping[str, Any]], cutoff: str) -> list[dict[str, Any]]:
+    # Keep the temporal verifier common with the existing evidence engine.
+    return point_in_time_rows(rows, cutoff)[0]
+
+
+def build_episode(*, cutoff: str, bars: Sequence[Mapping[str, Any]],
+                  state_rows: Sequence[Mapping[str, Any]] = (),
+                  condition_rows: Sequence[Mapping[str, Any]] = (),
+                  reaction_rows: Sequence[Mapping[str, Any]] = (),
+                  policy: AnalogPolicy = AnalogPolicy()) -> dict[str, Any]:
+    """Freeze information available at one anchor, including its provenance.
+
+    State rows are already derived, unit-labelled observations for this index.
+    A reaction is a measured return after a material event but BEFORE this
+    anchor. Absence of reaction evidence does not mean the market had no events.
+    """
+    source = [dict(row) for row in bars if isinstance(row, Mapping) and _identity(row) == INSTRUMENT]
+    visible = _visible(source, cutoff)
+    prices = []
+    for row in visible:
+        if _field(row) not in {"OHLCV_BAR", "close"}:
+            continue
+        value = _finite(row.get("close", row.get("value")))
+        if value is None or value <= 0:
+            # Do not bridge over a present but invalid bar as if it were a
+            # contiguous set of exchange sessions.
+            prices.append({"date": _period(row), "close": None})
+        else:
+            prices.append({"date": _period(row), "close": value, **_receipt(row)})
+    prices.sort(key=lambda row: row["date"])
+    window = prices[-policy.lookback_sessions - 1:]
+    if len({row["date"] for row in window}) != len(window):
+        raise ValueError("ambiguous_price_observation")
+    enough = len(window) == policy.lookback_sessions + 1 and all(row["close"] for row in window)
+    anchor = window[-1]["date"] if window else None
+    first = window[0]["date"] if window else None
+    # Information may arrive after the latest price close. Its own knowledge
+    # cutoff, not that older price anchor, bounds current descriptive evidence.
+    # Historical candidates are separately required to use their anchor-day cutoff.
+    information_day = _instant(cutoff).date().isoformat()
+    states: dict[str, Any] = {}
+    for row in _visible([dict(r) for r in state_rows if isinstance(r, Mapping)
+                         and _identity(r) == INSTRUMENT], cutoff):
+        field = _field(row)
+        definition = FEATURE_DEFINITIONS.get(field)
+        value = _finite(row.get("value"))
+        if definition and anchor and _period(row) <= information_day and value is not None \
+                and row.get("unit") == definition[0] and (date.fromisoformat(information_day) -
+                    date.fromisoformat(_period(row))).days <= FEATURE_MAX_AGE_DAYS[field]:
+            states[field] = {"value": value, "unit": definition[0],
+                             "date": _period(row), **_receipt(row)}
+    conditions = []
+    for row in _visible([dict(r) for r in condition_rows if isinstance(r, Mapping)
+                         and _identity(r) == INSTRUMENT], cutoff):
+        value = _finite(row.get("value"))
+        if first and anchor and first <= _period(row) <= information_day and value in (-1, 1):
+            conditions.append({"condition": _field(row), "direction": int(value),
+                               "date": _period(row), **_receipt(row)})
+    reactions: dict[str, Any] = {}
+    for row in _visible([dict(r) for r in reaction_rows if isinstance(r, Mapping)
+                         and _identity(r) == INSTRUMENT], cutoff):
+        value = _finite(row.get("value"))
+        if first and anchor and first <= _period(row) <= information_day and value is not None \
+                and row.get("unit") == "PERCENT" and row.get("eventId") \
+                and row.get("eventType") and not isinstance(row.get("reactionWindowSessions"), bool) \
+                and row.get("reactionWindowSessions") in (1, 3, 5):
+            key = str(row["eventType"]) + ":" + str(row["reactionWindowSessions"])
+            reactions[key] = {"value": value, "date": _period(row),
+                              "eventId": row["eventId"], "unit": "PERCENT", **_receipt(row)}
+    body = {
+        "schemaVersion": SCHEMA_VERSION, "instrumentId": INSTRUMENT,
+        "cutoff": cutoff, "anchorDate": anchor, "window": window,
+        "status": "AVAILABLE" if enough else "INSUFFICIENT_PRICE_HISTORY",
+        "states": states, "conditions": conditions, "reactions": reactions,
+        "policyHash": _hash(_policy_material(policy)),
+        "historicalVintageVerified": False,
+    }
+    return {**body, "snapshotId": _hash(body)}
+
+
+def _verify_episode(episode: Mapping[str, Any], policy: AnalogPolicy) -> None:
+    body = {key: value for key, value in episode.items() if key != "snapshotId"}
+    if episode.get("snapshotId") != _hash(body):
+        raise ValueError("episode_content_changed")
+    if episode.get("instrumentId") != INSTRUMENT or episode.get("policyHash") != _hash(_policy_material(policy)):
+        raise ValueError("episode_policy_or_instrument_mismatch")
+
+
+def _shape(episode: Mapping[str, Any]) -> list[float]:
+    window = episode["window"]
+    anchor = window[-1]["close"]
+    return [row["close"] / anchor * 100 for row in window]
+
+
+def _sequence(episode: Mapping[str, Any]) -> list[tuple[str, ...]]:
+    # Conditions within the same session are simultaneous, not a fabricated
+    # intraday order inferred from field sorting.
+    days: dict[str, set[str]] = {}
+    for row in episode["conditions"]:
+        days.setdefault(row["date"], set()).add(row["condition"] + ":" + str(row["direction"]))
+    return [tuple(sorted(tokens)) for _, tokens in sorted(days.items())]
+
+
+def _edit_distance(left: Sequence[Any], right: Sequence[Any]) -> float:
+    previous = list(range(len(right) + 1))
+    for i, item in enumerate(left, 1):
+        current = [i]
+        for j, other in enumerate(right, 1):
+            current.append(min(current[-1] + 1, previous[j] + 1,
+                               previous[j - 1] + (item != other)))
+        previous = current
+    return previous[-1] / max(len(left), len(right), 1)
+
+
+def weighted_distance(distances: Mapping[str, float | None], policy: AnalogPolicy) -> float:
+    """Weighted mean of the available components; equal weights reproduce
+    the original plain mean exactly."""
+    if not policy.component_weights:
+        available = [v for v in distances.values() if v is not None]
+        return sum(available) / len(available)
+    pairs = [(policy.weight_for(key), value) for key, value in distances.items() if value is not None]
+    total = sum(weight for weight, _ in pairs)
+    return sum(weight * value for weight, value in pairs) / total
+
+
+def component_distances(current: Mapping[str, Any], candidate: Mapping[str, Any], policy: AnalogPolicy, *,
+                        current_shape=None, candidate_shape=None, current_order=None,
+                        candidate_order=None) -> dict[str, Any]:
+    """The four-component distance between two sealed episodes.
+
+    Shared by the selection and by the walk-forward validation so both use
+    the same arithmetic; callers may pass precomputed shapes and orders.
+    """
+    current_shape = current_shape if current_shape is not None else _shape(current)
+    shape = candidate_shape if candidate_shape is not None else _shape(candidate)
+    shape_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(current_shape, shape)) /
+                               len(shape)) / policy.shape_scale_pct
+    common = sorted(set(current["states"]) & set(candidate["states"]))
+    state_deltas = {key: abs(current["states"][key]["value"] -
+                            candidate["states"][key]["value"]) / policy.scale_for(key)
+                    for key in common}
+    state_distance = math.sqrt(sum(v * v for v in state_deltas.values()) / len(common)) if common else None
+    current_order = current_order if current_order is not None else _sequence(current)
+    past_order = candidate_order if candidate_order is not None else _sequence(candidate)
+    order_distance = _edit_distance(current_order, past_order) if current_order and past_order else None
+    common_reactions = sorted(set(current["reactions"]) & set(candidate["reactions"]))
+    reaction_distance = (math.sqrt(sum((current["reactions"][key]["value"] -
+                                       candidate["reactions"][key]["value"]) ** 2
+                                      for key in common_reactions) / len(common_reactions)) / 5
+                         if common_reactions else None)
+    distances = {"priceShape": shape_distance, "marketState": state_distance,
+                 "conditionOrder": order_distance, "materialReaction": reaction_distance}
+    missing = sorted(set(FEATURE_DEFINITIONS) - set(common))
+    return {"distances": distances, "distance": weighted_distance(distances, policy), "stateDeltas": state_deltas,
+            "missing": missing,
+            "complete": not missing and order_distance is not None and reaction_distance is not None}
+
+
+def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str, Any]], *,
+                    session_dates: Sequence[str], policy: AnalogPolicy = AnalogPolicy()) -> dict[str, Any]:
+    """Rank a sealed past-only set. Forward paths are attached in another call."""
+    _verify_episode(current, policy)
+    if list(session_dates) != sorted(set(session_dates)):
+        raise ValueError("unique_ordered_session_calendar_required")
+    positions = {day: index for index, day in enumerate(session_dates)}
+    if current["status"] == "AVAILABLE" and current["anchorDate"] not in positions:
+        raise ValueError("current_anchor_missing_from_calendar")
+    scored = []
+    # Keep a compact, year-level audit trail for the search.  The chart must
+    # be able to explain why a historical period (including 2018) did not
+    # appear without giving that period preferential treatment.  It contains
+    # selection inputs only; later price paths never enter it.
+    audit = []
+    if current["status"] == "AVAILABLE":
+        current_index = positions[current["anchorDate"]]
+        if [row["date"] for row in current["window"]] != list(
+                session_dates[current_index - policy.lookback_sessions:current_index + 1]):
+            raise ValueError("current_window_missing_exchange_sessions")
+        current_shape = _shape(current)
+        for candidate in candidates:
+            _verify_episode(candidate, policy)
+            anchor = candidate["anchorDate"]
+            year = anchor[:4] if isinstance(anchor, str) and len(anchor) >= 4 else None
+            if candidate["status"] != "AVAILABLE" or anchor not in positions:
+                audit.append({"year": year, "anchorDate": anchor,
+                              "status": "INELIGIBLE_SESSION_OR_PRICE", "distance": None})
+                continue
+            if positions[current["anchorDate"]] - positions[anchor] < policy.lookback_sessions + 1:
+                audit.append({"year": year, "anchorDate": anchor,
+                              "status": "INELIGIBLE_TOO_NEAR_CURRENT", "distance": None})
+                continue
+            candidate_cutoff = _instant(candidate["cutoff"])
+            if candidate_cutoff is None or candidate_cutoff.date().isoformat() != anchor \
+                    or candidate_cutoff >= _instant(current["cutoff"]):
+                audit.append({"year": year, "anchorDate": anchor,
+                              "status": "INELIGIBLE_POINT_IN_TIME", "distance": None})
+                continue
+            anchor_index = positions[anchor]
+            if [row["date"] for row in candidate["window"]] != list(
+                    session_dates[anchor_index - policy.lookback_sessions:anchor_index + 1]):
+                audit.append({"year": year, "anchorDate": anchor,
+                              "status": "INELIGIBLE_SESSION_WINDOW", "distance": None})
+                continue
+            scored_parts = component_distances(current, candidate, policy, current_shape=current_shape)
+            distances, distance, state_deltas = (scored_parts["distances"], scored_parts["distance"],
+                                                 scored_parts["stateDeltas"])
+            missing, complete = scored_parts["missing"], scored_parts["complete"]
+            if distance > policy.maximum_distance:
+                audit.append({"year": year, "anchorDate": anchor,
+                              "status": "DISTANCE_ABOVE_THRESHOLD", "distance": distance})
+                continue
+            differences = [{"feature": key, "scaledAbsoluteDifference": value,
+                            "currentValue": current["states"][key]["value"],
+                            "comparisonValue": candidate["states"][key]["value"],
+                            "unit": FEATURE_DEFINITIONS[key][0],
+                            **({"derivationBasis": current["states"][key].get("derivationBasis")
+                                or candidate["states"][key].get("derivationBasis")}
+                               if current["states"][key].get("derivationBasis")
+                               or candidate["states"][key].get("derivationBasis") else {})}
+                           for key, value in sorted(state_deltas.items(), key=lambda item: (-item[1], item[0]))[:3]
+                           if value > 0]
+            if not differences:
+                differences = [{"feature": "marketState", "status": "NOT_COMPARABLE"}]
+            row = {
+                "snapshotId": candidate["snapshotId"], "anchorDate": anchor,
+                "distance": distance, "componentDistances": distances,
+                "comparisonKind": "MARKET_ANALOG" if complete else "PARTIAL_COMPARISON",
+                "missingFeatures": missing,
+                "missingGroups": [key for key, value in distances.items() if value is None],
+                "similarityReasons": sorted((key for key, value in distances.items() if value is not None),
+                                            key=lambda key: (distances[key], key)),
+                "importantDifferences": differences,
+                "limitations": ["historical_vintage_not_verified",
+                                "measured_feature_similarity_does_not_establish_equal_context"],
+                "historicalVintageVerified": False,
+            }
+            scored.append(row)
+            audit.append({"year": year, "anchorDate": anchor, "snapshotId": candidate["snapshotId"],
+                          "status": "ADMITTED", "distance": distance})
+    selected = []
+    for candidate in sorted(scored, key=lambda row: (row["comparisonKind"] != "MARKET_ANALOG",
+                                                        row["distance"], row["anchorDate"], row["snapshotId"])):
+        if any(abs(positions[candidate["anchorDate"]] - positions[other["anchorDate"]]) <
+               policy.minimum_separation_sessions for other in selected):
+            continue
+        selected.append(candidate)
+        if len(selected) == policy.maximum_candidates:
+            break
+    selected_ids = {row["snapshotId"] for row in selected}
+    admitted_rank = {row["snapshotId"]: index + 1 for index, row in enumerate(
+        sorted(scored, key=lambda row: (row["comparisonKind"] != "MARKET_ANALOG",
+                                         row["distance"], row["anchorDate"], row["snapshotId"]))) }
+    years = {}
+    for row in audit:
+        year = row.get("year")
+        if not isinstance(year, str) or not year.isdigit() or len(year) != 4:
+            continue
+        summary = years.setdefault(year, {"candidateCount": 0, "admittedCount": 0,
+                                          "selectedCount": 0, "closest": None})
+        summary["candidateCount"] += 1
+        if row["status"] == "ADMITTED":
+            summary["admittedCount"] += 1
+            if row["snapshotId"] in selected_ids:
+                summary["selectedCount"] += 1
+        distance = row.get("distance")
+        if isinstance(distance, (int, float)) and math.isfinite(distance):
+            closest = summary["closest"]
+            if closest is None or (distance, row["anchorDate"]) < (closest["distance"], closest["anchorDate"]):
+                selected_now = row.get("snapshotId") in selected_ids
+                summary["closest"] = {
+                    "anchorDate": row["anchorDate"], "distance": distance,
+                    "status": "SELECTED" if selected_now else row["status"],
+                    "rank": admitted_rank.get(row.get("snapshotId")),
+                }
+    body = {
+        "schemaVersion": SCHEMA_VERSION, "policy": asdict(policy),
+        "currentSnapshotId": current["snapshotId"], "informationCutoff": current["cutoff"],
+        "candidateCount": len(candidates),
+        "admittedCount": len(scored), "selected": selected,
+        "yearAudit": years,
+        "status": ("MARKET_ANALOGS_AVAILABLE" if any(row["comparisonKind"] == "MARKET_ANALOG" for row in selected)
+                   else "PARTIAL_COMPARISONS_ONLY" if selected else "NO_STRONG_ANALOG"),
+        "actionAuthority": False, "predictiveProbability": None,
+        "validationStatus": "UNVALIDATED", "outcomesUsedForSelection": False,
+    }
+    return {**body, "selectionId": _hash(body)}
+
+
+def reference_path(episode: Mapping[str, Any], *, later_bars: Sequence[Mapping[str, Any]],
+                   display_cutoff: str, session_dates: Sequence[str], horizon_sessions: int = 5,
+                   policy: AnalogPolicy = AnalogPolicy()) -> dict[str, Any]:
+    """Display an already selected past outcome. It cannot change selection."""
+    _verify_episode(episode, policy)
+    if isinstance(horizon_sessions, bool) or horizon_sessions not in (1, 5, 10, 20):
+        raise ValueError("unsupported_reference_horizon")
+    if episode["status"] != "AVAILABLE":
+        return {"status": "UNAVAILABLE", "comparison": [], "subsequentReference": []}
+    anchor_price = episode["window"][-1]["close"]
+    comparison = [{"offsetSessions": index - policy.lookback_sessions,
+                   "date": row["date"], "value": row["close"] / anchor_price * 100}
+                  for index, row in enumerate(episode["window"])]
+    visible = _visible([dict(row) for row in later_bars if isinstance(row, Mapping) and
+                        _identity(row) == INSTRUMENT], display_cutoff)
+    if list(session_dates) != sorted(set(session_dates)) or episode["anchorDate"] not in session_dates:
+        raise ValueError("reference_exchange_calendar_required")
+    expected_dates = list(session_dates[session_dates.index(episode["anchorDate"]) + 1:])[:horizon_sessions]
+    later = sorted((row for row in visible if _period(row) > episode["anchorDate"] and
+                    _field(row) in {"OHLCV_BAR", "close"}), key=_period)[:horizon_sessions]
+    subsequent = [{"offsetSessions": 0, "date": episode["anchorDate"], "value": 100.0}]
+    for index, row in enumerate(later, 1):
+        value = _finite(row.get("close", row.get("value")))
+        if value is None or value <= 0 or index > len(expected_dates) or _period(row) != expected_dates[index - 1]:
+            break
+        subsequent.append({"offsetSessions": index, "date": _period(row),
+                           "value": value / anchor_price * 100})
+    return {"status": "AVAILABLE" if len(subsequent) == horizon_sessions + 1 else "PARTIAL",
+            "snapshotId": episode["snapshotId"], "anchorDate": episode["anchorDate"],
+            "displayCutoff": display_cutoff,
+            "scale": "ANCHOR_100", "scaleFormula": "past close / past anchor close * 100",
+            "comparison": comparison, "subsequentReference": subsequent,
+            "subsequentReferenceIsPrediction": False, "horizonSessions": horizon_sessions}

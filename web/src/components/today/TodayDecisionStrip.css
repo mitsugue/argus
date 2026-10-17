@@ -1,0 +1,67 @@
+.today-strip { display: grid; gap: 14px; margin: 4px 0 22px; }
+.today-strip__close { display: flex; align-items: baseline; gap: 10px; margin: 0; color: var(--text-sub); font-size: 13px; }
+.today-strip__close b { color: var(--text-main); font-size: 26px; font-weight: 600; letter-spacing: .01em; }
+.today-strip__close em { font-style: normal; font-size: 15px; font-weight: 600; }
+.today-strip__close em.is-up { color: var(--green); }
+.today-strip__close em.is-down { color: var(--red); }
+.today-strip__verdict { border-radius: 12px; padding: 12px 14px; border: 1px solid var(--line-strong); background: var(--surface-soft); }
+.today-strip__verdict p { margin: 6px 0 0; color: var(--text-main); font-size: 17px; font-weight: 600; line-height: 1.5; }
+.today-strip__record { display: block; margin-top: 6px; color: var(--text-sub); font-size: 11px; line-height: 1.5; }
+.today-strip__overnight { margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--border, rgba(255,255,255,.12));
+  font-size: 13px; line-height: 1.6; cursor: pointer; }
+.today-strip__overnight b { font-weight: 700; }
+.today-strip__badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; }
+.today-strip__verdict.is-wait { border-color: rgba(251, 191, 36, .35); }
+.today-strip__verdict.is-wait .today-strip__badge { color: var(--amber); background: var(--action-trim-bg); }
+.today-strip__verdict.is-tail { border-color: rgba(52, 211, 153, .35); }
+.today-strip__verdict.is-tail .today-strip__badge { color: var(--green); background: var(--action-add-bg); }
+.today-strip__verdict.is-head { border-color: rgba(248, 113, 113, .35); }
+.today-strip__verdict.is-head .today-strip__badge { color: var(--red); background: var(--action-exit-bg); }
+.today-strip__tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.today-strip__tile { display: grid; gap: 2px; text-align: left; font: inherit; color: inherit; cursor: pointer; width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.today-strip__tile small { color: var(--text-sub); font-size: 11px; }
+.today-strip__tile b { color: var(--text-main); font-size: 18px; font-weight: 600; }
+.today-strip__tile span { color: var(--text-sub); font-size: 11px; }
+.today-strip__tile.alert-low b { color: var(--green); }
+.today-strip__tile.alert-normal b { color: var(--text-main); }
+.today-strip__tile.alert-high b { color: var(--red); }
+.today-strip__tile .today-strip__news-meta { color:var(--text-muted); font-size:10px; line-height:1.5; }
+.today-strip__tile b.today-strip__event { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.today-strip__rows h2 { margin: 0 0 4px; color: var(--text-sub); font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+.today-strip__row { border-top: 1px solid var(--line); }
+.today-strip__row > summary { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; cursor: pointer; list-style: none; }
+.today-strip__row > summary::-webkit-details-marker { display: none; }
+.today-strip__row > summary > span:last-child { display: grid; gap: 2px; min-width: 0; }
+.today-strip__row b { color: var(--text-main); font-size: 14px; font-weight: 600; }
+.today-strip__row small { color: var(--text-sub); font-size: 12px; line-height: 1.5; }
+.today-strip__chip { flex: none; margin-top: 1px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+.today-strip__chip.is-tail { color: var(--green); background: var(--action-add-bg); }
+.today-strip__chip.is-head { color: var(--red); background: var(--action-exit-bg); }
+.today-strip__chip.is-soft-head { color: var(--amber); background: var(--action-trim-bg); }
+.today-strip__chip.is-neutral { color: var(--text-sub); background: var(--action-hold-bg); }
+.today-strip__row dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 0 0 12px 4px; font-size: 12px; }
+.today-strip__row dt { color: var(--cyan); font-weight: 600; }
+.today-strip__row dd { margin: 0; color: var(--text-main); line-height: 1.55; }
+.today-strip__note { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.today-strip__close small { margin-left: auto; color: var(--text-muted); font-size: 11px; }
+.today-strip__tile:active { background: var(--surface-soft); }
+.today-strip__tile:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.today-strip__preparing { margin: 0; padding: 8px 12px; border-radius: 10px; color: var(--amber); background: var(--action-trim-bg); font-size: 12px; line-height: 1.5; }
+.today-strip__tile { --tile-accent: var(--cyan); background: linear-gradient(135deg, color-mix(in srgb, var(--tile-accent) 16%, var(--surface)), var(--surface) 85%); border-color: color-mix(in srgb, var(--tile-accent) 40%, var(--line)); border-top: 2px solid var(--tile-accent); gap: 5px; }
+.today-strip__tile.alert-low { --tile-accent: var(--green); }
+.today-strip__tile.alert-normal { --tile-accent: var(--cyan); }
+.today-strip__tile.alert-high { --tile-accent: var(--red); }
+.today-strip__tile.momentum-strong { --tile-accent: var(--amber); }
+.today-strip__tile.momentum-normal { --tile-accent: var(--cyan); }
+.today-strip__tile.momentum-weak { --tile-accent: var(--red); }
+.today-strip__tile.tile-event { --tile-accent: var(--amber); }
+.today-strip__tile.momentum-strong b, .today-strip__tile.momentum-weak b { color: var(--tile-accent); font-size: 15px; }
+.today-strip__tile.tile-range b { font-size: 17px; }
+.today-strip__row dl { padding: 12px; margin: 0 0 12px; border-radius: 8px; background: var(--surface); grid-template-columns: 1fr; gap: 3px; }
+.today-strip__row dt:not(:first-child) { margin-top: 8px; }
+.today-strip__detail { padding: 0 12px 10px; color: var(--text-sub); font-size: 12px; line-height: 1.6; }
+.today-strip__source { display: block; margin: 0 12px 12px; color: var(--cyan); font-size: 12px; }
+.today-strip__row > summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+/* A preview cannot enlarge one tile beyond all neighbouring tiles. Full text remains in news detail. */
+.today-strip__tile .today-strip__news-preview { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; line-height:1.6; }

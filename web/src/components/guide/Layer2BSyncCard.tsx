@@ -1,0 +1,219 @@
+import React, { useState } from 'react';
+import { TriangleStepLoader } from '../common/TriangleStepLoader';
+import type { AssetItem } from '../../types/assetItem';
+import { mergeWatchlistMembership } from '../../lib/watchlistMembershipRestore';
+import { markLocalEdit } from '../../lib/vault';
+import { flushWatchlistChanges, queueManualRegistrations, OWNER_SYNC_TOKEN_KEY } from '../../lib/watchlistAutoSync';
+
+// Layer 2B — sync the owner's watchlist MEMBERSHIP (symbols only, no holdings) so
+// ARGUS can score the assets you actually care about. The owner-sync token is
+// entered once and kept in localStorage on THIS device. It is a dedicated,
+// owner-scoped token for membership/Layer-2B operations, never general admin or
+// deployment authority.
+const TOKEN_KEY = OWNER_SYNC_TOKEN_KEY;
+const SYNC_MARKETS = new Set(['JP', 'US', 'CRYPTO']); // funds (CORE) excluded — no return-scoring
+
+interface Props {
+  assets: AssetItem[];
+}
+
+export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
+  const [token, setToken] = useState<string>(() => {
+    try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
+  });
+  const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState('');
+  const [result, setResult] = useState<string | null>(null);
+  const [summary, setSummary] = useState<any>(null);
+  const [syncStatus, setSyncStatus] = useState<{ synced: string[]; missing: string[] } | null>(null);
+  const backend = import.meta.env.VITE_ARGUS_BACKEND_URL;
+
+  async function restoreFromLayer2B() {
+    if (busy) return;
+    if (!backend || !token.trim()) { setResult('復元には合言葉を入力してください'); return; }
+    if (!confirm('サーバーに保存した銘柄のうち、この端末にない銘柄を追加します。登録済みの銘柄・設定・過去の記録はそのまま残します。よろしいですか?')) return;
+    setBusy(true); setBusyLabel('保存済みの銘柄情報を確認しています');
+    try {
+      const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/watchlist-membership', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerToken: token.trim() }), signal: AbortSignal.timeout(12000),
+      });
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !['ok', 'empty'].includes(d?.status)) { setResult('保存済みの銘柄を取得できませんでした。元の記録は保持しています'); return; }
+      const members = d?.membership?.members;
+      if (!members || !members.length) { setResult(`復元データなし: ${d?.status || r.status}`); return; }
+      if (!r.ok || d?.status !== 'ok') { setResult('保存済みの銘柄を取得できませんでした'); return; }
+      // Read AFTER the request, so changes made while it was in flight survive.
+      const raw = localStorage.getItem('argus.assets.v1');
+      const current = raw === null ? assets : JSON.parse(raw);
+      const restored = mergeWatchlistMembership(current, members, Date.now());
+      if (restored.added > 0) {
+        localStorage.setItem('argus.assets.v1', JSON.stringify(restored.assets));
+        markLocalEdit();
+        window.dispatchEvent(new Event('argus:data-synced'));
+      }
+      setResult(restored.added ? `${restored.added}銘柄を追加しました。元の記録は保持しています。` : '追加する銘柄はありません。');
+    } catch (e) {
+      setResult('復元エラー: ' + String(e).slice(0, 80));
+    } finally { setBusy(false); }
+  }
+
+  async function loadSummary() {
+    if (busy) return;
+    if (!backend || !token.trim()) { setResult('成績を見るには合言葉を入力してください'); return; }
+    setBusy(true); setBusyLabel('保存済みの銘柄情報を確認しています');
+    try {
+      const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/layer2b-summary', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerToken: token.trim() }), signal: AbortSignal.timeout(12000),
+      });
+      const d = await r.json().catch(() => null);
+      if (d && d.status === 'ok') setSummary(d.summary);
+      else setResult(`成績: ${d?.status || 'エラー'}`);
+    } catch { setResult('成績の取得に失敗'); } finally { setBusy(false); }
+  }
+
+  // Registration metadata only; archived position fields never affect sync.
+  const items = assets.filter(a => SYNC_MARKETS.has(a.market)).map(a => ({
+    symbol:a.symbol, market:a.market, enabled:a.enabled,
+    ownerState:'watch', downsideStrictness:'normal',
+  }));
+  const registeredLocal = items.filter(i => i.enabled).map(i => `${i.market}:${i.symbol}`);
+
+  async function checkSyncStatus() {
+    if (busy) return;
+    if (!backend || !token.trim()) { setResult('同期状態の確認には合言葉を入力してください'); return; }
+    setBusy(true); setBusyLabel('保存済みの銘柄情報を確認しています');
+    try {
+      const r = await fetch(backend.replace(/\/$/, '') + '/api/argus/calibration/watchlist-membership', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerToken: token.trim() }), signal: AbortSignal.timeout(12000),
+      });
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !['ok', 'empty'].includes(d?.status)) { setResult('同期状態を取得できませんでした。未登録とは判定しません'); return; }
+      const members: any[] = d?.membership?.members || [];
+      const registeredServer = new Set(members.filter(m => m.enabled !== false)
+        .map(m => `${m.market}:${m.symbol}`));
+      const synced = registeredLocal.filter(s => registeredServer.has(s));
+      const missing = registeredLocal.filter(s => !registeredServer.has(s));
+      setSyncStatus({ synced, missing });
+    } catch { setResult('同期状態の確認に失敗(合言葉/通信を確認)'); } finally { setBusy(false); }
+  }
+
+  async function sync() {
+    if (busy) return;
+    if (!backend) { setResult('バックエンド未設定'); return; }
+    if (!token.trim()) { setResult('オーナー同期トークンを入力してください'); return; }
+    setBusy(true); setBusyLabel('銘柄情報を保存しています'); setResult(null);
+    try {
+      localStorage.setItem(TOKEN_KEY, token.trim());
+      // Explicit setup adds this device's registrations. Deletions come only
+      // from the persisted operation batches, never from a complete old list.
+      const pending = await flushWatchlistChanges(backend, token.trim());
+      if (['error', 'unavailable', 'auth_required'].includes(pending.kind)) {
+        setResult(pending.message); return;
+      }
+      queueManualRegistrations();
+      const saved = await flushWatchlistChanges(backend, token.trim());
+      setResult(saved.message || '保存待ちの変更はありません');
+    } catch {
+      setResult('保存を確認できません。端末の登録銘柄は保持しています');
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="card guide-card">
+      <div className="guide-glossary">
+        <div className="guide-term">
+          <span className="guide-term__en">登録銘柄の同期</span>
+          <span className="guide-term__ja">
+            合言葉を設定すると、登録銘柄の追加・削除を自動保存し、定期分析へ反映します。
+            対象 {items.length} 銘柄（有効 {registeredLocal.length}）。
+          </span>
+        </div>
+        <div className="guide-term">
+          <span className="guide-term__en">オーナー同期トークン</span>
+          <span className="guide-term__ja">
+            <input
+              type="password" value={token} placeholder="Renderに設定したパスフレーズ"
+              onChange={(e) => setToken(e.target.value)}
+              style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box',
+                       padding: '6px 8px', borderRadius: 6,
+                       border: '1px solid var(--border, #2a3340)', background: 'transparent',
+                       color: 'inherit', fontFamily: 'monospace' }}
+            />
+            <span style={{ opacity: 0.6, fontSize: '0.85em' }}>
+              この端末にのみ保存。銘柄同期・Layer 2B採点/復元などのオーナー操作用です。
+              管理者・デプロイ権限はありません。
+            </span>
+          </span>
+        </div>
+        <div style={{ marginTop: 4 }}>
+          <button onClick={sync} disabled={busy}
+            style={{ padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                     background: 'var(--accent, #3b82f6)', color: '#fff', fontWeight: 600,
+                     opacity: busy ? 0.6 : 1 }}>
+            {busy ? '同期中…' : '今すぐ同期'}
+          </button>
+          <button onClick={loadSummary} disabled={busy}
+            style={{ marginLeft: 8, padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
+                     background: 'transparent', color: 'inherit',
+                     border: '1px solid var(--border, #2a3340)' }}>
+            採点成績を見る
+          </button>
+          <button onClick={restoreFromLayer2B} disabled={busy}
+            style={{ marginLeft: 8, padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
+                     background: 'transparent', color: 'inherit',
+                     border: '1px solid var(--border, #2a3340)' }}>
+            銘柄を復元
+          </button>
+          <button onClick={checkSyncStatus} disabled={busy}
+            style={{ marginLeft: 8, padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
+                     background: 'transparent', color: 'inherit',
+                     border: '1px solid var(--border, #2a3340)' }}>
+            同期状態を確認
+          </button>
+          {busy && <p><TriangleStepLoader label={busyLabel} /></p>}
+          {syncStatus && (
+            <div style={{ fontSize: '0.85em', marginTop: 10, lineHeight: 1.6 }}>
+              {registeredLocal.length === 0 ? (
+                <div style={{ opacity: 0.7 }}>この端末に有効な登録銘柄はありません。</div>
+              ) : syncStatus.missing.length === 0 ? (
+                <div style={{ color: 'var(--green, #34D399)' }}>
+                  ✅ 登録した{registeredLocal.length}銘柄をサーバーと同期済み。
+                </div>
+              ) : (
+                <div style={{ color: 'var(--amber, #FBBF24)' }}>
+                  ⚠️ 未同期: {syncStatus.missing.join(', ')} — これらは<b>サーバー側の定期分析へ未登録です</b>。
+                  「今すぐ同期」を押すと反映されます。
+                </div>
+              )}
+            </div>
+          )}
+          {result && (
+            <div style={{ fontSize: '0.9em', marginTop: 8, overflowWrap: 'anywhere',
+                          wordBreak: 'break-word' }}>{result}</div>
+          )}
+          {summary && (
+            <div style={{ fontSize: '0.85em', marginTop: 10, lineHeight: 1.6 }}>
+              <div>採点成績(あなたの銘柄・{summary.sampleStage}): 営業日 {summary.tradingDays} / 予測 {summary.nPredictions}件</div>
+              {['1d', '3d', '5d'].map((h) => {
+                const x = summary.byHorizon?.[h];
+                return (
+                  <div key={h} style={{ opacity: 0.85 }}>
+                    {h}: {x && x.n ? `的中 ${Math.round(x.hitRate * 100)}% / Brier ${x.brierMean}(n=${x.n})` : '採点待ち'}
+                  </div>
+                );
+              })}
+              <div style={{ opacity: 0.6 }}>※校正の測定。利益保証ではない。proven表記なし。</div>
+            </div>
+          )}
+        </div>
+        <div className="guide-note">
+          注意: これは校正(自己採点)のためのメタデータ同期で、注文・自動売買は一切ありません。
+          公開リポ対策で、private ストア未設定の場合は採点無効(銘柄は保存されません)。
+        </div>
+      </div>
+    </div>
+  );
+};

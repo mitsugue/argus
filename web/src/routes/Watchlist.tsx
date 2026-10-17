@@ -1,0 +1,130 @@
+import React, { useEffect, useState } from 'react';
+import { PageShell } from './PageShell';
+import { AssetDeskList, type AssetFocusIntent } from '../components/assetDesk/AssetDeskList';
+import { EntityProfileEditor } from '../components/dashboard/EntityProfileEditor';
+import { AddAssetModal } from '../components/dashboard/AddAssetModal';
+import { Layer2BSyncCard } from '../components/guide/Layer2BSyncCard';
+import { OWNER_AUTH_REQUIRED } from '../lib/ownerSession';
+import { useAssets } from '../hooks/useAssets';
+import { useWatchlistSync } from '../hooks/useWatchlistSync';
+import { useAssetIntel } from '../hooks/useAssetIntel';
+import { useDecisionEvidence, useTachibanaLiveDocument, requestedDecisionEvidenceSymbols } from '../hooks/useDecisionEvidence';
+import { tachibanaCurrentRows } from '../domain/tachibanaLive';
+import { deskCoverage, deskCoverageJa, deskCoverageDetailJa } from '../domain/deskCoverage';
+import { useLocale } from '../i18n';
+import '../components/dashboard/Dashboard.css';
+
+// Registration and shared market intelligence; archived portfolios stay in recovery.
+
+function ageLabel(ts: number, nowMs: number): string {
+  const m = Math.max(0, Math.round((nowMs - ts) / 60000));
+  return m < 1 ? 'たった今' : `${m}分前`;
+}
+
+interface Props {
+  /** Today等からのdeep-link(展開+スクロール)。App.tsxのpendingAssetFocus。 */
+  assetFocus?: AssetFocusIntent | null;
+  assetDetail?: boolean;
+  initialPortfolioOpen?: boolean;
+  onNavigateToAsset?: (symbol: string, section?: string) => void;
+  onBackToHoldings?: () => void;
+}
+
+export const Watchlist: React.FC<Props> = ({
+  assetFocus, assetDetail = false,
+  onNavigateToAsset, onBackToHoldings,
+}) => {
+  useLocale();   // re-render on locale switch
+  const syncState = useWatchlistSync();
+  const assetsApi = useAssets();
+  const { assets, add, remove, reorderGenre } = assetsApi;
+  // Holdings owns one canonical acquisition/intelligence lifecycle. Every
+  // contextual child below receives this exact snapshot.
+  const intel = useAssetIntel({ publish: true, assets });
+  // v13.5.63 (GPT review item 3): registered vs priced vs evidenced vs shown.
+  const evidence = useDecisionEvidence();
+  const liveDocument = useTachibanaLiveDocument();
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const currentPrices = tachibanaCurrentRows(liveDocument, Math.max(nowMs, Date.now()));
+  const visiblePrices = new Set(intel.priceBySymbol.keys());
+  for (const asset of assets) {
+    if (asset.market === 'JP' && currentPrices.has(asset.symbol.toUpperCase())) visiblePrices.add(asset.symbol.toUpperCase());
+  }
+  const coverage = deskCoverage({
+    assets,
+    pricedSymbols: visiblePrices,
+    evidenceSubjects: evidence.subjects,
+    displayedSymbols: new Set((assetDetail && assetFocus?.symbol ? [assetFocus.symbol] : assets.map((a) => a.symbol))
+      .map((s) => s.toUpperCase())),
+    requestedEvidence: evidence.requested ?? requestedDecisionEvidenceSymbols(),
+  });
+  const [addOpen, setAddOpen] = useState(false);
+  const [nonce, setNonce] = useState(0);            // rescan → remounts the data section
+  const [updatedAt, setUpdatedAt] = useState(() => Date.now());
+  const [supportOpen, setSupportOpen] = useState(false);
+  useEffect(() => {
+    const t = window.setInterval(() => setNowMs(Date.now()), liveDocument?.displayApproved === true ? 5_000 : 30_000);
+    return () => window.clearInterval(t);
+  }, [liveDocument?.displayApproved]);
+
+  function rescan() {
+    setNonce((n) => n + 1);
+    setUpdatedAt(Date.now());
+    setNowMs(Date.now());
+  }
+
+  return (
+    <PageShell
+      className="watchlist-page"
+      title={assetDetail ? '銘柄の見通し' : '登録銘柄'}
+      subtitle={assetDetail
+        ? `${assetFocus?.symbol ?? '銘柄'} · 判断 / 見通し / 根拠`
+        : '価格と変化を確認し、銘柄をタップして見通しへ。'}
+    >
+      {assetDetail && <button type="button" className="asset-btn" onClick={onBackToHoldings}>
+        ← 登録銘柄
+      </button>}
+      {!assetDetail && syncState.message && <p role="status" className="card"
+        style={{ padding: '12px 16px', color: syncState.kind === 'error' || syncState.kind === 'auth_required' ? 'var(--amber)' : 'var(--muted)' }}>
+        {syncState.message}
+      </p>}
+      <AssetDeskList
+        key={nonce}
+        assets={assets}
+        intel={intel}
+        onReorder={reorderGenre}
+        onRemove={remove}
+        focus={assetFocus}
+        detailSymbol={assetDetail ? assetFocus?.symbol : undefined}
+        onOpenAsset={onNavigateToAsset}
+        toolbar={(
+          <div className="asset-toolbar asset-toolbar--end">
+            <details className="asset-coverage" data-argus-contract="desk-coverage-v1"
+              data-coverage-complete={coverage.complete ? 'true' : 'false'}>
+              <summary>{deskCoverageJa(coverage, { loading: evidence.loading, generatedAt: evidence.generatedAt })}{coverage.complete ? '' : ' · 不足あり'}</summary>
+              <ul>{deskCoverageDetailJa(coverage).map((row) => <li key={row}>{row}</li>)}</ul>
+            </details>
+            <span className="asset-toolbar__age">画面の読み込み {ageLabel(updatedAt, nowMs)}</span>
+            <button className="asset-btn" onClick={rescan}
+              aria-label="銘柄の価格とデータを再読み込み">再読み込み</button>
+            <button className="asset-btn asset-btn--primary" onClick={() => setAddOpen(true)}
+              aria-label="銘柄を追加">+ 銘柄を追加</button>
+          </div>
+        )}
+      />
+
+      {!assetDetail && <details className="card ad-support" open={supportOpen}
+        onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
+        <summary>銘柄の設定・連携</summary>
+        {supportOpen && <div className="ad-support__body">
+          {OWNER_AUTH_REQUIRED
+            ? <p className="muted">登録銘柄・並び順はログインした端末で自動共有します。通信できない間の変更は、この端末に保持して再接続後に保存します。</p>
+            : <Layer2BSyncCard assets={assets} />}
+          <EntityProfileEditor assets={assets} />
+        </div>}
+      </details>}
+
+      {!assetDetail && addOpen && <AddAssetModal onClose={() => setAddOpen(false)} onAdd={add} />}
+    </PageShell>
+  );
+};

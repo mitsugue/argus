@@ -1,0 +1,157 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+// Recovery Phase A: cached public GET remains available. Mutation helpers are
+// absent because the static bundle must never carry admin auth.
+
+export interface OsintVerifiedSource {
+  titleJa: string; url?: string | null; sourceName?: string | null;
+  publishedAt?: string | null; ageHours?: number | null;
+  freshness: string; directness: string; verificationStatus: string;
+  labelJa: string; primaryEligible: boolean; supportStrength: string;
+}
+
+export interface OsintInvestigation {
+  id: string; symbol: string; assetName: string; asOf: string;
+  mode: string; modeJa: string; trigger: string;
+  investigationQuestionJa: string;
+  queryPlan: { queryCount: number; direct: string[]; sector: string[];
+    valueChain: string[]; globalCatalyst: string[]; negative: string[];
+    extraFromOwner: string[] };
+  agentRuns: { provider: string; status: string; claims: { titleJa?: string;
+    url?: string; publishedAt?: string; directness?: string; verified?: boolean }[];
+    missingEvidence: string[] }[];
+  verifiedSources: OsintVerifiedSource[];
+  rejectedSources: OsintVerifiedSource[];
+  catalystVerdict: { verdict: string; verdictJa: string; primaryCauseJa: string | null;
+    secondaryCausesJa: string[]; rejectedCausesJa: string[]; missingEvidenceJa: string[];
+    confidence: string; directEvidencePresent: boolean; ownerReadableJa: string;
+    whyThisMightBeWrongJa: string };
+  contradictionReport: string[];
+  coverageScore: Record<string, string> & { totalCoverage: string; totalCoverageJa: string };
+  reliabilityScore: { overall: string; overallJa: string; verificationRate: number;
+    directEvidence: boolean };
+  benchmark: { argusCount: number; geminiCount: number; gptCount: number;
+    overlapCount: number; geminiOnlyCount: number; gptOnlyCount: number;
+    argusOnlyCount: number; missedByArgusCount: number; notesJa: string[] };
+  ownerReadableSummaryJa: string;
+  missingAreasJa: string[]; nextResearchJa: string[];
+  privacyMode: string; costLabelJa?: string | null;
+  /** v12.1.1: OSINT優位性メトリクス(未回収Gemini-onlyがあればexceeds不可)。 */
+  superiority?: {
+    argusVerifiedSourceCount: number; geminiSourceCount: number; gptSourceCount: number;
+    geminiOnlyUnverifiedCount: number; gptOnlyUnverifiedCount: number;
+    argusMissedImportantCount: number; verifiedOverlapCount: number;
+    argusOnlyVerifiedCount: number; sourceVerificationRate: number;
+    superiorityStatus: 'exceeds_gemini' | 'matches_gemini' | 'below_gemini' | 'insufficient_data';
+    superiorityJa: string; ownerReadableVerdictJa: string; contextEdgeJa?: string | null;
+    // v12.1.2: ギャップ台帳サマリ
+    unresolvedImportant?: number;
+    gapByStatus?: Record<string, number>;
+    gapProgressLinesJa?: string[];
+    unresolvedItemsJa?: string[];
+    contextAdvantages?: string[];
+  };
+  /** v12.1.2: 全未回収に理由を付けた台帳。 */
+  gapLedger?: {
+    id: string; sourceTitle: string; sourceUrl?: string | null; sourceDomain?: string | null;
+    providedBy: string; resolutionStatus: string; resolutionStatusJa: string;
+    resolutionReasonJa: string; followUpQueries: string[]; ownerReadableJa: string;
+    claimType?: string;
+  }[];
+  /** v12.1.4 Phase 4: 新鮮候補(検証前 — 決定的原因にしない)。 */
+  freshCandidateCount?: number;
+  freshCandidateAlertJa?: string | null;
+  budget?: { maxUrls?: number; maxLoops?: number; maxSeconds?: number; maxCostLabel?: string };
+  /** v12.1.3 Phase 2: Research Power Score(生件数では2xにならない測定)。 */
+  researchPower?: {
+    components: Record<string, number>;
+    geminiBaselineScore: number; gptBaselineScore: number;
+    bestExternalBaselineScore?: number; argusScore: number;
+    argusVsGeminiRatio: number | null; argusVsBestExternalRatio: number | null;
+    status: 'below_gemini' | 'matches_gemini' | 'exceeds_gemini' | 'exceeds_gemini_2x' | 'insufficient_data';
+    statusJa: string; displayJa: string; ownerReadableVerdictJa: string;
+    ownerReadableJa?: string;
+    blockersJa: string[]; strengthsJa?: string[];
+    /** v12.1.6: Gemini基準の校正状態(単発runは暫定・参考値)。 */
+    baselineType?: string; baselineLabelJa?: string;
+    baselineConfidence?: string; baselineRunCount?: number;
+    ratioConfidence?: 'high' | 'medium' | 'low' | 'provisional';
+    ratioLabelJa?: string;
+    publicResearchRatio?: number | null;
+    ownerContextEnhancedRatio?: number | null;
+  };
+  /** v12.1.3 Phase 3差分: この調査で実際に見たカテゴリ(checkedの捏造なし)。 */
+  sourceCoverage?: { key: string; labelJa: string; state: string;
+    resultCount: number | null; coverageImpact: string }[];
+  coverageGuardsJa?: string[];
+  /** v12.1.3 Phase 4差分: バリューチェーングラフ(不完全は正直表示)。 */
+  valueChainGraph?: { symbol: string; company: string; sector: string | null;
+    adjacentThemes: string[]; queryExpansions: string[];
+    incomplete: boolean; incompleteNoteJa: string | null };
+  /** v12.1.3 Phase 6: 構造化矛盾レポート(旧contradictionReportはstring[]のまま)。 */
+  contradictionReportV2?: {
+    directEvidenceAbsent: boolean; themeInferenceOnly: boolean;
+    priceOnlyNarrativeRisk: boolean; agentDisagreement: boolean;
+    staleEvidencePresent: boolean; unsupportedClaims: number;
+    ownerReadableWarningsJa: string[];
+  };
+  /** v12.1.3 Phase 4: 再利用可能な価値連鎖規則(無ければnull=捏造しない)。 */
+  valueChainContext?: { theme: string; labelJa: string;
+    rolesJa: Record<string, string>; cautionJa: string } | null;
+  /** v12.1.3 Phase 3: 探索ソースユニバース(unavailableも可視)。 */
+  sourceUniverse?: { key: string; labelJa: string; availability: string; noteJa: string }[];
+  /** v12.1.5 Phase 1: 一次ソース取得チェック(未チェックで不在主張しない)。 */
+  primarySourceChecks?: { sourceCategory: string; sourceCategoryJa: string;
+    status: string; resultCount: number; verifiedResultCount: number;
+    ownerReadableJa: string }[];
+  primaryAbsenceGuardsJa?: string[];
+  /** v12.1.5 Phase 5: 因果関連度(検証済み=真実であって主因ではない)。 */
+  causalRelevanceSummary?: { byRelevance: Record<string, number>;
+    hasHighRelevance: boolean; weakCausalOnly: boolean; ownerReadableJa: string };
+  /** v12.1.5 Phase 7: オーナー結論。 */
+  ownerConclusion?: { bottomLineJa: string; directCompanyEvidenceJa: string;
+    industryEvidenceJa: string; valueChainEvidenceJa: string; contextJa: string;
+    externalFoundJa: string; argusVerifiedJa: string; unverifiedJa: string;
+    ratioJa: string; whyJa: string; nextActionJa: string; statusJa: string };
+}
+
+export interface OsintProgress {
+  stage: string; loop: number; maxLoops: number; notesJa: string[]; at: string;
+  /** v12.1.3 Phase 5: Autopilot 14段階(failed_safe=嘘の完了を返さない)。 */
+  autopilot?: {
+    stages: { key: string; labelJa: string; state: 'done' | 'pending' | 'failed' }[];
+    doneCount: number; totalStages: number;
+    status: 'running' | 'completed' | 'failed_safe';
+    currentStageJa: string | null; failReasonJa: string;
+  };
+}
+
+interface State { inv: OsintInvestigation | null; loading: boolean; error: boolean;
+  progress: OsintProgress | null; queuePosition: number | null; etaMin: number | null; }
+
+export function useOsintInvestigation(symbol: string) {
+  const [state, setState] = useState<State>({ inv: null, loading: true, error: false,
+    progress: null, queuePosition: null, etaMin: null });
+  const backend = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '');
+  const request = useRef<AbortController | null>(null);
+
+  const load = useCallback(() => {
+    request.current?.abort();
+    if (!backend) { setState((s) => ({ ...s, loading: false })); return; }
+    const ctrl = new AbortController(); request.current = ctrl;
+    setState((s) => ({ ...s, loading: true, error: false }));
+    fetch(`${backend}/api/argus/osint/investigation?symbol=${encodeURIComponent(symbol)}`, { signal: AbortSignal.any([ctrl.signal, AbortSignal.timeout(12000)]) })
+      .then((r) => { if (!r.ok) throw new Error('investigation_unavailable'); return r.json(); })
+      .then((d) => { if (ctrl.signal.aborted) return; setState((s) => ({ ...s, inv: d.investigation ?? null, loading: false,
+        progress: d.progress ?? null, queuePosition: d.queuePosition ?? null,
+        etaMin: d.nextCronEtaMin ?? null })); })
+      .catch(() => { if (!ctrl.signal.aborted) setState((s) => ({ ...s, loading: false, error: true })); });
+  }, [backend, symbol]);
+
+  useEffect(() => {
+    setState({ inv: null, loading: true, error: false, progress: null, queuePosition: null, etaMin: null });
+    load(); return () => request.current?.abort();
+  }, [load]);
+
+  return { ...state, reload: load };
+}

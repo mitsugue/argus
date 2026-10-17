@@ -1,0 +1,23 @@
+# Retired continuous whole-market mover monitoring. The current-day
+# heatmap has its own lightweight collection path. This legacy scanner stays
+# manually runnable for audited recovery without a recurring provider request.
+name: market-watch
+
+on:
+  workflow_dispatch: {}
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Trigger US market scan
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip"; exit 0; }
+          curl -s --max-time 60 "$BE/api/argus/rates" > /dev/null || true   # warm dyno
+          RESP=$(python3 scripts/workflow_http.py --name market-scan --method POST --timeout 90 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/market-scan")
+          echo "market-scan: $RESP"

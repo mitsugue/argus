@@ -1,0 +1,88 @@
+# v13.5.65 (stabilization item 5): the JPX two-market margin balance is the
+# D01 input and the credit conditioning of the chart forecast. The committed
+# CSV ends 2026-07-10 and nothing imported later weeks, so the 45-day window
+# silently dropped the credit features. This job fetches every published week
+# after the newest period the ledger holds and imports it through the admin
+# route (dry run, then commit), then reads the ledger back. Unpublished weeks
+# are reported as gaps, never filled.
+name: jpx-credit-weekly
+
+on:
+  schedule:
+    # 16:45 through 23:45 JST. Weekdays cover holiday-shifted publication.
+    # The held period is resolved first; a completed week performs no import.
+    - cron: '45 7-14 * * 1-5'
+    - cron: '30 10 * * 3-5'  # Existing Wednesday/Thursday/Friday fallback
+  workflow_dispatch:
+    inputs:
+      since:
+        description: last period already held (YYYY-MM-DD, exclusive); default = newest in the ledger
+        required: false
+        default: ''
+      valuation_monthly_backfill:
+        description: 公式月報から不足する評価損益率の過去週を補完（既存の信用残は変更しない）
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: jpx-credit-weekly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BE: https://argus-backend-3j2m.onrender.com
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet xlrd==2.0.2 openpyxl==3.1.5
+      - name: Install the pinned monthly reader only for the requested backfill
+        if: github.event_name == 'workflow_dispatch' && inputs.valuation_monthly_backfill
+        run: pip install --quiet pdfplumber==0.11.7
+      - name: Resolve the newest credit period the ledger already holds
+        id: since
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+          JPX_SINCE_INPUT: ${{ github.event.inputs.since }}
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PYTHON'
+          import os
+          from datetime import date
+          from scripts.jpx_credit_weekly import ledger_newest_credit, valuation_cursor
+          try:
+              held = ledger_newest_credit(os.environ["BE"], token=os.environ["ARGUS_ADMIN_TOKEN"])
+              periods = [str(held.get(sid, {}).get("periodEnd") or "")
+                         for sid in ("credit.short_balance", "credit.long_balance")]
+              best = min(periods) if all(periods) else "2026-07-10"
+              since = os.environ["JPX_SINCE_INPUT"] or max(best, "2026-07-10")
+              since = date.fromisoformat(since).isoformat()
+              valuation_since = valuation_cursor([dict(row, seriesId=sid) for sid, row in held.items()])
+              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                  out.write("since=" + since + "\nvaluation_since=" + valuation_since + "\n")
+          except Exception as error:
+              print("::error title=jpx-credit-weekly::保存済みの期間を確認できません（" + type(error).__name__ + "）")
+              raise SystemExit(1)
+          PYTHON
+      - name: Fetch, validate and import the published weeks (token never logged)
+        env:
+          JPX_SINCE_RESOLVED: ${{ steps.since.outputs.since }}
+          JPX_VALUATION_SINCE: ${{ steps.since.outputs.valuation_since }}
+          JPX_MONTHLY_BACKFILL: ${{ github.event.inputs.valuation_monthly_backfill }}
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          extra=()
+          if [ "$JPX_MONTHLY_BACKFILL" = "true" ]; then extra+=(--valuation-monthly-backfill); fi
+          python3 -B scripts/jpx_credit_weekly.py "${extra[@]}" --since "$JPX_SINCE_RESOLVED" --valuation-since "$JPX_VALUATION_SINCE" \
+            --import --backend "$BE" --summary "$RUNNER_TEMP/jpx-credit-summary.json"
+      # The ledger itself is persisted by the existing import route. Its
+      # authenticated readback and workbook rows are not public artifacts.

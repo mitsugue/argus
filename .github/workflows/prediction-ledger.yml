@@ -1,0 +1,626 @@
+# ARGUS canonical Prediction Ledger v2 writer.
+#
+# Every JP trading day at 16:05 JST:
+#   1. (optional) trigger a fresh AI judgment run so AI views are recorded
+#      (needs the ARGUS_ADMIN_TOKEN repo secret; skipped gracefully without it)
+#      AI failure or timeout is reported, then an independent job continues.
+#   2. fetch a bounded canonicalPredictionLedger snapshot
+#   3. append immutable IssuedDecision / OutcomeResolution segments under
+#      ledger/prediction/v2 using the exact workflow-triggering source SHA
+#      and push it before any auxiliary persistence work
+#
+# Data lives on the `ledger` BRANCH (not main) so daily commits never trigger
+# the Pages/Render deploys. Historical ledger/days, ledger/scores and
+# ledger/summary.json are read-only compatibility artifacts: this workflow
+# never writes or overwrites them.
+
+name: prediction-ledger
+
+on:
+  schedule:
+    - cron: '5 7 * * 1-5'   # 07:05 UTC = 16:05 JST Mon-Fri (after TSE close)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'full = 正本への追記+評価 / ai-only = AI実行+診断のみ(台帳に触らない)'
+        required: false
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - ai-only
+
+permissions:
+  contents: write
+
+# Serialize the ordinary `ledger` branch writers (including event,
+# learning, mover, macro, and vault workflows) so two plain pushes never race.
+# cancel-in-progress:false = queue, don't kill a half-done ledger run.
+concurrency:
+  group: ledger-branch-writer
+  cancel-in-progress: false
+
+jobs:
+  ai-judgment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v5
+      - name: Trigger AI judgment run without blocking the canonical ledger
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
+            echo "::warning::ARGUS_ADMIN_TOKEN secret is EMPTY in this run — AI skipped"
+            echo "🤖 AI: **secret missing** — rule-only predictions recorded" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "token present (length ${#ARGUS_ADMIN_TOKEN})"
+          # Warm the dyno, then surface the gate state on the run page (the
+          # security-status payload is booleans/limits only — no secrets).
+          curl -s --max-time 90 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/rates" > /dev/null || true
+          GATE=$(python3 scripts/workflow_http.py --name security-status --timeout 60 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --url "$BE/api/argus/security-status")
+          echo "gate: $GATE"
+          echo "🔐 gate: \`${GATE}\`" >> "$GITHUB_STEP_SUMMARY"
+          # checker=pro supplies bounded candidate evidence. It is not final action
+          # authority; canonical issuance remains governed by the snapshot contract.
+          AI_RC=0
+          RESP=$(python3 scripts/workflow_http.py --name ledger-ai-run --method POST --timeout 420 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status disabled --expected-status budget_exceeded \
+            --expected-status rate_limited --expected-status deterministic_mode \
+            --url "$BE/api/argus/ai-judgment/run?checker=pro") || AI_RC=$?
+          SHORT=$(echo "$RESP" | head -c 300)
+          echo "ai run: $SHORT"
+          echo "🤖 ai run: \`${SHORT}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$AI_RC" -ne 0 ]; then
+            echo "::warning title=AI judgment observation incomplete::The backend did not finish inside the 420-second observation window. The canonical prediction ledger will still be recorded and scored."
+            echo "🤖 AI observation: **INCOMPLETE** — canonical ledger processing continued independently." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Terra-only diagnostic.  The summary contains no provider secret.
+          DIAG=$(curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/ai-provider-status" | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          o = d.get('openai') or {}
+          print(json.dumps({'openai': o.get('lastRunStatus')}, ensure_ascii=False))" \
+            2>/dev/null || echo '{}')
+          echo "🔬 provider diag: \`${DIAG}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  record-and-score:
+    needs: ai-judgment
+    if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Stage exact triggering-commit canonical ledger runtime
+        if: github.event.inputs.mode != 'ai-only'
+        run: |
+          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          install -d "$RUNTIME" "$RUNTIME/scripts"
+          test -f scripts/run_prediction_ledger.py
+          install -m 0644 scripts/run_prediction_ledger.py \
+            "$RUNNER_TEMP/run_prediction_ledger.py"
+          install -m 0644 scripts/run_prediction_ledger.py "$RUNTIME/scripts/run_prediction_ledger.py"
+          install -m 0644 scripts/export_event_prediction_results.py "$RUNTIME/scripts/export_event_prediction_results.py"
+          install -m 0644 argus_event_prediction_results.py "$RUNTIME/argus_event_prediction_results.py"
+          # The Layer 2B / DV shadow steps run after the ledger-branch
+          # checkout, where scripts/ no longer exists in the working tree —
+          # stage the HTTP helper next to the ledger runtime.
+          test -f scripts/workflow_http.py
+          install -m 0644 scripts/workflow_http.py \
+            "$RUNNER_TEMP/workflow_http.py"
+          install -m 0644 scripts/workflow_http.py "$RUNTIME/scripts/workflow_http.py"
+          install -m 0644 scripts/persist_backup_vault.py "$RUNTIME/scripts/persist_backup_vault.py"
+          for path in \
+            argus_calibration.py \
+            argus_decision_ledger.py \
+            argus_market_data_truth.py \
+            argus_market_clock.py
+          do
+            test -f "$path"
+            install -m 0644 "$path" "$RUNTIME/$path"
+          done
+          printf '%s\n' "$GITHUB_SHA" > "$RUNTIME/SOURCE_SHA"
+          sha256sum \
+            "$RUNNER_TEMP/run_prediction_ledger.py" \
+            "$RUNTIME/argus_calibration.py" \
+            "$RUNTIME/argus_decision_ledger.py" \
+            "$RUNTIME/argus_market_data_truth.py" \
+            "$RUNTIME/argus_market_clock.py" \
+            "$RUNTIME/scripts/run_prediction_ledger.py" \
+            "$RUNTIME/scripts/persist_backup_vault.py" \
+            "$RUNTIME/scripts/workflow_http.py" \
+            "$RUNNER_TEMP/workflow_http.py" \
+            "$RUNTIME/scripts/export_event_prediction_results.py" \
+            "$RUNTIME/argus_event_prediction_results.py" \
+            > "$RUNTIME/SHA256SUMS"
+      - name: Switch to ledger branch (create if missing)
+        if: github.event.inputs.mode != 'ai-only'
+        run: |
+          # SAFETY (v10.59): NEVER orphan-wipe an existing ledger branch. The old
+          # `fetch … && checkout || checkout --orphan` wiped ~133 records on 06-22
+          # when the fetch hiccupped: the || fell through to an orphan branch built
+          # from main's tree (no ledger history), which then replaced the branch.
+          # Now we orphan ONLY when origin/ledger genuinely does not exist.
+          # 2026-10-17: the ledger lives in the private repository.
+          LEDGER_TOKEN="${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}" bash scripts/ledger_use_private.sh
+          git fetch origin "ledger:refs/remotes/origin/ledger" 2>/dev/null \
+            || git fetch origin ledger 2>/dev/null || true
+          if git rev-parse --verify refs/remotes/origin/ledger >/dev/null 2>&1; then
+            git checkout -B ledger refs/remotes/origin/ledger     # full history
+          elif git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+            git checkout -B ledger FETCH_HEAD
+          else
+            echo "::warning::origin/ledger not found — creating a FRESH ledger branch (first run only)"
+            git checkout --orphan ledger
+            git rm -rq --cached . 2>/dev/null || true
+            find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
+            mkdir -p ledger/prediction/v2
+          fi
+          echo "ledger branch ready; historical compatibility artifacts remain untouched"
+
+      - name: Append canonical Prediction Ledger v2 records
+        if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          # 2026-09-28: owner authentication gates every read of this host.
+          # The existing operational token passes the gate; it is never logged.
+          rm -f snap.json snap.pending.json
+          for attempt in 1 2 3 4; do
+            curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/prediction-snapshot" -o snap.pending.json && { mv snap.pending.json snap.json; break; }
+            echo "prediction snapshot retry $attempt"
+            if [ "$attempt" -lt 4 ]; then sleep 20; fi
+          done
+          test -s snap.json
+          python3 - <<'PY'
+          import json
+          snapshot = json.load(open("snap.json", encoding="utf-8"))
+          canonical = snapshot.get("canonicalPredictionLedger")
+          if not isinstance(canonical, dict):
+              raise SystemExit("canonicalPredictionLedger is missing")
+          if canonical.get("schemaVersion") != "argus-prediction-ledger-v2":
+              raise SystemExit("unexpected canonical Prediction Ledger schema")
+          if canonical.get("mode") != "forward_live":
+              raise SystemExit("canonical Prediction Ledger mode is not forward_live")
+          PY
+          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
+          test "$(cat "$RUNTIME/SOURCE_SHA")" = "$GITHUB_SHA"
+          sha256sum -c "$RUNTIME/SHA256SUMS"
+          export PYTHONPATH="$RUNTIME${PYTHONPATH:+:$PYTHONPATH}"
+          python3 "$RUNNER_TEMP/run_prediction_ledger.py" \
+            --snapshot snap.json \
+            --ledger-root ledger/prediction/v2 \
+            --expected-mode forward_live \
+            --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --runner-build-sha "$GITHUB_SHA"
+
+      - name: Commit canonical ledger before auxiliary persistence
+        id: canonical_commit
+        run: |
+          git config user.name "argus-ledger[bot]"
+          git config user.email "argus-ledger@users.noreply.github.com"
+          test -z "$(git status --porcelain -- ledger/days ledger/scores ledger/summary.json)"
+          git add ledger/prediction/v2/
+          if ! git diff --cached --quiet; then
+            git commit -m "予測台帳: 正本の追記と採点を保存"
+            git push origin HEAD:ledger
+          fi
+
+      - name: Persist backup vault (client-side-encrypted envelopes)
+        id: backup_vault
+        if: github.event.inputs.mode != 'ai-only'
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
+          sha256sum -c "$RUNTIME/SHA256SUMS"
+          python3 "$RUNTIME/scripts/persist_backup_vault.py" \
+            --url "https://argus-backend-3j2m.onrender.com/api/argus/vault-pull" \
+            --ledger-root ledger/vault
+
+      # ai-persist-v1: the public GET payload (no secrets) is committed to the
+      # ledger branch so a restarted Render dyno can restore the latest real AI
+      # view instead of showing "not run yet" all day.
+      - name: Persist AI judgment for dyno-restart restore
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/ai-judgment" -o ai.json || echo '{}' > ai.json
+          python3 - <<'PY'
+          import json, os
+          try:
+              d = json.load(open('ai.json'))
+          except Exception:
+              d = {}
+          if isinstance(d, dict) and d.get('status') in ('live', 'partial') and d.get('labels'):
+              os.makedirs('ledger/ai', exist_ok=True)
+              json.dump(d, open('ledger/ai/latest.json', 'w'), ensure_ascii=False)
+              print('AI judgment persisted:', d.get('status'), d.get('asOf'))
+          else:
+              s = d.get('status') if isinstance(d, dict) else '?'
+              print(f'no live AI judgment to persist (status={s}) — previous file kept')
+          PY
+
+      # official-event-ledger-v1 (v11.3.1): official-disclosure lifecycle history is
+      # the foundation of future scoring — persist the public-safe snapshot (metadata
+      # only, no PDFs/full text/portfolio) so redeploys can't erase it. Day file is
+      # append-only (never overwritten); latest.json updates every run.
+      - name: Persist official event lifecycle records
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          TODAY=$(TZ=Asia/Tokyo date +%F)
+          curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/official-events/snapshot" -o oe.json || echo '{}' > oe.json
+          python3 - "$TODAY" <<'PY'
+          import json, os, sys
+          today = sys.argv[1]
+          try:
+              d = json.load(open('oe.json'))
+          except Exception:
+              d = {}
+          items = d.get('items') if isinstance(d, dict) else None
+          if d.get('schemaVersion') == 'official-event-ledger-v1' and isinstance(items, list) and items:
+              os.makedirs('ledger/official-events', exist_ok=True)
+              day = f'ledger/official-events/{today}.json'
+              if not os.path.exists(day):                       # append-only day files
+                  json.dump(d, open(day, 'w'), ensure_ascii=False)
+              json.dump(d, open('ledger/official-events/latest.json', 'w'), ensure_ascii=False)
+              print('official events persisted:', len(items), 'items,', d.get('summary'))
+          else:
+              print('no official events to persist (empty/invalid snapshot) — previous files kept')
+          PY
+
+      # incident-replay-v1 (v10.108): snapshot the day's downside incidents to the
+      # ledger branch so a sharp-drop day can be reviewed later (postmortem). Append-
+      # only per date; calm days (no incidents) are skipped. Outcome scoring is a
+      # later layer — this is the durable record it will read.
+      - name: Persist downside incidents (replay history)
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          TODAY=$(TZ=Asia/Tokyo date +%F)
+          curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/downside-incidents" -o ds.json || echo '{}' > ds.json
+          python3 - "$TODAY" <<'PY'
+          import json, os, sys
+          today = sys.argv[1]
+          try:
+              d = json.load(open('ds.json'))
+          except Exception:
+              d = {}
+          incs = d.get('incidents') or []
+          if incs:
+              os.makedirs('ledger/downside', exist_ok=True)
+              rec = {'date': today, 'asOf': d.get('asOf'),
+                     'globalRegime': d.get('globalRegime'), 'jpIntradayOverlay': d.get('jpIntradayOverlay'),
+                     'holderRiskOverlay': d.get('holderRiskOverlay'), 'activeCount': d.get('activeCount'),
+                     'incidents': [{k: i.get(k) for k in ('symbol','market','assetName','changePct',
+                                    'incidentType','severity','actionOverride','isHeld','ownerState',
+                                    'causeBuckets','reasonJa')} for i in incs]}
+              # Append-only per date: never overwrite an existing day file.
+              path = f'ledger/downside/{today}.json'
+              if not os.path.exists(path):
+                  json.dump(rec, open(path, 'w'), ensure_ascii=False, indent=1)
+              json.dump(rec, open('ledger/downside/latest.json', 'w'), ensure_ascii=False, indent=1)
+              print(f'downside incidents persisted: {today} ({len(incs)})')
+          else:
+              print('no downside incidents today — nothing to persist')
+          PY
+
+      # rotation-history-v1 (v10.109): snapshot the day's capital-rotation reading
+      # (group scores + top rotations) to the ledger branch so Δ-from-last-reading
+      # ("where did money leave?") can be shown later. Append-only per date; only
+      # when the regime read is live/partial (a mock/empty read is skipped).
+      - name: Persist capital-rotation reading (history)
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          TODAY=$(TZ=Asia/Tokyo date +%F)
+          curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/market-regime" -o reg.json || echo '{}' > reg.json
+          python3 - "$TODAY" <<'PY'
+          import json, os, sys
+          today = sys.argv[1]
+          try:
+              d = json.load(open('reg.json'))
+          except Exception:
+              d = {}
+          if isinstance(d, dict) and d.get('status') in ('live', 'partial') and not d.get('heldOverMin'):
+              os.makedirs('ledger/rotations', exist_ok=True)
+              rec = {'date': today, 'asOf': d.get('asOf'),
+                     'regime': (d.get('regime') or {}).get('label'),
+                     'groups': [{'id': g.get('id'), 'label': g.get('label'), 'role': g.get('role'),
+                                 'score': g.get('score'), 'status': g.get('status')}
+                                for g in (d.get('rotationGroups') or []) if g.get('available')],
+                     'topRotations': d.get('topRotations') or []}
+              path = f'ledger/rotations/{today}.json'
+              if not os.path.exists(path):   # append-only: never overwrite a recorded day
+                  json.dump(rec, open(path, 'w'), ensure_ascii=False, indent=1)
+              json.dump(rec, open('ledger/rotations/latest.json', 'w'), ensure_ascii=False, indent=1)
+              print(f'rotation reading persisted: {today} ({len(rec["groups"])} groups)')
+          else:
+              st = d.get('status') if isinstance(d, dict) else '?'
+              print(f'rotation reading not persisted (status={st}, held={bool(d.get("heldOverMin"))})')
+          PY
+
+      # cause-attribution-ledger-v1 (v10.117): persist the integrity-checked cause
+      # stack for each active incident, so a later run can compare attribution to
+      # the realized 1/3/5D outcome. Append-only per date; only when incidents exist.
+      - name: Persist cause attributions (ledger)
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          TODAY=$(TZ=Asia/Tokyo date +%F)
+          curl -s --max-time 90 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/cause-attribution-batch" -o attrib.json || echo '{}' > attrib.json
+          python3 - "$TODAY" <<'PY'
+          import json, os, sys
+          today = sys.argv[1]
+          try:
+              d = json.load(open('attrib.json'))
+          except Exception:
+              d = {}
+          atts = d.get('attributions') or []
+          if atts:
+              os.makedirs('ledger/attribution', exist_ok=True)
+              rec = {'date': today, 'asOf': d.get('asOf'), 'count': len(atts), 'attributions': atts}
+              path = f'ledger/attribution/{today}.json'
+              if not os.path.exists(path):
+                  json.dump(rec, open(path, 'w'), ensure_ascii=False, indent=1)
+              json.dump(rec, open('ledger/attribution/latest.json', 'w'), ensure_ascii=False, indent=1)
+              print(f'cause attributions persisted: {today} ({len(atts)})')
+          else:
+              print('no active incidents — no attributions to persist')
+          PY
+
+      # ai-cost-persist (v10.50): the month-to-date AI spend (no prompts/keys) is
+      # committed so the ARGUS-side HARD budget stop survives a dyno restart. The
+      # server restores max(persisted, in-memory) on boot. Admin-token gated.
+      - name: Persist AI cost ledger (monthly hard-stop baseline)
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip cost persist"; exit 0; }
+          curl -s --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
+            "$BE/api/argus/ai-cost" -o aicost.json || echo '{}' > aicost.json
+          python3 - <<'PY'
+          import json, os
+          try:
+              d = json.load(open('aicost.json'))
+          except Exception:
+              d = {}
+          m = d.get('month'); spent = d.get('monthSpentUsd')
+          if isinstance(m, str) and isinstance(spent, (int, float)):
+              os.makedirs('ledger/ai-cost', exist_ok=True)
+              path = f'ledger/ai-cost/{m}.json'
+              prev = 0.0
+              if os.path.exists(path):
+                  try: prev = float(json.load(open(path)).get('monthSpentUsd') or 0.0)
+                  except Exception: prev = 0.0
+              # Monotonic within a month: never let a mid-month restart lower it.
+              d['monthSpentUsd'] = max(prev, float(spent))
+              json.dump(d, open(path, 'w'), ensure_ascii=False, indent=1)
+              print(f'AI cost persisted {m}: ${d["monthSpentUsd"]:.4f}')
+          else:
+              print('no AI cost to persist (admin gate / no run)')
+          PY
+
+      # scout-ledger-v1 is retained only as a SHADOW/DERIVED compatibility
+      # diagnostic. Its approximate latest-price evaluation cannot enter the
+      # canonical Prediction Ledger or forward-live calibration.
+      - name: SHADOW DERIVED — record + evaluate entry-scout compatibility artifacts
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          curl -sf --max-time 90 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/scout-batch" -o scout.json || echo '{}' > scout.json
+          curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/japan-watchlist" -o sjp.json || echo '{}' > sjp.json
+          python3 - <<'PY'
+          import json, os, glob, datetime
+          try:
+              sb = json.load(open('scout.json'))
+          except Exception:
+              sb = {}
+          recs = sb.get('records') or []
+          if not recs:
+              print('no scout records — skip'); raise SystemExit(0)
+          today = sb.get('dateJst') or datetime.datetime.now().strftime('%Y-%m-%d')
+          sb = dict(sb)
+          sb.update({'mode': 'shadow', 'authority': 'SHADOW_DERIVED',
+                     'canonicalPredictionLedger': False,
+                     'calibrationEligible': False})
+          os.makedirs('ledger/scout/days', exist_ok=True)
+          json.dump(sb, open(f'ledger/scout/days/{today}.json', 'w'), ensure_ascii=False, indent=1)
+          # realized prices now (bridge realtime or J-Quants close)
+          now_px = {}
+          try:
+              for s in (json.load(open('sjp.json')).get('stocks') or []):
+                  if s.get('status') == 'live':
+                      now_px[s['symbol']] = float(s['price'])
+          except Exception:
+              pass
+          # score scout days that are ~1 and ~5 trading days old
+          days = sorted(glob.glob('ledger/scout/days/*.json'))
+          dates = [os.path.basename(p)[:-5] for p in days]
+          def trading_gap(idx_from_end):
+              # position of a past file relative to today's list
+              return idx_from_end
+          # Build per-record forward returns by matching symbols across files.
+          # Simple approach: for each past day, forward return = now_px vs that
+          # day's lastClose (horizon ≈ days between then and now in file count).
+          summary = {'updated': today, 'engineVersion': 'scout-ledger-v1',
+                     'mode': 'shadow', 'authority': 'SHADOW_DERIVED',
+                     'canonicalPredictionLedger': False, 'calibrationEligible': False,
+                     'byBucket': {}, 'byFlowClass': {}, 'n': 0,
+                     'noteJa': 'SHADOW/DERIVED互換診断。正本Prediction Ledger、forward-live校正、最終判断権限には使用しない。'}
+          bucket = {}; flowc = {}
+          for p in days[:-1]:                      # exclude today (no outcome yet)
+              dd = os.path.basename(p)[:-5]
+              age = len(days) - 1 - days.index(p)  # trading-day-ish age
+              if age < 1 or age > 7:
+                  continue
+              try:
+                  rj = json.load(open(p))
+              except Exception:
+                  continue
+              for r in rj.get('records') or []:
+                  sym = r.get('symbol'); base = r.get('lastClose')
+                  px = now_px.get(sym)
+                  if not sym or not base or not px:
+                      continue
+                  fwd = (px - base) / base * 100.0
+                  b = r.get('bucket') or 'neutral'
+                  e = bucket.setdefault(b, {'n': 0, 'sumRet': 0.0, 'up': 0})
+                  e['n'] += 1; e['sumRet'] += fwd; e['up'] += (fwd > 0)
+                  fc = r.get('flowClass') or 'UNCONFIRMED'
+                  f = flowc.setdefault(fc, {'n': 0, 'sumRet': 0.0, 'up': 0})
+                  f['n'] += 1; f['sumRet'] += fwd; f['up'] += (fwd > 0)
+                  summary['n'] += 1
+          for b, e in bucket.items():
+              e['avgRetPct'] = round(e['sumRet'] / e['n'], 2) if e['n'] else None
+              e['upRate'] = round(e['up'] / e['n'], 3) if e['n'] else None
+              del e['sumRet']
+          for fc, f in flowc.items():
+              f['avgRetPct'] = round(f['sumRet'] / f['n'], 2) if f['n'] else None
+              f['upRate'] = round(f['up'] / f['n'], 3) if f['n'] else None
+              del f['sumRet']
+          summary['byBucket'] = bucket
+          summary['byFlowClass'] = flowc
+          json.dump(summary, open('ledger/scout/summary.json', 'w'), ensure_ascii=False, indent=1)
+          print(f"scout recorded {today} ({len(recs)} names); scored n={summary['n']}")
+          PY
+
+      - name: Commit to ledger branch
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
+        run: |
+          git config user.name "argus-ledger[bot]"
+          git config user.email "argus-ledger@users.noreply.github.com"
+          # The v1/v2/v3 paths are immutable historical compatibility inputs.
+          test -z "$(git status --porcelain -- ledger/days ledger/scores ledger/summary.json)"
+          git add ledger/
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+          else
+            git commit -m "ledger: $(date -u +%F) append + evaluate"
+            git push origin HEAD:ledger
+          fi
+
+      # PRIVATE-store extras run LAST (v13.5.2): from 07-23 to 08-18 a Layer 2B
+      # private-store outage sat as step 4 of this serial job and aborted every
+      # canonical Prediction Ledger append that followed it. The canonical
+      # ledger must never be hostage to the optional private store, so these
+      # steps now run after the canonical commit. They still hard-fail the run
+      # (loud, notified) — only the ordering changed, not the assertions.
+      - name: Layer 2B daily run (owner watchlist — private store)
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip Layer 2B"; exit 0; }
+          # Records today's owner predictions + scores due horizons into the
+          # PRIVATE repo (no-op if the owner hasn't synced / private store unset).
+          # workflow_http always prints its safe summary (including the error
+          # name + status-class diagnostic) before exiting non-zero, so capture
+          # it FIRST and surface it in the log AND the summary either way.
+          #
+          # Truthful terminal states (owner directive):
+          #   SUCCESS      — recorded/scored (or an explicitly expected skip)
+          #   DATA_GATED   — the non-authoritative private mirror is
+          #                  unavailable (membership unreadable / never
+          #                  synced). Annotated loudly, but it must not turn
+          #                  the CANONICAL daily ledger run red.
+          #   FAILURE      — anything else (transport, auth, write failures).
+          RC=0
+          RESP=$(python3 "$RUNNER_TEMP/workflow_http.py" --name layer2b-run --method POST --timeout 120 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status not_configured --expected-status disabled \
+            --expected-value private_store_not_configured \
+            --url "$BE/api/argus/calibration/layer2b-run") || RC=$?
+          echo "layer2b result: $RESP"
+          echo "🗂️ Layer 2B: \`${RESP:0:300}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$RC" -ne 0 ] && echo "$RESP" | grep -q '"error":"no_membership_synced"'; then
+            DIAG=$(echo "$RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('diagnostic') or 'no diagnostic')" 2>/dev/null || echo unparsed)
+            echo "::warning title=Layer 2B DATA_GATED::private membership mirror unavailable — $DIAG (owner: check ARGUS_LAYER2B_PRIVATE_TOKEN / re-sync watchlist)"
+            echo "🗂️ Layer 2B state: **DATA_GATED** — $DIAG" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          exit "$RC"
+
+      - name: Decision Value shadow run (Phase 1 — private store, NO orders)
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          BE="https://argus-backend-3j2m.onrender.com"
+          [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip DV shadow"; exit 0; }
+          # Records today's shadow candidates + scores due horizons into the PRIVATE
+          # repo only (research simulation; no order/broker/execute — ever). No-op
+          # until the owner's Layer-2B private store is configured.
+          RESP=$(python3 "$RUNNER_TEMP/workflow_http.py" --name decision-value-shadow --method POST --timeout 120 \
+            --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
+            --expected-status not_configured --expected-status disabled \
+            --expected-value private_store_not_configured \
+            --url "$BE/api/argus/decision-value/shadow-run")
+          echo "🎛️ DV shadow: \`${RESP:0:200}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish bounded event prediction result lookup
+        if: ${{ !cancelled() && github.event.inputs.mode != 'ai-only' && steps.canonical_commit.outcome == 'success' }}
+        run: |
+          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
+          sha256sum -c "$RUNTIME/SHA256SUMS"
+          SOURCE_COMMIT=$(git rev-parse HEAD)
+          # Canonical records are committed; private-store failures do not block this lookup.
+          # This replaceable lookup carries original pairs, never new scores.
+          python3 "$RUNTIME/scripts/export_event_prediction_results.py" \
+            --ledger-root ledger/prediction/v2 \
+            --output "$RUNNER_TEMP/event-prediction-results.json" \
+            --source-commit "$SOURCE_COMMIT"
+          install -d ledger/event-prediction-results/v1
+          install -m 0644 "$RUNNER_TEMP/event-prediction-results.json" \
+            ledger/event-prediction-results/v1/recent.json
+          git add ledger/event-prediction-results/v1/recent.json
+          if ! git diff --cached --quiet; then
+            git commit -m "ledger: refresh bounded event prediction result lookup"
+            git push origin HEAD:ledger
+          fi
+
+      # The ledger is ARGUS's memory — a silent failure would quietly stop the
+      # learning loop. Push a phone alert if ANY step above failed (v10.3.1).
+      - name: Notify on failure (skipped without NTFY_TOPIC)
+        if: ${{ !cancelled() && (failure() || needs.ai-judgment.result != 'success') }}
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          CANONICAL_OUTCOME: ${{ steps.canonical_commit.outcome }}
+        run: |
+          [ -z "$NTFY_TOPIC" ] && exit 0
+          if [ "$CANONICAL_OUTCOME" = success ]; then
+            TITLE="ARGUS auxiliary save FAILED"
+            MESSAGE="予測台帳の記録・採点は保存済みです。バックアップ・AIなど関連処理の一部が失敗しました。Actionsを確認してください。"
+          else
+            TITLE="ARGUS ledger FAILED"
+            MESSAGE="予測台帳の記録・採点を保存できませんでした。Actionsを確認してください。"
+          fi
+          curl -s --max-time 30 \
+            -H "Title: $TITLE" -H "Priority: high" -H "Tags: warning" \
+            -H "Click: https://github.com/mitsugue/argus/actions/runs/${{ github.run_id }}" \
+            -d "$MESSAGE" \
+            "https://ntfy.sh/$NTFY_TOPIC" > /dev/null || true

@@ -1,0 +1,24 @@
+.env
+# Machine-local Vite env overrides (e.g. web/.env.local). Committed
+# wiring lives in web/.env.production instead.
+.env.local
+.env.*.local
+
+# Node / Vite
+node_modules/
+# Worktree-local dependency symlinks are files to Git, not directories.
+web/node_modules
+dist/
+*.tsbuildinfo
+.vite/
+
+# A.R.G.U.S. ledger (runtime data, persisted on the host disk)
+data/
+
+# OS
+.DS_Store
+
+# Claude Code per-user
+# v12.2.5: リリースゲート生成物(コミットしない — 古いmanifestを真実にしない)
+artifacts/
+release_manifest.json

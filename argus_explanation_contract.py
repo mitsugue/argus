@@ -1,0 +1,334 @@
+"""Shared explanation validation only: no market composer or decision authority."""
+from __future__ import annotations
+import re
+import hashlib
+import json
+import copy
+from typing import Any,Dict,Mapping,Optional
+
+UNIFIED_FACT_LIMIT = 64
+
+
+_FORBIDDEN_BRIEF_PATTERNS = (
+    "買え", "売れ", "全力", "今すぐ買", "今すぐ売", "確実に", "必ず",
+    "暴騰確率", "上昇確率", "%の確率", "％の確率",
+)
+
+
+def _digits_of(text: str) -> set:
+    # Formatting an existing value with thousands separators does not invent
+    # a new number. Only correctly grouped numeric tokens are normalized.
+    value = re.sub(r"(?<![\d,])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\d,])",
+                   lambda match: match.group(0).replace(",", ""), str(text or ""))
+    return set(re.findall(r"\d+(?:\.\d+)?", value))
+
+
+UNIFIED_SECTIONS = ("view", "reasons", "changes", "impact", "next", "invalidation")
+
+
+def render_event_references(value: Any, context: Mapping[str, Any]):
+    """Expand request-local event tokens from cited current calendar facts.
+
+    This is a renderer, not an acceptance gate. The complete rendered reply
+    still passes the unchanged reference, number, authority and length checks.
+    Unknown, uncited and malformed tokens fail closed; prose is never repaired
+    by deleting numbers or replacing an unsupported claim.
+    """
+    current = {row.get("evidenceId"): row for row in context.get("facts", [])}
+    text_fields = {"textJa", "expectationJa", "fearJa", "triggerJa"}
+    pattern = re.compile(r"\{event:([^{}]+)\}")
+
+    def walk(item):
+        if isinstance(item, list):
+            return [walk(row) for row in item]
+        if not isinstance(item, dict):
+            return item
+        out = {}
+        for key, original in item.items():
+            if key in text_fields and isinstance(original, str):
+                def replace(match):
+                    ref = match.group(1)
+                    fact = current.get(ref) or {}
+                    label = fact.get("eventLabelJa")
+                    refs = item.get("evidenceIds")
+                    if (not isinstance(refs, list) or ref not in refs or fact.get("source") != "calendar"
+                            or fact.get("verification") != "VERIFIED" or not isinstance(label, str)
+                            or not label or label[:-1] not in fact.get("text", "")):
+                        raise ValueError("event_reference_unavailable")
+                    return label
+                rendered = pattern.sub(replace, original)
+                if "{event" in rendered:
+                    raise ValueError("event_reference_malformed")
+                out[key] = rendered
+            else:
+                out[key] = walk(original)
+        return out
+    return walk(value)
+
+
+def validation_scope_error(text, facts):
+    """Bound explicit benchmark claims to the cited method, instrument and horizon.
+
+    This catches a known cross-method attribution error, not all semantic errors.
+    It does not change stored calibration results or accept predictive authority.
+    """
+    claim = r"(?:基準モデル|ベースライン|単純トレンド)[^。\n]{0,16}(?:未達|届か|下回|上回|劣|優れ|勝|負)"
+    for sentence in re.split(r"[。\n]", text):
+        if not re.search(claim, sentence):
+            continue
+        matched = False
+        for fact in facts:
+            subject = fact.get('validationSubject') or {}
+            label = subject.get('labelJa')
+            if (fact.get('source') == 'jp_market_research'
+                    and isinstance(label, str) and label and label in sentence
+                    and subject.get('methodVersion') and subject.get('instrumentId')
+                    and subject.get('horizonSessions') == 5 and '5営業日' in sentence
+                    and subject.get('calibrationStatus') == 'poor_calibration'
+                    and re.search(r'(?:基準モデル|ベースライン|単純トレンド)[^。\n]{0,16}(?:未達|届か|下回|劣|負)', sentence)
+                    and not re.search(r'(?:上回|優れ|勝)', sentence)):
+                matched = True
+        if not matched:
+            return 'validation_method_scope_mismatch'
+    return None
+
+
+def validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic=None) -> Optional[Dict[str, Any]]:
+    """Reject unsupported numbers, references and claims of observed inference.
+
+    This is a structural constraint, not proof that every sentence is correct.
+    Source inspection and semantic evaluation remain required before acceptance.
+    """
+    def rejected(reason, section=None):
+        if isinstance(diagnostic, dict):
+            diagnostic.update(status="REJECTED", reason=reason, section=section)
+        return None
+    if not isinstance(value, Mapping) or set(value) != set(UNIFIED_SECTIONS):
+        return rejected("six_section_schema_required")
+    current = {r["evidenceId"]: r for r in context.get("facts", [])}
+    prior = {r["evidenceId"]: r for r in context.get("previousFacts", [])}
+    sections = {}
+    for key in UNIFIED_SECTIONS:
+        row = value[key]
+        if not isinstance(row, Mapping) or set(row) != {"textJa", "evidenceIds", "kind"}:
+            return rejected("section_schema_invalid", key)
+        text, refs, kind = row["textJa"], row["evidenceIds"], row["kind"]
+        if not isinstance(text, str) or not text.strip() or len(text) > 240 or \
+                kind not in {"FACT", "INFERENCE", "UNKNOWN"} or \
+                not isinstance(refs, list) or len(refs) > 6 or \
+                any(not isinstance(ref, str) for ref in refs) or len(set(refs)) != len(refs):
+            if isinstance(diagnostic, dict):
+                diagnostic['fieldIssues'] = {
+                    'textCharacters': len(text) if isinstance(text, str) else None,
+                    'textLimit': 240,
+                    'kindAllowed': kind in {'FACT', 'INFERENCE', 'UNKNOWN'} if isinstance(kind, str) else False,
+                    'referenceCount': len(refs) if isinstance(refs, list) else None,
+                    'referenceLimit': 6,
+                    'referencesDistinctStrings': isinstance(refs, list) and all(isinstance(ref, str) for ref in refs)
+                        and len(set(refs)) == len(refs),
+                }
+            return rejected("section_field_invalid", key)
+        allowed = {**prior, **current} if key == "changes" else current
+        if any(ref not in allowed for ref in refs):
+            return rejected("unknown_evidence_reference", key)
+        if kind != "UNKNOWN" and not refs:
+            return rejected("evidence_reference_required", key)
+        if key == "impact" and not context.get("ownerContextAvailable") and kind != "UNKNOWN":
+            return rejected("owner_context_unavailable", key)
+        if key == "changes" and not context.get("changes", {}).get("comparisonAvailable") and kind != "UNKNOWN":
+            return rejected("previous_context_unavailable", key)
+        if kind == "FACT" and (key in {"view", "impact", "next", "invalidation"} or
+                any(allowed[ref].get("verification") != "VERIFIED" for ref in refs)):
+            return rejected("fact_requires_verified_references", key)
+        if any(p in text for p in _FORBIDDEN_BRIEF_PATTERNS) or "確率" in text:
+            return rejected("unsupported_authority_or_probability", key)
+        scope_error = validation_scope_error(text, [allowed[ref] for ref in refs])
+        if scope_error:
+            return rejected(scope_error, key)
+        allowed_digits = set().union(*(_digits_of(allowed[ref]["text"]) for ref in refs)) if refs else set()
+        unsupported = _digits_of(text) - allowed_digits
+        if unsupported:
+            result = rejected("unsupported_numeric_tokens", key)
+            if isinstance(diagnostic, dict):
+                diagnostic["unsupportedNumericTokens"] = sorted(unsupported)[:20]
+            return result
+        if key == "impact" and not context.get("ownerContextAvailable"):
+            text = "市場全体の見通しです。登録銘柄ごとの影響は、銘柄別の根拠を確認する必要があります。"
+        if key == "changes" and not context.get("changes", {}).get("comparisonAvailable"):
+            text = "比較できる前回の見立てをまだ取得していません。"
+        sections[key] = {"textJa": text.strip(), "evidenceIds": list(refs), "kind": kind}
+    if isinstance(diagnostic, dict):
+        diagnostic.update(status="ACCEPTED", reason=None, section=None)
+    return {"schemaVersion": "argus-unified-brief-v1", "contextId": context["contextId"],
+            "sections": sections, "actionAuthority": False,
+            "ownerContextAvailable": context["ownerContextAvailable"],
+            "historyStatus": context["historyStatus"]}
+
+
+def validate_theme_views(value: Any, context: Mapping[str, Any], *, theme_ids, active_theme_ids,
+                         fields=("expectationJa", "fearJa", "triggerJa"), text_limit: int = 160,
+                         diagnostic=None):
+    """The AI's per-theme market-position views, under the six-section rules.
+
+    Evidence ids must exist in the context, numbers must come from the cited
+    evidence, and a view is never an observed FACT (13.8 §3-1 stage two).
+    """
+    THEMES = set(theme_ids); VIEW_FIELDS = tuple(fields); VIEW_TEXT_LIMIT = text_limit
+    def rejected(reason, theme_id=None):
+        if isinstance(diagnostic, dict):
+            diagnostic.update(status="REJECTED", reason=reason, themeId=theme_id)
+        return None
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > len(THEMES):
+        return rejected("position_schema_invalid")
+    current = {r["evidenceId"]: r for r in context.get("facts", [])}
+    active = set(active_theme_ids)
+    out = []; seen = set()
+    for row in value:
+        if not isinstance(row, Mapping) or set(row) != {"themeId", *VIEW_FIELDS, "evidenceIds", "kind"}:
+            return rejected("position_row_schema_invalid")
+        theme_id = row["themeId"]
+        if theme_id not in THEMES or theme_id in seen:
+            return rejected("position_theme_invalid", theme_id)
+        if theme_id not in active:
+            continue                      # a view on a quiet theme is dropped, not an error
+        seen.add(theme_id)
+        refs, kind = row["evidenceIds"], row["kind"]
+        texts = [row[field] for field in VIEW_FIELDS]
+        if (kind not in {"FACT", "INFERENCE", "UNKNOWN"} or not isinstance(refs, list) or len(refs) > 6
+                or any(not isinstance(ref, str) for ref in refs) or len(set(refs)) != len(refs)
+                or any(not isinstance(t, str) or len(t) > VIEW_TEXT_LIMIT for t in texts)
+                or not any(t.strip() for t in texts)):
+            return rejected("position_field_invalid", theme_id)
+        if any(ref not in current for ref in refs):
+            return rejected("unknown_evidence_reference", theme_id)
+        if kind != "UNKNOWN" and not refs:
+            return rejected("evidence_reference_required", theme_id)
+        if kind == "FACT":
+            return rejected("position_view_is_inference", theme_id)   # expectations are never observed facts
+        joined = "。".join(t for t in texts if t)
+        if any(p in joined for p in _FORBIDDEN_BRIEF_PATTERNS) or "確率" in joined:
+            return rejected("unsupported_authority_or_probability", theme_id)
+        allowed_digits = set().union(*(_digits_of(current[ref]["text"]) for ref in refs)) if refs else set()
+        unsupported = _digits_of(joined) - allowed_digits
+        if unsupported:
+            if isinstance(diagnostic, dict):
+                diagnostic["unsupportedNumericTokens"] = sorted(unsupported)[:20]
+            return rejected("unsupported_numeric_tokens", theme_id)
+        out.append({"themeId": theme_id, **{f: row[f].strip() for f in VIEW_FIELDS},
+                    "evidenceIds": list(refs), "kind": kind})
+    if isinstance(diagnostic, dict):
+        diagnostic.update(status="ACCEPTED", reason=None, themeId=None)
+    return out
+
+
+def calculation_identity(calculations):
+    """Ignore read timestamps, retaining price/input/definition changes."""
+    def stable(value):
+        if isinstance(value, Mapping):
+            return {key: stable(item) for key, item in value.items()
+                    if key not in {"informationCutoff", "lastSuccessfulAcquisitionAt", "valuationAcquisition", "researchCache"}}
+        if isinstance(value, list):
+            return [stable(item) for item in value]
+        return value
+    return hashlib.sha256(json.dumps(stable(calculations), sort_keys=True,
+        separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+
+
+def prompt_references(context, catalog):
+    """Use request-local short references; restore originals before validation.
+
+    All facts, text, units, dates and verification flags remain verbatim. The
+    mapping is local to this request and never changes a stored evidence ID.
+    """
+    fields = {"evidenceId", "evidenceIds", "contextId", "inventoryId", "payloadId",
+              "sourceRowSha256", "addedEvidenceIds", "removedEvidenceIds",
+              "previousSharedEvidenceIds", "baseMarketContextId", "indexComparisonEvidenceId"}
+    forward, reverse = {}, {}
+    def walk(value, mapping, *, key=None, allocate=False):
+        if isinstance(value, dict):
+            return {k: walk(v, mapping, key=k, allocate=allocate) for k, v in value.items()}
+        if isinstance(value, list):
+            return [walk(v, mapping, key=key, allocate=allocate) for v in value]
+        if key in fields and isinstance(value, str):
+            if allocate and re.fullmatch(r"(?:(?:brief|dialogue)-fact-)?[a-f0-9]{64}", value):
+                if value not in mapping:
+                    alias = "ref-" + str(len(mapping))
+                    mapping[value] = alias
+                    reverse[alias] = value
+            return mapping.get(value, value)
+        return value
+    short_context = walk(context, forward, allocate=True)
+    short_catalog = walk(catalog, forward, allocate=True)
+    def restore(value): return walk(value, reverse)
+    def compact(value): return walk(value, forward)
+    return short_context, short_catalog, restore, compact
+
+
+def prompt_fact_reuse(context):
+    """Reference identical prior facts only in the outbound model request.
+
+    The original context, evidence IDs and comparison timestamps remain the
+    validation/storage authority. Changed facts are never folded, even when
+    their IDs match. Ambiguous IDs disable reuse rather than guessing.
+    """
+    result = copy.deepcopy(context)
+    current = context.get("facts")
+    previous = context.get("previousFacts")
+    if not isinstance(current, list) or not isinstance(previous, list):
+        return result
+    by_id = {}
+    for row in current:
+        if not isinstance(row, dict):
+            return result
+        reference = row.get("evidenceId")
+        if not isinstance(reference, str) or not reference or reference in by_id:
+            return result
+        by_id[reference] = row
+    if any(not isinstance(row, dict) or "sameAsCurrentFact" in row for row in previous):
+        return result
+    def exact_json(value):
+        # Unlike Python equality, JSON distinguishes true from 1 and 1 from
+        # 1.0. Never substitute different numeric or verification inputs.
+        return json.dumps(value, sort_keys=True, ensure_ascii=False,
+                          separators=(",", ":"), allow_nan=False)
+    try:
+        encoded = {key: exact_json(row) for key, row in by_id.items()}
+        reused = []
+        for row in previous:
+            reference = row.get("evidenceId")
+            if isinstance(reference, str) and reference in encoded and exact_json(row) == encoded[reference]:
+                reused.append({"sameAsCurrentFact": reference})
+            else:
+                reused.append(copy.deepcopy(row))
+    except (TypeError, ValueError):
+        return result
+    result["previousFacts"] = reused
+    return result
+
+
+def restore_prompt_fact_reuse(context):
+    """Expand request-local fact references for lossless acceptance checks.
+
+    This is not a model-output decoder and cannot create evidence references
+    for an answer. Missing/ambiguous references fail rather than becoming facts.
+    """
+    result = copy.deepcopy(context)
+    by_id = {}
+    for row in context.get("facts", []):
+        reference = row.get("evidenceId") if isinstance(row, dict) else None
+        if not isinstance(reference, str) or not reference or reference in by_id:
+            raise ValueError("ambiguous_current_fact")
+        by_id[reference] = row
+    restored = []
+    for row in context.get("previousFacts", []):
+        if isinstance(row, dict) and "sameAsCurrentFact" in row:
+            reference = row["sameAsCurrentFact"]
+            if set(row) != {"sameAsCurrentFact"} or not isinstance(reference, str) or reference not in by_id:
+                raise ValueError("unknown_current_fact_reference")
+            restored.append(copy.deepcopy(by_id[reference]))
+        else:
+            restored.append(copy.deepcopy(row))
+    result["previousFacts"] = restored
+    return result

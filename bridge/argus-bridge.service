@@ -1,0 +1,25 @@
+# systemd unit for the ARGUS moomoo bridge (24h push from the OpenD machine).
+# Install:
+#   sudo cp argus-bridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now argus-bridge
+# Logs: journalctl -u argus-bridge -f
+[Unit]
+Description=ARGUS moomoo quote-push bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/argus-bridge.env
+# Adjust the path to wherever you cloned the repo on this machine:
+ExecStart=/usr/bin/python3 /opt/argus/bridge/moomoo_push.py
+Restart=always
+RestartSec=15
+# Run as a non-root user (create one: sudo useradd -r -s /usr/sbin/nologin argus)
+User=argus
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

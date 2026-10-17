@@ -1,0 +1,270 @@
+import copy
+import unittest
+
+from jp_market_source_adapters import normalize_jquants_margin_snapshot as normalize
+from jp_market_dynamics import credit_dynamics
+
+
+class MarginSourceTests(unittest.TestCase):
+    def setUp(self):
+        self.options = dict(instrument_id="1570", observed_at="2026-09-12T01:12:11Z",
+                            response_sha256="a" * 64, volume_unit="UNITS")
+        self.rows = [{"Date": "2026-08-28", "Code": "15700", "LongVol": 120, "ShrtVol": 20,
+                      "LongStdVol": 80, "LongNegVol": 40, "ShrtStdVol": 18, "ShrtNegVol": 2},
+                     {"Date": "2026-09-04", "Code": "15700", "LongVol": 150, "ShrtVol": 15}]
+
+    def result(self, rows=None, **extra):
+        return normalize({"data": self.rows if rows is None else rows, **extra}, **self.options)
+
+    def test_balance_components_and_receipt_provenance(self):
+        result = self.result()
+        self.assertEqual(len(result["rows"]), 8)
+        self.assertEqual(result["status"], "AVAILABLE")
+        for row in result["rows"]:
+            self.assertEqual(row["knownAt"], "2026-09-12T01:12:11+00:00")
+            self.assertIsNone(row["publishedAt"])
+            self.assertFalse(row["creditTermKnown"])
+        self.assertEqual(self.rows[0]["LongVol"], 120)
+
+    def test_current_dynamics_and_no_historical_backdating(self):
+        rows = self.result()["rows"]
+        args = dict(instrument_id="1570", balance_kind="WEEKLY_MARGIN",
+                    long_series="margin.long_balance", short_series="margin.short_balance")
+        before = credit_dynamics(rows, cutoff="2026-09-11T23:00:00Z", **args)
+        self.assertIsNone(before["current"])
+        current = credit_dynamics(rows, cutoff="2026-09-12T02:00:00Z", **args)
+        self.assertEqual(current["current"]["ratio"], 10)
+        self.assertEqual(current["change"]["ratioChange"], 4)
+        self.assertAlmostEqual(current["change"]["longContribution"] + current["change"]["shortContribution"], 4)
+
+    def test_wrong_code_and_invalid_totals(self):
+        for patch in ({"Code": "72030"}, {"LongVol": None}, {"LongVol": True},
+                      {"LongVol": -1}, {"LongVol": float("inf")}, {"LongVol": 1.5}):
+            rows = [dict(self.rows[1], **patch)]
+            self.assertEqual(self.result(rows)["rows"], [])
+
+    def test_component_disagreement_not_silently_accepted(self):
+        rows = copy.deepcopy(self.rows[:1]); rows[0]["LongNegVol"] = 41
+        self.assertEqual(self.result(rows)["rejectedRows"][0]["reason"], "inconsistent_credit_components")
+
+    def test_duplicate_period_invalidates_both(self):
+        result = self.result([self.rows[1], dict(self.rows[1], LongVol=180)])
+        self.assertEqual(result["rows"], [])
+        self.assertEqual(result["status"], "PARTIAL")
+
+    def test_future_period_rejected(self):
+        self.assertEqual(self.result([dict(self.rows[1], Date="2026-09-18")])["rows"], [])
+
+    def test_zero_balances_preserved_without_finite_ratio(self):
+        result = self.result([dict(self.rows[1], LongVol=0, ShrtVol=0)])
+        self.assertEqual(len(result["rows"]), 2)
+        self.assertTrue(all(row["value"] == 0 for row in result["rows"]))
+
+    def test_missing_unit_receipt_or_digest_cannot_be_invented(self):
+        for key, value in (("volume_unit", "JPY"), ("observed_at", ""), ("observed_at", "2026-09-12"), ("response_sha256", "")):
+            with self.assertRaises(ValueError):
+                normalize({"data": self.rows}, **{**self.options, key: value})
+
+    def test_pagination_is_explicitly_partial(self):
+        result = self.result(pagination_key="opaque-cursor")
+        self.assertEqual(result["status"], "PARTIAL")
+        self.assertNotIn("opaque-cursor", str(result))
+
+    def test_empty_data_is_unavailable(self):
+        self.assertEqual(self.result([])["status"], "UNAVAILABLE")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+def test_durable_margin_rechecks_rolloff_and_correction_keep_original_prefix(tmp_path):
+    import json
+    import hashlib
+    import sqlite3
+    from jp_market_source_adapters import retain_margin_snapshot, restore_margin_snapshot
+    path = tmp_path / 'sources.sqlite3'
+    def candidate(rows, at):
+        raw = json.dumps({'data': rows}).encode()
+        return normalize({'data': rows}, instrument_id='1570', observed_at=at,
+                         response_sha256=hashlib.sha256(raw).hexdigest(), volume_unit='UNITS'), raw
+    rows = [{'Date': '2026-08-28', 'Code': '15700', 'LongVol': 120, 'ShrtVol': 20},
+            {'Date': '2026-09-04', 'Code': '15700', 'LongVol': 150, 'ShrtVol': 15}]
+    first, raw = candidate(rows, '2026-09-12T01:00:00Z')
+    saved = retain_margin_snapshot(first, path=path, raw=raw)
+    original = copy.deepcopy(saved['rows'])
+    repeat, raw = candidate(rows, '2026-09-12T02:00:00Z')
+    repeated = retain_margin_snapshot(repeat, path=path, raw=raw)
+    assert repeated['rows'] == original
+    assert repeated['observedAt'] != saved['observedAt']
+    # Simulate restart, a rolling source and a received correction.
+    corrected, raw = candidate([dict(rows[1], LongVol=180)], '2026-09-13T03:00:00Z')
+    updated = retain_margin_snapshot(corrected, path=path, raw=raw)
+    assert updated['rows'][:len(original)] == original
+    assert len(updated['rows']) == len(original) + 2
+    assert all(r['revision'] == 1 for r in updated['rows'][len(original):])
+    args = dict(instrument_id='1570', balance_kind='WEEKLY_MARGIN',
+                long_series='margin.long_balance', short_series='margin.short_balance')
+    before = credit_dynamics(updated['rows'], cutoff='2026-09-13T02:59:59Z', **args)
+    after = credit_dynamics(updated['rows'], cutoff='2026-09-13T03:00:00Z', **args)
+    assert before['current']['ratio'] == 10
+    assert after['current']['ratio'] == 12
+    restored = restore_margin_snapshot(path)
+    assert restored['rows'] == updated['rows']
+    assert restored['historyStatus'] == 'LOCAL_DURABLE'
+    db = sqlite3.connect(path)
+    assert db.execute('SELECT count(*) FROM raw_sources').fetchone()[0] == 2
+    assert db.execute('SELECT count(*) FROM margin_input_history').fetchone()[0] == 6
+    db.close()
+    # Another identical fetch after restart appends neither observations nor revisions.
+    again, raw = candidate([dict(rows[1], LongVol=180)], '2026-09-14T03:00:00Z')
+    assert retain_margin_snapshot(again, path=path, raw=raw)['rows'] == updated['rows']
+
+
+def test_margin_prefix_reuse_matches_full_features_after_received_correction(tmp_path):
+    from jp_market_source_adapters import retain_margin_snapshot
+    from jp_market_features import build_feature_history
+    rows = [{'Date': '2026-08-28', 'Code': '15700', 'LongVol': 120, 'ShrtVol': 20},
+            {'Date': '2026-09-04', 'Code': '15700', 'LongVol': 150, 'ShrtVol': 15}]
+    def snapshot(values, at):
+        return normalize({'data': values}, instrument_id='1570', observed_at=at,
+                         response_sha256='a'*64, volume_unit='UNITS')
+    first = retain_margin_snapshot(snapshot(rows, '2026-09-12T01:00:00Z'))
+    cutoffs = ['2026-09-12T02:00:00Z', '2026-09-13T02:00:00Z']
+    old = build_feature_history(price_series={}, cutoffs=cutoffs, margin_1570=first['rows'])
+    old['status'] = 'AVAILABLE'  # The runtime admits and persists the completed history.
+    repeat = retain_margin_snapshot(snapshot(rows, '2026-09-13T03:00:00Z'), previous=first)
+    same = build_feature_history(price_series={}, cutoffs=cutoffs, margin_1570=repeat['rows'], previous_history=old)
+    assert same['calculationWork']['evaluatedCutoffs'] == 0
+    corrected = retain_margin_snapshot(snapshot([dict(rows[-1], LongVol=180)], '2026-09-14T01:00:00Z'), previous=repeat)
+    expanded = cutoffs + ['2026-09-14T02:00:00Z']
+    delta = build_feature_history(price_series={}, cutoffs=expanded, margin_1570=corrected['rows'], previous_history=old)
+    full = build_feature_history(price_series={}, cutoffs=expanded, margin_1570=corrected['rows'])
+    assert delta['calculationWork'] == {'evaluatedCutoffs': 1, 'reusedCutoffs': 2}
+    for key in ('features', 'conditions', 'latest'):
+        assert delta[key] == full[key]
+
+
+def test_margin_durable_corruption_and_bad_raw_do_not_overwrite(tmp_path):
+    import hashlib
+    import json
+    import sqlite3
+    import pytest
+    from jp_market_source_adapters import retain_margin_snapshot, restore_margin_snapshot
+    raw = json.dumps({'data':[{'Date':'2026-09-04','Code':'15700','LongVol':150,'ShrtVol':15}]}).encode()
+    candidate = normalize(json.loads(raw), instrument_id='1570', observed_at='2026-09-12T01:00:00Z',
+                          response_sha256=hashlib.sha256(raw).hexdigest(), volume_unit='UNITS')
+    path = tmp_path/'sources.sqlite3'
+    retain_margin_snapshot(candidate, path=path, raw=raw)
+    with pytest.raises(ValueError, match='raw_receipt'):
+        retain_margin_snapshot(candidate, path=path, raw=b'wrong')
+    assert restore_margin_snapshot(path)['rows'] == candidate['rows']
+    db=sqlite3.connect(path); db.execute("UPDATE margin_input_history SET body='{}' WHERE seq=1"); db.commit(); db.close()
+    with pytest.raises(ValueError, match='integrity'):
+        restore_margin_snapshot(path)
+    with pytest.raises(ValueError, match='integrity'):
+        retain_margin_snapshot(candidate, path=path, raw=raw)
+
+
+def test_topix_bars_are_normalized_with_next_day_availability_and_nothing_filled():
+    from jp_market_source_adapters import normalize_jquants_topix_bars
+    digest = "a" * 64
+    payload = {"data": [
+        {"Date": "2026-09-29", "O": 3000.5, "H": 3010.0, "L": 2990.0, "C": 3005.0},
+        {"Date": "2026-09-30", "Open": 3005.0, "High": 3020.0, "Low": 3001.0, "Close": 3015.0},
+        {"Date": "2026-09-28", "O": 2990.0, "H": 2995.0, "L": 2999.0, "C": 2992.0},  # low above open: unordered
+        {"Date": "2026-09-27", "O": 2990.0, "H": 2995.0, "L": None, "C": 2992.0},    # incomplete
+        {"Date": "2026-10-02", "O": 1.0, "H": 1.0, "L": 1.0, "C": 1.0},              # future
+        {"Date": "2026-09-29", "O": 3000.5, "H": 3010.0, "L": 2990.0, "C": 3005.0},  # duplicate
+        "bad",
+    ]}
+    result = normalize_jquants_topix_bars(payload, received_at="2026-09-30T08:00:00Z", response_sha256=digest)
+    assert result["status"] == "AVAILABLE" and [r["date"] for r in result["rows"]] == ["2026-09-29", "2026-09-30"]
+    row = result["rows"][0]
+    assert row["instrumentId"] == "TOPIX_INDEX" and row["seriesId"] == "close" and row["close"] == 3005.0
+    assert row["availableFrom"] == "2026-09-29T09:00:00Z" and row["receivedAt"] == "2026-09-30T08:00:00+00:00"
+    assert row["availabilityBasis"] == "SCHEDULED_PUBLICATION" and row["historicalVintageVerified"] is False
+    assert row["sourceResponseSha256"] == digest
+    assert result["rejectedCount"] == 5 and result["actionAuthority"] is False
+    assert sorted(r["reason"] for r in result["rejectedRows"]) == sorted([
+        "incomplete_or_unordered_bar", "incomplete_or_unordered_bar", "invalid_or_future_date", "duplicate_date", "invalid_row"])
+    import pytest
+    with pytest.raises(ValueError, match="actual_observation_time_required"):
+        normalize_jquants_topix_bars(payload, received_at="2026-09-30", response_sha256=digest)
+    with pytest.raises(ValueError, match="bounded_provider_rows_required"):
+        normalize_jquants_topix_bars({"data": None}, received_at="2026-09-30T08:00:00Z", response_sha256=digest)
+
+
+def test_daily_margin_crosses_old_limit_and_restores_original_receipts(tmp_path):
+    import hashlib
+    import json
+    from datetime import date, timedelta
+    from jp_market_source_adapters import retain_margin_snapshot, restore_margin_snapshot
+    values = [{"Date": (date(2016, 1, 1) + timedelta(days=i)).isoformat(),
+               "Code": "15700", "LongVol": 120, "ShrtVol": 20,
+               "LongStdVol": 80, "LongNegVol": 40,
+               "ShrtStdVol": 18, "ShrtNegVol": 2} for i in range(2000)]
+    def candidate(rows, at):
+        raw = json.dumps({"data": rows}).encode()
+        return normalize({"data": rows}, instrument_id="1570", observed_at=at,
+                         response_sha256=hashlib.sha256(raw).hexdigest(), volume_unit="UNITS"), raw
+    path = tmp_path / "sources.sqlite3"
+    first, raw = candidate(values, "2026-10-05T01:00:00Z")
+    original = retain_margin_snapshot(first, path=path, raw=raw)
+    assert len(original["rows"]) == 12000
+    # A rolling response adds a day without resending the original history.
+    next_row = dict(values[-1], Date=(date(2016, 1, 1) + timedelta(days=2000)).isoformat())
+    next_snapshot, raw = candidate([next_row], "2026-10-05T02:00:00Z")
+    extended = retain_margin_snapshot(next_snapshot, path=path, raw=raw)
+    assert len(extended["rows"]) == 12006
+    assert extended["rows"][:12000] == original["rows"]
+    restored = restore_margin_snapshot(path)
+    assert restored["rows"] == extended["rows"]
+    # A correction after restart appends six revisions without rewriting receipts.
+    corrected, raw = candidate([dict(next_row, LongVol=130, LongStdVol=90)], "2026-10-05T03:00:00Z")
+    revised = retain_margin_snapshot(corrected, path=path, raw=raw)
+    assert revised["rows"][:12006] == extended["rows"]
+    assert len(revised["rows"]) == 12012
+    assert all(row["revision"] == 1 for row in revised["rows"][12006:])
+    assert restore_margin_snapshot(path)["rows"] == revised["rows"]
+    assert revised["retention"]["status"] == "WITHIN_BUDGET"
+    assert revised["retention"]["rowLimit"] > 6 * 260 * 10
+
+
+def test_margin_capacity_failure_preserves_store_and_old_metadata(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    import sqlite3
+    import pytest
+    import jp_market_source_adapters as adapter
+    path = tmp_path / "sources.sqlite3"
+    def candidate(day, at):
+        raw = json.dumps({"data": [{"Date": day, "Code": "15700", "LongVol": 120, "ShrtVol": 20}]}).encode()
+        return normalize(json.loads(raw), instrument_id="1570", observed_at=at,
+                         response_sha256=hashlib.sha256(raw).hexdigest(), volume_unit="UNITS"), raw
+    first, raw = candidate("2026-10-01", "2026-10-05T01:00:00Z")
+    adapter.retain_margin_snapshot(first, path=path, raw=raw)
+    # A pre-upgrade envelope does not have capacity metadata and still restores.
+    with sqlite3.connect(path) as db:
+        envelope = json.loads(db.execute("SELECT value FROM metadata WHERE key='margin_snapshot:1570'").fetchone()[0])
+        envelope["document"].pop("retention")
+        envelope["sha256"] = hashlib.sha256(adapter._margin_json(envelope["document"]).encode()).hexdigest()
+        db.execute("UPDATE metadata SET value=? WHERE key='margin_snapshot:1570'", (adapter._margin_json(envelope),))
+    assert adapter.restore_margin_snapshot(path)["rows"] == first["rows"]
+    before = path.read_bytes()
+    incoming, raw = candidate("2026-10-02", "2026-10-05T02:00:00Z")
+    monkeypatch.setattr(adapter, "_MARGIN_MAX_ROWS", 2)
+    with pytest.raises(ValueError, match="margin_retention_maintenance_required"):
+        adapter.retain_margin_snapshot(incoming, path=path, raw=raw)
+    assert path.read_bytes() == before
+    assert adapter.restore_margin_snapshot(path)["retention"]["status"] == "MAINTENANCE_DUE"
+    monkeypatch.setattr(adapter, "_MARGIN_MAX_ROWS", 60000)
+    existing_bytes = adapter.restore_margin_snapshot(path)["retention"]["serializedBytes"]
+    monkeypatch.setattr(adapter, "_MARGIN_MAX_BYTES", existing_bytes)
+    with pytest.raises(ValueError, match="margin_history_byte_budget"):
+        adapter.retain_margin_snapshot(incoming, path=path, raw=raw)
+    assert path.read_bytes() == before
+    assert adapter.restore_margin_snapshot(path)["rows"] == first["rows"]
+    monkeypatch.setattr(adapter, "_MARGIN_MAX_BYTES", existing_bytes - 1)
+    with pytest.raises(ValueError, match="margin_history_byte_budget"):
+        adapter.restore_margin_snapshot(path)
