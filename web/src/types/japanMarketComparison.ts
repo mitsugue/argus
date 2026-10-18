@@ -89,6 +89,8 @@ export interface JapanMarketComparison {
       testHitRate: number | null; testNaiveRate: number | null; testWilsonLower95: number | null;
       equalWeightsTestHitRate: number | null; predictiveProbabilities: null;
     };
+    /** Past release reactions: with and without, used only when better (2026-10-18). */
+    materialReactionResearch?: MaterialReactionResearch;
     /** What followed each of the seven warning conditions in the same history (2026-10-02). */
     signEventStudy?: SignEventStudy;
   };
@@ -142,3 +144,10 @@ export interface SignEventStudy {
   historicalVintageVerified: false; validationStatus: 'UNVALIDATED';
   predictiveProbabilities: null; actionAuthority: false;
 }
+
+export type ReactionMetrics = { directionalEvaluations: number | null; hits: number | null;
+  hitRate: number | null; naiveMajorityRate: number | null; meanAbsoluteError: number | null };
+export type MaterialReactionResearch = { adopted: boolean; reason: string | null; horizon: number | null;
+  decisionStart: string | null; decisionEnd: string | null; reportStart: string | null; reportEnd: string | null;
+  decisionWith: ReactionMetrics; decisionWithout: ReactionMetrics; heldOutWith: ReactionMetrics; heldOutWithout: ReactionMetrics;
+  researchReactionRows: number; candidatesWithReactions: number; predictiveProbabilities: null };

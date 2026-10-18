@@ -112,6 +112,7 @@ class RuntimeConnection(unittest.TestCase):
             'jp_market_level_map':SimpleNamespace(EPS_BASIS='synthetic-current'), '_JP_MARKET_FEATURE_HISTORY':{},
             '_JP_ANALOG_BACKTEST_CACHE':{}, '_JP_MARKET_FEATURE_CACHE_STATUS':{}, '_jp_market_series_acquisition_status':lambda:{},
             '_JP_MARKET_FEATURE_INPUT_SPANS':{},'_JP_MARKET_SERIES_RECONCILIATION':{},
+            '_JP_HISTORICAL_RELEASES':{'events':[]},'_jp_historical_release_status':lambda:{'status':'NOT_ACQUIRED'},
             '_JP_OFFICIAL_SOURCE_CACHE':SimpleNamespace(snapshot=lambda:{})}
         source = (REPO / 'scanner.py').read_text()
         node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == '_jp_market_comparison_calculate')
@@ -129,5 +130,7 @@ class RuntimeConnection(unittest.TestCase):
         result=ns['_jp_market_comparison_calculate'](1)
         self.assertEqual(len(captured[-1]['reaction_rows']),3)
         self.assertEqual(result['materialReactionAcquisition']['recordsOmittedByBound'],41)
+        self.assertEqual(captured[-1]['research_reaction_rows'],[])
+        self.assertEqual(result['materialReactionAcquisition']['historicalReleases']['source']['status'],'NOT_ACQUIRED')
 
 if __name__=='__main__':unittest.main(verbosity=2)

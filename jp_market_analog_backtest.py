@@ -107,7 +107,8 @@ def horizon_metrics(records, h, *, step=EVALUATION_STEP_SESSIONS, flat_threshold
 
 
 # Relative component weights tried by the search (price shape fixed at 1 as
-# the reference; material reactions are absent from the history today).
+# the reference). Material reactions keep weight 1; whether they enter at all
+# is decided separately by compare_material_reactions (2026-10-18).
 WEIGHT_GRID = tuple((("priceShape", 1.0), ("marketState", m), ("conditionOrder", c))
                     for m in (0.5, 1.0, 2.0) for c in (0.0, 0.5, 1.0, 2.0))
 
@@ -304,3 +305,67 @@ def walk_forward(candidates: Sequence[Mapping[str, Any]], closes: Mapping[str, f
     for h in HORIZONS:
         result["horizons"][str(h)] = horizon_metrics(records, h, step=step, flat_threshold_pct=flat_threshold_pct)
     return result
+
+
+MATERIAL_REACTION_DECISION_HORIZON = 5
+MATERIAL_REACTION_MINIMUM_DECISION = 50
+MATERIAL_REACTION_SIGNIFICANCE = 0.05
+
+
+def compare_material_reactions(without: Mapping[str, Any], with_reactions: Mapping[str, Any], *,
+                               horizon: int = MATERIAL_REACTION_DECISION_HORIZON,
+                               flat_threshold_pct: float = .5,
+                               minimum: int = MATERIAL_REACTION_MINIMUM_DECISION) -> dict[str, Any]:
+    """Owner decision 2026-10-18: past release reactions enter the selection
+    only when they forecast better. Both walk-forwards are compared on the
+    same evaluation dates: the first three quarters decide, the last quarter
+    (seen by neither) is reported for both. Better means a higher directional
+    hit rate in the decision part over at least `minimum` evaluations each.
+    """
+    step = int(without.get("step") or EVALUATION_STEP_SESSIONS)
+    a = {r["anchorDate"]: r for r in without.get("records") or ()}
+    b = {r["anchorDate"]: r for r in with_reactions.get("records") or ()}
+    dates = sorted(set(a) & set(b))
+    def rows(source, chosen):
+        return [{"anchorDate": d, "horizons": {int(k): v for k, v in source[d]["horizons"].items()}} for d in chosen]
+    cut = (len(dates) * 3) // 4
+    decide, report = dates[:cut], dates[cut:]
+    metric = lambda source, chosen: horizon_metrics(rows(source, chosen), horizon, step=step,
+                                                    flat_threshold_pct=flat_threshold_pct)
+    decision = {"without": metric(a, decide), "with": metric(b, decide)}
+    held_out = {"without": metric(a, report), "with": metric(b, report)}
+    enough = all(decision[k]["directionalEvaluations"] >= minimum for k in decision)
+    # A higher rate alone was adopted on pure noise in the 2026-10-18 dry run.
+    # On the same non-overlapping dates, count where only one side was right;
+    # the side with reactions must win by more than chance (one-sided 5%).
+    stride = max(1, math.ceil(horizon / step))
+    def right(source, day):
+        row = source[day]["horizons"].get(str(horizon)) or source[day]["horizons"].get(horizon)
+        if not row:
+            return None
+        call = _classify(row["forecast"] - 100, flat_threshold_pct)
+        return call != "flat" and call == _classify(row["realized"] - 100, flat_threshold_pct)
+    only_with = only_without = 0
+    for day in decide[::stride]:
+        x, y = right(b, day), right(a, day)
+        if x is None or y is None:
+            continue
+        only_with += x and not y
+        only_without += y and not x
+    pairs = only_with + only_without
+    p_value = (sum(math.comb(pairs, k) for k in range(only_with, pairs + 1)) / 2 ** pairs) if pairs else None
+    better = (enough and decision["with"]["hitRate"] is not None and decision["without"]["hitRate"] is not None
+              and decision["with"]["hitRate"] > decision["without"]["hitRate"]
+              and p_value is not None and p_value < MATERIAL_REACTION_SIGNIFICANCE)
+    return {"method": METHOD + "-material-reaction-comparison", "horizon": horizon,
+            "commonEvaluationDates": len(dates),
+            "decisionStart": decide[0] if decide else None, "decisionEnd": decide[-1] if decide else None,
+            "reportStart": report[0] if report else None, "reportEnd": report[-1] if report else None,
+            "decision": decision, "heldOut": held_out, "adopted": bool(better),
+            "pairedOnlyWithRight": only_with, "pairedOnlyWithoutRight": only_without,
+            "pairedOneSidedPValue": p_value,
+            "reason": ("better_hit_rate_in_decision_period" if better else
+                       "too_few_decision_evaluations" if not enough else
+                       "not_better_in_decision_period" if not (decision["with"]["hitRate"] or 0) >
+                       (decision["without"]["hitRate"] or 0) else "difference_within_chance"),
+            "historicalVintageVerified": False, "predictiveProbabilities": None, "actionAuthority": False}

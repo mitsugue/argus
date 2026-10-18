@@ -145,6 +145,7 @@ import argus_notification_brief
 import argus_market_brief           # v13.5.36: Today-top NOW/WHY/NEXT situation brief
 import argus_causal_event_memory    # v13.5.4: PIT causal ledger/flag recovery/analogs (evidence only)
 import jp_market_price_paths
+import jp_market_historical_releases
 import jp_market_series_reconciliation
 import argus_index_history
 import jp_market_valuation
@@ -41259,15 +41260,27 @@ def _jp_market_comparison_calculate(horizon):
         try:
             if missing_calendar:
                 raise ValueError("official_calendar_incomplete")
+            cash = jp_market_material_reactions.cash_rows(stored_history, cached)
             material = jp_market_material_reactions.cached_reactions(material_records,
-                rows=jp_market_material_reactions.cash_rows(stored_history, cached),
-                sessions=sessions, cutoff=cutoff)
+                rows=cash, sessions=sessions, cutoff=cutoff)
         except (ValueError, TypeError, KeyError, AttributeError):
             # A material input failure cannot hide the already received chart.
             material = {"rows": [], "diagnostics": {"status": "DATA_GATED",
                 "reason": "material_input_or_calendar_unavailable",
                 "availableReferenceWindows": 0, "automaticAiCalls": 0,
                 "externalRequests": 0, "actionAuthority": False}}
+        # 2026-10-18 owner decision: past release reactions (archived date,
+        # fixed release time, known at the window's last close). The
+        # comparison uses them only when its walk-forward forecasts better.
+        try:
+            if missing_calendar:
+                raise ValueError("official_calendar_incomplete")
+            research = jp_market_material_reactions.historical_reactions(
+                list(_JP_HISTORICAL_RELEASES["events"]), rows=cash, sessions=sessions, cutoff=cutoff,
+                exclude={(row["seriesId"], row["date"]) for row in material["rows"]})
+        except (ValueError, TypeError, KeyError, AttributeError, NameError) as exc:
+            research = {"rows": [], "diagnostics": {"status": "DATA_GATED", "reason": type(exc).__name__,
+                                                    "availableReferenceWindows": 0, "actionAuthority": False}}
         result = jp_market_price_paths.cached_index_comparison(
             rows, cutoff=cutoff, session_dates=sessions, horizon_sessions=horizon,
             acquired_at=cached.get("acquiredAt"),
@@ -41277,10 +41290,13 @@ def _jp_market_comparison_calculate(horizon):
             state_rows=_JP_MARKET_FEATURE_HISTORY.get("features", ()),
             condition_rows=_JP_MARKET_FEATURE_HISTORY.get("conditions", ()),
             reaction_rows=material["rows"],
+            research_reaction_rows=research["rows"],
             # Walk-forward validation, computed when the history or the
             # policy changes and shared by the four horizons (2026-09-30).
             backtest_cache=_JP_ANALOG_BACKTEST_CACHE)
-        result["materialReactionAcquisition"] = {**material["diagnostics"], "recordsOmittedByBound": omitted}
+        result["materialReactionAcquisition"] = {**material["diagnostics"], "recordsOmittedByBound": omitted,
+                                                 "historicalReleases": {**research["diagnostics"],
+                                                                        "source": _jp_historical_release_status()}}
         result["marketFeatureAcquisition"] = {k: _JP_MARKET_FEATURE_HISTORY.get(k)
             for k in ("status", "lastSuccessfulCalculationAt", "errorClass", "errorReason",
                       "firstCutoff", "lastCutoff", "sourceWarming", "reuseDecision", "calculationWork")}
@@ -42517,6 +42533,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         _fred_us10y_history_dated()
         _jquants_topix_history(fetch=True)
         _fred_history_dated("CPIAUCSL", _US_CPI_CACHE, available_days=50, n=180)
+        _jp_historical_release_refresh()
     try:
         credit_rows = _jpx_credit_rows_effective()
     except Exception:
@@ -47519,6 +47536,60 @@ def _jpx_credit_rows_effective():
     except Exception:
         pass
     return base
+
+
+_JP_HISTORICAL_RELEASES = {"events": [], "status": "NOT_ACQUIRED", "lastAttemptAt": None,
+                           "lastSuccessAt": None, "lastAttemptMonotonic": None, "releases": {}}
+_JP_HISTORICAL_RELEASE_LOCK = threading.Lock()
+
+
+def _jp_historical_release_refresh():
+    """Past release dates of four BLS series from the FRED archive (2026-10-18).
+
+    Four bounded reads, at most once a day, on the existing collect lane. The
+    key goes in the request only; nothing of the response but dates and its
+    digest is kept. A failed series keeps its previous dates."""
+    if not _JP_HISTORICAL_RELEASE_LOCK.acquire(blocking=False):
+        return
+    try:
+        last = _JP_HISTORICAL_RELEASES["lastAttemptMonotonic"]
+        if last is not None and time.monotonic() - last < 20 * 3600 and _JP_HISTORICAL_RELEASES["status"] == "AVAILABLE":
+            return
+        if last is not None and time.monotonic() - last < 3600:
+            return
+        _JP_HISTORICAL_RELEASES.update(lastAttemptAt=_ai_now_iso(), lastAttemptMonotonic=time.monotonic())
+        if not _FRED_API_KEY:
+            _JP_HISTORICAL_RELEASES["status"] = "KEY_NOT_CONFIGURED"
+            return
+        releases = dict(_JP_HISTORICAL_RELEASES["releases"])
+        for code in jp_market_historical_releases.RELEASES:
+            try:
+                response = requests.get(jp_market_historical_releases.SOURCE, params={
+                    **jp_market_historical_releases.request_params(code), "api_key": _FRED_API_KEY},
+                    timeout=15, allow_redirects=False)
+                if response.status_code != 200:
+                    raise ValueError("release_dates_http_unavailable")
+                events = jp_market_historical_releases.events(code, response.content, received_at=_ai_now_iso())
+                releases[code] = {"events": events, "status": "AVAILABLE", "errorClass": None}
+            except Exception as exc:
+                previous = releases.get(code) or {"events": []}
+                releases[code] = {**previous, "status": "FAILED", "errorClass": type(exc).__name__}
+        events = [event for code in sorted(releases) for event in releases[code].get("events") or []]
+        ok = all((releases.get(code) or {}).get("status") == "AVAILABLE" for code in jp_market_historical_releases.RELEASES)
+        _JP_HISTORICAL_RELEASES.update(releases=releases, events=events,
+                                       status="AVAILABLE" if ok else "PARTIAL" if events else "FAILED")
+        if ok:
+            _JP_HISTORICAL_RELEASES["lastSuccessAt"] = _ai_now_iso()
+    finally:
+        _JP_HISTORICAL_RELEASE_LOCK.release()
+
+
+def _jp_historical_release_status():
+    return {"status": _JP_HISTORICAL_RELEASES["status"], "lastAttemptAt": _JP_HISTORICAL_RELEASES["lastAttemptAt"],
+            "lastSuccessAt": _JP_HISTORICAL_RELEASES["lastSuccessAt"],
+            "events": {code: len(row.get("events") or []) for code, row in _JP_HISTORICAL_RELEASES["releases"].items()},
+            "errors": {code: row.get("errorClass") for code, row in _JP_HISTORICAL_RELEASES["releases"].items()
+                       if row.get("errorClass")}}
 
 
 def _fred_history_dated(series_id, cache, *, available_days=1, n=2600):

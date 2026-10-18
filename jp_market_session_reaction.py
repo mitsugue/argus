@@ -25,7 +25,13 @@ def session_close(day):
 def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
-def measure(*, event, rows, sessions, cutoff, instrument=INSTRUMENT):
+#: 2026-10-18 owner decision: past releases (archived date, fixed release time)
+#: are treated as known when the window's last close was published.
+RESEARCH_TIME_BASIS = 'ARCHIVED_RELEASE_DATE_FIXED_TIME_RULE'
+RESEARCH_AVAILABILITY = 'RESEARCH_KNOWN_AT_ENDPOINT_CLOSE'
+
+
+def measure(*, event, rows, sessions, cutoff, instrument=INSTRUMENT, research_availability=False):
     if instrument != INSTRUMENT:
         raise ValueError('cash_index_identity_required')
     if len(rows) > 3000 or len(sessions) > 3000:
@@ -40,7 +46,9 @@ def measure(*, event, rows, sessions, cutoff, instrument=INSTRUMENT):
         raise ValueError('future_event_or_receipt')
     if not event.get('eventId') or not event.get('eventType') or not event.get('sourceRef') or not event.get('sourceSha256'):
         raise ValueError('event_provenance_required')
-    if event.get('timeBasis') not in {'OFFICIAL_EMBARGO_BOUNDARY', 'VERIFIED_ACTUAL_PUBLICATION'}:
+    if research_availability is not (event.get('timeBasis') == RESEARCH_TIME_BASIS):
+        raise ValueError('research_time_basis_requires_research_availability')
+    if not research_availability and event.get('timeBasis') not in {'OFFICIAL_EMBARGO_BOUNDARY', 'VERIFIED_ACTUAL_PUBLICATION'}:
         raise ValueError('scheduled_time_is_not_actual_evidence')
     before = [day for day in sessions if session_close(day) < at]
     after = [day for day in sessions if session_close(day) >= at]
@@ -93,9 +101,11 @@ def measure(*, event, rows, sessions, cutoff, instrument=INSTRUMENT):
             except (ValueError, KeyError, InvalidOperation):
                 out['reason'] = 'price_or_receipt_invalid'
             else:
+                known = (session_close(span[-1]) if research_availability else
+                         max([received, *[instant(row['receivedAt']) for row in selected]]))
                 out.update(status='AVAILABLE', value=float((values[-1] / values[0] - 1) * 100),
-                           periodEnd=span[-1], date=span[-1],
-                           availableFrom=max([received, *[instant(row['receivedAt']) for row in selected]]).isoformat(),
+                           periodEnd=span[-1], date=span[-1], availableFrom=known.isoformat(),
+                           availabilityBasis=RESEARCH_AVAILABILITY if research_availability else 'ACTUAL_RECEIPT',
                            sourceRowsHash=fingerprint(selected), sourceSessionDates=span)
         output.append(out)
     return output
