@@ -41097,7 +41097,8 @@ def _index_research_warm():
                           else _jp_market_comparison_calculate(int(interval)))
                 # 2026-10-18: why each key failed, for the private diagnostics
                 # (a comparison stayed at 10/5 with no recorded reason).
-                outcomes[key] = {"status": result.get("status"), "reason": result.get("reason")}
+                outcomes[key] = {"status": result.get("status"), "reason": result.get("reason"),
+                                 "errorClass": result.get("errorClass"), "errorDetail": result.get("errorDetail")}
                 if result.get("status") in ("unavailable", "expected_skip"):
                     failures.append(key); continue
                 at = _ai_now_iso()
@@ -41352,8 +41353,11 @@ def _jp_market_comparison_calculate(horizon):
             result["comparison"]["limitations"].append(
                 "公式営業日表の範囲外の過去局面は、比較候補から除外しています。")
         return result
-    except (ValueError, TypeError, KeyError, OverflowError):
-        return {**failure, "reason": "index_comparison_input_invalid"}
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        # 2026-10-18: keep which check failed (a fixed message, no data) so the
+        # private diagnostics can name it; the screen still sees the same reason.
+        return {**failure, "reason": "index_comparison_input_invalid",
+                "errorClass": type(exc).__name__, "errorDetail": str(exc)[:120]}
 
 
 _JP_INTERNALS_CACHE = {"prices": {}, "classifications": {}, "restoreAttempted": False}
