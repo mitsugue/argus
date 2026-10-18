@@ -422,7 +422,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     cannot silently compress a twenty-session comparison window.
     """
     from jp_market_analogs import (AnalogPolicy, INSTRUMENT, FEATURE_MAX_AGE_DAYS, _hash, build_episode,
-                                  reference_path, select_episodes)
+                                  reference_path, select_episodes, with_reactions)
     from jp_market_engine import point_in_time_rows
 
     current_per_context = isinstance(valuation, Mapping) and valuation.get("basis") == CURRENT_BASIS
@@ -483,20 +483,29 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     # release reactions (research availability). It replaces the base set only
     # when its walk-forward forecasts better; otherwise it is reported only.
     research = bool(research_reaction_rows) and backtest_cache is not None
-    indexed_with = index((state_rows, condition_rows, [*reaction_rows, *research_reaction_rows])) if research else None
+    indexed_with = index(([*reaction_rows, *research_reaction_rows],))[0] if research else None
 
-    def episode_at(at, price_rows, source=None):
+    def scope(at, price_rows):
         end = _instant(at).date()
         oldest = (end - timedelta(days=max(FEATURE_MAX_AGE_DAYS.values()))).isoformat()
         if price_rows:
             oldest = min(oldest, price_rows[max(0, len(price_rows) - policy.lookback_sessions - 1)]["date"])
-        scoped = [rows[bisect_left(days, oldest):bisect_right(days, end.isoformat())]
-                  for days, rows in (source or indexed)]
+        return oldest, end.isoformat()
+
+    def episode_at(at, price_rows):
+        oldest, end = scope(at, price_rows)
+        scoped = [rows[bisect_left(days, oldest):bisect_right(days, end)] for days, rows in indexed]
         return build_episode(cutoff=at, bars=price_rows, state_rows=scoped[0],
                              condition_rows=scoped[1], reaction_rows=scoped[2], policy=policy)
 
+    def episode_with(episode, at, price_rows):
+        # Only the reactions are read again (2026-10-18 collection-time fix).
+        oldest, end = scope(at, price_rows)
+        days, rows = indexed_with
+        return with_reactions(episode, rows[bisect_left(days, oldest):bisect_right(days, end)])
+
     current = episode_at(cutoff, visible)
-    current_with = episode_at(cutoff, visible, indexed_with) if research else None
+    current_with = episode_with(current, cutoff, visible) if research else None
     if current["status"] != "AVAILABLE":
         return {**base, "reason": "insufficient_complete_index_history"}
     # Limit candidates to dates whose complete lookback exists on the official
@@ -522,7 +531,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
         else:
             candidates.append(episode)
             if research:
-                candidates_with.append(episode_at(row["date"] + "T23:59:59Z", window_rows, indexed_with))
+                candidates_with.append(episode_with(episode, row["date"] + "T23:59:59Z", window_rows))
     validation, search = None, None
     selection_policy = policy
     if backtest_cache is not None:

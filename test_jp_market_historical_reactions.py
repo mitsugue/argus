@@ -164,3 +164,14 @@ def test_runtime_refresh_reads_four_series_once_and_never_keeps_the_key(monkeypa
     scanner._jp_historical_release_refresh()
     assert len(scanner._JP_HISTORICAL_RELEASES['events']) == 8          # previous dates are kept
     assert scanner._jp_historical_release_status()['errors'] == {c: 'OSError' for c in releases.RELEASES}
+
+
+def test_reactions_alone_are_reread_and_equal_a_full_rebuild():
+    from jp_market_analogs import build_episode, with_reactions
+    days, rows, research = comparison_inputs()
+    at = days[400] + 'T23:59:59Z'
+    window = rows[380:401]
+    base = build_episode(cutoff=at, bars=window, reaction_rows=())
+    full = build_episode(cutoff=at, bars=window, reaction_rows=research)
+    assert full['reactions'] and with_reactions(base, research) == full
+    assert with_reactions(full, ()) == base
