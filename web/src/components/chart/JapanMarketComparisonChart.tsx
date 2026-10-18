@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import type { ComparisonPoint, ForecastTrackRecordHorizon, JapanMarketComparison } from '../../types/japanMarketComparison';
 import { useForecastTrackRecord } from '../../hooks/useJapanMarketComparison';
-import { validMaterialReactionResearch } from '../../lib/japanMarketComparison';
+import { MaterialReactionLine } from './MaterialReactionLine';
 import './JapanMarketComparisonChart.css';
 
 const COLOURS = ['#94c5de', '#c7b6ed', '#dfbc83'];
@@ -276,18 +276,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
             : '判定：採用判断の期間で基準を満たさなかったため、重み付けは変えていません。'}</p>
         </section>;
       })()}
-      {validMaterialReactionResearch(document.forecast.materialReactionResearch) && (() => {
-        // 2026-10-18 (owner): one plain line. The figures are from the period
-        // the decision did not see.
-        const r = document.forecast.materialReactionResearch!;
-        const pct = (n: number | null) => n === null ? '—' : `${(n * 100).toFixed(0)}%`;
-        const change = `${pct(r.heldOutWithout.hitRate)} → ${pct(r.heldOutWith.hitRate)}`;
-        return <p className="jmc-material-reaction" data-material-reaction={r.adopted ? 'adopted' : 'not-adopted'}>
-          経済指標の発表反応：{r.adopted
-            ? `使用中（入れると5営業日後の方向の一致率 ${change}・検証${r.heldOutWith.directionalEvaluations ?? 0}件）`
-            : `不使用（入れても当たり方が良くならないため。${change}）`}
-        </p>;
-      })()}
+      <MaterialReactionLine research={document.forecast.materialReactionResearch} />
       {document.forecast.signEventStudy && <p><a href="#today-seven-conditions">七条件の向き・過去成績を見る</a></p>}
       <ul>{document.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}</ul>
     </details>

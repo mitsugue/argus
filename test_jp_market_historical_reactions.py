@@ -203,3 +203,17 @@ def test_one_build_serves_every_horizon_and_equals_a_fresh_build(monkeypatch):
     paths.cached_index_comparison(changed, cutoff=days[-1] + 'T08:00:00Z', session_dates=days,
                                   horizon_sessions=5, backtest_cache=cache, research_reaction_rows=research)
     assert cache['sealedCandidates']['key'] != key and len(builds) > before   # a changed bar rebuilds
+
+
+def test_private_runtime_diagnostics_carry_the_research_counts(monkeypatch):
+    import scanner
+    monkeypatch.setattr(scanner, '_JP_MATERIAL_RESEARCH_LAST', {'historicalEvents': 520, 'research': {'status': 'AVAILABLE'}})
+    monkeypatch.setattr(scanner, '_JP_ANALOG_BACKTEST_CACHE', {'materialReactionResearch': {
+        'adopted': False, 'reason': 'difference_within_chance', 'commonEvaluationDates': 400,
+        'decision': {'with': {'hitRate': .55, 'directionalEvaluations': 120}, 'without': {'hitRate': .53, 'directionalEvaluations': 118}},
+        'heldOut': {'with': {'hitRate': .5, 'directionalEvaluations': 40}, 'without': {'hitRate': .52, 'directionalEvaluations': 41}},
+        'pairedOneSidedPValue': .3}})
+    out = scanner._material_research_diagnostics()
+    assert out['lastCalculation']['historicalEvents'] == 520
+    assert out['decision']['adopted'] is False and out['decision']['heldOutWith']['hitRate'] == .5
+    assert set(out['source']) >= {'status', 'events', 'errors'}

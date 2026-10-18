@@ -34084,6 +34084,12 @@ def api_argus_admin_memory_attribution():
     payload["checkpointPersist"] = _diagnostic_counters_copy(_CHECKPOINT_PERSIST_STATS)
     payload["briefSchedule"] = copy.deepcopy(_MARKET_BRIEF_SCHEDULE)
     payload["financialVerify"] = dict(_JP_FINANCIAL_VERIFY)
+    payload["materialReactionResearch"] = _material_research_diagnostics()
+    payload["indexResearch"] = {
+        **{k: copy.deepcopy(v) for k, v in _INDEX_RESEARCH_STATUS.items() if k != "lastAttemptMonotonic"},
+        "savedCalculatedAt": {key: (row or {}).get("calculatedAt") for key, row in _INDEX_RESEARCH_REPORTS.items()},
+        "featureHistory": {k: _JP_MARKET_FEATURE_HISTORY.get(k) for k in
+                           ("status", "errorClass", "errorReason", "lastSuccessfulCalculationAt", "lastCutoff")}}
     payload["missionPhaseStartedAt"] = _MISSION_PHASE_TIMING.get("startedAt")
     if str(request.args.get("inventory") or "").lower() in ("1", "true", "yes"):
         payload["residentInventory"] = _resident_inventory()
@@ -41082,13 +41088,16 @@ def _index_research_warm():
         if last is not None and time.monotonic() - last < 1800:
             return
         _INDEX_RESEARCH_STATUS.update(status="RUNNING", lastAttemptMonotonic=time.monotonic())
-        failures = []; updated = []; retained = {}
+        failures = []; updated = []; retained = {}; outcomes = {}
         # Fixed existing index universe; no provider requests or LLM calls here.
         for key in sorted(argus_index_research_cache.KEYS):
             try:
                 kind, index, interval = key.split(":")
                 result = (_index_chart_calculate(index, interval) if kind == "chart"
                           else _jp_market_comparison_calculate(int(interval)))
+                # 2026-10-18: why each key failed, for the private diagnostics
+                # (a comparison stayed at 10/5 with no recorded reason).
+                outcomes[key] = {"status": result.get("status"), "reason": result.get("reason")}
                 if result.get("status") in ("unavailable", "expected_skip"):
                     failures.append(key); continue
                 at = _ai_now_iso()
@@ -41108,10 +41117,13 @@ def _index_research_warm():
                 argus_product_naming.require_allowed(value)
                 _INDEX_RESEARCH_REPORTS[key] = value
                 updated.append(key)
-            except Exception:
+            except Exception as exc:
                 failures.append(key)
+                outcomes[key] = {"status": "exception", "reason": type(exc).__name__,
+                                 "detail": str(exc)[:120] if isinstance(exc, (ValueError, KeyError)) else None}
         _INDEX_RESEARCH_STATUS.update(status="PARTIAL" if failures else "AVAILABLE",
-            updated=updated, unavailable=failures, retained=retained, lastCompletedAt=_ai_now_iso())
+            updated=updated, unavailable=failures, retained=retained, lastCompletedAt=_ai_now_iso(),
+            outcomes=outcomes)
         path = _index_research_path()
         if path and updated:
             doc = argus_index_research_cache.envelope(_INDEX_RESEARCH_REPORTS)
@@ -41286,7 +41298,16 @@ def _jp_market_comparison_calculate(horizon):
                 exclude={(row["seriesId"], row["date"]) for row in material["rows"]})
         except (ValueError, TypeError, KeyError, AttributeError, NameError) as exc:
             research = {"rows": [], "diagnostics": {"status": "DATA_GATED", "reason": type(exc).__name__,
+                                                    "errorDetail": str(exc)[:80] if isinstance(exc, ValueError) else None,
                                                     "availableReferenceWindows": 0, "actionAuthority": False}}
+        # 2026-10-18: owner-only counts for the private runtime diagnostics.
+        _JP_MATERIAL_RESEARCH_LAST.clear()
+        _JP_MATERIAL_RESEARCH_LAST.update(at=cutoff, horizon=horizon,
+            historicalEvents=len(_JP_HISTORICAL_RELEASES["events"]),
+            cashRows=len(cash) if "cash" in locals() else None,
+            materialStatus=material["diagnostics"].get("status"), materialReason=material["diagnostics"].get("reason"),
+            research={k: research["diagnostics"].get(k) for k in
+                      ("status", "reason", "errorDetail", "eventCount", "availableReferenceWindows", "gatedReasonCounts")})
         result = jp_market_price_paths.cached_index_comparison(
             rows, cutoff=cutoff, session_dates=sessions, horizon_sessions=horizon,
             acquired_at=cached.get("acquiredAt"),
@@ -47557,6 +47578,20 @@ def _jpx_credit_rows_effective():
 _JP_HISTORICAL_RELEASES = {"events": [], "status": "NOT_ACQUIRED", "lastAttemptAt": None,
                            "lastSuccessAt": None, "lastAttemptMonotonic": None, "releases": {}}
 _JP_HISTORICAL_RELEASE_LOCK = threading.Lock()
+_JP_MATERIAL_RESEARCH_LAST = {}
+
+
+def _material_research_diagnostics():
+    """Counts and statuses of the past-release reactions (owner-only, private store)."""
+    decision = _JP_ANALOG_BACKTEST_CACHE.get("materialReactionResearch") or {}
+    rate = lambda part, side: {k: ((decision.get(part) or {}).get(side) or {}).get(k)
+                               for k in ("directionalEvaluations", "hitRate")}
+    return {"source": _jp_historical_release_status(), "lastCalculation": copy.deepcopy(_JP_MATERIAL_RESEARCH_LAST),
+            "decision": {"adopted": decision.get("adopted"), "reason": decision.get("reason"),
+                         "commonEvaluationDates": decision.get("commonEvaluationDates"),
+                         "decisionWith": rate("decision", "with"), "decisionWithout": rate("decision", "without"),
+                         "heldOutWith": rate("heldOut", "with"), "heldOutWithout": rate("heldOut", "without"),
+                         "pairedOneSidedPValue": decision.get("pairedOneSidedPValue")} if decision else None}
 
 
 def _jp_historical_release_refresh():
