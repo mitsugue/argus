@@ -206,7 +206,14 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
         </section>;
       })()}
 
-      {document.valuationEvidence && (document.valuationEvidence.epsKind === 'PROXY_FROM_CONSTITUENT_FORECAST_EPS'
+      {document.valuationEvidence && document.valuationEvidence.epsKind === 'MARKET_CAP_WEIGHTED_FORWARD_ESTIMATE' &&
+        <p data-valuation-basis="argus-current-estimate">
+          {document.valuationEvidence.date}のPER {valuationNumber(document.valuationEvidence.per)}倍、
+          指数EPS {valuationNumber(document.valuationEvidence.eps)}円は<b>ARGUS推計</b>（構成銘柄の時価総額加重の予想EPS。公式値ではありません）。
+          取得：{new Date(document.valuationEvidence.knownAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST。
+        </p>}
+      {document.valuationEvidence && document.valuationEvidence.epsKind !== 'MARKET_CAP_WEIGHTED_FORWARD_ESTIMATE'
+        && (document.valuationEvidence.epsKind === 'PROXY_FROM_CONSTITUENT_FORECAST_EPS'
         ? <p data-valuation-basis="argus-proxy">
           {document.valuationEvidence.date}の指数ベースPER {valuationNumber(document.valuationEvidence.per)}倍、
           指数EPS {valuationNumber(document.valuationEvidence.eps)}円は<b>ARGUS代理値</b>（構成銘柄の予想EPSとウエートから再構成。公式の指数ベースPERではありません）。

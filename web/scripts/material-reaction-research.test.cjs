@@ -19,5 +19,5 @@ for (const host of ['JapanMarketComparisonChart.tsx', 'NikkeiResearchChart.tsx']
   assert.ok(fs.readFileSync('src/components/chart/' + host, 'utf8').includes('<MaterialReactionLine research='), host);
 // 2026-10-18 (owner): one plain line, adopted or not, with the before/after rate.
 assert.ok(chart.includes('経済指標の発表反応：') && chart.includes('使用中') && chart.includes('不使用'));
-assert.ok(chart.includes('heldOutWithout.hitRate') && !chart.includes('判断期間（'));
+assert.ok(chart.includes('r.heldOutWithout') && chart.includes('r.decisionWithout') && chart.includes('差が偶然の範囲'));
 console.log('material reaction research display contract PASS');
