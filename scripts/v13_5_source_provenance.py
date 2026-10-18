@@ -99,7 +99,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.56).
     # Pinned backend requirements + full Python patch version (v13.7.59).
     # Read-only Render deploy diagnostics (exact reviewed contents; v13.7.59).
-    '.github/workflows/render-deploy-diagnostics.yml': 'd59bd1806c81ee24f67cc545effb86295a428b6d',
+    '.github/workflows/render-deploy-diagnostics.yml': '7d8750603e9c9132d55a671ba7eb00acd60f99ef',
     'scripts/render_deploy_diagnostics.py': '232e235b15057b52754899eace7f847e54fd4344',
     'test_render_deploy_diagnostics.py': 'ffbcdda6f9c27aabff883e93bf73b03d7be550b4',
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
@@ -686,6 +686,9 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_private_diagnostics_store.py",
+    "scripts/private_diagnostics_store.py",
+    ".github/workflows/breadth-freshness.yml",
     "test_argus_jgb_archive_original.py",
     "web/scripts/material-reaction-research.test.cjs",
     "test_jp_market_historical_reactions.py",

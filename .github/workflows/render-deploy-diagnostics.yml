@@ -34,12 +34,10 @@ jobs:
             --service-id srv-d8j2hts8aovs738s1in0 \
             --limit "$DEPLOY_LIMIT" \
             --output artifacts/render-deploy-diagnostics/deploys.json \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Publish the diagnostics
+            > artifacts/render-deploy-diagnostics/summary.txt
+      # 2026-10-18: kept in the owner's private repository, not a public artifact.
+      - name: Store the diagnostics privately
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: render-deploy-diagnostics-${{ github.run_id }}
-          path: artifacts/render-deploy-diagnostics
-          if-no-files-found: ignore
-          retention-days: 7
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: python3 -B scripts/private_diagnostics_store.py --kind render --run-id "${{ github.run_id }}" artifacts/render-deploy-diagnostics

@@ -32,11 +32,11 @@ jobs:
           --retry-seconds 600
           --poll-seconds 30
           --max-wait-seconds 7200
-      - name: Publish freshness evidence
+          > "$RUNNER_TEMP/breadth-freshness.log"
+      # 2026-10-18: the evidence goes to the owner's private repository; the
+      # public run log keeps only the runner's exit status.
+      - name: Store freshness evidence privately
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: breadth-freshness-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/breadth-freshness.json
-          if-no-files-found: error
-          retention-days: 30
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: python3 -B scripts/private_diagnostics_store.py --kind breadth --run-id "${{ github.run_id }}" "$RUNNER_TEMP/breadth-freshness.json" "$RUNNER_TEMP/breadth-freshness.log"

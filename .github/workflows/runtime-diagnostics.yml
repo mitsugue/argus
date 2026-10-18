@@ -36,17 +36,14 @@ jobs:
             "https://argus-backend-3j2m.onrender.com/api/argus/admin/memory-attribution?threads=1&inventory=1")
           echo "http=$code"
           test "$code" = "200"
-      - name: Summarise for the run page
+      - name: Summarise privately
         run: |
           python3 -B scripts/runtime_diagnostics_summary.py \
-            artifacts/runtime-diagnostics/snapshot.json >> "$GITHUB_STEP_SUMMARY"
-          python3 -B scripts/runtime_diagnostics_summary.py \
-            artifacts/runtime-diagnostics/snapshot.json
-      - name: Publish the snapshot
+            artifacts/runtime-diagnostics/snapshot.json > artifacts/runtime-diagnostics/summary.txt
+      # 2026-10-18: the public repository's logs and artifacts are readable by
+      # anyone; the snapshot goes to the owner's private repository only.
+      - name: Store the snapshot privately
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: runtime-diagnostics-${{ github.run_id }}
-          path: artifacts/runtime-diagnostics
-          if-no-files-found: error
-          retention-days: 14
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: python3 -B scripts/private_diagnostics_store.py --kind runtime --run-id "${{ github.run_id }}" artifacts/runtime-diagnostics
