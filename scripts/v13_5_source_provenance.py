@@ -48,7 +48,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/lib/sessionViewCheckpoint.ts': '80b37d805c58421d942def76de5d378e8449068c',
     'web/src/lib/sharedPollingStore.ts': '78133e9e7a35b1596c4de46a518f8c36782e6fec',
     # Static-only prompt cache boundary and optional write-usage compatibility.
-    'test_argus_brief_prompt_cache.py': '7bca36de1987fb577ffb1b62e28fb1f84b4881bb',
+    'test_argus_brief_prompt_cache.py': '1e16e227c473be10bad19843458a14d469f77d9b',
     # 信用環境の公式入力・保存・表示を確認した正確な内容。
     'argus_credit_conditions.py': '105821dbe9aa30eef2eeca58f86d67eedebba720',
     'docs/operations/credit-conditions.md': '8b0ecf232effff256091c4f0de8f10805e942474',
@@ -686,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_caos_scan_private_notes.py",
     "test_private_diagnostics_store.py",
     "scripts/private_diagnostics_store.py",
     ".github/workflows/breadth-freshness.yml",
