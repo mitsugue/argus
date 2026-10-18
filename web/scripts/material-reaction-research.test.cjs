@@ -14,7 +14,9 @@ assert.ok(validMaterialReactionResearch(block));
 for (const bad of [null, { ...block, adopted: 'yes' }, { ...block, predictiveProbabilities: .6 },
   { ...block, decisionWith: { ...m, hitRate: -1 } }, { ...block, researchReactionRows: 1.5 }, { ...block, heldOutWith: null }])
   assert.equal(validMaterialReactionResearch(bad), false);
-const chart = fs.readFileSync('src/components/chart/JapanMarketComparisonChart.tsx', 'utf8');
+const chart = fs.readFileSync('src/components/chart/MaterialReactionLine.tsx', 'utf8');
+for (const host of ['JapanMarketComparisonChart.tsx', 'NikkeiResearchChart.tsx'])
+  assert.ok(fs.readFileSync('src/components/chart/' + host, 'utf8').includes('<MaterialReactionLine research='), host);
 // 2026-10-18 (owner): one plain line, adopted or not, with the before/after rate.
 assert.ok(chart.includes('経済指標の発表反応：') && chart.includes('使用中') && chart.includes('不使用'));
 assert.ok(chart.includes('heldOutWithout.hitRate') && !chart.includes('判断期間（'));
