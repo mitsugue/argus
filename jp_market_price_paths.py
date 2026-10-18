@@ -288,6 +288,18 @@ def reference_ensemble(selection: Mapping[str, Any], paths: Sequence[Mapping[str
     }
 
 
+FEATURE_LABELS_JA = {
+    "credit.ratio": "二市場信用倍率", "credit.ratio_change": "二市場信用倍率の変化",
+    "credit.loss_pct": "信用評価損失率", "margin1570.ratio": "日経レバ信用倍率",
+    "margin1570.long_change_pct": "日経レバ買残の変化率", "margin1570.short_change_pct": "日経レバ売残の変化率",
+    "relative_jp_us.return20": "日米相対力", "vix.level": "VIX水準", "vix.change5": "VIXの変化",
+    "vix.macd_histogram": "VIXのMACD", "foreign_flow.net4w": "海外投資家の4週フロー",
+    "fx.usdjpy_change5": "ドル円の変化率", "rate.jp10y_change5": "日本10年金利の変化幅",
+    "rate.us10y_change5": "米国10年金利の変化幅", "nt.ratio_change5": "NT倍率の変化率",
+    "event.sq_sessions": "SQまでの営業日数",
+}
+
+
 def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any],
                         paths: Sequence[Mapping[str, Any]], ensemble: Mapping[str, Any], *,
                         scale: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -314,16 +326,7 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
               "marketState": "同じ尺度の市場状態を比較",
               "conditionOrder": "条件の発生順序を比較",
               "materialReaction": "同種の材料に対する価格反応を比較"}
-    feature_labels = {
-        "credit.ratio": "二市場信用倍率", "credit.ratio_change": "二市場信用倍率の変化",
-        "credit.loss_pct": "信用評価損失率", "margin1570.ratio": "日経レバ信用倍率",
-        "margin1570.long_change_pct": "日経レバ買残の変化率", "margin1570.short_change_pct": "日経レバ売残の変化率",
-        "relative_jp_us.return20": "日米相対力", "vix.level": "VIX水準", "vix.change5": "VIXの変化",
-        "vix.macd_histogram": "VIXのMACD", "foreign_flow.net4w": "海外投資家の4週フロー",
-        "fx.usdjpy_change5": "ドル円の変化率", "rate.jp10y_change5": "日本10年金利の変化幅",
-        "rate.us10y_change5": "米国10年金利の変化幅", "nt.ratio_change5": "NT倍率の変化率",
-        "event.sq_sessions": "SQまでの営業日数",
-    }
+    feature_labels = FEATURE_LABELS_JA
     # A proxy-derived state is named as such wherever its label appears; the
     # official figure and the ARGUS proxy are never shown under one name.
     proxy_keys = {key for key, state in (current.get("states") or {}).items()
@@ -758,7 +761,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                  "materialReaction": "発表への反応"}
         comps = {k: v for k, v in (closest.get("componentDistances") or {}).items() if isinstance(v, (int, float))}
         main = max(comps, key=comps.get) if comps else None
-        names = ([label_for(row["feature"]) for row in closest.get("largestDifferences") or []][:2]
+        names = ([FEATURE_LABELS_JA.get(row["feature"], "市場指標") for row in closest.get("largestDifferences") or []][:2]
                  if main == "marketState" else [parts.get(main, "市場条件")] if main else [])
         document["noAnalogExplanation"] = {**closest, "maximumDistance": limit,
             "textJa": (f"今週は過去10年に似た局面がありません（最も近い{closest['anchorDate']}でも距離"
