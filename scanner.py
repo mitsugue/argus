@@ -34093,6 +34093,12 @@ def api_argus_admin_memory_attribution():
     payload["missionPhaseStartedAt"] = _MISSION_PHASE_TIMING.get("startedAt")
     if str(request.args.get("inventory") or "").lower() in ("1", "true", "yes"):
         payload["residentInventory"] = _resident_inventory()
+    # 2026-10-19 (owner): `?analog-inputs=1` adds the comparison's inputs
+    # (index bars, sessions, market-condition rows; no credentials, no owner
+    # data) on this existing owner route, for the private offline study.
+    if str(request.args.get("analog-inputs") or "") == "1":
+        payload["analogResearchInputs"] = {k: (list(v) if isinstance(v, tuple) else v)
+                                           for k, v in _JP_ANALOG_RESEARCH_INPUTS.items()}
     if str(request.args.get("market-input-backup") or "") == "1":
         import argus_market_input_backup
         payload["marketInputBackup"] = argus_market_input_backup.status_projection(
@@ -41309,6 +41315,14 @@ def _jp_market_comparison_calculate(horizon):
             materialStatus=material["diagnostics"].get("status"), materialReason=material["diagnostics"].get("reason"),
             research={k: research["diagnostics"].get(k) for k in
                       ("status", "reason", "errorDetail", "eventCount", "availableReferenceWindows", "gatedReasonCounts")})
+        # 2026-10-19 (owner): the comparison's own inputs, kept by reference
+        # (no copy) so the owner-only diagnostics can hand them to an offline
+        # walk-forward study of the selection rule. Nothing reads them here.
+        _JP_ANALOG_RESEARCH_INPUTS.clear()
+        _JP_ANALOG_RESEARCH_INPUTS.update(cutoff=cutoff, horizon=horizon, bars=rows, sessions=sessions,
+            stateRows=_JP_MARKET_FEATURE_HISTORY.get("features", ()),
+            conditionRows=_JP_MARKET_FEATURE_HISTORY.get("conditions", ()),
+            reactionRows=material["rows"], researchReactionRows=research["rows"])
         result = jp_market_price_paths.cached_index_comparison(
             rows, cutoff=cutoff, session_dates=sessions, horizon_sessions=horizon,
             acquired_at=cached.get("acquiredAt"),
@@ -47583,6 +47597,7 @@ _JP_HISTORICAL_RELEASES = {"events": [], "status": "NOT_ACQUIRED", "lastAttemptA
                            "lastSuccessAt": None, "lastAttemptMonotonic": None, "releases": {}}
 _JP_HISTORICAL_RELEASE_LOCK = threading.Lock()
 _JP_MATERIAL_RESEARCH_LAST = {}
+_JP_ANALOG_RESEARCH_INPUTS = {}
 
 
 def _material_research_diagnostics():
