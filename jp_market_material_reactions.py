@@ -124,3 +124,49 @@ def cached_reactions(records, *, rows, sessions, cutoff):
         'availableReferenceWindows': len(output), 'gatedReasonCounts': dict(sorted(reasons.items())),
         'historicalVintageVerified': False, 'automaticAiCalls': 0, 'externalRequests': 0,
         'productionWrites': 0, 'actionAuthority': False, 'probability': None}}
+
+
+#: Past release events read per comparison (four series, about ten years).
+MAX_HISTORICAL_EVENTS = 800
+
+
+def historical_reactions(events, *, rows, sessions, cutoff, exclude=()):
+    """Reaction windows of past releases, known at each window's last close.
+
+    Owner decision 2026-10-18: research availability, a separate basis from the
+    receipts above. `exclude` holds (seriesId, date) already measured from
+    evidenced records, which take precedence; a later close cannot rewrite them.
+    """
+    if len(events) > MAX_HISTORICAL_EVENTS:
+        raise ValueError('historical_event_bound_exceeded')
+    taken = set(exclude); reasons = Counter(); output = []
+    for event in events:
+        try:
+            references = measure(event=event, rows=rows, sessions=sessions, cutoff=cutoff,
+                                 research_availability=True)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            reasons['historical_event_or_cash_evidence_invalid'] += 1
+            continue
+        for row in references:
+            if row['status'] != 'AVAILABLE':
+                reasons[row['reason']] += 1
+                continue
+            if isinstance(row['value'], bool) or not math.isfinite(row['value']):
+                reasons['nonfinite_reaction'] += 1
+                continue
+            series = 'material_reaction.' + row['eventType'] + '.' + str(row['reactionWindowSessions'])
+            if (series, row['date']) in taken:
+                reasons['evidenced_record_takes_precedence'] += 1
+                continue
+            taken.add((series, row['date']))
+            row.update(seriesId=series, derivationBasis='DAILY_CLOSE_REFERENCE_NOT_INTRADAY_ATTRIBUTION',
+                       validationStatus='UNVALIDATED')
+            row['sourceSha256'] = fingerprint(row)
+            output.append(row)
+    return {'rows': output, 'diagnostics': {
+        'status': 'AVAILABLE' if output else 'DATA_GATED', 'eventCount': len(events),
+        'availableReferenceWindows': len(output), 'gatedReasonCounts': dict(sorted(reasons.items())),
+        'timeBasis': 'ARCHIVED_RELEASE_DATE_FIXED_TIME_RULE',
+        'availabilityBasis': 'RESEARCH_KNOWN_AT_ENDPOINT_CLOSE',
+        'historicalVintageVerified': False, 'actualPublicationTimeVerified': False,
+        'automaticAiCalls': 0, 'actionAuthority': False, 'probability': None}}

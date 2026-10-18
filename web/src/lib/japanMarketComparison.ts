@@ -227,3 +227,14 @@ export function validForecastTrackRecord(v: unknown): v is ForecastTrackRecord {
     && ['INSUFFICIENT_SAMPLE', 'ABOVE_BASELINE', 'NOT_ABOVE_BASELINE'].includes(h.status)
     && (h.status === 'INSUFFICIENT_SAMPLE') === (h.directionalForecasts < value.minimumDirectionalForecasts));
 }
+
+// 2026-10-18: optional; a malformed block hides only its own lines.
+const metric = (v: unknown) => !!v && typeof v === 'object' && ['directionalEvaluations', 'hits', 'hitRate', 'naiveMajorityRate',
+  'meanAbsoluteError'].every(k => { const x = (v as Record<string, unknown>)[k]; return x === null || (typeof x === 'number' && Number.isFinite(x) && x >= 0); });
+export function validMaterialReactionResearch(v: unknown): boolean {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.adopted === 'boolean' && r.predictiveProbabilities === null
+    && Number.isSafeInteger(r.researchReactionRows) && Number.isSafeInteger(r.candidatesWithReactions)
+    && ['decisionWith', 'decisionWithout', 'heldOutWith', 'heldOutWithout'].every(k => metric(r[k]));
+}

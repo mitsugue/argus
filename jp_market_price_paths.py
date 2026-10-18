@@ -412,7 +412,8 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                             state_rows: Sequence[Mapping[str, Any]] = (),
                             condition_rows: Sequence[Mapping[str, Any]] = (),
                             reaction_rows: Sequence[Mapping[str, Any]] = (),
-                            policy=None, backtest_cache: dict | None = None) -> dict[str, Any]:
+                            policy=None, backtest_cache: dict | None = None,
+                            research_reaction_rows: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
     """Connect cached daily observations to the existing four-layer calculation.
 
     Historical bars are the source's currently reported history. Their session
@@ -458,34 +459,44 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     from bisect import bisect_left, bisect_right
     from datetime import date, timedelta
     evidence = (state_rows, condition_rows, reaction_rows)
-    if sum(len(rows) for rows in evidence) > 60000:
+    if sum(len(rows) for rows in evidence) + len(research_reaction_rows) > 60000:
         raise ValueError("market_evidence_history_bound_exceeded")
-    indexed = []
-    for rows in evidence:
-        dated = []
-        for row in rows:
-            if not isinstance(row, Mapping):
-                continue
-            day = str(row.get("periodEnd") or row.get("date") or "")[:10]
-            try:
-                date.fromisoformat(day)
-            except ValueError:
-                continue
-            dated.append((day, dict(row)))
-        dated.sort(key=lambda pair: pair[0])
-        indexed.append(([pair[0] for pair in dated], [pair[1] for pair in dated]))
 
-    def episode_at(at, price_rows):
+    def index(groups):
+        out = []
+        for rows in groups:
+            dated = []
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    continue
+                day = str(row.get("periodEnd") or row.get("date") or "")[:10]
+                try:
+                    date.fromisoformat(day)
+                except ValueError:
+                    continue
+                dated.append((day, dict(row)))
+            dated.sort(key=lambda pair: pair[0])
+            out.append(([pair[0] for pair in dated], [pair[1] for pair in dated]))
+        return out
+    indexed = index(evidence)
+    # 2026-10-18 owner decision: a second, separately sealed set adds past
+    # release reactions (research availability). It replaces the base set only
+    # when its walk-forward forecasts better; otherwise it is reported only.
+    research = bool(research_reaction_rows) and backtest_cache is not None
+    indexed_with = index((state_rows, condition_rows, [*reaction_rows, *research_reaction_rows])) if research else None
+
+    def episode_at(at, price_rows, source=None):
         end = _instant(at).date()
         oldest = (end - timedelta(days=max(FEATURE_MAX_AGE_DAYS.values()))).isoformat()
         if price_rows:
             oldest = min(oldest, price_rows[max(0, len(price_rows) - policy.lookback_sessions - 1)]["date"])
         scoped = [rows[bisect_left(days, oldest):bisect_right(days, end.isoformat())]
-                  for days, rows in indexed]
+                  for days, rows in (source or indexed)]
         return build_episode(cutoff=at, bars=price_rows, state_rows=scoped[0],
                              condition_rows=scoped[1], reaction_rows=scoped[2], policy=policy)
 
     current = episode_at(cutoff, visible)
+    current_with = episode_at(cutoff, visible, indexed_with) if research else None
     if current["status"] != "AVAILABLE":
         return {**base, "reason": "insufficient_complete_index_history"}
     # Limit candidates to dates whose complete lookback exists on the official
@@ -498,18 +509,20 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                 session_dates[position - policy.lookback_sessions:position + 1])
     if not complete_window(current):
         return {**base, "reason": "current_exchange_sessions_missing"}
-    candidates = []
+    candidates, candidates_with = [], []
     excluded = {"missingCalendarOrPriceSession": 0, "incompleteEpisode": 0}
-    for index in range(policy.lookback_sessions, len(visible) - policy.lookback_sessions - 1):
-        row = visible[index]
-        episode = episode_at(row["date"] + "T23:59:59Z",
-                             visible[index - policy.lookback_sessions:index + 1])
+    for position in range(policy.lookback_sessions, len(visible) - policy.lookback_sessions - 1):
+        row = visible[position]
+        window_rows = visible[position - policy.lookback_sessions:position + 1]
+        episode = episode_at(row["date"] + "T23:59:59Z", window_rows)
         if episode["status"] != "AVAILABLE":
             excluded["incompleteEpisode"] += 1
         elif not complete_window(episode):
             excluded["missingCalendarOrPriceSession"] += 1
         else:
             candidates.append(episode)
+            if research:
+                candidates_with.append(episode_at(row["date"] + "T23:59:59Z", window_rows, indexed_with))
     validation, search = None, None
     selection_policy = policy
     if backtest_cache is not None:
@@ -533,14 +546,26 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                      "componentWeights": list(policy.component_weights),
                      "stateHistory": _hash(point_in_time_rows(
                          [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0]),
-                     "valuationBasis": (valuation or {}).get("basis")})
+                     "valuationBasis": (valuation or {}).get("basis"),
+                     "researchReactions": _hash([episode["snapshotId"] for episode in candidates_with]) if research else None})
         if backtest_cache.get("key") != key:
             closes = {row["date"]: float(row["close"]) for row in visible if row.get("close")}
             result = backtest.walk_forward(candidates, closes, session_dates, policy=policy, state_rows=state_rows)
-            searched = backtest.weight_search(candidates, closes, session_dates, policy=policy, state_rows=state_rows)
+            comparison = None
+            if research:
+                result_with = backtest.walk_forward(candidates_with, closes, session_dates, policy=policy,
+                                                    state_rows=state_rows)
+                comparison = backtest.compare_material_reactions(result, result_with)
+                if comparison["adopted"]:
+                    result = result_with
+            chosen = candidates_with if comparison and comparison["adopted"] else candidates
+            searched = backtest.weight_search(chosen, closes, session_dates, policy=policy, state_rows=state_rows)
             backtest_cache.clear()
-            backtest_cache.update(key=key, result=result, search=searched)
+            backtest_cache.update(key=key, result=result, search=searched, materialReactionResearch=comparison)
         validation, search = backtest_cache["result"], backtest_cache.get("search")
+        research_result = backtest_cache.get("materialReactionResearch")
+        if research and research_result and research_result.get("adopted"):
+            current, candidates = current_with, candidates_with
         if search and search.get("adopted"):
             from dataclasses import replace
             selection_policy = replace(policy, component_weights=tuple(sorted(search["chosenWeights"].items())))
@@ -553,6 +578,24 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     scale = index_valuation_scale(valuation, cutoff=cutoff, anchor_date=current["anchorDate"],
                                   anchor_price=current["window"][-1]["close"])
     document = comparison_document(current, selection, paths, ensemble, scale=scale)
+    if research:
+        result = backtest_cache.get("materialReactionResearch") or {}
+        pick = lambda part, side: {k: (result.get(part) or {}).get(side, {}).get(k) for k in
+                                   ("directionalEvaluations", "hits", "hitRate", "naiveMajorityRate", "meanAbsoluteError")}
+        document["forecast"]["materialReactionResearch"] = {
+            "adopted": bool(result.get("adopted")), "reason": result.get("reason"), "horizon": result.get("horizon"),
+            "decisionStart": result.get("decisionStart"), "decisionEnd": result.get("decisionEnd"),
+            "reportStart": result.get("reportStart"), "reportEnd": result.get("reportEnd"),
+            "decisionWith": pick("decision", "with"), "decisionWithout": pick("decision", "without"),
+            "heldOutWith": pick("heldOut", "with"), "heldOutWithout": pick("heldOut", "without"),
+            "pairedOnlyWithRight": result.get("pairedOnlyWithRight"),
+            "pairedOnlyWithoutRight": result.get("pairedOnlyWithoutRight"),
+            "pairedOneSidedPValue": result.get("pairedOneSidedPValue"),
+            "researchReactionRows": len(research_reaction_rows),
+            "candidatesWithReactions": sum(1 for episode in candidates_with if episode.get("reactions")),
+            "timeBasis": "ARCHIVED_RELEASE_DATE_FIXED_TIME_RULE",
+            "availabilityBasis": "RESEARCH_KNOWN_AT_ENDPOINT_CLOSE",
+            "historicalVintageVerified": False, "predictiveProbabilities": None}
     if validation is not None:
         adopted = bool(search and search.get("adopted"))
         # With adopted weights the reported figures are the final quarter's,
