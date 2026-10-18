@@ -72,7 +72,7 @@ def _read(get, url, limit, *, headers=None):
         return b''.join(chunks), dict(response.headers)
 
 
-def refresh(state, *, now_iso, calendar, get, fx_rows=(), clock=None):
+def refresh(state, *, now_iso, calendar, get, fx_rows=(), clock=None, retain_archive=None):
     """At most ten bounded official reads; pending/failed acquisition retries hourly.
 
     Source hash changes wait for a reviewed table edition. Old observations and
@@ -168,6 +168,15 @@ def refresh(state, *, now_iso, calendar, get, fx_rows=(), clock=None):
             archived = [row for row in archived if not saved.get((row['tenorYears'],row['sessionDate'])) or
                 saved[(row['tenorYears'],row['sessionDate'])].get('sourceKind')=='OFFICIAL_HISTORICAL_COMPILATION']
             candidates += auctions.missing_candidates(state,auctions.ledger_candidates(archived))
+            # 2026-10-18 (owner approved): keep the workbook itself privately.
+            # A failed save never blocks the rows; the status says so.
+            control['auctionArchiveOriginalStatus'] = 'NOT_CONFIGURED'
+            if retain_archive is not None:
+                try:
+                    retain_archive(raw, received)
+                    control['auctionArchiveOriginalStatus'] = 'RETAINED'
+                except Exception:
+                    control['auctionArchiveOriginalStatus'] = 'RETENTION_FAILED'
             control.update(auctionArchiveStatus='AVAILABLE',auctionArchiveSuccessAt=received,
                 auctionArchiveSourceHash=sha256(raw).hexdigest(),auctionArchiveImportedCandidateCount=len(archived),
                 auctionArchiveHistoricalVintageVerified=False)
@@ -197,6 +206,7 @@ def refresh(state, *, now_iso, calendar, get, fx_rows=(), clock=None):
     control['auctionArchiveReport']={'status':control.get('auctionArchiveStatus','NOT_RUN'),
         'lastSuccessAt':control.get('auctionArchiveSuccessAt'),'sourceUrl':auctions.ARCHIVE_URL,
         'sourceHash':control.get('auctionArchiveSourceHash'),'historicalVintageVerified':False,
+        'originalStatus':control.get('auctionArchiveOriginalStatus','NOT_RUN'),
         'actionAuthority':False,'predictivePerformance':'UNVALIDATED',
         'series':{str(tenor):{'rowCount':len(selected),
             'firstSessionDate':min((r['sessionDate'] for r in selected),default=None),
@@ -266,6 +276,11 @@ def public_document(state):
     if isinstance(auction_report, dict):
         document['auctions'] = deepcopy(auction_report)
         document['auctionAcquisitionStatus'] = stored.get('auctionAcquisitionStatus', 'NOT_RUN')
+        # 2026-10-18: the market rule's own record still says the auctions are
+        # not connected; that string is part of its id and stays there. The
+        # returned document shows the connection that exists.
+        if isinstance(document.get('market'), dict) and document['market'].get('auctionStatus') == 'NOT_CONNECTED':
+            document['market']['auctionStatus'] = 'CONNECTED_SEPARATELY'
     if isinstance(stored.get('auctionArchiveReport'),dict):
         document['auctionHistory']=deepcopy(stored['auctionArchiveReport'])
     return document

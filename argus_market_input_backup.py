@@ -17,6 +17,7 @@ import time
 import argus_earnings_history as earnings
 import jp_market_acquisition as sources
 import argus_credit_conditions as credit
+import argus_jgb_auction as auctions
 from argus_analysis_history_backup import CHUNK_BYTES, MAX_ARCHIVE_BYTES, MAX_SYNC_SECONDS
 
 PRIVATE_REPO='mitsugue/argus-l2b-private'
@@ -76,7 +77,7 @@ def status_projection(state, *, worker_active=False):
             and 0<=value<=10000000 and math.isfinite(value)}
     if isinstance(state.get('counts'),dict):
         out['counts']={k:v for k,v in state['counts'].items() if k in
-            {'financial','sector17','creditConditions','observations','coverageReceipts'}
+            {'financial','sector17','creditConditions','jgbArchive','observations','coverageReceipts'}
             and type(v) is int and 0<=v<=10000000}
     if out['status']=='VERIFIED' and re.fullmatch(r'[0-9a-f]{64}',str(state.get('manifestSha256',''))):
         out['manifestSha256']=state['manifestSha256']
@@ -127,6 +128,21 @@ def retain_sector(path,raw,*,symbol,received_at):
     return {'status':'RETAINED','sourceResponseSha256':digest,'rows':len(rows),'receivedAt':received_at}
 
 
+def retain_jgb_archive(path,raw,*,received_at):
+    """The official auction-history workbook as received (2026-10-18, owner approved).
+
+    Kept once per distinct content in the existing source store, so the private
+    backup can read the original back; the ledger rows stay the authority."""
+    rows=auctions.parse_archive(raw,acquired_at=received_at)
+    digest=_hash(raw);raw_id=_hash((auctions.ARCHIVE_URL+':'+digest).encode())
+    db=sources.connect(path)
+    try:
+        with db:
+            db.execute('INSERT OR IGNORE INTO raw_sources VALUES(?,?,?,?,?)',(raw_id,auctions.ARCHIVE_URL,digest,received_at,raw))
+    finally:db.close()
+    return {'status':'RETAINED','sourceResponseSha256':digest,'rows':len(rows),'receivedAt':received_at}
+
+
 def _validate_original(url,raw):
     if credit.approved_url(url):
         credit.validate_original(url,raw)
@@ -171,13 +187,16 @@ def snapshot(path,directory,*,check_budget=None,progress=None):
             stage('SNAPSHOT_ORIGINALS')
             for identity,url,digest,received,raw in db.execute('SELECT id,url,sha256,received_at,raw FROM raw_sources ORDER BY id'):
                 check()
-                if url!=earnings.URL and not credit.approved_url(url) and not re.fullmatch(r'https://api\.jquants\.com/v2/equities/bars/daily\?code=16(?:1[7-9]|2[0-9]|3[0-3])',url):continue
+                if url!=earnings.URL and url!=auctions.ARCHIVE_URL and not credit.approved_url(url) and not re.fullmatch(r'https://api\.jquants\.com/v2/equities/bars/daily\?code=16(?:1[7-9]|2[0-9]|3[0-3])',url):continue
                 bound=credit.MAX_BYTES if credit.approved_url(url) else sources.MAX_BYTES
                 if len(raw)>bound or _hash(raw)!=digest or identity!=_hash((url+':'+digest).encode()):
                     raise ValueError('private_original_integrity')
-                _validate_original(url,raw);sources._time(received);ids.add(identity)
+                if url==auctions.ARCHIVE_URL:auctions.parse_archive(raw,acquired_at=received)
+                else:_validate_original(url,raw)
+                sources._time(received);ids.add(identity)
                 write({'kind':'raw','id':identity,'url':url,'sha256':digest,'receivedAt':received,'dataBase64':base64.b64encode(raw).decode()})
-                kind='creditConditions' if credit.approved_url(url) else 'financial' if url==earnings.URL else 'sector17'
+                kind=('creditConditions' if credit.approved_url(url) else 'financial' if url==earnings.URL
+                      else 'jgbArchive' if url==auctions.ARCHIVE_URL else 'sector17')
                 counts[kind]=counts.get(kind,0)+1
             stage('SNAPSHOT_OBSERVATIONS')
             # The read transaction fixes every source version for this export.
