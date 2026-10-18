@@ -155,8 +155,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/ACCEPTANCE_FAILURE_EVIDENCE.md': '2f425f275db6065af5acaa5584d029d9d4771289',
     'web/scripts/business-failure-evidence.test.mjs': '6df1cca2b9d6962b281a8adb6becc2fb0678efae',
     'web/scripts/owner-artifact-workflows.test.mjs': 'e5cbf535944796d649ebd50402c36a567f3cf944',
-    'web/scripts/owner-artifact-envelope.test.mjs': '6f7806eaa5efca51c5f12ee9daa6af216203d772',
-    'web/scripts/owner-artifact-envelope.mjs': '2a1965f6f9c4a2c83baebda864bd8c704ab9673d',
+    'web/scripts/owner-artifact-envelope.test.mjs': '0019b7dceebaade7d7f2023a037f687de2c58a85',
+    'web/scripts/owner-artifact-envelope.mjs': '2029bfd71890ac6c6717d3f5e360ba74fb2974bf',
     'web/scripts/owner-artifact-browser.test.mjs': '645350049829f7d6f4377158787366776fe90399',
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
@@ -686,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_checkpoint_source_sealed.py",
     "test_analog_research_inputs.py",
     "test_jp_market_recent_yardstick.py",
     "web/src/components/chart/MaterialReactionLine.tsx",
