@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import type { ComparisonPoint, ForecastTrackRecordHorizon, JapanMarketComparison } from '../../types/japanMarketComparison';
 import { useForecastTrackRecord } from '../../hooks/useJapanMarketComparison';
-import { MaterialReactionLine } from './MaterialReactionLine';
+import { MaterialReactionLine, YardstickLine, noAnalogText } from './MaterialReactionLine';
 import './JapanMarketComparisonChart.css';
 
 const COLOURS = ['#94c5de', '#c7b6ed', '#dfbc83'];
@@ -159,7 +159,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
     {!document.candidates.length && <p className="jp-comparison__notice">十分に似た過去局面は見つかっていません。</p>}
     {document.candidates.length > 0 && document.candidates.every(candidate => candidate.comparisonKind === 'PARTIAL_COMPARISON') &&
       <p className="jp-comparison__notice">比較できるのは一部の条件です。市場状態全体が似ていると判断できる根拠は、まだ不足しています。</p>}
-    {!document.forecast.line.length && <p className="jp-comparison__notice">{forecastName}を出すための比較事例が不足しています。</p>}
+    {!document.forecast.line.length && <p className="jp-comparison__notice">{noAnalogText(document) ?? `${forecastName}を出すための比較事例が不足しています。`}</p>}
     {showResearchNote && document.forecast.line.length > 0 && <p className="jp-comparison__notice" data-forecast-role="reference-path">
       {document.forecast.validation
         ? `この比較からは日経平均の方向を見通せていません。過去10年で同じ方法の方向一致率は${document.forecast.validation.hitRate === null ? '—' : (document.forecast.validation.hitRate * 100).toFixed(0) + '%'}で、「いつも多数派の方向」と予想した場合の${document.forecast.validation.naiveMajorityRate === null ? '—' : (document.forecast.validation.naiveMajorityRate * 100).toFixed(0) + '%'}を上回っていないため、予測線は参考経路として初期表示では隠しています。`
@@ -284,6 +284,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
         </section>;
       })()}
       <MaterialReactionLine research={document.forecast.materialReactionResearch} />
+      <YardstickLine research={(document.forecast as Record<string, unknown>).yardstickResearch} />
       {document.forecast.signEventStudy && <p><a href="#today-seven-conditions">七条件の向き・過去成績を見る</a></p>}
       <ul>{document.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}</ul>
     </details>

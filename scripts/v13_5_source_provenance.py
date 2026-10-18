@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.132"
+PRODUCT_VERSION = "v13.8.133"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -161,7 +161,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '0c74316397895381b1fef09d195a2626737b338f',
+    'web/scripts/owner-today-https.mjs': '58c61945d01b0c90d739a0620185787fdc1b8cb5',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -402,11 +402,11 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_cpi_display_rounding.py': '1615a9459bf8763a1bba6978b46c8f895271a1db',
     'docs/V13_6_ANALYSIS_ACCEPTANCE.md': '1eec780bbdf73a3120cf2cf3ba7c0df16f68f4d9',
     'docs/V13_6_COMPUTE_CONTRACT.md': '4ad0e52d419c261b24be8775d9c635bd310e9417',
-    'jp_market_analogs.py': '197de232266f1efd81256ae9329f0c0a66ff6592',
+    'jp_market_analogs.py': '6c2f32f3728fde56523c3024ae4e4e7a65f98d6b',
     'jp_market_dynamics.py': '36624677a01861c4adfa706e4d5b9dfa405212dd',
     'jp_market_events.py': '9798f7172c58c3d94748641d4ca67fd4dde6f4cf',
     'jp_market_features.py': '08a8fdfaeab78b9c199baa7900cfbdd67274f10f',
-    'jp_market_price_paths.py': '7e2b0c1135f876527c0beb5cd957b84d7cef4ae4',
+    'jp_market_price_paths.py': 'dfa4604d5dcdc2f5d154e88a22acce2764149bae',
     'test_jp_market_current_per.py': '0ee8c8c8f6fe2631dccd7e829abbfdc673503209',
     'jp_market_source_adapters.py': 'f5950ba0ff80f98b8a121cfd08d5eef691e81af0',
     'ops/calendar/jp_index_sq_2026.json': 'd55cbf1e1362d4d86b21fe413cc2de35b035bd62',
@@ -430,7 +430,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/margin-dynamics.test.cjs': 'd969a73de0e7b669ecaed83da07f9481ab16cc8c',
     'web/scripts/market-brief-response.test.cjs': '93091e37a1832f91d3d19592e1fce7825d4ba065',
     'web/src/components/chart/JapanMarketComparisonChart.css': '5f1bc41ac381d67191cf3fa82ede9cc6f13c06ca',
-    'web/src/components/chart/JapanMarketComparisonChart.tsx': '7e292a50ab881ba3ff470913dac55e75c9fb6c6d',
+    'web/src/components/chart/JapanMarketComparisonChart.tsx': '397af02fb1394be6fd7dbc934bc60bce3858a176',
     'web/src/components/chart/JapanMarketComparisonPanel.tsx': 'a210ce56e1826916e66313a0e098c359294b691c',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '421e18ed7bfcf3a3c6729c62a3c56b7d4d436ccc',
@@ -686,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_jp_market_recent_yardstick.py",
     "web/src/components/chart/MaterialReactionLine.tsx",
     "test_caos_scan_private_notes.py",
     "test_private_diagnostics_store.py",

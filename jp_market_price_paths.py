@@ -447,6 +447,11 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     scales = robust_feature_scales(point_in_time_rows(
         [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0])
     policy = policy or AnalogPolicy.with_scales(scales)
+    from dataclasses import replace as _replace
+    from jp_market_analogs import RECENT_SCALE_YEARS, recent_scale_windows
+    recent_policy = _replace(policy, state_scales=AnalogPolicy.with_scales(robust_feature_scales(point_in_time_rows(
+        [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0],
+        windows=recent_scale_windows(cutoff, RECENT_SCALE_YEARS))).state_scales)
     visible, visibility = point_in_time_rows(
         [dict(row) for row in bars if row.get("instrumentId") == INSTRUMENT], cutoff)
     visible.sort(key=lambda row: row.get("date", ""))
@@ -581,7 +586,8 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                      "stateHistory": _hash(point_in_time_rows(
                          [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0]),
                      "valuationBasis": (valuation or {}).get("basis"),
-                     "researchReactions": _hash([episode["snapshotId"] for episode in candidates_with]) if research else None})
+                     "researchReactions": _hash([episode["snapshotId"] for episode in candidates_with]) if research else None,
+                     "recentScaleYears": dict(RECENT_SCALE_YEARS)})
         if backtest_cache.get("key") != key:
             closes = {row["date"]: float(row["close"]) for row in visible if row.get("close")}
             result = backtest.walk_forward(candidates, closes, session_dates, policy=policy, state_rows=state_rows)
@@ -593,20 +599,37 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                 if comparison["adopted"]:
                     result = result_with
             chosen = candidates_with if comparison and comparison["adopted"] else candidates
-            searched = backtest.weight_search(chosen, closes, session_dates, policy=policy, state_rows=state_rows)
+            # 2026-10-19 owner decision: the recent-years yardstick for the
+            # Japan 10-year yield is used only when its walk-forward, on the
+            # same dates and the same rule, forecasts better.
+            result_recent = backtest.walk_forward(chosen, closes, session_dates, policy=recent_policy,
+                                                  state_rows=state_rows, recent_years=RECENT_SCALE_YEARS)
+            yardstick = backtest.compare_material_reactions(result, result_recent)
+            yardstick = {**yardstick, "method": backtest.METHOD + "-recent-yardstick-comparison",
+                         "recentScaleYears": dict(RECENT_SCALE_YEARS)}
+            if yardstick["adopted"]:
+                result = result_recent
+            searched = backtest.weight_search(chosen, closes, session_dates,
+                policy=recent_policy if yardstick["adopted"] else policy, state_rows=state_rows,
+                recent_years=RECENT_SCALE_YEARS if yardstick["adopted"] else None)
             sealed = backtest_cache.get("sealedCandidates")
             backtest_cache.clear()
-            backtest_cache.update(key=key, result=result, search=searched, materialReactionResearch=comparison)
+            backtest_cache.update(key=key, result=result, search=searched, materialReactionResearch=comparison,
+                                  yardstickResearch=yardstick)
             if sealed:
                 backtest_cache["sealedCandidates"] = sealed
         validation, search = backtest_cache["result"], backtest_cache.get("search")
         research_result = backtest_cache.get("materialReactionResearch")
         if research and research_result and research_result.get("adopted"):
             current, candidates = current_with, candidates_with
+        yardstick_result = backtest_cache.get("yardstickResearch") or {}
+        if yardstick_result.get("adopted"):
+            selection_policy = recent_policy
         if search and search.get("adopted"):
             from dataclasses import replace
-            selection_policy = replace(policy, component_weights=tuple(sorted(search["chosenWeights"].items())))
-    selection = select_episodes(current, candidates, session_dates=session_dates, policy=selection_policy)
+            selection_policy = replace(selection_policy, component_weights=tuple(sorted(search["chosenWeights"].items())))
+    selection = select_episodes(current, candidates, session_dates=session_dates, policy=policy,
+                                ranking_policy=selection_policy)
     selected = {row["snapshotId"] for row in selection["selected"]}
     paths = [reference_path(episode, later_bars=visible, display_cutoff=cutoff,
                             session_dates=session_dates, horizon_sessions=horizon_sessions, policy=policy)
@@ -632,6 +655,16 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
             "candidatesWithReactions": sum(1 for episode in candidates_with if episode.get("reactions")),
             "timeBasis": "ARCHIVED_RELEASE_DATE_FIXED_TIME_RULE",
             "availabilityBasis": "RESEARCH_KNOWN_AT_ENDPOINT_CLOSE",
+            "historicalVintageVerified": False, "predictiveProbabilities": None}
+    if backtest_cache is not None and backtest_cache.get("yardstickResearch"):
+        y = backtest_cache["yardstickResearch"]
+        pick_y = lambda part, side: {k: (y.get(part) or {}).get(side, {}).get(k) for k in
+                                     ("directionalEvaluations", "hits", "hitRate", "naiveMajorityRate", "meanAbsoluteError")}
+        document["forecast"]["yardstickResearch"] = {
+            "adopted": bool(y.get("adopted")), "reason": y.get("reason"), "horizon": y.get("horizon"),
+            "decisionWith": pick_y("decision", "with"), "decisionWithout": pick_y("decision", "without"),
+            "heldOutWith": pick_y("heldOut", "with"), "heldOutWithout": pick_y("heldOut", "without"),
+            "pairedOneSidedPValue": y.get("pairedOneSidedPValue"), "recentScaleYears": y.get("recentScaleYears"),
             "historicalVintageVerified": False, "predictiveProbabilities": None}
     if validation is not None:
         adopted = bool(search and search.get("adopted"))
@@ -718,6 +751,18 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     # answers whether a year was searched and why its closest candidate was or
     # was not selected; it neither changes the ranking nor uses later returns.
     document["selectionAudit"] = selection.get("yearAudit", {})
+    if not selection.get("selected") and selection.get("closestRejected"):
+        closest = selection["closestRejected"]
+        limit = selection.get("policy", {}).get("maximum_distance")
+        parts = {"priceShape": "値動きの形", "marketState": "市場条件", "conditionOrder": "警戒条件の順序",
+                 "materialReaction": "発表への反応"}
+        comps = {k: v for k, v in (closest.get("componentDistances") or {}).items() if isinstance(v, (int, float))}
+        main = max(comps, key=comps.get) if comps else None
+        names = ([label_for(row["feature"]) for row in closest.get("largestDifferences") or []][:2]
+                 if main == "marketState" else [parts.get(main, "市場条件")] if main else [])
+        document["noAnalogExplanation"] = {**closest, "maximumDistance": limit,
+            "textJa": (f"今週は過去10年に似た局面がありません（最も近い{closest['anchorDate']}でも距離"
+                       f"{closest['distance']:.2f}・上限{limit}）。" + (f"主な違い：{'・'.join(names)}。" if names else ""))}
     document["selectionPolicy"] = {
         "policyId": policy.policy_id, "lookbackSessions": policy.lookback_sessions,
         "maximumCandidates": policy.maximum_candidates, "minimumSeparationSessions": policy.minimum_separation_sessions,

@@ -20,4 +20,20 @@ for (const host of ['JapanMarketComparisonChart.tsx', 'NikkeiResearchChart.tsx']
 // 2026-10-18 (owner): one plain line, adopted or not, with the before/after rate.
 assert.ok(chart.includes('経済指標の発表反応：') && chart.includes('使用中') && chart.includes('不使用'));
 assert.ok(chart.includes('r.heldOutWithout') && chart.includes('r.decisionWithout') && chart.includes('差が偶然の範囲'));
+const line = require('react-dom/server').renderToStaticMarkup;
+const React = require('react');
+const tsx = (f) => { const m = { exports: {} }; new Function('exports', 'require', 'module', ts.transpileModule(fs.readFileSync(f, 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText)(m.exports,
+  n => n.startsWith('../../lib/') ? require('../src/lib/' + n.slice(10) + '.ts') : require(n), m); return m.exports; };
+const parts = tsx('src/components/chart/MaterialReactionLine.tsx');
+const reason = '今週は過去10年に似た局面がありません（最も近い2024-07-22でも距離1.02・上限1）。主な違い：日本10年金利の変化幅・NT倍率の変化率。';
+assert.ok(line(React.createElement(parts.NoAnalogLine, { document: { noAnalogExplanation: { textJa: reason } } })).includes('主な違い'));
+assert.equal(parts.noAnalogText({ noAnalogExplanation: { textJa: 'x'.repeat(201) } }), null);
+assert.equal(parts.noAnalogText({}), null);
+const chartSource = fs.readFileSync('src/components/chart/JapanMarketComparisonChart.tsx', 'utf8');
+assert.ok(chartSource.includes('noAnalogText(document) ??') && chartSource.includes('<YardstickLine'));
+const y = { adopted: false, decisionWith: { hitRate: .45 }, decisionWithout: { hitRate: .44 }, heldOutWith: { hitRate: .5 }, heldOutWithout: { hitRate: .5 } };
+assert.ok(line(React.createElement(parts.YardstickLine, { research: y })).includes('不採用'));
+assert.ok(line(React.createElement(parts.YardstickLine, { research: { ...y, adopted: true } })).includes('採用（'));
+assert.equal(line(React.createElement(parts.YardstickLine, { research: { adopted: 'yes' } })), '');
 console.log('material reaction research display contract PASS');
