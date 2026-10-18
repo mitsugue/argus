@@ -126,3 +126,12 @@ class WeightSearchTest(unittest.TestCase):
             AnalogPolicy(component_weights=(("priceShape", 0.0),))
         with self.assertRaises(ValueError):
             AnalogPolicy(component_weights=(("unknown", 1.0),))
+
+
+def test_yearly_policies_keep_the_component_weights():
+    # 2026-10-19: the weights were dropped, so a weighted rule was validated
+    # with equal weights while the selection used the weights.
+    from jp_market_analogs import AnalogPolicy
+    weights = (("conditionOrder", 0.5), ("marketState", 2.0), ("priceShape", 1.0))
+    yearly = backtest.yearly_policies([], ["2020", "2021"], AnalogPolicy(component_weights=weights))
+    assert {year: policy.component_weights for year, policy in yearly.items()} == {"2020": weights, "2021": weights}

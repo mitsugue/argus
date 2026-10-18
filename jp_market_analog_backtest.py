@@ -72,7 +72,10 @@ def yearly_policies(state_rows: Sequence[Mapping[str, Any]], years: Sequence[str
                                              maximum_distance=base.maximum_distance,
                                              lookback_sessions=base.lookback_sessions,
                                              minimum_separation_sessions=base.minimum_separation_sessions,
-                                             shape_scale_pct=base.shape_scale_pct)
+                                             shape_scale_pct=base.shape_scale_pct,
+                                             # 2026-10-19: the weights were dropped here, so a
+                                             # weighted policy was validated as equal weights.
+                                             component_weights=base.component_weights)
     return out
 
 
