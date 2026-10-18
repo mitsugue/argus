@@ -246,7 +246,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_breadth_freshness_workflow.py': 'e8ed1942175b75416caec8711363cfc771b90e3d',
     'argus_tick_durability.py': 'fd2f2a97652cf1f3bb18084fd1aa5f54a19247da',
     'argus_jp_fiscal_monitor.py': '3584e845b3c66c2ebdbb41aae6e8b3bfd9866117',
-    'argus_jp_fiscal_runtime.py': 'e5e3c5c1c14b3dec8a58281fa457710f26fbb883',
+    'argus_jp_fiscal_runtime.py': 'd1e1eaa53ac36649386d6a113c660098a86d31a2',
     'argus_jp_fiscal_sources.py': '275738feebfefbc7cef3be1442f00d1e3d264bde',
     'docs/V13_7_JP_FISCAL_MONITOR.md': '58498e9819208825f203c37acff3d5c33c473dff',
     'ops/fiscal/cao_20260730.json': '72b7f9ded706ebf1aa9ae92ebb4396b8bf055ae6',
@@ -686,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_jgb_archive_original.py",
     "web/scripts/material-reaction-research.test.cjs",
     "test_jp_market_historical_reactions.py",
     "jp_market_historical_releases.py",
