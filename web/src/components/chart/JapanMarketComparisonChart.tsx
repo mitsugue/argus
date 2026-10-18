@@ -277,20 +277,16 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
         </section>;
       })()}
       {validMaterialReactionResearch(document.forecast.materialReactionResearch) && (() => {
+        // 2026-10-18 (owner): one plain line. The figures are from the period
+        // the decision did not see.
         const r = document.forecast.materialReactionResearch!;
-        const pct = (n: number | null) => n === null ? '—' : `${(n * 100).toFixed(1)}%`;
-        const line = (m: typeof r.decisionWith) => `${pct(m.hitRate)}（${m.directionalEvaluations ?? 0}件）`;
-        return <section aria-label="経済指標の発表反応の再検証" data-material-reaction={r.adopted ? 'adopted' : 'not-adopted'}>
-          <h3>経済指標の発表反応を比較に入れた場合の再検証</h3>
-          <p>過去の米国の雇用統計・CPI・PPI・求人の発表日（公式の記録）と決まった発表時刻から、発表後1・3・5営業日の日経の動きを{r.researchReactionRows}件作り、
-            それを含めて候補を選んだ場合と含めない場合を同じ日付で比べました。{r.horizon ?? 5}営業日後の方向一致率は、
-            判断期間（{r.decisionStart ?? '—'}〜{r.decisionEnd ?? '—'}）で入れた場合{line(r.decisionWith)}・入れない場合{line(r.decisionWithout)}、
-            判断に使っていない期間（{r.reportStart ?? '—'}〜{r.reportEnd ?? '—'}）で入れた場合{line(r.heldOutWith)}・入れない場合{line(r.heldOutWithout)}でした。</p>
-          <p>{r.adopted ? '判定：判断期間で当たり方が良くなり、その差が偶然では説明しにくいため、発表反応を含めて候補を選んでいます。'
-            : r.reason === 'difference_within_chance' ? '判定：判断期間の差が偶然の範囲だったため、発表反応は候補選びに使っていません。'
-            : '判定：判断期間で当たり方が良くならなかったため、発表反応は候補選びに使っていません。'}
-            発表時刻は日付と決まった時刻からの推定で、実際の公表時刻は確認していません。将来の確率ではありません。</p>
-        </section>;
+        const pct = (n: number | null) => n === null ? '—' : `${(n * 100).toFixed(0)}%`;
+        const change = `${pct(r.heldOutWithout.hitRate)} → ${pct(r.heldOutWith.hitRate)}`;
+        return <p className="jmc-material-reaction" data-material-reaction={r.adopted ? 'adopted' : 'not-adopted'}>
+          経済指標の発表反応：{r.adopted
+            ? `使用中（入れると5営業日後の方向の一致率 ${change}・検証${r.heldOutWith.directionalEvaluations ?? 0}件）`
+            : `不使用（入れても当たり方が良くならないため。${change}）`}
+        </p>;
       })()}
       {document.forecast.signEventStudy && <p><a href="#today-seven-conditions">七条件の向き・過去成績を見る</a></p>}
       <ul>{document.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}</ul>

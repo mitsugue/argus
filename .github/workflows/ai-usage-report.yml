@@ -1,9 +1,10 @@
 # Counts-only AI usage report (owner request 2026-10-16).
 #
-# Reads the owner-only AI cost document and prints calls, correction calls,
-# rejection reasons and tokens per UTC day to the run page. The repository and
-# its logs are public: scripts/ai_usage_report.py removes every money field
-# before printing, and the raw document is never uploaded or echoed.
+# Reads the owner-only AI cost document and writes calls, correction calls,
+# rejection reasons and tokens per UTC day. The repository and its logs are
+# public: scripts/ai_usage_report.py removes every money field, the raw
+# document is never uploaded or echoed, and the report itself is stored in the
+# owner's private repository (2026-10-18), not printed.
 name: ai-usage-report
 
 on:
@@ -31,5 +32,12 @@ jobs:
             "https://argus-backend-3j2m.onrender.com/api/argus/ai-cost?calls=1")
           echo "http=$code"
           test "$code" = "200"
-          python3 -B scripts/ai_usage_report.py "$DOC" | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p "$RUNNER_TEMP/ai-usage"
+          python3 -B scripts/ai_usage_report.py "$DOC" > "$RUNNER_TEMP/ai-usage/report.txt"
           rm -f "$DOC"
+      # 2026-10-18: the counts-only report goes to the owner's private
+      # repository; the public run page shows only how many files were stored.
+      - name: Store the report privately
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: python3 -B scripts/private_diagnostics_store.py --kind ai-usage --run-id "${{ github.run_id }}" "$RUNNER_TEMP/ai-usage"
