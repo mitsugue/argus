@@ -84,3 +84,21 @@ def test_recent_yardstick_is_reported_and_used_only_when_adopted(monkeypatch):
     assert {'rate.jp10y_change5': 3} in calls and None in calls
     assert forced['comparison']['forecast']['yardstickResearch']['adopted'] is True
     assert seen and seen[-1] is not None
+
+
+
+def test_reason_names_the_market_series_when_market_state_differs_most(monkeypatch):
+    # Production on 2026-10-19: the closest week differed most in the market
+    # state (Japan 10-year yield, NT ratio), so the reason names the series.
+    real = analogs.select_episodes
+    def no_candidates(*a, **kw):
+        result = real(*a, **kw)
+        return {**result, "selected": [], "admittedCount": 0, "closestRejected": {
+            "anchorDate": "2019-05-06", "distance": 1.02,
+            "componentDistances": {"priceShape": 0.4, "marketState": 1.6, "conditionOrder": None},
+            "largestDifferences": [{"feature": "rate.jp10y_change5"}, {"feature": "nt.ratio_change5"},
+                                   {"feature": "vix.level"}]}}
+    monkeypatch.setattr(analogs, "select_episodes", no_candidates)
+    _, doc = comparison()
+    assert doc['comparison']['noAnalogExplanation']['textJa'].endswith(
+        '主な違い：日本10年金利の変化幅・NT倍率の変化率。')
