@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.131"
+PRODUCT_VERSION = "v13.8.132"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -161,7 +161,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'd808ab7cf97a6b693484eafdd13caf9410f0eb05',
+    'web/scripts/owner-today-https.mjs': '0c74316397895381b1fef09d195a2626737b338f',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -424,13 +424,13 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_jp_market_margin_runtime.py': 'd555f10dbdee53818af7958f2ba5a94fdfd63eb4',
     'test_jp_market_price_paths.py': 'abb27d1d239f11588eb1ab73713d766edbf7db1d',
     'test_jp_market_source_adapters.py': '116bf3c3481dd1f9d62f5b42d66fe37d3b109c95',
-    'web/scripts/japan-market-comparison.test.cjs': 'a009d85cf1963aa4a4a68c993da803fcbc396009',
+    'web/scripts/japan-market-comparison.test.cjs': '0c3941ad1b269bb46db6a3dd1d20c494242dfbcc',
     'web/scripts/japan-sq-calendar.test.cjs': '41fc84761bab22b8218bb5c1347767521472a2c6',
     'web/scripts/macro-result-details.test.cjs': 'b2bcdb290db61a0ef8d8ffcd090a55e5020e10a1',
     'web/scripts/margin-dynamics.test.cjs': 'd969a73de0e7b669ecaed83da07f9481ab16cc8c',
     'web/scripts/market-brief-response.test.cjs': '93091e37a1832f91d3d19592e1fce7825d4ba065',
     'web/src/components/chart/JapanMarketComparisonChart.css': '5f1bc41ac381d67191cf3fa82ede9cc6f13c06ca',
-    'web/src/components/chart/JapanMarketComparisonChart.tsx': '37593d4709b85d8ba32bcc9a8d2950e17cb66fd7',
+    'web/src/components/chart/JapanMarketComparisonChart.tsx': '7e292a50ab881ba3ff470913dac55e75c9fb6c6d',
     'web/src/components/chart/JapanMarketComparisonPanel.tsx': 'a210ce56e1826916e66313a0e098c359294b691c',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '421e18ed7bfcf3a3c6729c62a3c56b7d4d436ccc',
@@ -438,7 +438,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/today/MarginDynamicsCard.tsx': 'ad2e582df6452f1eb5a5505f1146ff2a87cbf771',
     'web/src/hooks/useJapanMarketComparison.ts': '861bbfa24e8f19597fe271a702936fcb1fc714c6',
     'web/src/hooks/useJapanSqCalendar.ts': '57a9dbc42c781a7a2ac1f4939b9084e332dba82c',
-    'web/src/lib/japanMarketComparison.ts': 'd73de5acf0d25ac5d1258c24b5af6ce91dd64d89',
+    'web/src/lib/japanMarketComparison.ts': 'c219b8392e36f13ac52a9507bf7f3906c6c7e3d8',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',
     'web/src/lib/marketBrief.ts': '0a8b194626239867475fa60e04c8615afbf06db1',
     'web/src/types/japanMarketComparison.ts': '65b6912fa705e1ceb4d502726e3d49959f328515',

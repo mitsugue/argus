@@ -97,7 +97,14 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
     const proxy = e.epsKind === 'PROXY_FROM_CONSTITUENT_FORECAST_EPS'
       && typeof e.sourceRef === 'string' && /^argus:index-valuation-proxy:[A-Za-z0-9+._-]{1,80}$/.test(e.sourceRef)
       && e.sourceResponseSha256 === null;
-    if (!official && !proxy) return false;
+    // 2026-10-18: the current authority (docs/PER_CURRENT_AUTHORITY.md) is the
+    // market-cap-weighted estimate the level map stores per session. The
+    // server switched to it around 10/5; without this shape every comparison
+    // was rejected and the screen kept the last accepted document.
+    const current = e.epsKind === 'MARKET_CAP_WEIGHTED_FORWARD_ESTIMATE'
+      && typeof e.sourceRef === 'string' && /^level-map-eps:\d{4}-\d{2}-\d{2}$/.test(e.sourceRef)
+      && e.sourceResponseSha256 === null;
+    if (!official && !proxy && !current) return false;
   }
   for (const c of v.candidates) {
     if (!object(c) || typeof c.snapshotId !== 'string' || ids.has(c.snapshotId)

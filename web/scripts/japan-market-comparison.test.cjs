@@ -131,7 +131,19 @@ for (const patch of [{ sourceResponseSha256: 'a'.repeat(64) }, { sourceRef: 'htt
   { sourceRef: 'argus:index-valuation-proxy:javascript:alert(1)' }, { epsKind: 'DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER' }]) {
   assert(!validJapanMarketComparison({ ...withProxy, valuationEvidence: { ...withProxy.valuationEvidence, ...patch } }, 5));
 }
-console.log('Index valuation evidence validation PASS (official and ARGUS proxy shapes)');
+// 2026-10-18: the current market-cap-weighted estimate the server has sent
+// since ~10/5. Rejecting it hid every comparison for two weeks.
+const withCurrent = { ...withScale, valuationEvidence: {
+  date: document.anchorDate, eps: 3848.0, per: 16.98,
+  epsKind: 'MARKET_CAP_WEIGHTED_FORWARD_ESTIMATE', knownAt: '2026-09-11T07:30:00Z',
+  publishedAt: null, sourceRef: 'level-map-eps:' + document.anchorDate, sourceResponseSha256: null,
+} };
+assert(validJapanMarketComparison(withCurrent, 5));
+for (const patch of [{ sourceResponseSha256: 'a'.repeat(64) }, { sourceRef: 'level-map-eps:javascript' },
+  { sourceRef: 'argus:index-valuation-proxy:jquants+nikkei-weights' }, { publishedAt: '2026-09-11T07:30:00Z' }]) {
+  assert(!validJapanMarketComparison({ ...withCurrent, valuationEvidence: { ...withCurrent.valuationEvidence, ...patch } }, 5));
+}
+console.log('Index valuation evidence validation PASS (official, ARGUS proxy and current estimate shapes)');
 const withCoverage = { ...document, historyCoverage: {
   sourceBars: 2450, sourceStart: '2016-09-16', sourceEnd: '2026-09-11',
   candidateCount: 2300, candidateStart: '2016-10-20', candidateEnd: '2026-08-10',
