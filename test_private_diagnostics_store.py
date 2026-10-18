@@ -43,3 +43,20 @@ def test_production_diagnostics_never_publish_artifacts_or_print_contents():
         text = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
         assert 'upload-artifact' not in text and 'GITHUB_STEP_SUMMARY' not in text, name
         assert 'private_diagnostics_store.py' in text and 'ARGUS_PRIVATE_LEDGER_TOKEN' in text, name
+
+
+def test_scheduled_runs_keep_response_bodies_out_of_the_public_log():
+    import re
+    checks = {
+        'caos-scan': ['echo "caos-collect: $RESP"', 'echo "osint-agents: $OS"', 'echo "missions-tick[$BATCH]: $MT"'],
+        'crypto-watch': ['echo "crypto-scan: $RESP"'],
+        'prediction-ledger': ['echo "gate: $GATE"', 'echo "ai run: $SHORT"', 'provider diag: \\`${DIAG}'],
+        'news-intake-ops': ['tee -a "$GITHUB_STEP_SUMMARY"', 'echo "reprocess: $RESP"'],
+        'backend-warm-after-deploy': ['run_intel_collect.py --base "$BE" --timeout 900 || exit 1'],
+        'macro-event-analysis': ['echo "generate: ${GEN:0:200}', 'echo "refresh-results: ${RES:0:200}"'],
+    }
+    for name, banned in checks.items():
+        text = (ROOT / '.github/workflows' / f'{name}.yml').read_text()
+        for line in banned:
+            assert line not in text, (name, line)
+        assert 'private_diagnostics_store.py' in text and 'stored privately' in text, name
