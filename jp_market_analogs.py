@@ -56,12 +56,18 @@ def _policy_material(policy):
 
 
 ROBUST_SCALE_MINIMUM_OBSERVATIONS = 30
+#: 2026-10-19 candidate yardstick: the Japan 10-year yield moved inside a
+#: pinned band for years (yield curve control), so ten years of 5-day changes
+#: make an ordinary move look extreme. The candidate measures that field over
+#: the most recent years only; it is adopted only when it forecasts better.
+RECENT_SCALE_YEARS = {"rate.jp10y_change5": 3}
 ROBUST_SCALE_BASIS = "ROBUST_MAD_HISTORY"
 DEFAULT_SCALE_BASIS = "FIXED_DEFINITION"
 
 
 def robust_feature_scales(rows: Iterable[Mapping[str, Any]], *,
-                          minimum_observations: int = ROBUST_SCALE_MINIMUM_OBSERVATIONS) -> dict[str, dict[str, Any]]:
+                          minimum_observations: int = ROBUST_SCALE_MINIMUM_OBSERVATIONS,
+                          windows: Mapping[str, str] | None = None) -> dict[str, dict[str, Any]]:
     """One robust unit per market-condition series from its own history.
 
     scale = 1.4826 * median(|x - median(x)|) over the feature history rows of
@@ -78,6 +84,10 @@ def robust_feature_scales(rows: Iterable[Mapping[str, Any]], *,
         field = _field(row)
         value = _finite(row.get("value"))
         if field in FEATURE_DEFINITIONS and value is not None and row.get("unit") == FEATURE_DEFINITIONS[field][0]:
+            # 2026-10-19: a field listed in `windows` uses only rows from that
+            # date on (a regime the older years do not describe).
+            if windows and field in windows and _period(row) < windows[field]:
+                continue
             values.setdefault(field, []).append(value)
     out = {}
     for field, (unit, default) in FEATURE_DEFINITIONS.items():
@@ -358,8 +368,20 @@ def component_distances(current: Mapping[str, Any], candidate: Mapping[str, Any]
 
 
 def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str, Any]], *,
-                    session_dates: Sequence[str], policy: AnalogPolicy = AnalogPolicy()) -> dict[str, Any]:
-    """Rank a sealed past-only set. Forward paths are attached in another call."""
+                    session_dates: Sequence[str], policy: AnalogPolicy = AnalogPolicy(),
+                    ranking_policy: AnalogPolicy | None = None) -> dict[str, Any]:
+    """Rank a sealed past-only set. Forward paths are attached in another call.
+
+    2026-10-19: episodes are verified against the policy they were sealed
+    with; `ranking_policy` may change only the yardsticks and weights used to
+    rank them (an adopted, separately validated variant). Scales never change
+    what an episode contains.
+    """
+    rank = ranking_policy or policy
+    if (rank.lookback_sessions, rank.maximum_candidates, rank.minimum_separation_sessions,
+            rank.maximum_distance, rank.shape_scale_pct) != (policy.lookback_sessions, policy.maximum_candidates,
+            policy.minimum_separation_sessions, policy.maximum_distance, policy.shape_scale_pct):
+        raise ValueError("ranking_policy_may_change_only_scales_and_weights")
     _verify_episode(current, policy)
     if list(session_dates) != sorted(set(session_dates)):
         raise ValueError("unique_ordered_session_calendar_required")
@@ -372,6 +394,10 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
     # appear without giving that period preferential treatment.  It contains
     # selection inputs only; later price paths never enter it.
     audit = []
+    # 2026-10-18 (owner): when nothing is close enough, the screen names why.
+    # The closest past window above the limit and its largest differences;
+    # kept outside the selection identity, never used to select.
+    closest_rejected = None
     if current["status"] == "AVAILABLE":
         current_index = positions[current["anchorDate"]]
         if [row["date"] for row in current["window"]] != list(
@@ -402,13 +428,19 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
                 audit.append({"year": year, "anchorDate": anchor,
                               "status": "INELIGIBLE_SESSION_WINDOW", "distance": None})
                 continue
-            scored_parts = component_distances(current, candidate, policy, current_shape=current_shape)
+            scored_parts = component_distances(current, candidate, rank, current_shape=current_shape)
             distances, distance, state_deltas = (scored_parts["distances"], scored_parts["distance"],
                                                  scored_parts["stateDeltas"])
             missing, complete = scored_parts["missing"], scored_parts["complete"]
             if distance > policy.maximum_distance:
                 audit.append({"year": year, "anchorDate": anchor,
                               "status": "DISTANCE_ABOVE_THRESHOLD", "distance": distance})
+                if closest_rejected is None or (distance, anchor) < (closest_rejected["distance"], closest_rejected["anchorDate"]):
+                    closest_rejected = {"anchorDate": anchor, "distance": distance,
+                        "componentDistances": dict(distances),
+                        "largestDifferences": [{"feature": key, "scaledAbsoluteDifference": value}
+                            for key, value in sorted(state_deltas.items(), key=lambda item: (-item[1], item[0]))[:3]
+                            if value > 0]}
                 continue
             differences = [{"feature": key, "scaledAbsoluteDifference": value,
                             "currentValue": current["states"][key]["value"],
@@ -474,7 +506,7 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
                     "rank": admitted_rank.get(row.get("snapshotId")),
                 }
     body = {
-        "schemaVersion": SCHEMA_VERSION, "policy": asdict(policy),
+        "schemaVersion": SCHEMA_VERSION, "policy": asdict(rank),
         "currentSnapshotId": current["snapshotId"], "informationCutoff": current["cutoff"],
         "candidateCount": len(candidates),
         "admittedCount": len(scored), "selected": selected,
@@ -484,7 +516,7 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
         "actionAuthority": False, "predictiveProbability": None,
         "validationStatus": "UNVALIDATED", "outcomesUsedForSelection": False,
     }
-    return {**body, "selectionId": _hash(body)}
+    return {**body, "selectionId": _hash(body), "closestRejected": closest_rejected}
 
 
 def reference_path(episode: Mapping[str, Any], *, later_bars: Sequence[Mapping[str, Any]],
@@ -520,3 +552,17 @@ def reference_path(episode: Mapping[str, Any], *, later_bars: Sequence[Mapping[s
             "scale": "ANCHOR_100", "scaleFormula": "past close / past anchor close * 100",
             "comparison": comparison, "subsequentReference": subsequent,
             "subsequentReferenceIsPrediction": False, "horizonSessions": horizon_sessions}
+
+
+def recent_scale_windows(reference_day: str, years: Mapping[str, int] = RECENT_SCALE_YEARS) -> dict[str, str]:
+    """The first date each listed field's yardstick may use, `n` years before."""
+    day = date.fromisoformat(reference_day[:10])
+    out = {}
+    for field, n in years.items():
+        try:
+            start = day.replace(year=day.year - n)
+        except ValueError:
+            start = day.replace(year=day.year - n, day=28)
+        out[field] = start.isoformat()
+    return out
+

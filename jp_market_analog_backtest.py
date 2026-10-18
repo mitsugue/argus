@@ -57,7 +57,7 @@ def _classify(change: float, threshold: float) -> str:
 
 
 def yearly_policies(state_rows: Sequence[Mapping[str, Any]], years: Sequence[str],
-                    base: AnalogPolicy) -> dict[str, AnalogPolicy]:
+                    base: AnalogPolicy, recent_years: Mapping[str, int] | None = None) -> dict[str, AnalogPolicy]:
     """One policy per calendar year whose yardsticks use only rows known
     before 1 January of that year."""
     out = {}
@@ -65,7 +65,9 @@ def yearly_policies(state_rows: Sequence[Mapping[str, Any]], years: Sequence[str
         boundary = _instant(f"{year}-01-01T00:00:00Z")
         known = [row for row in state_rows if isinstance(row, Mapping)
                  and (_knowledge_time(row) or boundary) < boundary]
-        scales = robust_feature_scales(known)
+        from jp_market_analogs import recent_scale_windows
+        scales = robust_feature_scales(known, windows=recent_scale_windows(f"{year}-01-01", recent_years)
+                                       if recent_years else None)
         out[year] = AnalogPolicy.with_scales(scales, maximum_candidates=base.maximum_candidates,
                                              maximum_distance=base.maximum_distance,
                                              lookback_sessions=base.lookback_sessions,
@@ -146,7 +148,8 @@ def _forecast_rows(chosen, pos, closes, session_dates, last_position):
 def weight_search(candidates, closes, session_dates, *, policy: AnalogPolicy, state_rows=(),
                   grid=WEIGHT_GRID, choice_horizon: int = 5, flat_threshold_pct: float = .5,
                   step: int = EVALUATION_STEP_SESSIONS, minimum_prior: int = MINIMUM_PRIOR_CANDIDATES,
-                  maximum_evaluations: int = MAXIMUM_EVALUATIONS) -> dict[str, Any]:
+                  maximum_evaluations: int = MAXIMUM_EVALUATIONS,
+                  recent_years: Mapping[str, int] | None = None) -> dict[str, Any]:
     """Choose component weights on the first half of the evaluation dates,
     decide adoption on the third quarter and report on the last quarter.
 
@@ -166,7 +169,8 @@ def weight_search(candidates, closes, session_dates, *, policy: AnalogPolicy, st
     prepared = [(positions[c["anchorDate"]], c, _shape(c), _sequence(c)) for c in ordered]
     last_position = len(session_dates) - 1
     max_h = max(HORIZONS)
-    policies = yearly_policies(state_rows, [c["anchorDate"][:4] for c in ordered], policy) if state_rows else {}
+    policies = (yearly_policies(state_rows, [c["anchorDate"][:4] for c in ordered], policy, recent_years)
+                if state_rows else {})
     eligible = [i for i, (pos, c, _, _) in enumerate(prepared)
                 if i >= minimum_prior and pos + max_h <= last_position
                 and all(session_dates[pos + k] in closes for k in range(0, max_h + 1))]
@@ -233,7 +237,8 @@ def walk_forward(candidates: Sequence[Mapping[str, Any]], closes: Mapping[str, f
                  state_rows: Sequence[Mapping[str, Any]] = (), flat_threshold_pct: float = .5,
                  step: int = EVALUATION_STEP_SESSIONS, minimum_prior: int = MINIMUM_PRIOR_CANDIDATES,
                  maximum_evaluations: int = MAXIMUM_EVALUATIONS,
-                 policy_for_year: Callable[[str], AnalogPolicy] | None = None) -> dict[str, Any]:
+                 policy_for_year: Callable[[str], AnalogPolicy] | None = None,
+                 recent_years: Mapping[str, int] | None = None) -> dict[str, Any]:
     """Evaluate the forecast rule at every `step`-th eligible date.
 
     candidates: the sealed, complete-window episodes of the comparison, any
@@ -250,7 +255,8 @@ def walk_forward(candidates: Sequence[Mapping[str, Any]], closes: Mapping[str, f
     last_position = len(session_dates) - 1
     max_h = max(HORIZONS)
     if policy_for_year is None:
-        policies = yearly_policies(state_rows, [c["anchorDate"][:4] for c in ordered], policy) if state_rows else {}
+        policies = (yearly_policies(state_rows, [c["anchorDate"][:4] for c in ordered], policy, recent_years)
+                    if state_rows else {})
         policy_for_year = lambda year: policies.get(year, policy)
     eligible_indices = [i for i, (pos, c, _, _) in enumerate(prepared)
                         if i >= minimum_prior and pos + max_h <= last_position

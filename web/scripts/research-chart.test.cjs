@@ -47,7 +47,7 @@ assert.equal(lib.externalPoints(currentPeriod,{...chart,today:'2026-10-07'}).len
 assert.equal(lib.externalPoints(currentPeriod,{...chart,today:'2026-10-11'}).length,0,'期間終了後は最新の参考予測から外す');
 const components=load('src/components/chart/NikkeiResearchChart.tsx',name=>name.endsWith('.css')?{}:
  name.includes('/researchChart')?lib:name.includes('/hooks/')?{}:
- name==='./MaterialReactionLine'?{MaterialReactionLine:()=>null}:require(name));
+ name==='./MaterialReactionLine'?{MaterialReactionLine:()=>null,NoAnalogLine:()=>null}:require(name));
 const html=renderToStaticMarkup(React.createElement(components.NikkeiResearchChartView,{chart,future}));
 assert.ok(html.includes('PER18 70,787円'));
 assert.ok(html.includes('参考予測（未検証）'));
