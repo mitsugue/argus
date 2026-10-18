@@ -13970,12 +13970,13 @@ def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose", cach
         # Changing facts/catalog/correction text stays outside the write.
         if (purpose != "market_brief" or model not in {"gpt-5.6-terra", "gpt-5.6-luna"}
                 or type(cache_prefix_chars) is not int or not isinstance(user, str)
-                or not 0 < cache_prefix_chars < len(user)):
+                or not 0 < cache_prefix_chars <= len(user)):
             raise ValueError("brief_cache_boundary_invalid")
-        user = [{"role": "user", "content": [
-            {"type": "input_text", "text": user[:cache_prefix_chars],
-             "prompt_cache_breakpoint": {"mode": "explicit"}},
-            {"type": "input_text", "text": user[cache_prefix_chars:]}]}]
+        blocks = [{"type": "input_text", "text": user[:cache_prefix_chars],
+                   "prompt_cache_breakpoint": {"mode": "explicit"}}]
+        if cache_prefix_chars < len(user):
+            blocks.append({"type": "input_text", "text": user[cache_prefix_chars:]})
+        user = [{"role": "user", "content": blocks}]
         cache_options = {"prompt_cache_options": {"mode": "explicit"}}
     if purpose == "owner_dialogue":
         resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(
@@ -17586,9 +17587,14 @@ def _market_brief_ai_polish(brief):
     if required:
         user += "\n" + required
     diag = {}
+    # 2026-10-18 (measured): a written cache lives 30 minutes and costs 1.25x;
+    # scheduled editions are 45+ minutes apart, so caching only the
+    # instructions was written and never read. The bounded correction resends
+    # this whole request seconds later (most editions need it), so the cache
+    # boundary is the end of the request: the correction reads it at 0.1x.
     raw = _openai_prose(user, max_out=5200,
                        system=argus_presentation_intent.VOICE,
-                       purpose="market_brief", diagnostic=diag, cache_prefix_chars=len(instructions))
+                       purpose="market_brief", diagnostic=diag, cache_prefix_chars=len(user))
     validation = {}
     event_renderer = argus_market_brief.render_event_references
     def render_reply(value, diagnostic):
@@ -17628,7 +17634,7 @@ def _market_brief_ai_polish(brief):
         diag = {}
         raw = _openai_prose(correction, max_out=5200,
             system=argus_presentation_intent.VOICE,
-            purpose="market_brief", diagnostic=diag, cache_prefix_chars=len(instructions))
+            purpose="market_brief", diagnostic=diag, cache_prefix_chars=len(user))
         validation = {}
         raw = render_reply(raw, validation)
         unified = argus_market_brief.validate_unified_ai(
@@ -17694,8 +17700,8 @@ def _market_brief_ai_polish(brief):
         "attemptCount": len(attempts), "correctionCalls": len(attempts) - 1,
         "acceptanceGatesChanged": False}
     brief["aiDiagnostics"]["promptCachePolicy"] = {
-        "schema": "argus-brief-prompt-cache-v1", "mode": "EXPLICIT_STATIC_PREFIX_ONLY",
-        "stablePrefixCharacters": len(instructions), "dynamicSuffixCached": False,
+        "schema": "argus-brief-prompt-cache-v2", "mode": "EXPLICIT_FULL_REQUEST_FOR_CORRECTION",
+        "stablePrefixCharacters": len(user), "dynamicSuffixCached": True,
         "prewarmCalls": 0, "sourceTextChanged": False, "invoiceSavingsVerified": False}
     brief["aiDiagnostics"]["promptFactReuse"] = {
         "schema": "argus-prompt-fact-reuse-v1", "requestOnly": True,

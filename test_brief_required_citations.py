@@ -27,7 +27,7 @@ def test_the_line_follows_the_data_so_the_reusable_prefix_is_unchanged():
     source = (ROOT / "scanner.py").read_text(encoding="utf-8")
     at = source.index('required = argus_macro_material.required_citation_line(prompt_context.get("facts"))')
     assert source.index('json.dumps(prompt_context, ensure_ascii=False, separators=(",", ":")))') < at
-    assert 'cache_prefix_chars=len(instructions)' in source
+    assert 'cache_prefix_chars=len(user)' in source
 
 
 def test_presentation_rejections_are_counted_by_rule(tmp_path):
