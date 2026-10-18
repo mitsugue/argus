@@ -175,3 +175,31 @@ def test_reactions_alone_are_reread_and_equal_a_full_rebuild():
     full = build_episode(cutoff=at, bars=window, reaction_rows=research)
     assert full['reactions'] and with_reactions(base, research) == full
     assert with_reactions(full, ()) == base
+
+
+def test_one_build_serves_every_horizon_and_equals_a_fresh_build(monkeypatch):
+    import jp_market_analogs
+    import jp_market_price_paths as paths
+    days, rows, research = comparison_inputs()
+    builds = []
+    original = jp_market_analogs.build_episode
+    def counted(**kw):
+        builds.append(1)
+        return original(**kw)
+    monkeypatch.setattr(jp_market_analogs, 'build_episode', counted)
+    cache = {}
+    first = {h: paths.cached_index_comparison(rows, cutoff=days[-1] + 'T08:00:00Z', session_dates=days,
+                                              horizon_sessions=h, backtest_cache=cache,
+                                              research_reaction_rows=research) for h in (1, 5, 10, 20)}
+    one_build = len(builds)
+    assert one_build < 2 * len(days)              # candidates were built once, not four times
+    for h in (20,):   # the last horizon read the reused candidates; one full rebuild is enough
+        fresh = paths.cached_index_comparison(rows, cutoff=days[-1] + 'T08:00:00Z', session_dates=days,
+                                              horizon_sessions=h, backtest_cache={}, research_reaction_rows=research)
+        assert fresh == first[h]
+    changed = [dict(r) for r in rows]; changed[-30]['close'] = changed[-30]['close'] * 1.01
+    key = cache['sealedCandidates']['key']
+    before = len(builds)
+    paths.cached_index_comparison(changed, cutoff=days[-1] + 'T08:00:00Z', session_dates=days,
+                                  horizon_sessions=5, backtest_cache=cache, research_reaction_rows=research)
+    assert cache['sealedCandidates']['key'] != key and len(builds) > before   # a changed bar rebuilds

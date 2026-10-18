@@ -518,9 +518,31 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                 session_dates[position - policy.lookback_sessions:position + 1])
     if not complete_window(current):
         return {**base, "reason": "current_exchange_sessions_missing"}
-    candidates, candidates_with = [], []
-    excluded = {"missingCalendarOrPriceSession": 0, "incompleteEpisode": 0}
-    for position in range(policy.lookback_sessions, len(visible) - policy.lookback_sessions - 1):
+    # 2026-10-18: one collection asks for four horizons and each call rebuilt
+    # the same sealed candidates (the dominant cost on one CPU). They depend
+    # only on the knowable bars, the evidence rows, the calendar and the
+    # policy, never on the horizon, so identical inputs reuse the first build.
+    candidate_key = None
+    if backtest_cache is not None:
+        try:
+            candidate_key = _hash({"schema": "sealed-candidates-v1", "bars": _hash(visible),
+                                   "evidence": [_hash(list(rows)) for rows in evidence],
+                                   "research": _hash(list(research_reaction_rows)),
+                                   "sessions": _hash(list(session_dates)), "policy": policy.policy_id,
+                                   "scales": list(policy.state_scales), "weights": list(policy.component_weights),
+                                   "lookback": policy.lookback_sessions})
+        except (TypeError, ValueError):
+            candidate_key = None
+    reused = (backtest_cache or {}).get("sealedCandidates") if candidate_key else None
+    if reused and reused.get("key") == candidate_key:
+        candidates, candidates_with = list(reused["candidates"]), list(reused["candidatesWith"])
+        excluded = dict(reused["excluded"])
+        positions_range = range(0)
+    else:
+        candidates, candidates_with = [], []
+        excluded = {"missingCalendarOrPriceSession": 0, "incompleteEpisode": 0}
+        positions_range = range(policy.lookback_sessions, len(visible) - policy.lookback_sessions - 1)
+    for position in positions_range:
         row = visible[position]
         window_rows = visible[position - policy.lookback_sessions:position + 1]
         episode = episode_at(row["date"] + "T23:59:59Z", window_rows)
@@ -532,6 +554,9 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
             candidates.append(episode)
             if research:
                 candidates_with.append(episode_with(episode, row["date"] + "T23:59:59Z", window_rows))
+    if candidate_key and not (reused and reused.get("key") == candidate_key):
+        backtest_cache["sealedCandidates"] = {"key": candidate_key, "candidates": tuple(candidates),
+                                              "candidatesWith": tuple(candidates_with), "excluded": dict(excluded)}
     validation, search = None, None
     selection_policy = policy
     if backtest_cache is not None:
@@ -569,8 +594,11 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                     result = result_with
             chosen = candidates_with if comparison and comparison["adopted"] else candidates
             searched = backtest.weight_search(chosen, closes, session_dates, policy=policy, state_rows=state_rows)
+            sealed = backtest_cache.get("sealedCandidates")
             backtest_cache.clear()
             backtest_cache.update(key=key, result=result, search=searched, materialReactionResearch=comparison)
+            if sealed:
+                backtest_cache["sealedCandidates"] = sealed
         validation, search = backtest_cache["result"], backtest_cache.get("search")
         research_result = backtest_cache.get("materialReactionResearch")
         if research and research_result and research_result.get("adopted"):

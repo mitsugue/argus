@@ -78,6 +78,8 @@ def test_the_workflow_prints_only_the_filtered_report():
     assert "upload-artifact" not in text and "cat \"$DOC\"" not in text
     assert "scripts/ai_usage_report.py \"$DOC\"" in text and "rm -f \"$DOC\"" in text
     assert "${{ secrets.ARGUS_ADMIN_TOKEN }}" in text
+    # 2026-10-18: the report is stored privately and never printed to the public run page.
+    assert "GITHUB_STEP_SUMMARY" not in text and "private_diagnostics_store.py" in text
 
 
 def test_reads_in_short_pages_and_counts_only_true_integers(tmp_path, monkeypatch):
