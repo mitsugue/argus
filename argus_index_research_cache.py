@@ -35,7 +35,11 @@ def record(key, payload, *, method, at):
             raise ValueError('research_cache_report_missing')
     elif not isinstance(payload.get('comparison'), dict):
         raise ValueError('research_cache_comparison_missing')
-    body = {'key': key, 'methodVersion': method, 'calculatedAt': at, 'payload': deepcopy(payload)}
+    # Stored exactly as it reads back: a tuple in a policy becomes a list in
+    # the file, so the in-memory record takes the JSON form too (2026-10-19:
+    # every fresh comparison failed the save's read-back comparison).
+    body = {'key': key, 'methodVersion': method, 'calculatedAt': at,
+            'payload': json.loads(json.dumps(payload, ensure_ascii=False, allow_nan=False))}
     return {**body, 'sha256': digest(body)}
 
 

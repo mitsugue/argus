@@ -183,3 +183,14 @@ def test_price_only_result_does_not_replace_saved_market_condition_comparison():
     stale = cache.record('comparison:N225:5', market, method='m', at='2026-09-26T06:00:00Z')
     assert cache.comparison_retention_reason(shape_only, stale, feature_history_available=False, now=now) is None
     assert cache.comparison_retention_reason(shape_only, None, feature_history_available=False, now=now) is None
+
+
+def test_record_reads_back_equal_when_the_payload_holds_tuples(tmp_path):
+    # Production 2026-10-19: a comparison's policy carries tuples, which the
+    # file returns as lists; the save's read-back check must still match.
+    payload = {'comparison': {'candidates': []},
+               'selection': {'policy': {'state_scales': (('rate.jp10y_change5', 0.05),), 'component_weights': ()}}}
+    records = {'comparison:N225:5': cache.record('comparison:N225:5', payload, method='m', at='2026-10-18T16:00:00Z')}
+    path = tmp_path / 'research.json'
+    path.write_text(json.dumps(cache.envelope(records)))
+    assert cache.load(path, method='m', now='2026-10-18T17:00:00Z') == records
