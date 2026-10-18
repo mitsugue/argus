@@ -108,3 +108,10 @@ test('the existing complete profile contract validates after encrypted transport
  await fs.appendFile(path.join(f.output,'Default/IndexedDB/https_mitsugue.github.io_0.indexeddb.leveldb/CURRENT'),'bad');
  await assert.rejects(validateWarmProfile({profileDir:f.output,expectedCandidateSha:context.candidate}));
 }));
+test('the checkpoint gate state is sealed under its own kind (2026-10-19)', () => fixture(async f => {
+ const ctx = { ...context, kind: 'checkpoint-source' };
+ await seal(f.source, f.sealed, key, ctx); await unseal(f.sealed, f.output, key, ctx);
+ assert.deepEqual(await fs.readFile(path.join(f.source,'.hidden/fixture')), await fs.readFile(path.join(f.output,'.hidden/fixture')));
+ await fs.rm(f.output, {recursive:true,force:true});
+ await rejected(f, { ...ctx, kind: 'profile' });
+}));

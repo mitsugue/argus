@@ -17,7 +17,7 @@ function keyBytes(text) {
 function contextBytes(c) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(c.repository || '')
       || !/^[0-9a-f]{40}$/.test(c.candidate || '') || !/^[1-9][0-9]*$/.test(c.run || '')
-      || !['profile', 'seed-evidence', 'consumer-evidence', 'mobile-evidence'].includes(c.kind)) fail();
+      || !['profile', 'seed-evidence', 'consumer-evidence', 'mobile-evidence', 'checkpoint-source'].includes(c.kind)) fail();
   return Buffer.from(JSON.stringify(['argus-owner-artifact-v1', c.repository, c.candidate, c.run, c.kind]));
 }
 function aad(context, record) { return Buffer.concat([context, Buffer.from(`\n${record}`)]); }

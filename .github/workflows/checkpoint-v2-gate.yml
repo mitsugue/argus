@@ -73,11 +73,29 @@ jobs:
             https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
             --output artifacts/checkpoint-v2-exact-source.json
           python3 -B -c 'import json,pathlib; p=pathlib.Path("artifacts/checkpoint-v2-exact-source.json"); v=json.loads(p.read_text()); assert isinstance(v,dict) and v'
-      - name: Publish immutable shared exact state
+      # 2026-10-19: this repository is public and its artifacts can be
+      # downloaded by anyone signed in to GitHub. The production state is
+      # sealed (AES-256-GCM, owner artifact key) before it leaves this job;
+      # each consumer job opens it in its own workspace.
+      - uses: actions/checkout@v5
+        with: {path: source-tree}
+      - name: Seal the shared exact state for artifact transport
+        env:
+          ARGUS_OWNER_ARTIFACT_KEY: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -m 700 artifacts/plain-source
+          mv artifacts/checkpoint-v2-exact-source.json artifacts/plain-source/
+          chmod 600 artifacts/plain-source/checkpoint-v2-exact-source.json
+          node source-tree/web/scripts/owner-artifact-envelope.mjs seal artifacts/plain-source \
+            artifacts/sealed-source checkpoint-source "$GITHUB_SHA" "$GITHUB_RUN_ID"
+          rm -rf artifacts/plain-source
+      - name: Publish immutable shared exact state (sealed)
         uses: actions/upload-artifact@v4
         with:
           name: checkpoint-v2-exact-source-${{ github.sha }}
-          path: artifacts/checkpoint-v2-exact-source.json
+          path: artifacts/sealed-source
+          if-no-files-found: error
           retention-days: 1
 
   linux-4gib-cgroup:
@@ -102,7 +120,17 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: checkpoint-v2-exact-source-${{ github.sha }}
-          path: artifacts
+          path: artifacts/sealed-source
+      - name: Open the sealed exact state
+        env:
+          ARGUS_OWNER_ARTIFACT_KEY: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          node web/scripts/owner-artifact-envelope.mjs unseal artifacts/sealed-source \
+            artifacts/opened-source checkpoint-source "$GITHUB_SHA" "$GITHUB_RUN_ID"
+          mv artifacts/opened-source/checkpoint-v2-exact-source.json artifacts/checkpoint-v2-exact-source.json
+          chmod 644 artifacts/checkpoint-v2-exact-source.json
+          rm -rf artifacts/sealed-source artifacts/opened-source
       - name: Exact-state write, restore, WAL and cgroup proof
         shell: bash
         run: |
@@ -138,7 +166,17 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: checkpoint-v2-exact-source-${{ github.sha }}
-          path: artifacts
+          path: artifacts/sealed-source
+      - name: Open the sealed exact state
+        env:
+          ARGUS_OWNER_ARTIFACT_KEY: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          node web/scripts/owner-artifact-envelope.mjs unseal artifacts/sealed-source \
+            artifacts/opened-source checkpoint-source "$GITHUB_SHA" "$GITHUB_RUN_ID"
+          mv artifacts/opened-source/checkpoint-v2-exact-source.json artifacts/checkpoint-v2-exact-source.json
+          chmod 644 artifacts/checkpoint-v2-exact-source.json
+          rm -rf artifacts/sealed-source artifacts/opened-source
       - name: Same-shape allocator attribution (${{ matrix.variant }})
         run: |
           set -euo pipefail
@@ -172,7 +210,17 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: checkpoint-v2-exact-source-${{ github.sha }}
-          path: artifacts
+          path: artifacts/sealed-source
+      - name: Open the sealed exact state
+        env:
+          ARGUS_OWNER_ARTIFACT_KEY: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          node web/scripts/owner-artifact-envelope.mjs unseal artifacts/sealed-source \
+            artifacts/opened-source checkpoint-source "$GITHUB_SHA" "$GITHUB_RUN_ID"
+          mv artifacts/opened-source/checkpoint-v2-exact-source.json artifacts/checkpoint-v2-exact-source.json
+          chmod 644 artifacts/checkpoint-v2-exact-source.json
+          rm -rf artifacts/sealed-source artifacts/opened-source
       - name: Test-only mmap and munmap trace
         run: |
           set -euo pipefail
@@ -213,7 +261,17 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: checkpoint-v2-exact-source-${{ github.sha }}
-          path: artifacts
+          path: artifacts/sealed-source
+      - name: Open the sealed exact state
+        env:
+          ARGUS_OWNER_ARTIFACT_KEY: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          node web/scripts/owner-artifact-envelope.mjs unseal artifacts/sealed-source \
+            artifacts/opened-source checkpoint-source "$GITHUB_SHA" "$GITHUB_RUN_ID"
+          mv artifacts/opened-source/checkpoint-v2-exact-source.json artifacts/checkpoint-v2-exact-source.json
+          chmod 644 artifacts/checkpoint-v2-exact-source.json
+          rm -rf artifacts/sealed-source artifacts/opened-source
       - name: Exact 32-cycle single-process mapping closure
         run: |
           set -euo pipefail
@@ -247,7 +305,17 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: checkpoint-v2-exact-source-${{ github.sha }}
-          path: artifacts
+          path: artifacts/sealed-source
+      - name: Open the sealed exact state
+        env:
+          ARGUS_OWNER_ARTIFACT_KEY: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          node web/scripts/owner-artifact-envelope.mjs unseal artifacts/sealed-source \
+            artifacts/opened-source checkpoint-source "$GITHUB_SHA" "$GITHUB_RUN_ID"
+          mv artifacts/opened-source/checkpoint-v2-exact-source.json artifacts/checkpoint-v2-exact-source.json
+          chmod 644 artifacts/checkpoint-v2-exact-source.json
+          rm -rf artifacts/sealed-source artifacts/opened-source
       - name: Materialize one shared fail-closed isolated proof validator
         shell: bash
         run: |
