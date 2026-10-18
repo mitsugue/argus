@@ -27,5 +27,13 @@ jobs:
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-value backbone_disabled \
             --url "$BE/api/argus/crypto-scan")
-          echo "crypto-scan: $RESP"
-          echo "🪙 crypto-scan: \`${RESP}\`" >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p "$RUNNER_TEMP/private-notes"; printf '%s\n' "$RESP" >> "$RUNNER_TEMP/private-notes"/crypto-scan.txt; echo "crypto-scan: stored privately"
+      # 2026-10-18: response bodies go to the owner's private repository;
+      # the public run log keeps only that they were stored.
+      - name: Store run notes privately
+        if: always()
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: |
+          [ -d "$RUNNER_TEMP/private-notes" ] || exit 0
+          python3 -B scripts/private_diagnostics_store.py --kind crypto --run-id "${{ github.run_id }}" "$RUNNER_TEMP/private-notes"

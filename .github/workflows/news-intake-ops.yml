@@ -32,9 +32,10 @@ jobs:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           BE="https://argus-backend-3j2m.onrender.com"
+          mkdir -p "$RUNNER_TEMP/private-notes"
           if [ "${{ inputs.action }}" = "health" ]; then
             curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/news-intake/health" \
-              | python3 -m json.tool | tee -a "$GITHUB_STEP_SUMMARY"
+              | python3 -m json.tool >> "$RUNNER_TEMP/private-notes"/news-intake.txt
             exit 0
           fi
           [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token"; exit 1; }
@@ -50,13 +51,13 @@ jobs:
                   -d "{\"provider\": \"$P\", \"confirm\": true, \"reason\": \"model currency proof (owner-approved ops dispatch)\"}" \
                   "$BE/api/argus/ai-provider-status/ping$Q" || echo '{}')
                 echo "$RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); row=d.get("openai") or {}; print("provider=%s requested=%s returned=%s ok=%s status=%s" % (d.get("provider"), row.get("requestedModel") or d.get("model"), row.get("returnedModel") or row.get("model"), row.get("ok"), d.get("status") or d.get("reason") or "called"))' \
-                  2>/dev/null || echo "ping parse failed: ${RESP:0:160}"
-              done | tee -a "$GITHUB_STEP_SUMMARY"
+                  2>/dev/null || echo "ping parse failed"
+              done >> "$RUNNER_TEMP/private-notes"/news-intake.txt
               echo "--- lastPings (server-side record; survives client timeouts) ---"
               curl -s --max-time 30 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
                 "$BE/api/argus/ai-provider-status" \
                 | python3 -c 'import json,sys; [print("%s requested=%s returned=%s ok=%s at=%s" % (k, v.get("requestedModel"), v.get("returnedModel"), v.get("ok"), v.get("at"))) for k, v in (json.load(sys.stdin).get("lastPings") or {}).items()]' \
-                | tee -a "$GITHUB_STEP_SUMMARY"
+                >> "$RUNNER_TEMP/private-notes"/news-intake.txt
               ;;
             quarantine-review|quarantine-reprocess)
               BODY='{"reprocess": false}'
@@ -68,7 +69,7 @@ jobs:
               # Public repo: print a REDACTED summary only — verdicts, domains
               # and auth flags. subjectPrefix (licensed content) never reaches
               # the log.
-              python3 - "$RESP" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+              python3 - "$RESP" <<'PY' >> "$RUNNER_TEMP/private-notes"/news-intake.txt
           import json, sys
           try:
               data = json.loads(sys.argv[1])
@@ -97,7 +98,15 @@ jobs:
                 --method POST --timeout 300 \
                 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
                 --url "$BE/api/argus/admin/news-intake/reprocess")
-              echo "reprocess: $RESP"
-              echo "📥 news reprocess: \`${RESP:0:300}\`" >> "$GITHUB_STEP_SUMMARY"
+              printf '%s\n' "$RESP" >> "$RUNNER_TEMP/private-notes"/news-intake.txt; echo "reprocess: stored privately"
               ;;
           esac
+      # 2026-10-18: the operation's output goes to the owner's private
+      # repository; the public run log keeps only that it was stored.
+      - name: Store the operation output privately
+        if: always()
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: |
+          [ -d "$RUNNER_TEMP/private-notes" ] || exit 0
+          python3 -B scripts/private_diagnostics_store.py --kind news-intake --run-id "${{ github.run_id }}" "$RUNNER_TEMP/private-notes"

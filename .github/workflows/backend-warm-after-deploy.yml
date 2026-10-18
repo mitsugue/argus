@@ -57,10 +57,21 @@ jobs:
         run: |
           set -uo pipefail
           if [ -z "$ARGUS_ADMIN_TOKEN" ]; then echo "::error::ARGUS_ADMIN_TOKEN missing"; exit 1; else
-            python3 scripts/workflow_http.py --name warm-market-scan --method POST --timeout 90 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/market-scan" | cut -c1-200 || true
-            python3 scripts/run_intel_collect.py --base "$BE" --timeout 900 || exit 1
+            python3 scripts/workflow_http.py --name warm-market-scan --method POST --timeout 90 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/market-scan" > /dev/null || true
+            mkdir -p "$RUNNER_TEMP/private-notes"
+            python3 scripts/run_intel_collect.py --base "$BE" --timeout 900 > "$RUNNER_TEMP/private-notes"/collect.txt || { echo "collect: failed (stored privately)"; exit 1; }
+            echo "collect: done (stored privately)"
           fi
           python3 scripts/warm_protected_reads.py --group runtime || exit 1
+      # 2026-10-18: response bodies go to the owner's private repository;
+      # the public run log keeps only that they were stored.
+      - name: Store run notes privately
+        if: always()
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: |
+          [ -d "$RUNNER_TEMP/private-notes" ] || exit 0
+          python3 -B scripts/private_diagnostics_store.py --kind warm --run-id "${{ github.run_id }}" "$RUNNER_TEMP/private-notes"
       - name: Record the warmed identity
         run: |
           echo "## backend-warm-after-deploy" >> "$GITHUB_STEP_SUMMARY"
