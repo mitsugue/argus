@@ -235,6 +235,19 @@ def build_episode(*, cutoff: str, bars: Sequence[Mapping[str, Any]],
         if first and anchor and first <= _period(row) <= information_day and value in (-1, 1):
             conditions.append({"condition": _field(row), "direction": int(value),
                                "date": _period(row), **_receipt(row)})
+    reactions = _episode_reactions(reaction_rows, cutoff, first, anchor, information_day)
+    body = {
+        "schemaVersion": SCHEMA_VERSION, "instrumentId": INSTRUMENT,
+        "cutoff": cutoff, "anchorDate": anchor, "window": window,
+        "status": "AVAILABLE" if enough else "INSUFFICIENT_PRICE_HISTORY",
+        "states": states, "conditions": conditions, "reactions": reactions,
+        "policyHash": _hash(_policy_material(policy)),
+        "historicalVintageVerified": False,
+    }
+    return {**body, "snapshotId": _hash(body)}
+
+
+def _episode_reactions(reaction_rows, cutoff, first, anchor, information_day) -> dict[str, Any]:
     reactions: dict[str, Any] = {}
     for row in _visible([dict(r) for r in reaction_rows if isinstance(r, Mapping)
                          and _identity(r) == INSTRUMENT], cutoff):
@@ -246,14 +259,23 @@ def build_episode(*, cutoff: str, bars: Sequence[Mapping[str, Any]],
             key = str(row["eventType"]) + ":" + str(row["reactionWindowSessions"])
             reactions[key] = {"value": value, "date": _period(row),
                               "eventId": row["eventId"], "unit": "PERCENT", **_receipt(row)}
-    body = {
-        "schemaVersion": SCHEMA_VERSION, "instrumentId": INSTRUMENT,
-        "cutoff": cutoff, "anchorDate": anchor, "window": window,
-        "status": "AVAILABLE" if enough else "INSUFFICIENT_PRICE_HISTORY",
-        "states": states, "conditions": conditions, "reactions": reactions,
-        "policyHash": _hash(_policy_material(policy)),
-        "historicalVintageVerified": False,
-    }
+    return reactions
+
+
+def with_reactions(episode: Mapping[str, Any], reaction_rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """The same sealed episode with its reactions read from other rows.
+
+    2026-10-18: the states and conditions of every candidate were rebuilt a
+    second time for the release-reaction comparison, which doubled the
+    collection time on one CPU. Only the reactions differ, so only they are
+    read again; the result equals build_episode with those rows.
+    """
+    window = episode.get("window") or []
+    first = window[0]["date"] if window else None
+    information_day = _instant(episode["cutoff"]).date().isoformat()
+    body = {key: value for key, value in episode.items() if key != "snapshotId"}
+    body["reactions"] = _episode_reactions(reaction_rows, episode["cutoff"], first,
+                                           episode.get("anchorDate"), information_day)
     return {**body, "snapshotId": _hash(body)}
 
 
