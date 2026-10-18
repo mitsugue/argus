@@ -473,7 +473,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # Owner-authorized v13.7 operating-cost reduction: retire redundant
     # scheduled workflows while retaining manual recovery and product tests.
     ".github/workflows/ai-rejudge.yml": "9674c680ad54973f71bbc03a2dc335eb299c373b",
-    ".github/workflows/crypto-watch.yml": "1c996e5db84e8211ea09daa762c5f7d5d5554f7d",
+    ".github/workflows/crypto-watch.yml": "a31e93b8c0e82e57a37d707fd9835318e1286283",
     ".github/workflows/mover-causes.yml": "c12e4830658a2a21ad9e557ecb5c817276f5ee09",
     "test_retired_background_workflows.py": "bbfe02c081353b142cde8e106ac619f67cec6dd0",
     # Owner-authorized Gemini retirement regression coverage. This fixes only
