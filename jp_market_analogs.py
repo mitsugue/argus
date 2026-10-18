@@ -565,4 +565,3 @@ def recent_scale_windows(reference_day: str, years: Mapping[str, int] = RECENT_S
             start = day.replace(year=day.year - n, day=28)
         out[field] = start.isoformat()
     return out
-

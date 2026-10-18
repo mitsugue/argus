@@ -49,4 +49,3 @@ export function YardstickLine({ research }: { research: unknown }) {
       : `不採用（一致率 ${pct(without)} → ${pct(withIt)} で、良くなると言えないため）`}
   </p>;
 }
-
