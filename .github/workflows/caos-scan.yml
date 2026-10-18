@@ -132,7 +132,7 @@ jobs:
               --url "$BE/api/argus/admin/missions/tick")
             LAST_RC=$?
             set -e
-            mkdir -p "$RUNNER_TEMP/private-notes"; printf '%s\n' "[$BATCH] $MT" >> "$RUNNER_TEMP/private-notes"/missions-tick.txt; echo "missions-tick: stored privately"
+            echo "missions-tick[$BATCH]: $MT"
             VALUES=$(printf '%s' "$MT" | python3 -c \
               'import json,sys; d=json.load(sys.stdin); print(d.get("result","")); print(d.get("remaining","")); print(str(d.get("hasMore") is True).lower())')
             LAST_RESULT=$(printf '%s\n' "$VALUES" | sed -n '1p')
@@ -154,16 +154,6 @@ jobs:
             exit 2
           fi
           exit "$LAST_RC"
-
-      # 2026-10-18: response bodies go to the owner's private repository;
-      # the public run log keeps only that they were stored.
-      - name: Store run notes privately
-        if: always()
-        env:
-          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
-        run: |
-          [ -d "$RUNNER_TEMP/private-notes" ] || exit 0
-          python3 -B scripts/private_diagnostics_store.py --kind caos-mission --run-id "${{ github.run_id }}" "$RUNNER_TEMP/private-notes"
 
   caos-collection:
     needs: backend-identity
@@ -194,7 +184,7 @@ jobs:
           # printed, so three failures in a week left no reason in the log.
           COLLECT_RC=0
           RESP=$(python3 scripts/run_intel_collect.py --base "$BE" --timeout 900) || COLLECT_RC=$?
-          mkdir -p "$RUNNER_TEMP/private-notes"; printf '%s\n' "$RESP" >> "$RUNNER_TEMP/private-notes"/caos-collect.txt; echo "caos-collect: stored privately"
+          echo "caos-collect: $RESP"
           [ "$COLLECT_RC" -eq 0 ] || exit "$COLLECT_RC"
           OS=$(python3 scripts/workflow_http.py --name osint-agents \
             --method POST --timeout 180 \
@@ -202,20 +192,20 @@ jobs:
             --expected-status deterministic_mode \
             --header 'Content-Type: application/json' --data '{}' \
             --url "$BE/api/argus/admin/osint/agents-run")
-          mkdir -p "$RUNNER_TEMP/private-notes"; printf '%s\n' "$OS" >> "$RUNNER_TEMP/private-notes"/osint-agents.txt; echo "osint-agents: stored privately"
+          echo "osint-agents: $OS"
           BM=$(python3 scripts/workflow_http.py --name osint-benchmark \
             --method POST --timeout 60 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --expected-status deterministic_mode \
             --header 'Content-Type: application/json' --data '{}' \
             --url "$BE/api/argus/admin/osint/benchmark-run")
-          mkdir -p "$RUNNER_TEMP/private-notes"; printf '%s\n' "$BM" >> "$RUNNER_TEMP/private-notes"/osint-benchmark.txt; echo "osint-benchmark: stored privately"
+          echo "osint-benchmark: $BM"
           CN=$(python3 scripts/workflow_http.py --name osint-canary \
             --method POST --timeout 60 \
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --header 'Content-Type: application/json' --data '{}' \
             --url "$BE/api/argus/admin/osint/canary-run")
-          mkdir -p "$RUNNER_TEMP/private-notes"; printf '%s\n' "$CN" >> "$RUNNER_TEMP/private-notes"/osint-canary.txt; echo "osint-canary: stored privately"
+          echo "osint-canary: $CN"
       - name: Translate visible headlines
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -231,7 +221,7 @@ jobs:
               --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
               --expected-status deterministic_mode \
               --url "$BE/api/argus/admin/news/translate-visible")
-            mkdir -p "$RUNNER_TEMP/private-notes"; printf '%s\n' "[$ROUND] ${TRV:0:200}" >> "$RUNNER_TEMP/private-notes"/translate-visible.txt; echo "translate-visible: stored privately"
+            echo "translate-visible[$ROUND]: ${TRV:0:200}"
             COUNTS=$(printf '%s' "$TRV" | python3 -c \
               'import json,sys; d=json.load(sys.stdin); print(d.get("translated",0)); print(d.get("pending",0))')
             TRANSLATED=$(printf '%s\n' "$COUNTS" | sed -n '1p')
@@ -239,15 +229,6 @@ jobs:
             [ "$TRANSLATED" = "0" ] && [ "$PENDING" = "0" ] && break
             sleep 5
           done
-      # 2026-10-18: response bodies go to the owner's private repository;
-      # the public run log keeps only that they were stored.
-      - name: Store run notes privately
-        if: always()
-        env:
-          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
-        run: |
-          [ -d "$RUNNER_TEMP/private-notes" ] || exit 0
-          python3 -B scripts/private_diagnostics_store.py --kind caos-collect --run-id "${{ github.run_id }}" "$RUNNER_TEMP/private-notes"
       - name: Record C.A.O.S. result
         id: result
         if: always()

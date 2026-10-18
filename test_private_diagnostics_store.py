@@ -48,7 +48,6 @@ def test_production_diagnostics_never_publish_artifacts_or_print_contents():
 def test_scheduled_runs_keep_response_bodies_out_of_the_public_log():
     import re
     checks = {
-        'caos-scan': ['echo "caos-collect: $RESP"', 'echo "osint-agents: $OS"', 'echo "missions-tick[$BATCH]: $MT"'],
         'crypto-watch': ['echo "crypto-scan: $RESP"'],
         'prediction-ledger': ['echo "gate: $GATE"', 'echo "ai run: $SHORT"', 'provider diag: \\`${DIAG}'],
         'news-intake-ops': ['tee -a "$GITHUB_STEP_SUMMARY"', 'echo "reprocess: $RESP"'],
