@@ -41730,8 +41730,12 @@ def _jp_fiscal_environment_warm():
                         argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, day) else "0"})
             except argus_market_clock.CalendarUnavailableError:
                 calendar = []
+            store = (os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3")
+                     if _cost_policy_durable_enabled() else None)
             result = argus_jp_fiscal_runtime.refresh(original, now_iso=_ai_now_iso(),
-                calendar=calendar, get=requests.get)
+                calendar=calendar, get=requests.get,
+                retain_archive=(lambda raw, received: _jp_fiscal_retain_archive(store, raw, received))
+                if store else None)
             if not result["changed"] and not _JP_FISCAL_REFRESH_STATE.get("pendingPersistence"):
                 _JP_FISCAL_REFRESH_STATE["status"] = "NOT_DUE"
                 return
@@ -41770,6 +41774,12 @@ def _jp_fiscal_environment_warm():
 _CFTC_JPY_REFRESH_LOCK = threading.Lock()
 _CFTC_JPY_STATE = {"lastAttemptAt": None, "lastSuccessfulAcquisitionAt": None,
                    "status": "NOT_ACQUIRED", "lastAttemptMonotonic": None}
+
+
+def _jp_fiscal_retain_archive(store, raw, received):
+    """The official auction-history workbook into the existing private source store."""
+    import argus_market_input_backup
+    return argus_market_input_backup.retain_jgb_archive(store, raw, received_at=received)
 
 
 def _cftc_jpy_document(*, cutoff=None):
