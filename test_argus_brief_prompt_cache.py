@@ -44,7 +44,7 @@ def test_real_sdk_serializes_explicit_boundary_without_losing_or_reordering_cont
 @pytest.mark.parametrize('model,purpose,boundary', [
     ('unreviewed-model','market_brief',2), ('gpt-5.6-terra','event_analysis',2),
     ('gpt-5.6-terra','market_brief',True), ('gpt-5.6-terra','market_brief',0),
-    ('gpt-5.6-terra','market_brief',5)])
+    ('gpt-5.6-terra','market_brief',6)])
 def test_invalid_boundary_fails_before_any_paid_request(monkeypatch,model,purpose,boundary):
     def forbidden(*a,**k): raise AssertionError('provider called')
     monkeypatch.setattr(scanner,'_ai_usage_provider_call',forbidden)
@@ -52,7 +52,10 @@ def test_invalid_boundary_fails_before_any_paid_request(monkeypatch,model,purpos
         scanner._openai_prose_call(N(),model,'policy','input',purpose=purpose,cache_prefix_chars=boundary)
 
 
-def test_polish_keeps_current_facts_and_correction_outside_stable_prefix(monkeypatch):
+def test_correction_reads_the_first_request_from_the_cache(monkeypatch):
+    # 2026-10-18 (measured): editions are 45+ minutes apart and a cache lives
+    # 30 minutes, so the boundary is the end of the first request, which the
+    # bounded correction resends seconds later.
     requests=[]
     def provider(user,**kwargs):
         context, raw=model_response(user)
@@ -67,12 +70,11 @@ def test_polish_keeps_current_facts_and_correction_outside_stable_prefix(monkeyp
     result=scanner._market_brief_ai_polish(brief)
     assert len(requests)==2 and result['unifiedStatus']=='GENERATED'
     first,n,context=requests[0];second,m,again=requests[1]
-    assert n==m and first[:n]==second[:m]
-    assert '表示候補:' in first[n:] and '"facts"' in first[n:]
-    assert '表示候補:' not in first[:n] and '"facts"' not in first[:n]
+    assert n==m==len(first) and second[:m]==first
+    assert '"facts"' in first[:n] and '前の回答は検証で却下されました' in second[m:]
     assert second.startswith(first) and context==again
     assert result['aiDiagnostics']['cacheWriteInputTokens']==150
-    assert result['aiDiagnostics']['promptCachePolicy']['dynamicSuffixCached'] is False
+    assert result['aiDiagnostics']['promptCachePolicy']['dynamicSuffixCached'] is True
 
 
 def row(**overrides):
@@ -128,3 +130,16 @@ def test_malformed_provider_write_count_preserves_other_usage_without_retry():
     assert len(calls)==len(records)==1
     assert records[0]['inputTokens']==1000 and records[0]['cachedInputTokens']==200
     assert 'cacheWriteInputTokens' not in records[0]
+
+
+def test_boundary_at_the_end_sends_one_cached_block(monkeypatch):
+    captured = []
+    sdk = openai.OpenAI(api_key='offline-synthetic', base_url='https://unused.invalid')
+    monkeypatch.setattr(sdk.responses, '_post', lambda path, *, body, **kw: captured.append(body) or N(output_text='{}'))
+    monkeypatch.setattr(scanner, '_ai_usage_provider_call', lambda p,f,m,invoke,**kw:invoke())
+    text = '規則と材料の全文'
+    scanner._openai_prose_call(N(responses=sdk.responses), 'gpt-5.6-terra', '方針', text,
+                               purpose='market_brief', cache_prefix_chars=len(text))
+    blocks = captured[-1]['input'][0]['content']
+    assert blocks == [{'type': 'input_text', 'text': text, 'prompt_cache_breakpoint': {'mode': 'explicit'}}]
+    sdk.close()
