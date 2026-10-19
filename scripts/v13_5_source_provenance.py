@@ -430,7 +430,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/margin-dynamics.test.cjs': 'd969a73de0e7b669ecaed83da07f9481ab16cc8c',
     'web/scripts/market-brief-response.test.cjs': '93091e37a1832f91d3d19592e1fce7825d4ba065',
     'web/src/components/chart/JapanMarketComparisonChart.css': 'ed4a3479e60375c21f67e0cb40680a658baac18d',
-    'web/src/components/chart/JapanMarketComparisonChart.tsx': '6d78541a8463849eac60e9908230a67e44af00b0',
+    'web/src/components/chart/JapanMarketComparisonChart.tsx': '4d7a2b496a2f7718d1c923f17b79736830fe8e4e',
     'web/src/components/chart/JapanMarketComparisonPanel.tsx': 'aa5af39948b06558efdfe5dbe28e47fdeae9293f',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '421e18ed7bfcf3a3c6729c62a3c56b7d4d436ccc',
@@ -686,6 +686,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/scripts/comparison-references-only.test.cjs",
+    "test_owner_decisions_2026_10_20.py",
     "test_series_small_fixes_2026_10_20.py",
     "test_history_capacity_check.py",
     "test_argus_analysis_history_parts.py",
