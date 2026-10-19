@@ -17870,8 +17870,15 @@ def _market_brief_refresh(allow_ai=True):
                     if allow_ai else copy.deepcopy(previous.get("calculationSnapshots") or {}))
     internals = (internals if allow_ai else
                  (calculations.get("5") or {}).get("marketInternals") or {})
-    for calculation in calculations.values():
-        calculation["marketInternals"] = internals
+    # 2026-10-19: one internals document holds every horizon's periods. Four
+    # copies were about 250 KB (26%) of each saved edition and brought the
+    # remote history toward its bound; readers fall back to the "5" copy.
+    holder = "5" if isinstance(calculations.get("5"), dict) else None
+    for key, calculation in calculations.items():
+        if holder is None or key == holder:
+            calculation["marketInternals"] = internals
+        else:
+            calculation.pop("marketInternals", None)
     brief["calculationSnapshots"] = calculations
     brief["facts"].extend(argus_market_brief.calculation_facts(calculations))
     brief["facts"].extend(jp_market_internals.explanation_facts(internals))

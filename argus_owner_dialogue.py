@@ -112,7 +112,9 @@ def hypothesis_calculation(value, *, index_quote=None, eps_input=None,
 
 
 def market_internals(brief, horizon):
-    saved=((brief.get('calculationSnapshots') or {}).get(str(horizon)) or {}).get('marketInternals')
+    snapshots=brief.get('calculationSnapshots') or {}
+    # 2026-10-19: newer editions keep the one internals document on the "5" snapshot.
+    saved=(snapshots.get(str(horizon)) or {}).get('marketInternals') or (snapshots.get('5') or {}).get('marketInternals')
     facts=(brief.get('unifiedContext') or {}).get('facts') or []
     if not isinstance(saved,dict) or saved.get('schemaVersion')!='jp-market-internals-v1' or saved.get('actionAuthority') is not False:return None
     if not any(f.get('source')=='market_internals_calculation' and (f.get('provenance') or {}).get('eventId')==f'market-internals-{horizon}' and (f.get('provenance') or {}).get('sourceRowSha256')==saved.get('evidenceId') for f in facts):return None

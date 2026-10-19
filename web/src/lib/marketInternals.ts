@@ -49,7 +49,8 @@ export function validMarketInternals(v:unknown):v is MarketInternalsDocument {
 }
 
 export function selectMarketInternals(brief:MarketBrief|null, latest:unknown, horizon:number) {
-  const saved=brief?.calculationSnapshots?.[String(horizon)]?.marketInternals;
+  // 2026-10-19: newer editions keep the one internals document on the "5" snapshot.
+  const saved=brief?.calculationSnapshots?.[String(horizon)]?.marketInternals??brief?.calculationSnapshots?.['5']?.marketInternals;
   const accepted=brief?.unifiedSummary;
   if(accepted?.schemaVersion==='argus-unified-brief-v1'&&accepted.actionAuthority===false&&accepted.contextId===brief?.unifiedContext?.contextId&&validMarketInternals(saved)
     &&saved.periods[String(horizon)]&&brief.unifiedContext.facts.some(f=>f.source==='market_internals_calculation'
