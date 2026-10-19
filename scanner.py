@@ -15796,8 +15796,6 @@ def _system_health(*, allow_provider_fetch=True):
         # bridge push is therefore the expected state, not a warning — only
         # a US session without pushes is.
         bridge_open = us_open
-        idle_ja = ("US市場時間外(待機) · 日本株はTachibana経由(ブリッジ対象外)"
-                   if jp_open and not us_open else "市場時間外(待機)")
         if not ages:
             # 2026-10-20 (owner decision): the EC2 bridge is retired (no
             # heartbeat or push since September); US ETF prices come from

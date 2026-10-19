@@ -334,12 +334,15 @@ def snapshot(path,directory,*,check_budget=None,progress=None):
     finally:db.close()
     stage('SNAPSHOT_CHUNKS')
     chunks=[];total=0;digest=hashlib.sha256()
-    for location in sections:
-        with location.open('rb') as handle:
-            while raw:=handle.read(CHUNK_BYTES):
-                check()
-                checksum=_hash(raw);(Path(directory)/checksum).write_bytes(raw);digest.update(raw);total+=len(raw)
-                chunks.append({'sha256':checksum,'bytes':len(raw)})
+    # The whole archive is still written as one file: the sections in order.
+    with (Path(directory)/'inputs.ndjson').open('wb') as whole:
+        for location in sections:
+            with location.open('rb') as handle:
+                while raw:=handle.read(CHUNK_BYTES):
+                    check()
+                    whole.write(raw)
+                    checksum=_hash(raw);(Path(directory)/checksum).write_bytes(raw);digest.update(raw);total+=len(raw)
+                    chunks.append({'sha256':checksum,'bytes':len(raw)})
     check()
     return {'schemaVersion':SCHEMA,'scope':'PUBLIC_MARKET_INPUTS','ownerRecordsIncluded':False,
             'credentialsIncluded':False,'originalArchiveSha256':digest.hexdigest(),'archiveBytes':total,
