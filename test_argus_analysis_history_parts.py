@@ -180,3 +180,13 @@ def test_outcomes_are_kept_after_their_editions_and_restored(tmp_path):
     fresh = tmp_path / 'fresh.sqlite3'
     assert v3.synchronize(fresh, remote)['restoredCounts'] == {'views': len(views), 'outcomes': len(outcomes)}
     assert bodies(fresh) == (views, outcomes)
+
+
+def test_a_writer_is_not_blocked_while_v3_splits_records(tmp_path):
+    """2026-10-20: no read lock is held between records (rollback-journal mode)."""
+    local = local_file(tmp_path, 'local.sqlite3', [edition('2026-10-01T00:00:00Z'), edition('2026-10-02T00:00:00Z')])
+    ids = [r[0] for r in sqlite3.connect(local).execute('SELECT record_id FROM views ORDER BY sequence')]
+    reader = v3._local_bodies(local, 'views', 'record_id', ids)
+    next(reader)                                    # the caller is now splitting the first record
+    history.append(local, edition('2026-10-03T00:00:00Z'))   # a writer commits meanwhile
+    assert len(list(reader)) == 1

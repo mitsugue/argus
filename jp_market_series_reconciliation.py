@@ -26,14 +26,23 @@ LIST_LIMIT = 50
 MARGIN_DAILY_FROM = '2026-09-25'
 #: Scheduled sessions on which the exchange did not trade.
 KNOWN_NONTRADING_DAYS = {'2020-10-01': 'TSE_FULL_DAY_OUTAGE'}
+#: 2026-10-20: the exchanges announce that the weekly margin balance of a week
+#: broken by the New Year or Golden Week holidays is not published (e.g.
+#: Nagoya/Sapporo notices for 2025-12-30 and 2026-05-08). Every one of the 13
+#: weeks missing from both stored margin series since 2016 had at most two
+#: sessions, and every holiday week with three or more sessions was published,
+#: so such a week is not expected for the margin series. Investor-type flows
+#: are published for these weeks too and keep the full weekly calendar.
+MARGIN_MIN_WEEK_SESSIONS = 3
 
 JP_SESSIONS, JP_WEEKS, MARGIN_WEEKS_THEN_SESSIONS = 'JP_SESSIONS', 'JP_WEEKS', 'MARGIN_WEEKS_THEN_SESSIONS'
+JP_MARGIN_WEEKS = 'JP_MARGIN_WEEKS'
 NO_CALENDAR, NOT_CHECKED = 'NO_OFFICIAL_CALENDAR', 'NOT_CHECKED'
 CALENDARS = {
     'price_series:nikkei': JP_SESSIONS,
     'price_series:topix': JP_SESSIONS,
     'price_series:index_per': JP_SESSIONS,
-    'two_market_credit': JP_WEEKS,
+    'two_market_credit': JP_MARGIN_WEEKS,
     'foreign_flow': JP_WEEKS,
     'margin_1570': MARGIN_WEEKS_THEN_SESSIONS,
     'price_series:sp500': NO_CALENDAR,
@@ -125,7 +134,13 @@ def reconcile_series(key: str, rows: Sequence[Any], *, open_days: Iterable[str],
         return {**base, 'status': 'NO_ROWS', 'reason': None, 'expected': 0,
                 'missingDates': _listed(()), 'unexpectedDates': _listed(())}
     first, last = base['first'], base['last']
+    open_days = list(open_days)
     open_set = {d for d in open_days if first <= d <= last and d not in KNOWN_NONTRADING_DAYS}
+    # Sessions per whole week, not clipped to the series' first and last date.
+    week_sessions: Dict[str, int] = {}
+    for d in open_days:
+        if d not in KNOWN_NONTRADING_DAYS:
+            week_sessions[_week(d)] = week_sessions.get(_week(d), 0) + 1
     unknown = {d for d in unknown_days if first <= d <= last}
     if len(open_set) > MAX_DAYS:
         raise ValueError('reconciliation_day_bound')
@@ -135,11 +150,14 @@ def reconcile_series(key: str, rows: Sequence[Any], *, open_days: Iterable[str],
         # The application date's own week is the first daily week, not a weekly one.
         switch = _week(MARGIN_DAILY_FROM)
         weekly = _weekly({d for d in stored if d < MARGIN_DAILY_FROM},
-                         {d for d in open_set if d < MARGIN_DAILY_FROM and _week(d) != switch})
+                         {d for d in open_set if d < MARGIN_DAILY_FROM and _week(d) != switch},
+                         min_sessions=MARGIN_MIN_WEEK_SESSIONS, week_sessions=week_sessions)
         daily = _daily({d for d in stored if d >= MARGIN_DAILY_FROM}, {d for d in open_set if d >= MARGIN_DAILY_FROM})
         expected, missing, unexpected = (weekly[0] + daily[0], weekly[1] | daily[1], weekly[2] | daily[2])
-    elif calendar == JP_WEEKS:
-        expected, missing, unexpected = _weekly(stored, open_set)
+    elif calendar in (JP_WEEKS, JP_MARGIN_WEEKS):
+        expected, missing, unexpected = _weekly(
+            stored, open_set, min_sessions=MARGIN_MIN_WEEK_SESSIONS if calendar == JP_MARGIN_WEEKS else 1,
+            week_sessions=week_sessions)
     else:
         expected, missing, unexpected = _daily(stored, open_set)
     # A date the calendar could not answer is neither expected nor unexpected.
@@ -155,16 +173,41 @@ def _daily(stored: set, open_set: set):
     return len(open_set), open_set - stored, stored - open_set
 
 
-def _weekly(stored: set, open_set: set):
-    """One date per week that has a session; the week, not the weekday, is checked."""
-    weeks = {_week(d) for d in open_set}
+def _weekly(stored: set, open_set: set, *, min_sessions: int = 1, week_sessions=None):
+    """One date per week that has enough sessions; the week, not the weekday, is checked.
+
+    A short week (fewer than min_sessions) is not expected; a stored date in it
+    is accepted, not reported as unexpected."""
+    present = {_week(d) for d in open_set}
+    counts = week_sessions or {}
+    if not week_sessions:
+        for d in open_set:
+            counts[_week(d)] = counts.get(_week(d), 0) + 1
+    weeks = {w for w in present if counts.get(w, 0) >= min_sessions}
+    short = present - weeks
     by_week: Dict[str, list] = {}
     for d in stored:
         by_week.setdefault(_week(d), []).append(d)
     missing = {w for w in weeks if w not in by_week}
-    unexpected = {d for w, ds in by_week.items() if w not in weeks for d in ds}
+    unexpected = {d for w, ds in by_week.items() if w not in weeks and w not in short for d in ds}
     unexpected |= {d for ds in by_week.values() if len(ds) > 1 for d in sorted(ds)[:-1]}
     return len(weeks), missing, unexpected
+
+
+def drop_exact_duplicates(rows: Sequence[Mapping[str, Any]]) -> list:
+    """Keep the first of rows equal in series, period, receipt and value (2026-10-20).
+
+    A revision (another receipt or another value) is kept; only a repeated
+    import of the same observation is dropped."""
+    seen, out = set(), []
+    for row in rows or ():
+        key = (row.get('seriesId'), _day(row), str(row.get('knownAt') or row.get('availableFrom') or ''),
+               repr(row.get('value')))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
 
 
 def reconcile(inputs: Mapping[str, Any], *, open_days: Iterable[str], unknown_days: Iterable[str] = (),

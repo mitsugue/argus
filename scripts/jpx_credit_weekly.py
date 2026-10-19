@@ -210,6 +210,50 @@ def build_rows(parsed: Dict[str, Any], *, url: str, sha256: str,
     } for key in ("short", "long")]
 
 
+def monthly_balance_rows(periods: Sequence[str], *, reader=None, observed_at: Optional[str] = None,
+                         index_reader=None) -> Dict[str, Any]:
+    """Balances of named missing weeks from the official monthly report (2026-10-20).
+
+    JPX keeps only about five weekly workbooks; the weeks of 2026-07-17 and
+    07-24 were never imported and are gone. The monthly report prints the same
+    two-market balances (its 07-31 and 08-07 rows equal the weekly imports to
+    the yen). Only the named weeks are built; the receipt time is now and is
+    never back-dated."""
+    from urllib.parse import urljoin
+    from scripts import jpx_credit_valuation_monthly as monthly
+    reader = reader or monthly.read
+    wanted = sorted(set(periods))
+    for period in wanted:
+        if date.fromisoformat(period).weekday() != 4:
+            raise ValueError("jpx_backfill_period_not_friday")
+    observed = observed_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    first = monthly.parse_index(reader(monthly.INDEX, 1024 * 1024))
+    rows, fetched, gaps = [], [], []
+    for period in wanted:
+        year, month = int(period[:4]), int(period[5:7])
+        base = first.years[year]
+        page = first if base == monthly.INDEX else monthly.parse_index(reader(base, 1024 * 1024), base)
+        url = next((monthly.official_url(urljoin(base, link)) for link in page.credit
+                    if link.endswith(f"sinyou{year % 100:02d}{month:02d}.pdf")), None)
+        if url is None:
+            gaps.append(period + ":monthly_report_unavailable")
+            continue
+        payload = reader(url, monthly.MAX_BYTES)
+        found = [r for r in monthly.extract_pdf(payload) if r["periodEnd"] == period]
+        if len(found) != 1 or found[0].get("shortBalanceJpy") is None or found[0].get("longBalanceJpy") is None:
+            gaps.append(period + ":monthly_row_missing")
+            continue
+        digest = hashlib.sha256(payload).hexdigest()
+        source = (f"JPX official | {url} | sha256={digest} | "
+                  "publication=monthly_report_retrospective | availability=successful_fetch")
+        for key, value in (("short", found[0]["shortBalanceJpy"]), ("long", found[0]["longBalanceJpy"])):
+            rows.append({"seriesId": SERIES[key], "periodEnd": period, "publishedAt": "",
+                         "availableFrom": observed, "observedAt": observed, "value": value,
+                         "unit": "JPY", "source": source, "sourceKind": "official", "status": "live"})
+        fetched.append(period)
+    return {"fetched": fetched, "gaps": gaps, "failures": list(gaps), "rows": rows, "csv": rows_to_csv(rows)}
+
+
 def rows_to_csv(rows: Iterable[Dict[str, Any]]) -> str:
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=list(CSV_COLUMNS), lineterminator="\n")
@@ -355,7 +399,7 @@ def post_json(url: str, body: Dict[str, Any], token: str, timeout: int = 600) ->
 
 
 def import_rows(csv_text: str, *, backend: str, token: str,
-                expected_newest: Optional[str] = None) -> Dict[str, Any]:
+                expected_newest: Optional[str] = None, older_than_readback_ok: bool = False) -> Dict[str, Any]:
     """Dry run, commit, read back. The commit rebuilds the ledger and can
     outlive the proxy's response window (2026-09-08: the rows landed but the
     client saw a transport error) — so a transport error on the commit is
@@ -378,6 +422,7 @@ def import_rows(csv_text: str, *, backend: str, token: str,
                 "ledger": readback, "transportError": commit.get("transportError")}
     import argus_market_ledger as market_ledger
     from argus_jpx_credit_valuation import ledger_observation_digest
+    outside_window: List[str] = []
     try:
         expected = market_ledger.parse_csv(csv_text)
         required = set(SERIES.values()) if expected_newest else set()
@@ -392,6 +437,12 @@ def import_rows(csv_text: str, *, backend: str, token: str,
             seen = readback.get(sid, {})
             observations = [{"periodEnd": seen.get("periodEnd"), "value": seen.get("latestValue"),
                              "availableFrom": seen.get("availableFrom")}, *seen.get("history", [])]
+            oldest = min((str(x.get("periodEnd") or "") for x in observations if x.get("periodEnd")), default="")
+            if older_than_readback_ok and oldest and row["periodEnd"] < oldest:
+                # 2026-10-20 backfill: the table reads back only recent weeks; the
+                # expected-date reconciliation confirms these after the import.
+                outside_window.append(row["periodEnd"])
+                continue
             digest = ledger_observation_digest(row) if sid == "credit.valuation_loss_pct" else None
             matches = [x for x in observations if x.get("periodEnd") == row["periodEnd"]
                        and x.get("value") == row["value"]
@@ -408,6 +459,7 @@ def import_rows(csv_text: str, *, backend: str, token: str,
     except (KeyError, TypeError, ValueError):
         return {"ok": False, "stage": "readback_content", "ledger": readback}
     return {"ok": True, "stage": "verified_import", "importId": commit.get("importId"),
+            "outsideReadbackWindow": sorted(set(outside_window)),
             "rowCount": len(commit.get("preview") or []),
             "settledByReadback": commit.get("ok") is None,
             "transportError": commit.get("transportError"), "ledger": readback}
@@ -458,9 +510,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--summary", default=None, help="write a JSON summary here")
     parser.add_argument("--valuation-since", default=None, help="last audited valuation period held (exclusive); independent from credit balances")
     parser.add_argument("--valuation-monthly-backfill", action="store_true", help="one-time missing audited periods from official monthly reports; balances are not imported")
+    parser.add_argument("--balance-monthly-backfill", default="", help="comma-separated missing Fridays whose balances come from the official monthly report")
     args = parser.parse_args(argv)
     try:
-        if args.valuation_monthly_backfill:
+        if args.balance_monthly_backfill:
+            result = monthly_balance_rows([p.strip() for p in args.balance_monthly_backfill.split(",") if p.strip()])
+        elif args.valuation_monthly_backfill:
             from scripts.jpx_credit_valuation_monthly import collect as monthly_collect
             held = ledger_newest_credit(args.backend, token=os.environ.get(args.token_env, ""))
             rows = monthly_collect([dict(row, seriesId=sid) for sid, row in held.items()])
@@ -485,9 +540,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             summary["import"] = {"ok": False, "stage": "token_missing"}
         else:
             try:
+                backfill = bool(args.balance_monthly_backfill)
                 summary["import"] = import_rows(result["csv"], backend=args.backend, token=token,
-                    expected_newest=max((r["periodEnd"] for r in result["rows"]
-                                         if r["seriesId"] in SERIES.values()), default=None))
+                    expected_newest=None if backfill else max((r["periodEnd"] for r in result["rows"]
+                                         if r["seriesId"] in SERIES.values()), default=None),
+                    older_than_readback_ok=backfill)
                 summary["ledger"] = (summary["import"] or {}).get("ledger") or ledger_newest_credit(args.backend, token=token)
             except Exception as error:
                 summary["import"] = {"ok": False, "stage": "authenticated_import",
