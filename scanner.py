@@ -51509,6 +51509,13 @@ def run_scheduler():
         threading.Thread(target=_intel_collect_resident_tick, daemon=True, name="intel-collect-resident").start()
         threading.Thread(target=_official_events_track_resident_tick, daemon=True,
                          name="official-events-track").start()
+        # 2026-10-20: the history backup used to run only after a brief was
+        # generated (11 times a weekday), so the v3 migration of 48 editions a
+        # call would have taken two days. The call keeps its own lock and its
+        # ten-minute interval; with nothing new it reads two remote heads.
+        threading.Thread(target=lambda: _memory_operation_run(
+            "internal", "brief.history_sync", _market_brief_history_sync),
+            daemon=True, name="market-brief-history-sync-resident").start()
         threading.Thread(target=_heavy_tick, daemon=True, name="sector-heatmap",
                          args=("jp_sector_heatmap_tick",
                                _jp_sector_heatmap_tick)).start()
