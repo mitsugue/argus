@@ -2111,15 +2111,7 @@ def api_argus_layer2b_summary():
         return jsonify({"status": "parse_error"})
 
 
-@app.route("/api/argus/ledger/recent")
-def api_argus_ledger_recent():
-    """Debug — most recent N entries from the raw ledger."""
-    try:
-        limit = int(request.args.get("limit", "50"))
-    except (TypeError, ValueError):
-        limit = 50
-    limit = max(1, min(limit, 500))
-    return jsonify({"entries": argus_ledger.list_recent(limit=limit)})
+# 2026-10-19: the debug /ledger/recent route (no caller) is retired.
 
 
 # ━━━ FRED rates snapshot ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -50212,59 +50204,10 @@ def api_argus_prediction_snapshot():
     # provider/observation projection after the first socket times out.
     return _single_flight_json("prediction-snapshot", _prediction_snapshot_cached_build)
 
-@app.route("/api/argus/sensor-quotes")
-def api_argus_sensor_quotes():
-    """Latest values for the 16 Layer-1 sensors — the ledger-v3 scorer's price
-    source (JP via J-Quants/moomoo overlay, US ETFs via the Twelve Data stash,
-    BTC via CoinGecko, USDJPY/VIX via FRED)."""
-    out = {}
-    jp = get_japan_watchlist_snapshot([s for s, _ in _L1_SENSORS_JP])
-    for s in (jp.get("stocks") or []):
-        q = _decision_usable_watch_quote_row(
-            s, "JP", allow_delayed=False)
-        if q is not None:
-            out[q["symbol"]] = float(q["price"])
-    get_market_regime_snapshot()
-    _alert_etf_momentum()
-    _ensure_sensor_etfs()
-    now_ts = time.time()
-    for sym in _L1_SENSORS_US:
-        st = _etf_last_price_decision_row(
-            sym, max_transport_age_sec=24 * 3600,
-            now_epoch=now_ts)
-        if st:
-            out[sym] = st["price"]
-    cw = get_crypto_watchlist_snapshot(["bitcoin"])
-    for q in (cw.get("quotes") or []):
-        price = (_decision_usable_crypto_price(q)
-                 if q.get("id") == "bitcoin" else None)
-        if price is not None:
-            out["BTC"] = price
-    rates = get_rates_snapshot()
-    for key, sid in (("usdJpy", "USDJPY"), ("vix", "VIX")):
-        s = rates.get(key) if isinstance(rates, dict) else None
-        value = _decision_usable_rate_value(s)
-        if value is not None:
-            out[sid] = value
-    return jsonify({"asOf": _ai_now_iso(), "engineVersion": "ledger-v3", "quotes": out})
-
-@app.route("/api/argus/class-quotes")
-def api_argus_class_quotes():
-    """Latest asset-class proxy prices for the ledger scorer. Warms the
-    regime/alerts caches first so the stash is fresh; crypto is scored via
-    /crypto-watchlist directly."""
-    get_market_regime_snapshot()
-    _alert_etf_momentum()
-    now_ts = time.time()
-    out = {}
-    for sym in list(_ETF_LAST_PRICE):
-        st = _etf_last_price_decision_row(
-            sym, max_transport_age_sec=24 * 3600,
-            now_epoch=now_ts)
-        if st:
-            out[sym] = {"price": st["price"],
-                        "ageSec": int(now_ts - st["ts"])}
-    return jsonify({"asOf": _ai_now_iso(), "quotes": out})
+# 2026-10-19: /sensor-quotes and /class-quotes (the retired ledger-v3 scorer's
+# price sources; no caller in the app, workflows, scripts or the EC2 schedule)
+# are retired. The source-time gate they used, _etf_last_price_decision_row,
+# stays and keeps its own tests.
 
 
 # ━━━ Notifications — read the same saved integrated-AI edition as Today ━━━

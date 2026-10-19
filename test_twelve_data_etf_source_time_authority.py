@@ -293,38 +293,29 @@ def test_prediction_snapshot_uses_valid_daily_class_sensor_and_posture(monkeypat
     }
 
 
-def _stub_quote_route_dependencies(monkeypatch):
-    monkeypatch.setattr(
-        scanner, "get_japan_watchlist_snapshot",
-        lambda *_args, **_kwargs: {"stocks": []})
-    monkeypatch.setattr(scanner, "get_market_regime_snapshot", lambda: {})
-    monkeypatch.setattr(scanner, "_alert_etf_momentum", lambda: {})
-    monkeypatch.setattr(scanner, "_ensure_sensor_etfs", lambda: None)
-    monkeypatch.setattr(
-        scanner, "get_crypto_watchlist_snapshot", lambda _ids: {"quotes": []})
-    monkeypatch.setattr(scanner, "get_rates_snapshot", lambda: {})
-
-
 @pytest.mark.parametrize(
     "invalid_date",
     [None, "2020-08-11", "bad-date", "2026-08-13", "2026-08-09"],
     ids=["missing", "stale", "malformed", "future", "weekend"],
 )
-def test_quote_routes_omit_source_invalid_etf_stash(monkeypatch, invalid_date):
-    _stub_quote_route_dependencies(monkeypatch)
+def test_decision_row_omits_source_invalid_etf_stash(monkeypatch, invalid_date):
+    # 2026-10-19: the /sensor-quotes and /class-quotes routes that read this
+    # gate were retired (no caller); the gate itself keeps the same guarantee.
     scanner._ETF_LAST_PRICE.update({
         "SPY": _stash_row(invalid_date),
         "GLD": _stash_row(LATEST_TRADING_DATE),
     })
+    row = lambda sym: scanner._etf_last_price_decision_row(
+        sym, max_transport_age_sec=24 * 3600, now_epoch=NOW)
+
+    assert row("SPY") is None
+    assert row("GLD")["price"] == 101.0
+
+
+def test_retired_quote_routes_are_gone():
     client = scanner.app.test_client()
-
-    sensor_quotes = client.get("/api/argus/sensor-quotes").get_json()["quotes"]
-    class_quotes = client.get("/api/argus/class-quotes").get_json()["quotes"]
-
-    assert "SPY" not in sensor_quotes
-    assert "SPY" not in class_quotes
-    assert sensor_quotes["GLD"] == 101.0
-    assert class_quotes["GLD"]["price"] == 101.0
+    for path in ("/api/argus/sensor-quotes", "/api/argus/class-quotes"):
+        assert client.get(path).status_code == 404
 
 
 def test_ensure_sensor_etfs_rechecks_cached_gate_after_source_boundary(
