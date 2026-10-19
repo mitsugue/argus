@@ -157,6 +157,7 @@ import jp_market_chart_layers
 import jp_market_close_refresh
 import math
 import argus_future_map
+import argus_future_lines
 import jp_market_candidates
 import argus_analyst_targets
 import argus_asset_earnings
@@ -9904,6 +9905,11 @@ def api_argus_intel_collect():
         status = _future_map_status()
         ok_read = read_completed is True and status["availability"] == "AVAILABLE" and not status["lastError"]
         return jsonify({**status, "only": "future_map", "ok": ok_read}), 200 if ok_read else 502
+    # Future lines (2026-10-19): read the stored document once, nothing else.
+    if (isinstance(body, dict) and body.get("only") == "future_lines") or request.args.get("only") == "future_lines":
+        ok_read = _future_lines_refresh(trigger="notification") is True
+        return jsonify({"only": "future_lines", "ok": ok_read, "lastError": _FUTURE_LINES.get("lastError"),
+                        "lastReadOkAt": _FUTURE_LINES.get("lastReadOkAt")}), 200 if ok_read else 502
     if isinstance(body, dict) and (body.get("async") is True or body.get("statusOnly") is True):
         request_id = body.get("requestId")
         if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", request_id):
@@ -40733,6 +40739,112 @@ def api_argus_future_map():
                     "fallback": _FUTURE_MAP_FALLBACK.get("lastDecision")})
 
 
+# ── Future lines: weekly pre-recorded paths and their scores (2026-10-19) ─────
+# Owner decision 2026-10-19: the paths drawn in a video commentary, two
+# mechanical paths and a public wave-count view are recorded every Saturday on
+# the research side, scored by one fixed rule and shown without source names.
+# The research side writes future_lines.v1 to the existing private store; the
+# app reads it once a day from 10:00 JST (hourly retry while failing). The
+# FUTURE MAP reading is separate and unchanged.
+_FUTURE_LINES = {"loaded": False, "public": None, "sha": None, "lastAttemptAt": None, "lastError": None,
+                 "lastReadOkAt": None, "lastDay": None, "retryAt": None}
+_FUTURE_LINES_LOCK = threading.Lock()
+FUTURE_LINES_READ_HOUR_JST = 10
+
+
+def _future_lines_path():
+    if not _cost_policy_durable_enabled():
+        return None
+    return os.path.join(_DURABILITY_PATHS["root"], "future_lines.json")
+
+
+def _future_lines_load_saved():
+    if _FUTURE_LINES["loaded"]:
+        return
+    _FUTURE_LINES["loaded"] = True
+    path = _future_lines_path()
+    try:
+        if path and os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as handle:
+                saved = json.load(handle)
+            public = saved.get("public")
+            if isinstance(public, dict) and public.get("schemaVersion") == argus_future_lines.PUBLIC_SCHEMA:
+                _FUTURE_LINES.update(public=public, sha=saved.get("sha"), lastReadOkAt=saved.get("lastReadOkAt"),
+                                     lastDay=saved.get("lastDay"))
+    except (OSError, ValueError, TypeError) as exc:
+        _FUTURE_LINES["lastError"] = type(exc).__name__
+
+
+def _future_lines_refresh(trigger="unspecified"):
+    """Read the stored document once, validate it and keep its public form."""
+    if not _FUTURE_LINES_LOCK.acquire(blocking=False):
+        return False
+    try:
+        _future_lines_load_saved()
+        _FUTURE_LINES["lastAttemptAt"] = _ai_now_iso()
+        remote = _level_map_remote()
+        if remote is None:
+            _FUTURE_LINES["lastError"] = "remote_not_configured"
+            return False
+        raw, sha = remote.get(argus_future_lines.REMOTE_PATH)
+        if raw is None:
+            _FUTURE_LINES["lastError"] = "remote_document_missing"
+            return False
+        public = _FUTURE_LINES.get("public")
+        if public is None or sha is None or sha != _FUTURE_LINES.get("sha"):
+            public = argus_future_lines.validate(json.loads(raw))
+            argus_product_naming.require_allowed(public)
+        now = _ai_now_iso()
+        day = datetime.now(TZ_JST).strftime("%Y-%m-%d")
+        path = _future_lines_path()
+        if path:
+            argus_persistent_storage.atomic_write_json(path, {"public": public, "sha": sha, "lastReadOkAt": now,
+                                                              "lastDay": day, "trigger": trigger},
+                                                       maximum_bytes=1024 * 1024, file_mode=0o600)
+        _FUTURE_LINES.update(public=public, sha=sha, lastReadOkAt=now, lastDay=day, lastError=None, retryAt=None)
+        return True
+    except Exception as exc:
+        _FUTURE_LINES["lastError"] = type(exc).__name__
+        return False
+    finally:
+        _FUTURE_LINES_LOCK.release()
+
+
+def _future_lines_tick(now=None):
+    """Once a day from 10:00 JST; hourly retry while the read fails."""
+    now = now or datetime.now(TZ_JST)
+    _future_lines_load_saved()
+    day = now.strftime("%Y-%m-%d")
+    if now.hour < FUTURE_LINES_READ_HOUR_JST or _FUTURE_LINES.get("lastDay") == day:
+        return None
+    retry_at = _FUTURE_LINES.get("retryAt")
+    if retry_at is not None and now < retry_at:
+        return None
+    ok = _future_lines_refresh(trigger="daily")
+    if not ok:
+        _FUTURE_LINES["retryAt"] = now + timedelta(hours=1)
+    return ok
+
+
+@app.route("/api/argus/future-lines")
+def api_argus_future_lines():
+    """PUBLIC cached-only: the pre-recorded future lines, their scores and recent closes (never fetches)."""
+    _future_lines_load_saved()
+    public = _FUTURE_LINES.get("public")
+    if not public:
+        return jsonify({"schemaVersion": argus_future_lines.PUBLIC_SCHEMA, "availability": "UNAVAILABLE",
+                        "reason": _FUTURE_LINES.get("lastError") or "not_loaded", "actionAuthority": False})
+    closes = []
+    try:
+        bars = _level_map_completed_bars(_nikkei_chart_rows(), _ai_now_iso())
+        closes = [{"date": r["date"], "close": round(float(r["close"]), 2)} for r in bars[-130:]
+                  if isinstance(r, dict) and r.get("close") is not None]
+    except Exception as exc:
+        add_log(f"future-lines closes unavailable: {type(exc).__name__}")
+    return jsonify({**public, "availability": "AVAILABLE", "closes": closes,
+                    "lastReadOkAt": _FUTURE_LINES.get("lastReadOkAt"), "lastError": _FUTURE_LINES.get("lastError")})
+
+
 # ── Pre-registered candidate signals (2026-10-04) ─────────────────────────────
 # Recorded from the signal day's close until the entry open, never after;
 # scored after every close by one fixed rule. Not a trading signal.
@@ -51317,6 +51429,7 @@ def run_scheduler():
                          name="owner-overview-refresh").start()
         threading.Thread(target=_web_push_tick, daemon=True, name="web-push").start()
         threading.Thread(target=_future_map_fallback_tick, daemon=True, name="future-map-fallback").start()
+        threading.Thread(target=_future_lines_tick, daemon=True, name="future-lines-daily").start()
         threading.Thread(target=_heavy_tick, daemon=True, name="sector-heatmap",
                          args=("jp_sector_heatmap_tick",
                                _jp_sector_heatmap_tick)).start()

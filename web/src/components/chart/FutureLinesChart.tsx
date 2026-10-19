@@ -1,0 +1,102 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { useFutureLines } from '../../hooks/useFutureLines';
+import { LINE_LABEL, MEASURE_LABEL, dayNumber, linesFrame, pathPoints, type FutureLinesDoc, type LineId, type LineRecord } from '../../lib/futureLines';
+import './NikkeiResearchChart.css';
+import './FutureLinesChart.css';
+
+const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
+const md = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
+const KIND = { H: '山', L: '谷' } as const;
+/** First day of each month inside the drawing window, as YYYY-MM-01. */
+function months(start: number, end: number) {
+  const out: string[] = [];
+  const d = new Date(start); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + 1);
+  while (d.getTime() <= end && out.length < 12) { out.push(d.toISOString().slice(0, 10)); d.setUTCMonth(d.getUTCMonth() + 1); }
+  return out;
+}
+const IDS: Record<'commentator' | 'machine', LineId[]> = { commentator: ['commentator'], machine: ['machine', 'machine2'] };
+
+function RecordTable({ id, record, retro }: { id: LineId; record?: LineRecord; retro?: LineRecord }) {
+  const rows = (['strict', 'standard', 'loose', 'timing'] as const);
+  return <div className="fl-record" data-argus-contract="future-lines-record-v1">
+    <b>{LINE_LABEL[id]}の成績（事前に記録した分）</b>
+    {!record || !record.records ? <p>まだ記録がありません。</p> : <>
+      <table><thead><tr><th>物差し</th><th>当たり</th><th>判定待ち</th><th>でたらめな予想</th></tr></thead>
+        <tbody>{rows.map(m => { const x = record[m]; return <tr key={m}><td>{MEASURE_LABEL[m]}</td>
+          <td>{x ? `${x.hit}/${x.n}` : '―'}</td><td>{x ? x.pending : '―'}</td><td>{x && x.n && x.randomMean !== null ? `平均${x.randomMean}` : '―'}</td></tr>; })}</tbody></table>
+      <p>最初の点に、逆へ5%動く前に届いたか：届いた {record.reach.reach}・崩れた {record.reach.stop}・期限切れ {record.reach.expire}・判定待ち {record.reach.pending}（記録 {record.records}件）</p>
+    </>}
+    {retro && retro.loose && <p className="fl-retro">参考（後から読み取った分）：ゆるい {retro.loose.hit}/{retro.loose.n}（でたらめ平均{retro.loose.randomMean ?? '―'}）・標準 {retro.standard?.hit ?? '―'}/{retro.standard?.n ?? '―'}</p>}
+  </div>;
+}
+
+export function FutureLinesChartView({ doc, mode }: { doc: FutureLinesDoc; mode: 'commentator' | 'machine' }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(390);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => setWidth(Math.max(240, Math.round(entry.contentRect.width))));
+    observer.observe(el); return () => observer.disconnect();
+  }, []);
+  const ids = IDS[mode];
+  const frame = linesFrame(doc, ids);
+  const left = 8, right = width - 76, top = 22, bottom = 250;
+  const x = (date: string) => left + (dayNumber(date) - frame.start) / Math.max(1, frame.end - frame.start) * (right - left);
+  const y = (v: number) => top + (frame.high - v) / Math.max(1, frame.high - frame.low) * (bottom - top);
+  const line = (pts: { date: string; price: number }[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.date).toFixed(1)},${y(p.price).toFixed(1)}`).join(' ');
+  const wave = mode === 'commentator' && doc.wave && !doc.wave.settledBeforeRecord ? doc.wave : null;
+  const latest = frame.shown.filter(s => s.latest);
+  const lastClose = frame.closes.at(-1);
+  return <div className="nr-chart fl-chart" ref={ref} data-argus-contract={`future-lines-chart-v1-${mode}`}>
+    <p className="nr-note">{mode === 'commentator'
+      ? '動画の解説者が描いた予想の線を、毎週土曜に結果が出る前に記録し、決まった物差しで採点しています。'
+      : '2018年の同じ月日の山・谷（機械1）、または直近の山・谷の間隔（機械2）の日付に、整数PER線の高さを上下交互に置いた線です。毎週土曜に記録し、同じ物差しで採点しています。'}
+      <br />ARGUSの判断ではありません。予測の成績は検証中です。</p>
+    {!latest.length && <p role="status">表示できる記録がまだありません。</p>}
+    <div className="nr-plot-wrap"><svg viewBox={`0 0 ${width} ${bottom + 32}`} role="img" aria-label={`日経平均の終値と${ids.map(i => LINE_LABEL[i]).join('・')}`}>
+      {frame.multiples.map(m => <g key={m} className="nr-per-label"><line x1={left} x2={right + 4} y1={y(frame.eps! * m)} y2={y(frame.eps! * m)} />
+        <text x={right + 6} y={y(frame.eps! * m) + 3}>PER{m} {yen(frame.eps! * m)}円</text></g>)}
+      {frame.closes.length > 1 && <path className="nr-price" d={line(frame.closes.map(c => ({ date: c.date, price: c.close })))} />}
+      {wave && <g className="fl-wave">
+        <line className="nr-target" x1={x(wave.pub)} x2={right} y1={y(wave.target)} y2={y(wave.target)} />
+        <line className="nr-stop" x1={x(wave.pub)} x2={right} y1={y(wave.stop)} y2={y(wave.stop)} />
+        <text x={x(wave.pub) + 2} y={y(wave.target) - 4}>波動の公開予想の目標 {yen(wave.target)}円</text>
+        <text x={x(wave.pub) + 2} y={y(wave.stop) + 11}>崩れの水準 {yen(wave.stop)}円</text></g>}
+      {frame.shown.filter(s => !s.latest).map((s, i) => <path key={`old-${s.id}-${i}`} className={`fl-line fl-${s.id} is-old`} d={line(pathPoints(s.line, frame.closes))} />)}
+      {latest.map(s => <g key={s.id} className={`fl-${s.id}`}>
+        <path className="fl-line" d={line(pathPoints(s.line, frame.closes))} />
+        {s.line.points.map((p, i) => <g key={i}><circle className="fl-point" cx={x(p.date)} cy={y(p.price)} r={3.5} />
+          <text className="fl-point-label" x={x(p.date)} y={p.kind === 'H' ? y(p.price) - 7 : y(p.price) + 14} textAnchor="middle">{KIND[p.kind]} {md(p.date)}</text></g>)}
+      </g>)}
+      {months(frame.start, frame.end).map(m => <g key={m} className="nr-grid"><line x1={x(m)} x2={x(m)} y1={top} y2={bottom} />
+        <text x={x(m) + 2} y={bottom + 12}>{Number(m.slice(5, 7))}月</text></g>)}
+      {lastClose && <><line className="nr-today" x1={x(lastClose.date)} x2={x(lastClose.date)} y1={top} y2={bottom} />
+        <text className="nr-today-label" x={x(lastClose.date)} y={bottom + 24} textAnchor="middle">{md(lastClose.date)}の終値まで</text></>}
+    </svg></div>
+    <div className="nr-legend"><span className="nr-key-price">日経平均・終値</span>
+      {ids.map(id => <span key={id} className={`fl-key fl-${id}`}>{LINE_LABEL[id]}（太線=最新・細線=前の週）</span>)}
+      {wave && <span>波動の公開予想：目標と崩れの水準</span>}</div>
+    <div className="fl-points">{latest.map(s => <p key={s.id}><b className={`fl-${s.id}`}>{LINE_LABEL[s.id]}</b>（{md(s.line.rec)}の大引けまでで記録）：
+      {s.line.points.map(p => `${KIND[p.kind]} ${md(p.date)} ${yen(p.price)}円`).join(' → ')}</p>)}
+      {wave && <p><b>波動の公開予想</b>（{md(wave.pub)}の記事）：{wave.dir === 'up' ? '上向き' : '下向き'}・目標 {yen(wave.target)}円・崩れ {yen(wave.stop)}円 → {wave.result === 'pending' ? '判定待ち' : wave.result === 'reach' ? '届いた' : wave.result === 'stop' ? '崩れた' : '期限切れ'}</p>}
+    </div>
+    {ids.map(id => <RecordTable key={id} id={id} record={doc.record[id]} retro={doc.retroRecord[id]} />)}
+    {mode === 'commentator' && <p className="nr-note">{doc.record.wave && doc.record.wave.records
+      ? `波動の公開予想の成績（目標に崩れより先に届いたか）：届いた ${doc.record.wave.reach}/${doc.record.wave.n}・判定待ち ${doc.record.wave.pending}（記録 ${doc.record.wave.records}件）`
+      : '波動の公開予想：まだ事前の記録がありません（公開の記事は月に数本です）。'}</p>}
+    <details className="nr-guide"><summary>線の意味と採点のしかた</summary>
+      <p>毎週土曜の朝、その週の最後の大引けまでの情報で線を記録します。記録した時刻より後に来た山・谷だけで採点します。</p>
+      <p>当たりの物差しは3段階です。山・谷の大きさ（3〜5%の反転）、日付のずれ（±5〜10営業日）、価格のずれ（±2〜4%）で判定します。比べる相手は、日付と価格をでたらめに引いた予想です。</p>
+      {mode === 'machine' && <p>2010〜2025年の毎週で同じ採点をすると、日付の当たりは機械1・機械2ともでたらめと同じでした。高さを整数PER線に交互に置くことで、少し当たりが増えています。</p>}
+      {mode === 'commentator' && <p>動画の線は画面から読み取った点です。読み取りの誤差は日付±1営業日・価格±0.5%ほどです。</p>}
+    </details>
+    <p className="nr-note">記録の更新：{doc.updatedAt.slice(0, 16).replace('T', ' ')}・価格データは{md(doc.dataEnd)}まで</p>
+  </div>;
+}
+
+export function FutureLinesChart({ mode }: { mode: 'commentator' | 'machine' }) {
+  const state = useFutureLines();
+  if (!state.doc) return <p role="status">{state.status === 'loading' ? '未来の線の記録を読み込んでいます。' : '未来の線の記録を取得できていません。'}</p>;
+  return <FutureLinesChartView doc={state.doc} mode={mode} />;
+}
