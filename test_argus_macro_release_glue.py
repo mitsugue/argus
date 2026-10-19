@@ -195,3 +195,36 @@ def test_new_reporting_regenerates_once_and_keeps_the_analysed_window(monkeypatc
     assert scanner._MACRO_ANALYSIS[EVENT["id"]]["post"]["reactionWindow"] == "+5m"
     scanner._generate_macro_event_analysis(limit=8)
     assert len(prompts) == 2
+
+
+def _delayed_provider(monkeypatch, state):
+    """2026-10-19: futures arrive 10 minutes late and VIX 15, as measured on the 10/14 CPI."""
+    lag = {"JPY=X": 0, "^VIX": 15}
+    def clock():
+        from datetime import datetime, timezone
+        return datetime(2026, 10, 2, 12, 30, tzinfo=timezone.utc).timestamp() + state["minute"] * 60
+    monkeypatch.setattr(scanner.time, "time", clock)
+    class Response:
+        status_code = 200
+        def __init__(self, symbol): self.symbol = symbol
+        def json(self):
+            traded = clock() - lag.get(self.symbol, 10) * 60
+            phase = "after" if traded >= clock() - state["minute"] * 60 else "before"
+            return {"chart": {"result": [{"meta": {"regularMarketPrice": PRICES[phase][self.symbol],
+                                                   "regularMarketTime": traded}}]}}
+    monkeypatch.setattr(scanner.requests, "get", lambda url, **kwargs: Response(url.rsplit("/", 1)[1]))
+
+
+def test_delayed_futures_are_measured_by_capturing_the_window_again(monkeypatch):
+    _seed(monkeypatch)
+    state = {"minute": -2}; _delayed_provider(monkeypatch, state)
+    scanner._macro_release_baseline(EVENT)
+    rr = scanner._MACRO_ANALYSIS[EVENT["id"]]["releaseReaction"]
+    assert set(rr["baselineComparisonValues"]) == set(PRICES["before"])     # VIX included
+    for minute in (5, 16, 21):
+        state["minute"] = minute
+        scanner._macro_release_window(EVENT, "+5m")
+    window = scanner._MACRO_ANALYSIS[EVENT["id"]]["releaseReaction"]["windows"]["+5m"]
+    assert set(window["comparisonValues"]) == set(PRICES["after"]), window["timeRejections"]
+    assert window["moves"]["ffImpliedRateMoveBp"] == -2.5 and window["moves"]["usdJpyMovePct"] == 0.25
+    assert window["comparisonValues"]["JPY=X"]["tradedAt"] == "2026-10-02T12:35:00Z"   # the +5 quote is kept

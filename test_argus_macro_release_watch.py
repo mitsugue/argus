@@ -81,7 +81,9 @@ def test_delayed_source_price_retries_inside_window_instead_of_claiming_capture_
     calls = []
     def arrived(event, name):
         calls.append(name)
-        return {"schemaVersion": reaction.SCHEMA, "windows": {name: {"comparisonValues": {"ES=F": {"price": 100}}}}}
+        # 2026-10-19: settles once every symbol is inside the window (one symbol alone keeps it due)
+        return {"schemaVersion": reaction.SCHEMA, "windows": {name: {"comparisonValues": {
+            symbol: {"price": 100} for symbol in reaction.SYMBOLS}}}}
     watch.tick(lambda: [NFP], lambda: None, now=AT + timedelta(minutes=8), window=arrived)
     watch.tick(lambda: [NFP], lambda: None, now=AT + timedelta(minutes=9), window=arrived)
     assert calls == ["+5m"]
@@ -96,3 +98,29 @@ def test_unusable_baseline_is_not_counted_as_a_successful_measurement(monkeypatc
                baseline=lambda event: {"schemaVersion": reaction.SCHEMA, "baselineComparisonValues": {}})
     assert watch.status()["reaction"]["baselines"] == 0
     assert watch.status()["reaction"]["lastError"] == "ValueError"
+
+
+def test_window_stays_due_until_every_symbol_is_inside_it_then_settles_once(monkeypatch):
+    """2026-10-19: a window holding USD/JPY alone must keep capturing for the delayed futures."""
+    _fresh(monkeypatch)
+    import argus_macro_release_reaction as reaction
+    calls = []
+    def capture(event, name):
+        calls.append(name)
+        ok = {"JPY=X": {}} if len(calls) == 1 else {s: {} for s in reaction.SYMBOLS}
+        return {"schemaVersion": reaction.SCHEMA, "windows": {name: {"comparisonValues": ok}}}
+    watch.tick(lambda: [NFP], lambda: None, now=AT + timedelta(minutes=5), window=capture)
+    assert NFP["id"] not in watch.status()["reaction"]["windows"]
+    watch.tick(lambda: [NFP], lambda: None, now=AT + timedelta(minutes=16), window=capture)
+    assert watch.status()["reaction"]["windows"][NFP["id"]] == ["+5m"]
+    watch.tick(lambda: [NFP], lambda: None, now=AT + timedelta(minutes=17), window=capture)
+    assert calls == ["+5m", "+5m"]
+
+
+def test_partial_window_settles_at_its_last_capture_minute(monkeypatch):
+    _fresh(monkeypatch)
+    import argus_macro_release_reaction as reaction
+    def capture(event, name):
+        return {"schemaVersion": reaction.SCHEMA, "windows": {name: {"comparisonValues": {"JPY=X": {}}}}}
+    watch.tick(lambda: [NFP], lambda: None, now=AT + timedelta(minutes=24, seconds=30), window=capture)
+    assert watch.status()["reaction"]["windows"][NFP["id"]] == ["+5m"]

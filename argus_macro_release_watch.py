@@ -77,16 +77,23 @@ def reaction_tick(events: Iterable[Mapping[str, Any]], now: datetime, *,
                     _state["baselines"][event_id] = now
                 done.append((event_id, "baseline"))
             name = reaction.window_due(at, now, captured) if window else None
+            settled = False
             if name:
                 result = window(event, name)
+                # 2026-10-19: a window stays due until every symbol has a quote traded
+                # inside it, or until its last capture minute; delayed quotes arrive late.
+                last_chance = now + timedelta(seconds=POLL_SECONDS) > reaction.window_deadline(at, name)
+                settled = True
                 if isinstance(result, Mapping) and result.get("schemaVersion") == reaction.SCHEMA:
                     measured = (result.get("windows") or {}).get(name) or {}
                     if not measured.get("comparisonValues"):
                         raise ValueError("release_window_source_time_unavailable")
-                with _lock:
-                    _state["windows"].setdefault(event_id, {})[name] = now
-                done.append((event_id, name))
-            have = captured if not name else {**captured, name: now}
+                    settled = reaction.window_complete(measured) or last_chance
+                if settled:
+                    with _lock:
+                        _state["windows"].setdefault(event_id, {})[name] = now
+                    done.append((event_id, name))
+            have = captured if not settled else {**captured, name: now}
             for ask in ("+5m", "+60m", "+8h"):   # first reading, the hour, the settled day
                 if post and ask in have and ask not in (posted or {}):
                     if post(event, ask):    # False: result not there yet, ask again next tick

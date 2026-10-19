@@ -14641,7 +14641,9 @@ def _macro_release_window(event, name):
     if not after["values"]:
         raise ValueError("release_window_unavailable")
     windows = _macro_release_windows(current)
-    windows[name] = after
+    windows[name] = argus_macro_release_reaction.merge_window_capture(
+        windows.get(name), after,
+        argus_macro_release_reaction._instant(rec.get("eventTimeUtc")), name)
     return _macro_release_store(eid, rec, current.get("baseline"), windows)
 
 
