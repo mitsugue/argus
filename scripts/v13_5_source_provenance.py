@@ -260,7 +260,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/news-delivery-grouping.test.cjs': 'e646d83148430f802aeec014dfd6f8985f5babc6',
     'docs/V13_7_INDEX_ANALOG_COVERAGE.md': '905dca1b82c5c24ed1e7e11ce6278e8503221564',
     'test_argus_index_history.py': 'ce4a258925493926854d121d0d43e1f3559597e1',
-    'argus_index_history.py': 'f4f50d4bcb69d60e35f831647c4308dc0432b8ad',
+    'argus_index_history.py': '4a1effcec3a6a72000ea938d515c2c7165be48e6',
     "docs/V13_7_NUMERICAL_RESEARCH_INVENTORY.md": "827158b6cc590cd7aebc60b8539806c50c82ef91",
     "test_jp_market_valuation.py": "2aa3093796fa2b75e10525bde18cd19922fb43ef",
     "test_argus_index_research_cache.py": "276f27505aa1066cea06d3973a6cecdf92742eb9",
@@ -686,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_series_small_fixes_2026_10_20.py",
     "test_history_capacity_check.py",
     "test_argus_analysis_history_parts.py",
     "test_analysis_history_v3_sync.py",
