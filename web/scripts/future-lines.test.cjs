@@ -40,7 +40,7 @@ const html = renderToStaticMarkup(React.createElement(chartModule.FutureLinesCha
 assert.match(html, /動画解説の線/); assert.match(html, /谷 10\/30 61,230円/); assert.match(html, /波動の公開予想の目標 71,540円/);
 assert.match(html, /20\/28/, '後から読み取った分の参考の成績');
 assert.match(html, />11月</, '月の目盛り'); assert.match(html, /まだ事前の記録がありません/);
-assert.doesNotMatch(html, /SHO|NOBU|O-CHAN|src_a/i, '個人名や出どころの記号を出さない');
+assert.doesNotMatch(html, /src_[abc]/, '出どころの記号を出さない(名前は配信前の命名の検査で確かめる)');
 const machine = renderToStaticMarkup(React.createElement(chartModule.FutureLinesChartView, {doc, mode:'machine'}));
 assert.match(machine, /機械1（2018年の暦）/); assert.match(machine, /機械2（直近の間隔）/); assert.doesNotMatch(machine, /波動の公開予想の目標/);
 assert.match(machine, /日付の当たりは機械1・機械2ともでたらめと同じ/);
