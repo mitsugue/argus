@@ -22,16 +22,15 @@ export function JapanMarketComparisonPanel({ horizon }: { horizon: number }) {
 /** Numerical comparisons have their own period; saved explanations keep theirs. */
 export function JapanMarketHorizonComparison() {
   const [horizon, setHorizon] = useState<5 | 10 | 20>(5);
-  const [mode, setMode] = useState<'research' | 'comparison' | 'commentator' | 'machine'>('research');
+  const [mode, setMode] = useState<'research' | 'comparison' | 'lines'>('research');
   return <section id="today-nikkei-chart" aria-label="最新の日経平均の過去比較">
     <h3>日経平均の水準と見通し</h3>
     <div className="jp-comparison-periods" role="group" aria-label="チャートの表示">
       <button type="button" aria-pressed={mode === 'research'} onClick={() => setMode('research')}>価格の目盛りと参考予測</button>
       <button type="button" aria-pressed={mode === 'comparison'} onClick={() => setMode('comparison')}>従来の過去比較</button>
-      <button type="button" aria-pressed={mode === 'commentator'} onClick={() => setMode('commentator')}>動画解説の線</button>
-      <button type="button" aria-pressed={mode === 'machine'} onClick={() => setMode('machine')}>機械の線</button>
+      <button type="button" aria-pressed={mode === 'lines'} onClick={() => setMode('lines')}>未来の線の記録</button>
     </div>
-    {mode === 'commentator' || mode === 'machine' ? <FutureLinesChart mode={mode} /> : mode === 'research' ? <NikkeiResearchChart /> : <>
+    {mode === 'lines' ? <FutureLinesChart /> : mode === 'research' ? <NikkeiResearchChart /> : <>
     <p>保存したAI解説とは別に、取得済みの価格と市場条件で計算した参考経路です。</p>
     <div className="jp-comparison-periods" role="group" aria-label="見通しの期間">
       {([5, 10, 20] as const).map(period => <button key={period} type="button"
