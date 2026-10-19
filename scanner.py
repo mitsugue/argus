@@ -17009,6 +17009,19 @@ def _market_brief_history_sync():
             _MARKET_BRIEF_HISTORY_REMOTE["v3"] = {
                 **(_MARKET_BRIEF_HISTORY_REMOTE.get("v3") or {}), "status": "FAILED",
                 "errorClass": type(exc).__name__, "lastAttemptAt": _ai_now_iso()}
+        # 2026-10-20: once v3 has written this round, v2 is not written either.
+        # After every restart v2 re-read the whole 650 MB file, timed out at 180 s
+        # (so it published nothing new), held the read that made the level-map
+        # writer fail with "database is locked", and its failure stretched the
+        # next attempt to 30 minutes, slowing the v3 migration. The remote v2
+        # stays readable; v2 is written only when v3 fails.
+        v3_ok = (_MARKET_BRIEF_HISTORY_REMOTE.get("v3") or {}).get("status") == "VERIFIED"
+        if v3_ok and not v3_complete:
+            _MARKET_BRIEF_HISTORY_REMOTE.update(status="VERIFIED", formatVersion=3,
+                                                counts={k: v3["counts"][k] for k in ("views", "outcomes")},
+                                                lastVerifiedAt=_ai_now_iso(), errorClass=None,
+                                                v2="READ_ONLY_V3_MIGRATING")
+            return
         if v3_complete:
             _MARKET_BRIEF_HISTORY_REMOTE.update(status="VERIFIED", formatVersion=3,
                                                 counts={k: v3["counts"][k] for k in ("views", "outcomes")},
