@@ -53,7 +53,7 @@ def test_extended_daily_schema_still_rejects_unknown_or_nested_values_before_exp
 def test_originals_and_corrections_retained_and_private_backup_reuses_immutable_chunks(tmp_path):
     path=originals(tmp_path);remote=Remote()
     result=backup.synchronize(path,remote)
-    assert result['status']=='VERIFIED' and result['counts']=={'financial':2,'sector17':1,'observations':2,'coverageReceipts':0}
+    assert result['status']=='VERIFIED' and result['counts']=={'financial':2,'sector17':1,'observations':2,'coverageReceipts':0,'selectedVix':0,'selectedFeatures':0}
     manifest=json.loads(remote.files[backup.PREFIX+'/manifests/'+result['manifestSha256']+'.json'])
     content=b''.join(remote.files[backup.PREFIX+'/chunks/'+c['sha256']+'.bin'] for c in manifest['chunks'])
     entries=[json.loads(r) for r in content.splitlines()]
@@ -157,7 +157,7 @@ def test_visibility_deadline_keeps_visibility_phase_and_never_starts_snapshot(mo
 
 @pytest.mark.parametrize('phase',[
     'SNAPSHOT_ORIGINALS','SNAPSHOT_OBSERVATIONS','SNAPSHOT_DATE_COVERAGE',
-    'SNAPSHOT_COMPANY_COVERAGE','SNAPSHOT_CHUNKS'])
+    'SNAPSHOT_COMPANY_COVERAGE','SNAPSHOT_SELECTED','SNAPSHOT_CHUNKS'])
 def test_snapshot_checks_shared_deadline_in_each_stage(monkeypatch,tmp_path,phase):
     clock=[0.0];steps=[];remote=Remote()
     monkeypatch.setattr(backup.time,'monotonic',lambda:clock[0])
@@ -236,12 +236,14 @@ def test_progress_reports_only_protocol_scalars_and_preserves_archive(tmp_path):
     expected=backup.synchronize(path,plain)
     assert backup.synchronize(path,observed,progress=steps.append)==expected
     assert plain.files==observed.files
+    # 2026-10-20: each section is its own chunk stream, so a small store has several chunks.
+    chunks=sum(1 for key in plain.files if '/chunks/' in key)
+    assert chunks>1
     assert [s['phase'] for s in steps]==[
         'VISIBILITY','SNAPSHOT','SNAPSHOT_ORIGINALS','SNAPSHOT_OBSERVATIONS',
-        'SNAPSHOT_DATE_COVERAGE','SNAPSHOT_COMPANY_COVERAGE','SNAPSHOT_CHUNKS',
-        'SNAPSHOT_CHUNKS','CHUNK_READ','CHUNK_WRITE',
-        'CHUNK_READBACK','CHUNK_READBACK','MANIFEST_READ','MANIFEST_WRITE',
-        'MANIFEST_READBACK','COMPLETE']
+        'SNAPSHOT_DATE_COVERAGE','SNAPSHOT_COMPANY_COVERAGE','SNAPSHOT_SELECTED','SNAPSHOT_CHUNKS',
+        'SNAPSHOT_CHUNKS']+['CHUNK_READ','CHUNK_WRITE','CHUNK_READBACK','CHUNK_READBACK']*chunks+[
+        'MANIFEST_READ','MANIFEST_WRITE','MANIFEST_READBACK','COMPLETE']
     assert set().union(*(set(s) for s in steps))=={
         'phase','counts','archiveBytes','chunksTotal','chunksProcessed',
         'elapsedSeconds','phaseElapsedSeconds','workerCpuSeconds','phaseSeconds'}
@@ -383,3 +385,41 @@ def test_company_receipt_fields_counts_and_future_original_rejected_before_send(
     with pytest.raises(ValueError,match='company_receipt'):
         backup.synchronize(path,remote)
     assert remote.writes==0
+
+
+def _chunks(remote, result):
+    manifest = json.loads(remote.files[backup.PREFIX + '/manifests/' + result['manifestSha256'] + '.json'])
+    return [c['sha256'] for c in manifest['chunks']]
+
+
+def test_a_new_original_reuploads_only_its_section_tail(tmp_path, monkeypatch):
+    """2026-10-20: every snapshot re-uploaded all 86 chunks; originals were ordered by hash."""
+    monkeypatch.setattr(backup, 'CHUNK_BYTES', 2048)
+    path = tmp_path / 'source.sqlite3'
+    for day in range(1, 40):
+        raw = sources._json({'data': [dict(Date=f'2026-09-{day % 28 + 1:02d}', Code='16170', AdjC=100 + day,
+                                           MktCap=123000 + day)] * 40}).encode()
+        backup.retain_sector(path, raw, symbol='1617', received_at=f'2026-09-{day % 28 + 1:02d}T09:00:00+00:00')
+    remote = Remote()
+    first = _chunks(remote, backup.synchronize(path, remote))
+    earnings.retain(path, [row()], received_at=AT, member_codes=['1000'])   # one new original
+    second = _chunks(remote, backup.synchronize(path, remote))
+    assert len(first) > 4
+    assert len(set(second) - set(first)) <= 3          # the tail of the touched sections only
+
+
+def test_first_receipts_and_selected_rows_are_kept_and_checked(tmp_path):
+    path = originals(tmp_path)
+    rows = [{'instrumentId': 'TOPIX', 'date': '2026-10-06', 'close': 3000.0, 'availableFrom': '2026-10-06T07:00:00Z',
+             'sourceRef': 'jquants:topix'}]
+    sources.retain_first_receipts(rows, path=path, source_id='topix', received_at='2026-10-06T08:00:00+00:00')
+    remote = Remote()
+    result = backup.synchronize(path, remote)
+    assert result['counts']['selectedFeatures'] == 1
+    content = b''.join(remote.files[backup.PREFIX + '/chunks/' + c + '.bin'] for c in _chunks(remote, result))
+    entry = [json.loads(l) for l in content.splitlines() if b'selectedFeature' in l][0]
+    assert entry['sourceId'] == 'topix' and entry['session'] == '2026-10-06' and entry['receivedAt']
+    import sqlite3
+    conn = sqlite3.connect(path); conn.execute("UPDATE selected_feature_inputs SET body=replace(body,'3000','3001')"); conn.commit(); conn.close()
+    with pytest.raises(ValueError, match='private_selected_integrity'):
+        backup.synchronize(path, Remote())

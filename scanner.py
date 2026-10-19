@@ -15796,12 +15796,12 @@ def _system_health(*, allow_provider_fetch=True):
         # bridge push is therefore the expected state, not a warning — only
         # a US session without pushes is.
         bridge_open = us_open
-        idle_ja = ("US市場時間外(待機) · 日本株はTachibana経由(ブリッジ対象外)"
-                   if jp_open and not us_open else "市場時間外(待機)")
         if not ages:
-            L("bridge", "moomooブリッジ", "warning" if bridge_open else "off",
-              ("US市場時間中なのにpush無し" if bridge_open else idle_ja)
-              + " · 旧ブリッジ(heartbeat未対応)")
+            # 2026-10-20 (owner decision): the EC2 bridge is retired (no
+            # heartbeat or push since September); US ETF prices come from
+            # Twelve Data. A silent bridge is the expected state, not a warning.
+            L("bridge", "moomooブリッジ", "off",
+              "退役(2026-10-20) · push無し · 米国ETFの価格はTwelve Data")
         elif min(ages) <= 120:
             L("bridge", "moomooブリッジ", "ok",
               f"最終push {int(min(ages))}秒前 · 旧ブリッジ(heartbeat未対応)")
@@ -21321,38 +21321,10 @@ def api_argus_official_event_lifecycle_view(oid):
                     "evidenceRef": argus_official_event_lifecycle.evidence_ref(r)})
 
 
-# 2026-10-19: the reaction tracking of official disclosures was reachable only
-# from the admin route below, whose one caller (ai-rejudge) became manual-only;
-# 590 of 600 records stayed "classified" without any reaction. The process
-# runs one bounded pass an hour (25 s, 100 records, cached daily bars),
-# single-flight with the admin route, after the post-deploy warm.
-OFFICIAL_TRACK_RESIDENT_INTERVAL_SECONDS = 60 * 60
-_OFFICIAL_TRACK_RESIDENT = {"lastMonotonic": None, "lastAt": None, "lastResult": None, "runs": 0}
-
-
-def _official_events_track_resident_tick(now_monotonic=None):
-    now = time.monotonic() if now_monotonic is None else now_monotonic
-    if now - _INTEL_COLLECT_PROCESS_STARTED < INTEL_COLLECT_RESIDENT_WARMUP_SECONDS:
-        return None
-    last = _OFFICIAL_TRACK_RESIDENT["lastMonotonic"]
-    if last is not None and now - last < OFFICIAL_TRACK_RESIDENT_INTERVAL_SECONDS:
-        return None
-    if not _OFFICIAL_TRACK_LOCK.acquire(blocking=False):
-        return None
-    try:
-        _OFFICIAL_TRACK_RESIDENT["lastMonotonic"] = now
-        try:
-            result = _official_events_track()
-            summary = {k: result.get(k) for k in ("status", "reason", "updated", "processedCount", "remainingCount")}
-        except Exception as exc:
-            result, summary = None, {"status": "failed", "errorClass": type(exc).__name__}
-        _OFFICIAL_TRACK_RESIDENT.update(lastAt=_ai_now_iso(), lastResult=summary,
-                                        runs=int(_OFFICIAL_TRACK_RESIDENT["runs"]) + 1)
-        return result
-    finally:
-        _OFFICIAL_TRACK_LOCK.release()
-
-
+# 2026-10-20 (owner decision): the scheduled reaction tracking of official
+# disclosures stays retired. New official disclosures stopped with the TDnet
+# add-on (2026-09-29), so a schedule would only fill the 600 records of
+# September. The admin route below remains for a reviewed manual run.
 @app.route("/api/argus/official-events/track", methods=["POST"])
 def api_argus_official_events_track():
     """ADMIN/cron: fill pending market-reaction windows from cached daily bars."""
@@ -31922,6 +31894,48 @@ def _osint_agents_worker(syms):
         add_log(f"[osint] agents worker failed: {type(e).__name__}")
 
 
+# 2026-10-20 (owner decision): the per-symbol web research ran on every
+# caos-scan (4-8 times a day, about 50k tokens each) without a measured effect.
+# The scheduled run is now once a Tokyo day, before the open (05:00-09:00 JST);
+# a named-symbol manual run is unchanged. The day is kept on the durable disk
+# so a restart does not run it twice.
+_OSINT_DAILY_WINDOW_JST = (5, 9)
+
+
+def _osint_daily_run_path():
+    root = _DURABILITY_PATHS.get("root") if _cost_policy_durable_enabled() else None
+    return os.path.join(root, "osint_daily_run.json") if root else None
+
+
+def _osint_daily_run_decision(now=None):
+    """(allowed, reason) for the scheduled research run of this Tokyo day."""
+    local = (now or datetime.now(TZ_JST)).astimezone(TZ_JST)
+    if not _OSINT_DAILY_WINDOW_JST[0] <= local.hour < _OSINT_DAILY_WINDOW_JST[1]:
+        return False, "outside_pre_open_window"
+    path = _osint_daily_run_path()
+    last = _OSINT_LAST.get("dailyRunDate")
+    if last is None and path and os.path.isfile(path):
+        try:
+            with open(path, "rb") as handle:
+                last = (json.loads(handle.read(4096)) or {}).get("date")
+        except (OSError, ValueError):
+            last = None
+    if last == local.date().isoformat():
+        return False, "already_ran_today"
+    return True, None
+
+
+def _osint_daily_run_mark(now=None):
+    day = (now or datetime.now(TZ_JST)).astimezone(TZ_JST).date().isoformat()
+    _OSINT_LAST["dailyRunDate"] = day
+    path = _osint_daily_run_path()
+    if path:
+        try:
+            argus_persistent_storage.atomic_write_json(path, {"date": day}, maximum_bytes=4096, file_mode=0o600)
+        except Exception:
+            pass
+
+
 @app.route("/api/argus/admin/osint/agents-run", methods=["POST"])
 def api_argus_admin_osint_agents_run():
     """Admin/cron: キュー済み銘柄のGemini/GPTスカウトを実行(予算: 1回3銘柄まで)。
@@ -31938,12 +31952,19 @@ def api_argus_admin_osint_agents_run():
     try:
         body = request.get_json(silent=True) or {}
         target = str(body.get("symbol") or "").strip().upper()
+        if not target:
+            allowed, reason = _osint_daily_run_decision()
+            if not allowed:
+                return jsonify({"ok": True, "status": "expected_skip", "reason": reason, "started": [],
+                                "noteJa": "銘柄の調査は場が開く前に1日1回だけ動きます(外部AIは呼ばれていません)。"})
         syms = [target] if target else list(_OSINT_AGENT_QUEUE.keys())[:3]
         if not syms:
             _OSINT_LAST["agentsStatus"] = "empty"
             return jsonify({"ok": True, "started": [], "queuedRemaining": 0,
                             "noteJa": "キューは空(外部AIは呼ばれていません)。"})
         _OSINT_LAST["agentsStatus"] = "running"
+        if not target:
+            _osint_daily_run_mark()
         import threading
         threading.Thread(
             target=_memory_operation_run,
@@ -34197,8 +34218,6 @@ def api_argus_admin_memory_attribution():
                                    "residentStarted": _INTEL_COLLECT_LAST.get("residentStarted"),
                                    "running": _INTEL_COLLECT_RUN.get("status") == "running",
                                    "intervalSeconds": INTEL_COLLECT_RESIDENT_INTERVAL_SECONDS}
-        payload["officialEventsTrack"] = {**{k: _OFFICIAL_TRACK_RESIDENT.get(k) for k in ("lastAt", "lastResult", "runs")},
-                                          "intervalSeconds": OFFICIAL_TRACK_RESIDENT_INTERVAL_SECONDS}
     payload["indexResearch"] = {
         **{k: copy.deepcopy(v) for k, v in _INDEX_RESEARCH_STATUS.items() if k != "lastAttemptMonotonic"},
         "savedCalculatedAt": {key: (row or {}).get("calculatedAt") for key, row in _INDEX_RESEARCH_REPORTS.items()},
@@ -51513,8 +51532,6 @@ def run_scheduler():
         threading.Thread(target=_future_map_fallback_tick, daemon=True, name="future-map-fallback").start()
         threading.Thread(target=_future_lines_tick, daemon=True, name="future-lines-daily").start()
         threading.Thread(target=_intel_collect_resident_tick, daemon=True, name="intel-collect-resident").start()
-        threading.Thread(target=_official_events_track_resident_tick, daemon=True,
-                         name="official-events-track").start()
         # 2026-10-20: the history backup used to run only after a brief was
         # generated (11 times a weekday), so the v3 migration of 48 editions a
         # call would have taken two days. The call keeps its own lock and its
