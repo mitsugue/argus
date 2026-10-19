@@ -21285,6 +21285,38 @@ def api_argus_official_event_lifecycle_view(oid):
                     "evidenceRef": argus_official_event_lifecycle.evidence_ref(r)})
 
 
+# 2026-10-19: the reaction tracking of official disclosures was reachable only
+# from the admin route below, whose one caller (ai-rejudge) became manual-only;
+# 590 of 600 records stayed "classified" without any reaction. The process
+# runs one bounded pass an hour (25 s, 100 records, cached daily bars),
+# single-flight with the admin route, after the post-deploy warm.
+OFFICIAL_TRACK_RESIDENT_INTERVAL_SECONDS = 60 * 60
+_OFFICIAL_TRACK_RESIDENT = {"lastMonotonic": None, "lastAt": None, "lastResult": None, "runs": 0}
+
+
+def _official_events_track_resident_tick(now_monotonic=None):
+    now = time.monotonic() if now_monotonic is None else now_monotonic
+    if now - _INTEL_COLLECT_PROCESS_STARTED < INTEL_COLLECT_RESIDENT_WARMUP_SECONDS:
+        return None
+    last = _OFFICIAL_TRACK_RESIDENT["lastMonotonic"]
+    if last is not None and now - last < OFFICIAL_TRACK_RESIDENT_INTERVAL_SECONDS:
+        return None
+    if not _OFFICIAL_TRACK_LOCK.acquire(blocking=False):
+        return None
+    try:
+        _OFFICIAL_TRACK_RESIDENT["lastMonotonic"] = now
+        try:
+            result = _official_events_track()
+            summary = {k: result.get(k) for k in ("status", "reason", "updated", "processedCount", "remainingCount")}
+        except Exception as exc:
+            result, summary = None, {"status": "failed", "errorClass": type(exc).__name__}
+        _OFFICIAL_TRACK_RESIDENT.update(lastAt=_ai_now_iso(), lastResult=summary,
+                                        runs=int(_OFFICIAL_TRACK_RESIDENT["runs"]) + 1)
+        return result
+    finally:
+        _OFFICIAL_TRACK_LOCK.release()
+
+
 @app.route("/api/argus/official-events/track", methods=["POST"])
 def api_argus_official_events_track():
     """ADMIN/cron: fill pending market-reaction windows from cached daily bars."""
@@ -34129,6 +34161,8 @@ def api_argus_admin_memory_attribution():
                                    "residentStarted": _INTEL_COLLECT_LAST.get("residentStarted"),
                                    "running": _INTEL_COLLECT_RUN.get("status") == "running",
                                    "intervalSeconds": INTEL_COLLECT_RESIDENT_INTERVAL_SECONDS}
+        payload["officialEventsTrack"] = {**{k: _OFFICIAL_TRACK_RESIDENT.get(k) for k in ("lastAt", "lastResult", "runs")},
+                                          "intervalSeconds": OFFICIAL_TRACK_RESIDENT_INTERVAL_SECONDS}
     payload["indexResearch"] = {
         **{k: copy.deepcopy(v) for k, v in _INDEX_RESEARCH_STATUS.items() if k != "lastAttemptMonotonic"},
         "savedCalculatedAt": {key: (row or {}).get("calculatedAt") for key, row in _INDEX_RESEARCH_REPORTS.items()},
@@ -51489,6 +51523,8 @@ def run_scheduler():
         threading.Thread(target=_future_map_fallback_tick, daemon=True, name="future-map-fallback").start()
         threading.Thread(target=_future_lines_tick, daemon=True, name="future-lines-daily").start()
         threading.Thread(target=_intel_collect_resident_tick, daemon=True, name="intel-collect-resident").start()
+        threading.Thread(target=_official_events_track_resident_tick, daemon=True,
+                         name="official-events-track").start()
         threading.Thread(target=_heavy_tick, daemon=True, name="sector-heatmap",
                          args=("jp_sector_heatmap_tick",
                                _jp_sector_heatmap_tick)).start()
