@@ -66,6 +66,7 @@ def test_a_v3_failure_keeps_the_v2_backup_running_and_visible(wired, monkeypatch
 def test_the_backup_runs_on_its_own_cadence_not_only_after_a_brief():
     import inspect
     source = inspect.getsource(scanner)
+    assert 'target=_analysis_history_backup_tick' in source
     assert 'name="market-brief-history-sync-resident"' in source
     # the call keeps its own interval and lock
     body = inspect.getsource(scanner._market_brief_history_sync)

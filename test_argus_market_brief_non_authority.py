@@ -40,6 +40,8 @@ _ALLOWED_SCANNER_SCOPES = {
     # 2026-10-17: the owner's update times of the view (when to write, what
     # changed); they read the saved edition's time and facts, not its advice.
     "_market_brief_schedule_decision", "_market_brief_schedule_mark", "_market_brief_edition_at",
+    # 2026-10-20: starts the history backup on its own cadence; never reads the brief.
+    "_analysis_history_backup_tick",
 }
 _BRIEF_SYMBOL_PREFIXES = ("_market_brief", "_brief_")
 _BRIEF_SYMBOLS = {"argus_market_brief", "_MARKET_BRIEF"}

@@ -17031,6 +17031,12 @@ def _market_brief_history_sync():
         _MARKET_BRIEF_HISTORY_SYNC_LOCK.release()
 
 
+def _analysis_history_backup_tick():
+    """Start the history backup on its own cadence (2026-10-20). It never reads
+    or returns the brief; the call keeps its lock and its interval."""
+    _memory_operation_run("internal", "brief.history_sync", _market_brief_history_sync)
+
+
 _MARKET_BRIEF_HISTORY_HEAD_SCHEMA = "argus-market-brief-history-head-v1"
 
 
@@ -51513,9 +51519,8 @@ def run_scheduler():
         # generated (11 times a weekday), so the v3 migration of 48 editions a
         # call would have taken two days. The call keeps its own lock and its
         # ten-minute interval; with nothing new it reads two remote heads.
-        threading.Thread(target=lambda: _memory_operation_run(
-            "internal", "brief.history_sync", _market_brief_history_sync),
-            daemon=True, name="market-brief-history-sync-resident").start()
+        threading.Thread(target=_analysis_history_backup_tick, daemon=True,
+                         name="market-brief-history-sync-resident").start()
         threading.Thread(target=_heavy_tick, daemon=True, name="sector-heatmap",
                          args=("jp_sector_heatmap_tick",
                                _jp_sector_heatmap_tick)).start()
