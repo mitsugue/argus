@@ -44,6 +44,7 @@ assert.doesNotMatch(html, /src_[abc]/, '出どころの記号を出さない(名
 assert.match(html, /機械1（2018年の暦）/); assert.match(html, /機械2（直近の間隔）/, '3本の線を1つのチャートに');
 assert.match(html, /日付の当たりは機械1・機械2ともでたらめと同じ/);
 const panel = fs.readFileSync('src/components/chart/JapanMarketComparisonPanel.tsx','utf8');
-for (const label of ['価格の目盛りと参考予測','従来の過去比較','未来の線の記録']) assert.ok(panel.includes(`>${label}</button>`), label);
+for (const label of ['価格の目盛りと<wbr />参考予測','従来の過去比較','未来の線の記録']) assert.ok(panel.includes(`>${label}</button>`), label);
+assert.ok(panel.includes('jp-comparison-periods jp-comparison-views'), '3つの切り替えは1行に並べる');
 assert.equal((panel.match(/onClick=\{\(\) => setMode\(/g) || []).length, 3, '日経のチャートの切り替えは3つ(足したのは1つ)');
 console.log('future lines: ok');
