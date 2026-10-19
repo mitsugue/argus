@@ -430,7 +430,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/margin-dynamics.test.cjs': 'd969a73de0e7b669ecaed83da07f9481ab16cc8c',
     'web/scripts/market-brief-response.test.cjs': '93091e37a1832f91d3d19592e1fce7825d4ba065',
     'web/src/components/chart/JapanMarketComparisonChart.css': '5f1bc41ac381d67191cf3fa82ede9cc6f13c06ca',
-    'web/src/components/chart/JapanMarketComparisonChart.tsx': '397af02fb1394be6fd7dbc934bc60bce3858a176',
+    'web/src/components/chart/JapanMarketComparisonChart.tsx': '6d78541a8463849eac60e9908230a67e44af00b0',
     'web/src/components/chart/JapanMarketComparisonPanel.tsx': '528208237514444a7481a3a8c6fb6c9b337f9d81',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': '421e18ed7bfcf3a3c6729c62a3c56b7d4d436ccc',
@@ -686,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/scripts/few-analogs.test.cjs",
     "web/src/lib/futureLines.ts",
     "web/src/hooks/useFutureLines.ts",
     "web/src/components/chart/FutureLinesChart.tsx",
