@@ -257,6 +257,7 @@ def test_notification_workflow_consolidation_preserves_schedule_semantics():
         "caos-scan.yml",              # mission tick backup (:07/:37)
         "checkpoint-v2-gate.yml",     # nightly 4 GiB proof (2026-09-28)
         "event-ledger.yml",           # event ledger close
+        "history-capacity.yml",       # weekly size of the private history backup (2026-10-20)
         "jpx-credit-weekly.yml",      # weekly JPX credit
         "learning-memory.yml",        # learning memory roll-up
         "macro-event-analysis.yml",   # macro result/generation slots

@@ -138,6 +138,7 @@ import argus_owner_dialogue_recovery
 import argus_owner_dialogue_backup
 import argus_subject_materials
 import argus_analysis_history_backup
+import argus_analysis_history_parts
 import argus_public_feed_fetch
 import argus_presentation_intent
 import argus_jp_market_research
@@ -16989,6 +16990,33 @@ def _market_brief_history_sync():
         # is kept beside the local file and read back once per process.
         if _MARKET_BRIEF_HISTORY_REMOTE.get("headVersion") is None:
             _MARKET_BRIEF_HISTORY_REMOTE["headVersion"] = _market_brief_history_head_load(path)
+        # 2026-10-20: v3 keeps each edition as a skeleton and parts kept once,
+        # in append-only packs (v2 would have reached its 128 MiB compressed
+        # bound in mid-November). v2 stays written only until v3 holds every
+        # local record, and stays readable afterwards.
+        v3_complete = False
+        try:
+            v3 = argus_analysis_history_parts.synchronize(path, argus_analysis_history_backup.GitHubStore(
+                repo=repo, headers=_gh_private_headers(), http=requests.request))
+            v3_complete = bool(v3.get("complete"))
+            _MARKET_BRIEF_HISTORY_REMOTE["v3"] = {
+                "status": v3["status"], "complete": v3_complete, "counts": v3["counts"],
+                "written": v3["written"], "restoredCounts": v3["restoredCounts"],
+                "capacity": v3["capacity"], "lastVerifiedAt": _ai_now_iso(), "errorClass": None}
+            if v3.get("restoredCounts") is not None:
+                _MARKET_BRIEF["historyRestoreAttempted"] = False
+        except Exception as exc:
+            _MARKET_BRIEF_HISTORY_REMOTE["v3"] = {
+                **(_MARKET_BRIEF_HISTORY_REMOTE.get("v3") or {}), "status": "FAILED",
+                "errorClass": type(exc).__name__, "lastAttemptAt": _ai_now_iso()}
+        if v3_complete:
+            _MARKET_BRIEF_HISTORY_REMOTE.update(status="VERIFIED", formatVersion=3,
+                                                counts={k: v3["counts"][k] for k in ("views", "outcomes")},
+                                                latestRecordId=v3.get("latestRecordId"),
+                                                restoredCounts=v3.get("restoredCounts"),
+                                                lastVerifiedAt=_ai_now_iso(), errorClass=None,
+                                                v2="READ_ONLY_SUPERSEDED_BY_V3")
+            return
         remote = argus_analysis_history_backup.GitHubStore(
             repo=repo, headers=_gh_private_headers(), http=requests.request)
         result = argus_analysis_history_backup.synchronize(path, remote,
