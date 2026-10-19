@@ -47,10 +47,13 @@ def test_v2_is_no_longer_written_once_v3_holds_every_record(wired, monkeypatch):
     assert 'test-only-token' not in json.dumps(status)
 
 
-def test_v2_stays_written_while_the_v3_migration_is_incomplete(wired, monkeypatch):
+def test_v2_is_not_written_while_v3_migrates_successfully(wired, monkeypatch):
+    """2026-10-20: v2 timed out after every restart and its failure slowed the v3 migration to 30 minutes."""
     monkeypatch.setattr(parts, 'synchronize', _v3(False))
     scanner._market_brief_history_sync()
-    assert wired == ['v2'] and scanner._MARKET_BRIEF_HISTORY_REMOTE['v3']['complete'] is False
+    status = scanner._MARKET_BRIEF_HISTORY_REMOTE
+    assert wired == [] and status['v3']['complete'] is False
+    assert status['status'] == 'VERIFIED' and status['v2'] == 'READ_ONLY_V3_MIGRATING' and status['errorClass'] is None
 
 
 def test_a_v3_failure_keeps_the_v2_backup_running_and_visible(wired, monkeypatch):
