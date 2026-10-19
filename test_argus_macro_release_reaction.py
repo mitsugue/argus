@@ -50,12 +50,15 @@ def test_windows_open_only_at_their_minute_and_once():
     assert rr.window_due(T, T + timedelta(minutes=4), {}) is None
     assert rr.window_due(T, T + timedelta(minutes=5), {}) == "+5m"
     assert rr.window_due(T, T + timedelta(minutes=9), {}) == "+5m"
-    assert rr.window_due(T, T + timedelta(minutes=10), {}) is None       # grace over, not captured
+    # 2026-10-19: the capture may wait for the delayed quote of the window's minute
+    assert rr.window_due(T, T + timedelta(minutes=25), {}) == "+5m"
+    assert rr.window_due(T, T + timedelta(minutes=26), {}) is None       # grace and delay over
     assert rr.window_due(T, T + timedelta(minutes=31), {"+5m": 1}) == "+30m"
     assert rr.window_due(T, T + timedelta(minutes=31), {"+5m": 1, "+30m": 1}) is None
     assert rr.window_due(T, T + timedelta(minutes=62), {"+30m": 1}) == "+60m"
     assert rr.window_due(T, T + timedelta(hours=8, minutes=20), {"+5m": 1, "+30m": 1, "+60m": 1}) == "+8h"
-    assert rr.window_due(T, T + timedelta(hours=8, minutes=31), {}) is None
+    assert rr.window_due(T, T + timedelta(hours=8, minutes=46), {}) == "+8h"
+    assert rr.window_due(T, T + timedelta(hours=8, minutes=47), {}) is None
 
 
 def test_moves_and_reading_follow_the_jobs_report_night():
@@ -262,3 +265,45 @@ def test_revalidated_valid_record_preserves_formula_reading_and_original_evidenc
 
 def test_large_integer_price_is_invalid_instead_of_overflowing_revalidation():
     assert rr.parse_quote(_payload(10**1000, E(5)), received_epoch=E(5)) is None
+
+
+# 2026-10-19: measured on the 10/14 CPI release — futures came about 10 minutes
+# late and VIX about 15, so only USD/JPY ever passed and the reading stayed unmeasured.
+def _delayed(minute_of_capture, *, futures_lag=10, vix_lag=15):
+    at = T + timedelta(minutes=minute_of_capture)
+    def q(price, lag):
+        return {"price": price, "tradedAt": rr._iso(at - timedelta(minutes=lag)),
+                "receivedAt": rr._iso(at)}
+    values = {s: q(AFTER[s], futures_lag) for s in AFTER if s not in ("JPY=X", "^VIX")}
+    values["JPY=X"] = q(AFTER["JPY=X"], 0)
+    values["^VIX"] = q(AFTER["^VIX"], vix_lag)
+    return {"captureStartedAt": rr._iso(at - timedelta(seconds=1)), "capturedAt": rr._iso(at),
+            "source": rr.PROVIDER, "values": values, "missing": []}
+
+
+def test_delayed_quotes_of_the_window_minute_are_accepted_when_they_arrive():
+    first = _delayed(5)                       # at +5: only USD/JPY was traded inside the window
+    usable, rejected = rr.comparison_quotes(first, T, "+5m")
+    assert set(usable) == {"JPY=X"} and rejected["ES=F"] == "OUTSIDE_SOURCE_WINDOW"
+    merged = rr.merge_window_capture(first, _delayed(16), T, "+5m")   # futures traded at +6
+    usable, _ = rr.comparison_quotes(merged, T, "+5m")
+    assert set(usable) == set(rr.SYMBOLS) - {"^VIX"}
+    assert usable["JPY=X"]["tradedAt"] == first["values"]["JPY=X"]["tradedAt"]   # the in-window quote stays
+    merged = rr.merge_window_capture(merged, _delayed(21), T, "+5m")  # VIX traded at +6
+    assert rr.window_complete({"comparisonValues": rr.comparison_quotes(merged, T, "+5m")[0]})
+
+
+def test_a_late_capture_never_turns_a_post_window_trade_into_the_window_price():
+    late = _delayed(16, futures_lag=0, vix_lag=0)     # traded at +16: outside +5..+9
+    usable, rejected = rr.comparison_quotes(late, T, "+5m")
+    assert usable == {} and set(rejected.values()) == {"OUTSIDE_SOURCE_WINDOW"}
+    beyond = _delayed(26)                             # after grace and delay: capture refused
+    _, rejected = rr.comparison_quotes(beyond, T, "+5m")
+    assert set(rejected.values()) == {"OUTSIDE_CAPTURE_WINDOW"}
+
+
+def test_baseline_accepts_the_slowest_symbols_last_pre_release_quote_but_not_after_release():
+    base = _delayed(-2)                       # captured 2 minutes before: VIX traded 17 minutes before
+    usable, rejected = rr.comparison_quotes(base, T)
+    assert set(usable) == set(rr.SYMBOLS), rejected
+    assert rr.comparison_quotes(_delayed(1), T)[0] == {}     # a capture after the release is never a baseline

@@ -153,7 +153,9 @@ def test_runtime_refresh_reads_four_series_once_and_never_keeps_the_key(monkeypa
     scanner._jp_historical_release_refresh()
     assert len(calls) == 4 and {c['release_id'] for c in calls} == {50, 10, 46, 192}
     assert scanner._JP_HISTORICAL_RELEASES['status'] == 'AVAILABLE'
-    assert len(scanner._JP_HISTORICAL_RELEASES['events']) == 8
+    # 2026-10-19: plus the FOMC and Bank of Japan decisions, read without a request
+    scheduled = sum(len(releases.scheduled_events(c, received_at=RECEIVED)) for c in releases.SCHEDULES)
+    assert len(scanner._JP_HISTORICAL_RELEASES['events']) == 8 + scheduled
     assert 'k' * 32 not in json.dumps(scanner._JP_HISTORICAL_RELEASES) + json.dumps(scanner._jp_historical_release_status())
     scanner._jp_historical_release_refresh()
     assert len(calls) == 4   # not due again within the day
@@ -162,7 +164,7 @@ def test_runtime_refresh_reads_four_series_once_and_never_keeps_the_key(monkeypa
     monkeypatch.setattr(scanner.requests, 'get', fail)
     scanner._JP_HISTORICAL_RELEASES['lastAttemptMonotonic'] = None
     scanner._jp_historical_release_refresh()
-    assert len(scanner._JP_HISTORICAL_RELEASES['events']) == 8          # previous dates are kept
+    assert len(scanner._JP_HISTORICAL_RELEASES['events']) == 8 + scheduled   # previous dates are kept
     assert scanner._jp_historical_release_status()['errors'] == {c: 'OSError' for c in releases.RELEASES}
 
 
@@ -217,3 +219,33 @@ def test_private_runtime_diagnostics_carry_the_research_counts(monkeypatch):
     assert out['lastCalculation']['historicalEvents'] == 520
     assert out['decision']['adopted'] is False and out['decision']['heldOutWith']['hitRate'] == .5
     assert set(out['source']) >= {'status', 'events', 'errors'}
+
+
+def test_central_bank_decisions_come_from_the_published_schedules():
+    """2026-10-19: FOMC at 14:00 New York, the Bank of Japan inside the Tokyo session."""
+    fomc = releases.scheduled_events('fomc', received_at=RECEIVED)
+    boj = releases.scheduled_events('boj', received_at=RECEIVED)
+    by_day = {e['releaseDate']: e for e in fomc}
+    assert by_day['2024-12-18']['eventTime'] == '2024-12-18T19:00:00+00:00'      # 14:00 EST
+    assert by_day['2024-07-31']['eventTime'] == '2024-07-31T18:00:00+00:00'      # 14:00 EDT
+    assert by_day['2020-03-03']['eventTime'] == '2020-03-03T15:00:00+00:00'      # the unscheduled 10:00 cut
+    assert by_day['2020-03-15']['eventTime'] == '2020-03-15T21:00:00+00:00'      # Sunday 17:00
+    assert '2026-10-28' not in by_day and fomc[-1]['releaseDate'] == '2026-09-16'   # not yet decided at receipt
+    boj_day = {e['releaseDate']: e for e in boj}
+    assert boj_day['2024-03-19']['eventTime'] == '2024-03-19T03:00:00+00:00'     # 12:00 Tokyo
+    assert boj[0]['releaseDate'] == '2016-01-29' and boj[-1]['releaseDate'] == '2026-09-18'
+    for row in fomc + boj:
+        assert row['timeBasis'] == releases.TIME_BASIS and row['actualPublicationTimeVerified'] is False
+        assert len(row['sourceSha256']) == 64
+    assert len(fomc) + len(boj) + 4 * 136 <= material.MAX_HISTORICAL_EVENTS
+    with pytest.raises(ValueError):
+        releases.scheduled_events('ecb', received_at=RECEIVED)
+
+
+def test_an_in_session_decision_reacts_on_its_own_day_and_an_evening_one_on_the_next():
+    boj = {**event('2026-09-04', '03:00'), 'eventId': 'hist-boj-2026-09-04', 'eventType': 'boj'}
+    fomc = {**event('2026-09-03', '18:00'), 'eventId': 'hist-fomc-2026-09-03', 'eventType': 'fomc'}
+    one = lambda e: next(r for r in measure(event=e, rows=CASH, sessions=DAYS, cutoff=RECEIVED,
+                                             research_availability=True) if r['reactionWindowSessions'] == 1)
+    assert (one(boj)['baselineDate'], one(boj)['endpointDate']) == ('2026-09-03', '2026-09-04')
+    assert (one(fomc)['baselineDate'], one(fomc)['endpointDate']) == ('2026-09-03', '2026-09-04')

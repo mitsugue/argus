@@ -41,3 +41,13 @@ BLSの公表文書は自動の読み取りを拒否する（手元とGitHub Acti
   説明しにくい（片側5%未満）時だけ候補選びに含める（各50件以上）。一致率が少し上がるだけでは、
   でたらめな模擬データでも採用されたため（2026-10-18の試運転）。残り4分の1は両方の成績を
   表示するだけで判断に使わない。予測の確率にはしない。結果は画面の比較の説明に件数と並べて出す。
+
+## FOMCと日銀の決定(2026-10-19)
+
+- 種類: `fomc`、`boj`。日付は `jp_market_historical_releases.FOMC_DECISION_DAYS` と
+  `BOJ_DECISION_DAYS`(2016-01〜2026-12、各会合の最終日)。原典は federalreserve.gov の
+  fomccalendars.htm と fomchistorical<年>.htm、boj.or.jp の mpmsche_minu/past.htm と index.htm。
+- 対象は定例会合と、2020年3月3日・15日の臨時利下げ。政策の声明がない書面決議は入れない。
+- 時刻はどちらも規則で、実公表時刻の確認ではない(`actualPublicationTimeVerified=false`)。
+- 外部への取得はしない。表の内容のハッシュを `sourceSha256` とする。
+- 新しい年の日程は、各中央銀行の公表を確かめてから表に足す。

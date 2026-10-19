@@ -27,7 +27,16 @@ WINDOWS = (("+5m", timedelta(minutes=5)), ("+30m", timedelta(minutes=30)),
            ("+60m", timedelta(minutes=60)), ("+8h", timedelta(hours=8)))
 WINDOW_GRACE = {"+5m": timedelta(minutes=4), "+30m": timedelta(minutes=4),
                 "+60m": timedelta(minutes=4), "+8h": timedelta(minutes=30)}
-WATCH_UNTIL = timedelta(hours=8, minutes=30)   # the watcher forgets an event after this
+# 2026-10-19: this provider serves CME futures about 10 minutes late and VIX
+# about 15 (measured on every 10/14 CPI and 10/15 PPI capture; USD/JPY 0), so
+# every window kept USD/JPY alone and the reading stayed unmeasured.  A window
+# price must still be traded inside its window; only the capture may happen
+# later, until the delayed quote of that minute has arrived.  The baseline is
+# still captured before the release; its traded time may reach back far
+# enough for the slowest symbol's last pre-release quote.
+SOURCE_DELAY_ALLOWANCE = timedelta(minutes=16)
+BASELINE_SOURCE_FROM = timedelta(minutes=20)
+WATCH_UNTIL = timedelta(hours=8, minutes=30) + SOURCE_DELAY_ALLOWANCE
 PROVIDER = "Yahoo Finance (delayed)"
 
 # One provider for every symbol so before and after are comparable.
@@ -137,14 +146,14 @@ def comparison_quotes(capture: Optional[Mapping[str, Any]], event_time: Optional
     if capture.get("source") != PROVIDER:
         return {}, {symbol: "SOURCE_MISMATCH" for symbol in values}
     if window is None:
-        lower, upper = event_time - BASELINE_FROM, event_time
-        capture_ok = lower <= observed < event_time - BASELINE_UNTIL
+        lower, upper = event_time - BASELINE_SOURCE_FROM, event_time
+        capture_ok = event_time - BASELINE_FROM <= observed < event_time - BASELINE_UNTIL
     else:
         offset = dict(WINDOWS).get(window)
         if offset is None:
             return {}, {symbol: "UNKNOWN_WINDOW" for symbol in values}
         lower, upper = event_time + offset, event_time + offset + WINDOW_GRACE[window]
-        capture_ok = lower <= observed <= upper
+        capture_ok = lower <= observed <= upper + SOURCE_DELAY_ALLOWANCE
     usable, rejected = {}, {}
     for symbol, quote in values.items():
         if not isinstance(quote, Mapping) or _finite(quote.get("price")) is None or quote["price"] <= 0:
@@ -173,15 +182,36 @@ def baseline_due(event_time: datetime, now: datetime) -> bool:
     return event_time - BASELINE_FROM <= now < event_time - BASELINE_UNTIL
 
 
+def window_deadline(event_time: datetime, name: str) -> datetime:
+    """The last capture time for a window: its grace plus the provider delay."""
+    return event_time + dict(WINDOWS)[name] + WINDOW_GRACE[name] + SOURCE_DELAY_ALLOWANCE
+
+
 def window_due(event_time: datetime, now: datetime, captured: Mapping[str, Any]) -> Optional[str]:
-    """The first post-release window whose minute has passed and is not yet captured."""
+    """The first post-release window whose minute has passed and is not yet settled."""
     for name, offset in WINDOWS:
         if name in captured:
             continue
-        at = event_time + offset
-        if at <= now <= at + WINDOW_GRACE[name]:
+        if event_time + offset <= now <= window_deadline(event_time, name):
             return name
     return None
+
+
+def window_complete(measured: Optional[Mapping[str, Any]]) -> bool:
+    """Every symbol has a quote traded inside the window."""
+    return set((measured or {}).get("comparisonValues") or {}) >= set(SYMBOLS)
+
+
+def merge_window_capture(previous: Optional[Mapping[str, Any]], new: Mapping[str, Any],
+                         event_time: Optional[datetime], name: str) -> Dict[str, Any]:
+    """Keep each symbol's in-window quote from an earlier capture; take the rest from the new one."""
+    if not previous:
+        return dict(new)
+    kept, _ = comparison_quotes(previous, event_time, name)
+    values = {**(new.get("values") or {}), **kept}
+    return {"captureStartedAt": previous.get("captureStartedAt") or new.get("captureStartedAt"),
+            "capturedAt": new.get("capturedAt"), "source": new.get("source"), "values": values,
+            "missing": [symbol for symbol in SYMBOLS if symbol not in values]}
 
 
 def _pct(before: Optional[float], after: Optional[float]) -> Optional[float]:

@@ -14641,7 +14641,9 @@ def _macro_release_window(event, name):
     if not after["values"]:
         raise ValueError("release_window_unavailable")
     windows = _macro_release_windows(current)
-    windows[name] = after
+    windows[name] = argus_macro_release_reaction.merge_window_capture(
+        windows.get(name), after,
+        argus_macro_release_reaction._instant(rec.get("eventTimeUtc")), name)
     return _macro_release_store(eid, rec, current.get("baseline"), windows)
 
 
@@ -47771,7 +47773,8 @@ def _material_research_diagnostics():
 
 
 def _jp_historical_release_refresh():
-    """Past release dates of four BLS series from the FRED archive (2026-10-18).
+    """Past release dates of four BLS series from the FRED archive (2026-10-18),
+    and FOMC and Bank of Japan decisions from their published schedules (2026-10-19).
 
     Four bounded reads, at most once a day, on the existing collect lane. The
     key goes in the request only; nothing of the response but dates and its
@@ -47801,8 +47804,18 @@ def _jp_historical_release_refresh():
             except Exception as exc:
                 previous = releases.get(code) or {"events": []}
                 releases[code] = {**previous, "status": "FAILED", "errorClass": type(exc).__name__}
+        # 2026-10-19: FOMC and Bank of Japan decisions from their published
+        # schedules (no request); the same reaction study, the same adoption gate.
+        for code in jp_market_historical_releases.SCHEDULES:
+            try:
+                releases[code] = {"events": jp_market_historical_releases.scheduled_events(
+                    code, received_at=_ai_now_iso()), "status": "AVAILABLE", "errorClass": None}
+            except Exception as exc:
+                previous = releases.get(code) or {"events": []}
+                releases[code] = {**previous, "status": "FAILED", "errorClass": type(exc).__name__}
         events = [event for code in sorted(releases) for event in releases[code].get("events") or []]
-        ok = all((releases.get(code) or {}).get("status") == "AVAILABLE" for code in jp_market_historical_releases.RELEASES)
+        ok = all((releases.get(code) or {}).get("status") == "AVAILABLE"
+                 for code in (*jp_market_historical_releases.RELEASES, *jp_market_historical_releases.SCHEDULES))
         _JP_HISTORICAL_RELEASES.update(releases=releases, events=events,
                                        status="AVAILABLE" if ok else "PARTIAL" if events else "FAILED")
         if ok:
