@@ -58,6 +58,14 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
                             "failedFeedCount": len(failed_feeds), "feedCount": result.get("feeds"),
                             # 2026-10-19: the public feed names (no payload), so a failing feed can be named.
                             "failedFeeds": [str(name)[:40] for name in failed_feeds[:25]],
+                            # 2026-10-20: why each failed feed failed — fixed codes only, no page content.
+                            "failedFeedReasons": [
+                                {"feed": str(row.get("feed"))[:40],
+                                 "httpStatus": row.get("httpStatus") if isinstance(row.get("httpStatus"), int) else None,
+                                 "errorClass": str(row.get("errorClass") or "")[:60] or None,
+                                 "elapsedSeconds": row.get("elapsedSeconds") if isinstance(row.get("elapsedSeconds"), (int, float)) else None}
+                                for row in (result.get("perFeed") or [])[:40]
+                                if isinstance(row, dict) and row.get("ok") is False][:25],
                             "supplyDemandWarm": result.get("supplyDemandWarm"),
                             "jpMarketEngineInputWarm": result.get("jpMarketEngineInputWarm")}
             else:

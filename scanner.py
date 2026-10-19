@@ -17031,6 +17031,12 @@ def _market_brief_history_sync():
         _MARKET_BRIEF_HISTORY_SYNC_LOCK.release()
 
 
+def _analysis_history_backup_tick():
+    """Start the history backup on its own cadence (2026-10-20). It never reads
+    or returns the brief; the call keeps its lock and its interval."""
+    _memory_operation_run("internal", "brief.history_sync", _market_brief_history_sync)
+
+
 _MARKET_BRIEF_HISTORY_HEAD_SCHEMA = "argus-market-brief-history-head-v1"
 
 
@@ -41100,8 +41106,8 @@ def _nikkei_chart_rows():
         # Each received row replaces the whole prior row of the same date.
         by_day = {row["date"]: row for row in rows}
         by_day.update({row["date"]: row for row in current})
-        return [by_day[day] for day in sorted(by_day)]
-    return rows or current
+        return argus_index_history.drop_stale_holiday_copies([by_day[day] for day in sorted(by_day)])
+    return argus_index_history.drop_stale_holiday_copies(rows or current)
 
 
 def _level_map_public():
@@ -42672,7 +42678,7 @@ def _jp_market_feature_history_warm():
             if isinstance(row.get("per"), (int, float)) and not isinstance(row.get("per"), bool)
             and row.get("per") > 0 and row.get("availableFrom")]
         if _N225_ANALOG_HISTORY.get("data"):
-            price_series["nikkei"] = list(_N225_ANALOG_HISTORY["data"])
+            price_series["nikkei"] = argus_index_history.drop_stale_holiday_copies(_N225_ANALOG_HISTORY["data"])
         price_series['vix'] = jp_market_acquisition.merge_feature_sources(
             price_series.get('vix', []), _JP_OFFICIAL_SOURCE_CACHE.rows.get('vix_ohlc', []),
             path=(os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3')
@@ -42707,6 +42713,9 @@ def _jp_market_feature_history_warm():
             for r in _MARKET_LEDGER.get("observations", [])
             if r.get("importId") not in rolled and r.get("periodEnd", "") >= oldest
             and not (r.get("metadata") or {}).get("excludeFromEffective")]
+        # 2026-10-20: the same observation imported twice (same series, period,
+        # receipt and value) reached the features twice (foreign flow: 2 weeks).
+        ledger = jp_market_series_reconciliation.drop_exact_duplicates(ledger)
         last_csv = max((r["periodEnd"] for r in credit), default="")
         credit += [r for r in ledger if r.get("seriesId") in ("credit.long_balance", "credit.short_balance")
                    and r.get("periodEnd", "") > last_csv]
@@ -51506,6 +51515,12 @@ def run_scheduler():
         threading.Thread(target=_intel_collect_resident_tick, daemon=True, name="intel-collect-resident").start()
         threading.Thread(target=_official_events_track_resident_tick, daemon=True,
                          name="official-events-track").start()
+        # 2026-10-20: the history backup used to run only after a brief was
+        # generated (11 times a weekday), so the v3 migration of 48 editions a
+        # call would have taken two days. The call keeps its own lock and its
+        # ten-minute interval; with nothing new it reads two remote heads.
+        threading.Thread(target=_analysis_history_backup_tick, daemon=True,
+                         name="market-brief-history-sync-resident").start()
         threading.Thread(target=_heavy_tick, daemon=True, name="sector-heatmap",
                          args=("jp_sector_heatmap_tick",
                                _jp_sector_heatmap_tick)).start()

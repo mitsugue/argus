@@ -392,13 +392,17 @@ def _local_ids(path):
 
 
 def _local_bodies(path, table, column, ids):
-    conn = history._connect(path, True)
-    try:
-        for identity in ids:
-            row = conn.execute(f'SELECT body FROM {table} WHERE {column}=?', (identity,)).fetchone()
-            if row is None: raise ValueError('history_v3_local_row_missing')
-            yield json.loads(row[0])
-    finally: conn.close()
+    """One short read per record: the statement is finished before the caller
+    splits the record, so no read lock is held while a writer waits (the level
+    map writer timed out behind the v2 snapshot's long read, 2026-10-16)."""
+    for identity in ids:
+        conn = history._connect(path, True)
+        try:
+            rows = conn.execute(f'SELECT body FROM {table} WHERE {column}=?', (identity,)).fetchall()
+        finally:
+            conn.close()
+        if len(rows) != 1: raise ValueError('history_v3_local_row_missing')
+        yield json.loads(rows[0][0])
 
 
 # ── publish ────────────────────────────────────────────────────────────────

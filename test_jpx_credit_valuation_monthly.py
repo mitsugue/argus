@@ -104,6 +104,8 @@ def test_monthly_mode_writes_only_missing_valuation_rows_and_verifies_them(monke
 def test_monthly_library_is_only_enabled_for_explicit_backfill():
     from pathlib import Path
     text=Path('.github/workflows/jpx-credit-weekly.yml').read_text()
-    assert "github.event_name == 'workflow_dispatch' && inputs.valuation_monthly_backfill" in text
+    # 2026-10-20: also the explicit balance backfill of named missing weeks; never a scheduled run.
+    assert ("github.event_name == 'workflow_dispatch' && (inputs.valuation_monthly_backfill"
+            " || inputs.balance_monthly_backfill != '')") in text
     assert 'pdfplumber==0.11.7' in text
     assert 'actions/upload-artifact' not in text and '$RUNNER_TEMP/jpx-credit-summary.json' in text

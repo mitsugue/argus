@@ -291,3 +291,44 @@ def test_listing_byte_limit_is_checked_before_parse(monkeypatch):
     monkeypatch.setattr(jw.urllib.request, 'urlopen', lambda *a, **k: io.BytesIO(b'x' * (jw.MAX_LISTING_BYTES + 1)))
     with pytest.raises(ValueError, match='listing_too_large'):
         jw.fetch_listing()
+
+
+def test_missing_weeks_take_balances_from_the_monthly_report_with_todays_receipt(monkeypatch):
+    """2026-10-20: the weekly workbooks of 07-17 and 07-24 are gone; the monthly report prints them."""
+    from scripts import jpx_credit_valuation_monthly as monthly
+    class Page:
+        years = {2026: monthly.INDEX}
+        credit = ['t13/12_sinyou2606.pdf', 't13/12_sinyou2607.pdf']
+    monkeypatch.setattr(monthly, 'parse_index', lambda payload, base=monthly.INDEX: Page())
+    reads = []
+    def reader(url, limit):
+        reads.append(url)
+        return b'%PDF-report-' + url.encode()
+    monkeypatch.setattr(monthly, 'extract_pdf', lambda payload: [
+        {'periodEnd': '2026-07-10', 'shortBalanceJpy': 795524e6, 'longBalanceJpy': 6732228e6},
+        {'periodEnd': '2026-07-17', 'shortBalanceJpy': 681412e6, 'longBalanceJpy': 6709743e6},
+        {'periodEnd': '2026-07-24', 'shortBalanceJpy': 725262e6, 'longBalanceJpy': 6476938e6}])
+    result = jw.monthly_balance_rows(['2026-07-24', '2026-07-17'], reader=reader,
+                                         observed_at='2026-10-20T03:00:00Z')
+    assert result['fetched'] == ['2026-07-17', '2026-07-24'] and result['failures'] == []
+    assert {(r['seriesId'], r['periodEnd'], r['value']) for r in result['rows']} == {
+        ('credit.short_balance', '2026-07-17', 681412e6), ('credit.long_balance', '2026-07-17', 6709743e6),
+        ('credit.short_balance', '2026-07-24', 725262e6), ('credit.long_balance', '2026-07-24', 6476938e6)}
+    assert all(r['availableFrom'] == '2026-10-20T03:00:00Z' for r in result['rows'])   # never back-dated
+    assert all('monthly_report_retrospective' in r['source'] for r in result['rows'])
+    assert '2026-07-10' not in {r['periodEnd'] for r in result['rows']}               # only the named weeks
+    assert all(url.endswith('sinyou2607.pdf') for url in reads[1:])
+
+
+def test_monthly_backfill_names_fridays_only_and_reports_a_missing_row(monkeypatch):
+    from scripts import jpx_credit_valuation_monthly as monthly
+    import pytest
+    with pytest.raises(ValueError):
+        jw.monthly_balance_rows(['2026-07-16'], reader=lambda url, limit: b'')
+    class Page:
+        years = {2026: monthly.INDEX}
+        credit = ['t13/12_sinyou2607.pdf']
+    monkeypatch.setattr(monthly, 'parse_index', lambda payload, base=monthly.INDEX: Page())
+    monkeypatch.setattr(monthly, 'extract_pdf', lambda payload: [])
+    result = jw.monthly_balance_rows(['2026-07-17'], reader=lambda url, limit: b'%PDF-')
+    assert result['rows'] == [] and result['failures'] == ['2026-07-17:monthly_row_missing']

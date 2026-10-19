@@ -153,3 +153,21 @@ def refresh(prior, *, current_rows, now_iso, get, fetch_calendar):
         sourceStart=result['data'][0]['date'] if result['data'] else None,
         sourceEnd=result['data'][-1]['date'] if result['data'] else None)
     return result
+
+
+def drop_stale_holiday_copies(rows):
+    """Remove a source's holiday copy of the previous session (2026-10-20).
+
+    The public chart source carried 2018-07-16 (Marine Day, no session) as the
+    2018-07-13 bar repeated with zero volume; the expected-date check found it
+    and the condition features counted it as a session. A bar is dropped only
+    when its volume is zero and its open, high, low and close equal the
+    previous kept bar whose volume is not zero. Nothing is filled or moved."""
+    kept = []
+    for row in rows or ():
+        previous = kept[-1] if kept else None
+        if (previous is not None and row.get("volume") == 0 and (previous.get("volume") or 0) > 0
+                and all(row.get(key) == previous.get(key) for key in ("open", "high", "low", "close"))):
+            continue
+        kept.append(row)
+    return kept

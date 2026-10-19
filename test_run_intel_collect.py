@@ -73,3 +73,16 @@ def test_failed_feed_names_are_kept_for_the_private_record():
                     "result": {"feeds": 20, "failedFeeds": ["meti_official", "nikkei_web"], "stored": 40}})))
     assert result["status"] == "done" and result["failedFeedCount"] == 2
     assert result["failedFeeds"] == ["meti_official", "nikkei_web"]
+
+
+def test_failed_feed_reasons_keep_fixed_codes_only():
+    """2026-10-20: meti:release failed only in production; the reason was not recorded."""
+    result = run(base="https://example.test", token="secret", request_id="test-run-1",
+                 request=lambda **kw: (200, json.dumps({"status": "done", "runId": "test-run-1",
+                    "result": {"feeds": 20, "failedFeeds": ["meti:release"], "stored": 40, "perFeed": [
+                        {"feed": "meti:release", "ok": False, "httpStatus": 403, "errorClass": "http_unavailable",
+                         "elapsedSeconds": 0.4, "fetched": 0, "body": "<html>secret</html>"},
+                        {"feed": "boj:release", "ok": True, "httpStatus": 200, "errorClass": None}]}})))
+    assert result["failedFeedReasons"] == [
+        {"feed": "meti:release", "httpStatus": 403, "errorClass": "http_unavailable", "elapsedSeconds": 0.4}]
+    assert "secret" not in json.dumps(result)
