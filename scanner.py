@@ -6987,7 +6987,10 @@ _INTEL_FEEDS = [
     # Nasdaq markets
     ("nasdaq_public",        "nasdaq:markets",   "https://www.nasdaq.com/feed/rssoutbound?category=Markets", "rss"),
     # Yahoo Finance headlines (company news volume)
-    ("yahoo_finance_public", "yahoo:finance",    "https://finance.yahoo.com/news/rssindex", "rss"),
+    # 2026-10-19: Yahoo's news-section feeds answer 404 (rssindex since at least
+    # 2026-10-19); the per-symbol headline feed of the S&P 500 still answers.
+    ("yahoo_finance_public", "yahoo:finance",
+     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EGSPC&region=US&lang=en-US", "rss"),
     # Official / macro — central bank + regulator (public domain)
     ("federal_reserve",      "fed:press",        "https://www.federalreserve.gov/feeds/press_all.xml", "rss"),
     ("sec_press",            "sec:press",        "https://www.sec.gov/news/pressreleases.rss", "rss"),
