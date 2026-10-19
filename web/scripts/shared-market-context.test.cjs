@@ -13,5 +13,10 @@ for(const mutate of [b=>b.unifiedContext.contextId='d'.repeat(64),b=>b.unifiedCo
 assert.equal(selectMarketInternals(brief,latest,20).binding,'LATEST_SEPARATE');
 assert.equal(selectMarketInternals(null,latest,5).binding,'AWAITING_AI');
 assert.equal(selectMarketInternals(null,{},5).document,null);
+// 2026-10-19: newer editions keep one internals document on the "5" snapshot only.
+{const both=structuredClone(frame);both.periods['20']={...structuredClone(frame.periods['5']),horizonSessions:20};
+ const once=structuredClone(brief);once.calculationSnapshots={'5':{marketInternals:both},'20':{}};
+ once.unifiedContext.facts.push({source:'market_internals_calculation',provenance:{eventId:'market-internals-20',sourceRowSha256:both.evidenceId}});
+ const twenty=selectMarketInternals(once,latest,20);assert.equal(twenty.binding,'AI_SNAPSHOT');assert.equal(twenty.document,both);}
 const wrong=structuredClone(frame);wrong.periods['5'].sample.counts.expected=1;assert.equal(validMarketInternals(wrong),false);
 console.log('Shared market context: exact saved inputs survive newer data; mismatch/horizon/authority stay separate PASS');
