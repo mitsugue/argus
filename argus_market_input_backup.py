@@ -25,10 +25,10 @@ PREFIX='market-analysis/source-inputs/v1'
 SCHEMA='argus-private-market-inputs-v1'
 SECTOR_CODES={str(n) for n in range(1617,1634)}
 DIAGNOSTIC_PHASES={'CONFIGURATION','VISIBILITY','SNAPSHOT','SNAPSHOT_ORIGINALS',
-                   'SNAPSHOT_OBSERVATIONS','SNAPSHOT_DATE_COVERAGE',
+                   'SNAPSHOT_OBSERVATIONS','SNAPSHOT_DATE_COVERAGE','SNAPSHOT_SELECTED',
                    'SNAPSHOT_COMPANY_COVERAGE','SNAPSHOT_CHUNKS','CHUNK_READ','CHUNK_WRITE',
                    'CHUNK_READBACK','MANIFEST_READ','MANIFEST_WRITE','MANIFEST_READBACK','COMPLETE'}
-DIAGNOSTIC_ERRORS={'private_original_backup_destination','private_original_backup_visibility',
+DIAGNOSTIC_ERRORS={'private_original_backup_destination','private_selected_integrity','private_original_backup_visibility',
     'private_original_backup_deadline','private_original_backup_conflict',
     'private_original_backup_readback','private_original_backup_chunk',
     'private_original_backup_bound','private_original_integrity','private_observation_fields',
@@ -175,17 +175,33 @@ def snapshot(path,directory,*,check_budget=None,progress=None):
     location=Path(path)
     if location.is_symlink() or not location.is_file():raise ValueError('private_original_store_required')
     db=sqlite3.connect(location.resolve().as_uri()+'?mode=ro',uri=True)
-    destination=Path(directory)/'inputs.ndjson';ids=set();counts={'financial':0,'sector17':0,'observations':0,'coverageReceipts':0}
+    # 2026-10-20: every snapshot re-uploaded all 86 chunks (44.6 MB): originals
+    # were ordered by their hash, so one new original shifted every later byte,
+    # and one stream was cut into chunks end to end (740 MB of chunks in the
+    # private repository). Rows are now in insertion order and each section is
+    # its own chunk stream, so a new row changes only its section's last chunk.
+    # The concatenated chunks are still the one archive, in the same format.
+    sections=[];ids=set();counts={'financial':0,'sector17':0,'observations':0,'coverageReceipts':0,
+                                  'selectedVix':0,'selectedFeatures':0}
+    total_bytes=[0]
+    current=[None]
+    def section(name):
+        if current[0] is not None:current[0].close()
+        location=Path(directory)/('section-%02d-%s.ndjson'%(len(sections),name))
+        sections.append(location);current[0]=location.open('wb')
     try:
         db.execute('BEGIN')
-        with destination.open('wb') as out:
+        try:
             def write(row):
                 check()
-                out.write(sources._json(row).encode()+b'\n')
-                if out.tell()>MAX_ARCHIVE_BYTES:raise ValueError('private_original_backup_bound')
+                encoded=sources._json(row).encode()+b'\n'
+                current[0].write(encoded);total_bytes[0]+=len(encoded)
+                if total_bytes[0]>MAX_ARCHIVE_BYTES:raise ValueError('private_original_backup_bound')
+            section('header')
             write({'schemaVersion':SCHEMA,'scope':'PUBLIC_MARKET_INPUTS','ownerRecordsIncluded':False})
             stage('SNAPSHOT_ORIGINALS')
-            for identity,url,digest,received,raw in db.execute('SELECT id,url,sha256,received_at,raw FROM raw_sources ORDER BY id'):
+            section('originals')
+            for identity,url,digest,received,raw in db.execute('SELECT id,url,sha256,received_at,raw FROM raw_sources ORDER BY rowid'):
                 check()
                 if url!=earnings.URL and url!=auctions.ARCHIVE_URL and not credit.approved_url(url) and not re.fullmatch(r'https://api\.jquants\.com/v2/equities/bars/daily\?code=16(?:1[7-9]|2[0-9]|3[0-3])',url):continue
                 bound=credit.MAX_BYTES if credit.approved_url(url) else sources.MAX_BYTES
@@ -199,6 +215,7 @@ def snapshot(path,directory,*,check_budget=None,progress=None):
                       else 'jgbArchive' if url==auctions.ARCHIVE_URL else 'sector17')
                 counts[kind]=counts.get(kind,0)+1
             stage('SNAPSHOT_OBSERVATIONS')
+            section('observations')
             # The read transaction fixes every source version for this export.
             # Keep only the immediately preceding original: adjacent rows from
             # one receipt must not repeatedly query and decode its full body.
@@ -243,7 +260,8 @@ def snapshot(path,directory,*,check_budget=None,progress=None):
             cached_original_key=None;cached_original=None;cached_financial_rows=None
             coverage_allowed={'status','retainedRows','newObservations','rejectedRows','receivedAt','memberCount','queryDate','goodEarningsRuleDefined','actionAuthority','complete','memberCodes','knownAt','rawId','sourceResponseSha256','coverageSha256','collectionKind','componentReceipt'}
             stage('SNAPSHOT_DATE_COVERAGE')
-            for key,body in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-date:%' ORDER BY key"):
+            section('date-coverage')
+            for key,body in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-date:%' ORDER BY rowid"):
                 check()
                 row=json.loads(body)
                 if row.get('rawId') not in ids:continue
@@ -259,7 +277,8 @@ def snapshot(path,directory,*,check_budget=None,progress=None):
                 write({'kind':'coverage','key':key,'body':row});counts['coverageReceipts']+=1
             company_allowed={'code','complete','receivedAt','rawId','sourceResponseSha256','retainedRows','receiptSha256'}
             stage('SNAPSHOT_COMPANY_COVERAGE')
-            for key,body in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-code:%' ORDER BY key"):
+            section('company-coverage')
+            for key,body in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-code:%' ORDER BY rowid"):
                 check()
                 row=json.loads(body)
                 if set(row)-company_allowed:raise ValueError('private_company_receipt_fields')
@@ -281,16 +300,46 @@ def snapshot(path,directory,*,check_budget=None,progress=None):
                     raise ValueError('private_company_receipt_integrity')
                 write({'kind':'coverage','key':key,'body':{**row,'receiptSha256':checksum}})
                 counts['coverageReceipts']+=1
+            # 2026-10-20 (owner decision): the per-date selections of the VIX/JGB
+            # inputs and the first receipts of TOPIX, US 10y and USD/JPY. Their
+            # public originals can be fetched again; when each was first
+            # received cannot, so these small tables are kept here.
+            stage('SNAPSHOT_SELECTED')
+            section('selected')
+            tables={name for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if 'selected_vix_inputs' in tables:
+                for session,body,digest,received in db.execute(
+                        'SELECT session,body,sha256,received_at FROM selected_vix_inputs ORDER BY seq'):
+                    check()
+                    if _hash(body.encode())!=digest or json.loads(body).get('date')!=session:
+                        raise ValueError('private_selected_integrity')
+                    sources._time(received)
+                    write({'kind':'selectedVix','session':session,'sha256':digest,'receivedAt':received,'body':json.loads(body)})
+                    counts['selectedVix']+=1
+            if 'selected_feature_inputs' in tables:
+                for source_id,session,body,digest,received in db.execute(
+                        'SELECT source_id,session,body,sha256,received_at FROM selected_feature_inputs ORDER BY seq'):
+                    check()
+                    if (_hash(body.encode())!=digest or json.loads(body).get('date')!=session
+                            or source_id not in sources.STABLE_FEATURE_SOURCES):
+                        raise ValueError('private_selected_integrity')
+                    sources._time(received)
+                    write({'kind':'selectedFeature','sourceId':source_id,'session':session,'sha256':digest,
+                           'receivedAt':received,'body':json.loads(body)})
+                    counts['selectedFeatures']+=1
+        finally:
+            if current[0] is not None:current[0].close()
         check()
         db.execute('COMMIT')
     finally:db.close()
     stage('SNAPSHOT_CHUNKS')
     chunks=[];total=0;digest=hashlib.sha256()
-    with destination.open('rb') as handle:
-        while raw:=handle.read(CHUNK_BYTES):
-            check()
-            checksum=_hash(raw);(Path(directory)/checksum).write_bytes(raw);digest.update(raw);total+=len(raw)
-            chunks.append({'sha256':checksum,'bytes':len(raw)})
+    for location in sections:
+        with location.open('rb') as handle:
+            while raw:=handle.read(CHUNK_BYTES):
+                check()
+                checksum=_hash(raw);(Path(directory)/checksum).write_bytes(raw);digest.update(raw);total+=len(raw)
+                chunks.append({'sha256':checksum,'bytes':len(raw)})
     check()
     return {'schemaVersion':SCHEMA,'scope':'PUBLIC_MARKET_INPUTS','ownerRecordsIncluded':False,
             'credentialsIncluded':False,'originalArchiveSha256':digest.hexdigest(),'archiveBytes':total,
