@@ -22,6 +22,22 @@ function IssuedForecastRecord({ record, minimum }: { record: ForecastTrackRecord
   </p>;
 }
 
+/** 2026-10-19: one or two admitted episodes are a thin basis. Say how many,
+ *  how close they were to the limit, and that the computed line needs two. */
+export function fewAnalogsText(document: JapanMarketComparison): string | null {
+  const n = document.candidates.length;
+  if (n === 0 || n > 2) return null;
+  const items = document.candidates.map(candidate => {
+    const closest = document.selectionAudit?.[candidate.anchorDate.slice(0, 4)]?.closest;
+    const distance = closest && closest.anchorDate === candidate.anchorDate && typeof closest.distance === 'number' ? closest.distance : null;
+    return `${candidate.anchorDate}${distance === null ? '' : `・距離${distance.toFixed(2)}`}`;
+  });
+  const limit = document.selectionPolicy ? `／上限${document.selectionPolicy.maximumDistance}` : '';
+  return `似た局面は${n}件だけです（${items.join('、')}${limit}）。`
+    + (n === 1 ? '1件では計算予測の線は出さず、過去の動きを参考として示すだけです。' : '件数が少ないので、参考の程度にとどめてください。')
+    + 'データが入れ替わると、似た局面が無くなったり別の局面に変わったりします。';
+}
+
 export function JapanMarketComparisonChart({ document }: { document: JapanMarketComparison }) {
   const container = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(340);
@@ -91,6 +107,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
     ? `市場条件は${definedCount}系列中${comparedCommon.length}系列で比較${comparedCommon.length ? `（${comparedCommon.join('・')}）` : ''}`
     : '市場条件（信用残・VIX・為替・金利・NT倍率など、当時に入手できた値）';
 
+  const few = fewAnalogsText(document);
   return <section className="jp-comparison" aria-labelledby={`${uniqueId}-title`}>
     <div className="jp-comparison__heading">
       <div><h2 id={`${uniqueId}-title`}>{validated ? '日経平均の見通し' : '日経平均と過去の類似局面'}</h2>
@@ -103,6 +120,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
         ? '価格形状のみ（市場条件の履歴を再計算中。完了すると候補と計算予測は市場条件つきの比較に入れ替わります）'
         : `価格形状＋${marketStateNote}`}
     </p>}
+    {few && <p className="jp-comparison__notice" data-comparison-few={document.candidates.length}>{few}</p>}
     <div ref={container} className="jp-comparison__canvas">
       <svg viewBox={`0 0 ${width} ${height}`} role="img"
         aria-labelledby={`${uniqueId}-chart-title ${uniqueId}-chart-desc`}>
@@ -159,7 +177,9 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
     {!document.candidates.length && <p className="jp-comparison__notice">十分に似た過去局面は見つかっていません。</p>}
     {document.candidates.length > 0 && document.candidates.every(candidate => candidate.comparisonKind === 'PARTIAL_COMPARISON') &&
       <p className="jp-comparison__notice">比較できるのは一部の条件です。市場状態全体が似ていると判断できる根拠は、まだ不足しています。</p>}
-    {!document.forecast.line.length && <p className="jp-comparison__notice">{noAnalogText(document) ?? `${forecastName}を出すための比較事例が不足しています。`}</p>}
+    {!document.forecast.line.length && <p className="jp-comparison__notice">{noAnalogText(document) ?? (document.candidates.length === 1
+      ? `${forecastName}は、似た局面が2件以上あるときに計算します（今は1件）。`
+      : `${forecastName}を出すための比較事例が不足しています。`)}</p>}
     {showResearchNote && document.forecast.line.length > 0 && <p className="jp-comparison__notice" data-forecast-role="reference-path">
       {document.forecast.validation
         ? `この比較からは日経平均の方向を見通せていません。過去10年で同じ方法の方向一致率は${document.forecast.validation.hitRate === null ? '—' : (document.forecast.validation.hitRate * 100).toFixed(0) + '%'}で、「いつも多数派の方向」と予想した場合の${document.forecast.validation.naiveMajorityRate === null ? '—' : (document.forecast.validation.naiveMajorityRate * 100).toFixed(0) + '%'}を上回っていないため、予測線は参考経路として初期表示では隠しています。`
