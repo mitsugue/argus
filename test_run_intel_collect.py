@@ -64,3 +64,12 @@ def test_admin_stage_details_are_not_added_to_workflow_output():
                     "result": {"collected": 3, "stored": 40}})))
     assert result["status"] == "done"
     assert "stage" not in result and "completedStages" not in result
+
+
+def test_failed_feed_names_are_kept_for_the_private_record():
+    """2026-10-19: "2 of 20 feeds failed" could not say which two."""
+    result = run(base="https://example.test", token="secret", request_id="test-run-1",
+                 request=lambda **kw: (200, json.dumps({"status": "done", "runId": "test-run-1",
+                    "result": {"feeds": 20, "failedFeeds": ["meti_official", "nikkei_web"], "stored": 40}})))
+    assert result["status"] == "done" and result["failedFeedCount"] == 2
+    assert result["failedFeeds"] == ["meti_official", "nikkei_web"]

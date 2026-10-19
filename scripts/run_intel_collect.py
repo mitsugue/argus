@@ -56,6 +56,8 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
                             "errorClass": "all_intel_feeds_unavailable" if all_feeds_failed else body.get("errorClass"),
                             "collected": result.get("collected"), "stored": result.get("stored"),
                             "failedFeedCount": len(failed_feeds), "feedCount": result.get("feeds"),
+                            # 2026-10-19: the public feed names (no payload), so a failing feed can be named.
+                            "failedFeeds": [str(name)[:40] for name in failed_feeds[:25]],
                             "supplyDemandWarm": result.get("supplyDemandWarm"),
                             "jpMarketEngineInputWarm": result.get("jpMarketEngineInputWarm")}
             else:

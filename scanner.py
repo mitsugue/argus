@@ -2111,15 +2111,7 @@ def api_argus_layer2b_summary():
         return jsonify({"status": "parse_error"})
 
 
-@app.route("/api/argus/ledger/recent")
-def api_argus_ledger_recent():
-    """Debug — most recent N entries from the raw ledger."""
-    try:
-        limit = int(request.args.get("limit", "50"))
-    except (TypeError, ValueError):
-        limit = 50
-    limit = max(1, min(limit, 500))
-    return jsonify({"entries": argus_ledger.list_recent(limit=limit)})
+# 2026-10-19: the debug /ledger/recent route (no caller) is retired.
 
 
 # ━━━ FRED rates snapshot ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -21285,6 +21277,38 @@ def api_argus_official_event_lifecycle_view(oid):
                     "evidenceRef": argus_official_event_lifecycle.evidence_ref(r)})
 
 
+# 2026-10-19: the reaction tracking of official disclosures was reachable only
+# from the admin route below, whose one caller (ai-rejudge) became manual-only;
+# 590 of 600 records stayed "classified" without any reaction. The process
+# runs one bounded pass an hour (25 s, 100 records, cached daily bars),
+# single-flight with the admin route, after the post-deploy warm.
+OFFICIAL_TRACK_RESIDENT_INTERVAL_SECONDS = 60 * 60
+_OFFICIAL_TRACK_RESIDENT = {"lastMonotonic": None, "lastAt": None, "lastResult": None, "runs": 0}
+
+
+def _official_events_track_resident_tick(now_monotonic=None):
+    now = time.monotonic() if now_monotonic is None else now_monotonic
+    if now - _INTEL_COLLECT_PROCESS_STARTED < INTEL_COLLECT_RESIDENT_WARMUP_SECONDS:
+        return None
+    last = _OFFICIAL_TRACK_RESIDENT["lastMonotonic"]
+    if last is not None and now - last < OFFICIAL_TRACK_RESIDENT_INTERVAL_SECONDS:
+        return None
+    if not _OFFICIAL_TRACK_LOCK.acquire(blocking=False):
+        return None
+    try:
+        _OFFICIAL_TRACK_RESIDENT["lastMonotonic"] = now
+        try:
+            result = _official_events_track()
+            summary = {k: result.get(k) for k in ("status", "reason", "updated", "processedCount", "remainingCount")}
+        except Exception as exc:
+            result, summary = None, {"status": "failed", "errorClass": type(exc).__name__}
+        _OFFICIAL_TRACK_RESIDENT.update(lastAt=_ai_now_iso(), lastResult=summary,
+                                        runs=int(_OFFICIAL_TRACK_RESIDENT["runs"]) + 1)
+        return result
+    finally:
+        _OFFICIAL_TRACK_LOCK.release()
+
+
 @app.route("/api/argus/official-events/track", methods=["POST"])
 def api_argus_official_events_track():
     """ADMIN/cron: fill pending market-reaction windows from cached daily bars."""
@@ -34129,6 +34153,8 @@ def api_argus_admin_memory_attribution():
                                    "residentStarted": _INTEL_COLLECT_LAST.get("residentStarted"),
                                    "running": _INTEL_COLLECT_RUN.get("status") == "running",
                                    "intervalSeconds": INTEL_COLLECT_RESIDENT_INTERVAL_SECONDS}
+        payload["officialEventsTrack"] = {**{k: _OFFICIAL_TRACK_RESIDENT.get(k) for k in ("lastAt", "lastResult", "runs")},
+                                          "intervalSeconds": OFFICIAL_TRACK_RESIDENT_INTERVAL_SECONDS}
     payload["indexResearch"] = {
         **{k: copy.deepcopy(v) for k, v in _INDEX_RESEARCH_STATUS.items() if k != "lastAttemptMonotonic"},
         "savedCalculatedAt": {key: (row or {}).get("calculatedAt") for key, row in _INDEX_RESEARCH_REPORTS.items()},
@@ -50178,59 +50204,10 @@ def api_argus_prediction_snapshot():
     # provider/observation projection after the first socket times out.
     return _single_flight_json("prediction-snapshot", _prediction_snapshot_cached_build)
 
-@app.route("/api/argus/sensor-quotes")
-def api_argus_sensor_quotes():
-    """Latest values for the 16 Layer-1 sensors — the ledger-v3 scorer's price
-    source (JP via J-Quants/moomoo overlay, US ETFs via the Twelve Data stash,
-    BTC via CoinGecko, USDJPY/VIX via FRED)."""
-    out = {}
-    jp = get_japan_watchlist_snapshot([s for s, _ in _L1_SENSORS_JP])
-    for s in (jp.get("stocks") or []):
-        q = _decision_usable_watch_quote_row(
-            s, "JP", allow_delayed=False)
-        if q is not None:
-            out[q["symbol"]] = float(q["price"])
-    get_market_regime_snapshot()
-    _alert_etf_momentum()
-    _ensure_sensor_etfs()
-    now_ts = time.time()
-    for sym in _L1_SENSORS_US:
-        st = _etf_last_price_decision_row(
-            sym, max_transport_age_sec=24 * 3600,
-            now_epoch=now_ts)
-        if st:
-            out[sym] = st["price"]
-    cw = get_crypto_watchlist_snapshot(["bitcoin"])
-    for q in (cw.get("quotes") or []):
-        price = (_decision_usable_crypto_price(q)
-                 if q.get("id") == "bitcoin" else None)
-        if price is not None:
-            out["BTC"] = price
-    rates = get_rates_snapshot()
-    for key, sid in (("usdJpy", "USDJPY"), ("vix", "VIX")):
-        s = rates.get(key) if isinstance(rates, dict) else None
-        value = _decision_usable_rate_value(s)
-        if value is not None:
-            out[sid] = value
-    return jsonify({"asOf": _ai_now_iso(), "engineVersion": "ledger-v3", "quotes": out})
-
-@app.route("/api/argus/class-quotes")
-def api_argus_class_quotes():
-    """Latest asset-class proxy prices for the ledger scorer. Warms the
-    regime/alerts caches first so the stash is fresh; crypto is scored via
-    /crypto-watchlist directly."""
-    get_market_regime_snapshot()
-    _alert_etf_momentum()
-    now_ts = time.time()
-    out = {}
-    for sym in list(_ETF_LAST_PRICE):
-        st = _etf_last_price_decision_row(
-            sym, max_transport_age_sec=24 * 3600,
-            now_epoch=now_ts)
-        if st:
-            out[sym] = {"price": st["price"],
-                        "ageSec": int(now_ts - st["ts"])}
-    return jsonify({"asOf": _ai_now_iso(), "quotes": out})
+# 2026-10-19: /sensor-quotes and /class-quotes (the retired ledger-v3 scorer's
+# price sources; no caller in the app, workflows, scripts or the EC2 schedule)
+# are retired. The source-time gate they used, _etf_last_price_decision_row,
+# stays and keeps its own tests.
 
 
 # ━━━ Notifications — read the same saved integrated-AI edition as Today ━━━
@@ -51489,6 +51466,8 @@ def run_scheduler():
         threading.Thread(target=_future_map_fallback_tick, daemon=True, name="future-map-fallback").start()
         threading.Thread(target=_future_lines_tick, daemon=True, name="future-lines-daily").start()
         threading.Thread(target=_intel_collect_resident_tick, daemon=True, name="intel-collect-resident").start()
+        threading.Thread(target=_official_events_track_resident_tick, daemon=True,
+                         name="official-events-track").start()
         threading.Thread(target=_heavy_tick, daemon=True, name="sector-heatmap",
                          args=("jp_sector_heatmap_tick",
                                _jp_sector_heatmap_tick)).start()
