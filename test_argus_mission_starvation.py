@@ -1,6 +1,7 @@
 """2026-10-03: the mission queue stayed at "processed 0, remaining 7" because the
 stages before it used the whole batch deadline, and the daily short history was
 fetched again after every restart because it was never written to durable state."""
+import copy
 import os
 import tempfile
 import time
@@ -10,14 +11,16 @@ import scanner
 import argus_scheduler
 
 
-def _run_tick(*, ledger_seconds, short_rows):
+def _run_tick(*, ledger_seconds, short_rows, forecasts=0, missions=3):
     saved = {"missions": list(scanner._MISSIONS), "windows": list(scanner._MISSION_WINDOWS),
              "forecasts": list(scanner._FORECAST_LEDGER), "outcomes": list(scanner._OUTCOME_LEDGER),
              "batch": dict(scanner._MISSION_BATCH_STATE), "token": scanner._ARGUS_ADMIN_TOKEN,
              "wal": scanner._MISSION_WAL_FILE, "lease": scanner._MISSION_LEASE_FILE,
              "persistState": dict(scanner._OSINT_PERSIST_STATE), "startup": dict(scanner._STARTUP),
              "short": list(scanner._TODAY_INTELLIGENCE.get("shortSellingHistory") or []),
-             "shortCache": dict(scanner._JP_DAILY_SHORT_CACHE)}
+             "shortCache": dict(scanner._JP_DAILY_SHORT_CACHE),
+             "journal": copy.deepcopy((scanner._OPS_JOURNAL, scanner._OPS_JOURNAL_COMPACT,
+                                       scanner._OPS_JOURNAL_META, scanner._OPS_SEQ))}
     with tempfile.TemporaryDirectory() as directory:
         try:
             scanner._MISSIONS[:] = []; scanner._MISSION_WINDOWS[:] = []
@@ -31,7 +34,11 @@ def _run_tick(*, ledger_seconds, short_rows):
             scanner._TODAY_INTELLIGENCE["shortSellingHistory"] = []
             scanner._JP_DAILY_SHORT_CACHE.update(rows=None, expires=0.0, status="live", errorClass=None)
             now = scanner._ai_now_iso()
-            for number in range(3):
+            for number in range(forecasts):
+                scanner._FORECAST_LEDGER.append({
+                    "id": f"fc-{number}", "symbol": f"S{number}", "market": "JP",
+                    "issuedAt": "2026-09-01T09:00:00+09:00"})
+            for number in range(missions):
                 scanner._MISSIONS.append(argus_scheduler.mission(
                     mission_type="daily_learning", market="ALL", session_date=now[:10],
                     scheduled_for=now, symbol=f"S{number}"))
@@ -56,7 +63,12 @@ def _run_tick(*, ledger_seconds, short_rows):
                     mock.patch.object(scanner, "_precompute_verified_market_view",
                                       return_value=({"reportId": "r", "status": "ok"}, {"status": "verified"})), \
                     mock.patch.object(scanner, "_jp_daily_short_history", side_effect=short_history), \
-                    mock.patch.object(scanner, "_osint_persist", return_value=checkpoint):
+                    mock.patch.object(scanner, "_osint_persist", return_value=checkpoint), \
+                    mock.patch.object(scanner.argus_market_clock, "market_session",
+                                      return_value={"isTradingDay": True}), \
+                    mock.patch.object(scanner, "_price_history_cached", create=True,
+                                      return_value=[{"date": "2026-08-31", "close": 100.0},
+                                                    {"date": "2026-09-02", "close": 101.0}]):
                 response = scanner.app.test_client().post(
                     "/api/argus/admin/missions/tick", headers={"X-ARGUS-ADMIN-TOKEN": "test-admin"},
                     json={"triggerSource": "manual", "runId": "starvation-test"})
@@ -72,6 +84,10 @@ def _run_tick(*, ledger_seconds, short_rows):
             scanner._STARTUP.clear(); scanner._STARTUP.update(saved["startup"])
             scanner._TODAY_INTELLIGENCE["shortSellingHistory"] = saved["short"]
             scanner._JP_DAILY_SHORT_CACHE.clear(); scanner._JP_DAILY_SHORT_CACHE.update(saved["shortCache"])
+            journal, compact, meta, sequence = saved["journal"]
+            scanner._OPS_JOURNAL[:] = journal; scanner._OPS_JOURNAL_COMPACT[:] = compact
+            scanner._OPS_JOURNAL_META.clear(); scanner._OPS_JOURNAL_META.update(meta)
+            scanner._OPS_SEQ.clear(); scanner._OPS_SEQ.update(sequence)
 
 
 ROWS = [{"date": f"2026-09-{day:02d}", "shortRatio": 40.0 + day / 10, "revision": 1} for day in range(1, 11)]
@@ -96,3 +112,19 @@ def test_without_the_guaranteed_minimum_the_same_tick_claims_nothing(monkeypatch
     monkeypatch.setattr(scanner, "_MISSION_LOOP_MIN_SECONDS", 0)
     body, _, _ = _run_tick(ledger_seconds=6, short_rows=[])
     assert body["processedMissionCount"] == 0 and body["result"] == "partial", body
+
+
+def test_outcomes_resolve_even_when_earlier_stages_used_the_whole_batch_deadline():
+    """2026-10-19 04:14: the third attempt resolved 0 of 2 due outcomes."""
+    body, _, _ = _run_tick(ledger_seconds=6, short_rows=[], forecasts=2, missions=0)
+    assert body["processedOutcomeCount"] == 2, body
+    assert body["remainingOutcomeCount"] == 0 and body["remainingMissionCount"] == 0
+    assert body["result"] == "caught_up", body
+    assert isinstance(body["elapsedMs"], int)
+
+
+def test_without_the_outcome_minimum_due_outcomes_stay_unprocessed(monkeypatch):
+    monkeypatch.setattr(scanner, "_OUTCOME_LOOP_MIN_SECONDS", 0)
+    body, _, _ = _run_tick(ledger_seconds=6, short_rows=[], forecasts=2, missions=0)
+    assert body["processedOutcomeCount"] == 0 and body["remainingOutcomeCount"] == 2, body
+    assert body["result"] == "partial"

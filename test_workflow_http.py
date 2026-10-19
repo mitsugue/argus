@@ -124,3 +124,14 @@ class WorkflowHttpTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_mission_tick_breakdown_is_kept_in_the_private_summary():
+    """2026-10-19: a failed run could not say whether missions or outcomes remained."""
+    summary = wh._safe_summary(
+        {"result": "partial", "remainingCount": 2, "remainingMissionCount": 0,
+         "remainingOutcomeCount": 2, "processedMissionCount": 0,
+         "processedOutcomeCount": 0, "elapsedMs": 61000}, "degraded", 200)
+    assert summary["remainingOutcomeCount"] == 2
+    assert summary["remainingMissionCount"] == 0
+    assert summary["elapsedMs"] == 61000

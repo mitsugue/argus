@@ -29,7 +29,10 @@ _SAFE_OUTPUT_KEYS = ("ok", "status", "buildSha", "backendVersion", "ready",
                      "count", "translated", "pending", "made",
                      "created", "updated", "generated", "queued", "recovered",
                      "result", "processedCount", "remainingCount", "hasMore",
-                     "cursorBefore", "cursorAfter", "checkpointCreated")
+                     "cursorBefore", "cursorAfter", "checkpointCreated",
+                     "processedMissionCount", "processedOutcomeCount",
+                     "remainingMissionCount", "remainingOutcomeCount",
+                     "elapsedMs")
 _SAFE_OUTPUT_KEYS += (
     "accepted", "durabilityState", "operationId", "receiptId",
     "acceptedAt", "targetWalSequence", "verifiedWalSequence",

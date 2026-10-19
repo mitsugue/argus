@@ -464,7 +464,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "test_argus_v12_1_3.py": "ec334f206cc43a94f3e2dc8c7ea5015b341a0957",
     ".github/workflows/ai-rejudge.yml": "3fff3c5530adf4ca322e93d72dffb38d52ad7520",
     "test_argus_official_lifecycle.py": "94895d787c27281d6699182cce75a415c7ad896b",
-    "test_workflow_http.py": "3b02814b97563c1b089de97697d0bb471bee1578",
+    "test_workflow_http.py": "6b0382ee83f4a458fe14072b4e4cdfe5e1948159",
     # v13.7.18 owner-required Today consolidation: these exact acceptance
     # assertions remove the legacy four-index selector and its duplicate
     # outlook without relaxing the underlying research/truth contracts.
@@ -686,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_intel_collect_resident.py",
     "web/scripts/few-analogs.test.cjs",
     "web/src/lib/futureLines.ts",
     "web/src/hooks/useFutureLines.ts",

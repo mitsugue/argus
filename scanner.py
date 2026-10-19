@@ -9825,6 +9825,15 @@ def _investor_types_autorefresh():
 
 _INTEL_COLLECT_LOCK = threading.Lock()
 _INTEL_COLLECT_RUN = {}
+# 2026-10-19: GitHub's scheduler starts the 30-minute collection only every
+# ~2.5 hours. The collection already runs inside this process, so the
+# process starts it itself on the same cadence (single flight unchanged); the
+# external schedule stays as a backup and joins a running collection.
+INTEL_COLLECT_RESIDENT_INTERVAL_SECONDS = 30 * 60
+INTEL_COLLECT_RESIDENT_WARMUP_SECONDS = 10 * 60
+_INTEL_COLLECT_PROCESS_STARTED = time.monotonic()
+_INTEL_COLLECT_LAST = {"finishedMonotonic": None, "finishedAt": None, "status": None, "trigger": None,
+                       "residentStarted": 0}
 _INTEL_COLLECT_CONTEXT = threading.local()
 _INTEL_COLLECT_STAGES = frozenset((
     "news_feeds", "news_translation", "news_ranking", "news_persist",
@@ -9851,7 +9860,7 @@ def _intel_collect_stage(name):
         current.update(stage=name, stageStartedAt=_ai_now_iso())
 
 
-def _intel_collect_tracked(request_id, *, status_only=False):
+def _intel_collect_tracked(request_id, *, status_only=False, trigger="request"):
     """Bounded single-flight record for the complete collect + warm operation."""
     with _INTEL_COLLECT_LOCK:
         current = _INTEL_COLLECT_RUN
@@ -9880,6 +9889,8 @@ def _intel_collect_tracked(request_id, *, status_only=False):
                 if started is not None:
                     current["stageElapsedSeconds"] = round(max(0, time.monotonic() - started), 3)
                 current.update(terminal, finishedAt=_ai_now_iso())
+                _INTEL_COLLECT_LAST.update(finishedMonotonic=time.monotonic(), finishedAt=current["finishedAt"],
+                                           status=terminal["status"], trigger=trigger)
             _INTEL_COLLECT_CONTEXT.run_id = None
 
         worker = threading.Thread(target=work, name="argus-intel-collect", daemon=True)
@@ -9889,6 +9900,24 @@ def _intel_collect_tracked(request_id, *, status_only=False):
             current.update(status="failed", finishedAt=_ai_now_iso(),
                            errorClass=type(exc).__name__)
         return copy.deepcopy(current), 202 if current["status"] == "running" else 200
+
+
+def _intel_collect_resident_tick(now_monotonic=None):
+    """Start one tracked collection when none ran for 30 minutes (process-resident cadence)."""
+    now = time.monotonic() if now_monotonic is None else now_monotonic
+    if now - _INTEL_COLLECT_PROCESS_STARTED < INTEL_COLLECT_RESIDENT_WARMUP_SECONDS:
+        return None                         # the post-deploy warm starts the first collection
+    with _INTEL_COLLECT_LOCK:
+        if _INTEL_COLLECT_RUN.get("status") == "running":
+            return None
+        last = _INTEL_COLLECT_LAST.get("finishedMonotonic")
+        if last is not None and now - last < INTEL_COLLECT_RESIDENT_INTERVAL_SECONDS:
+            return None
+    run_id = "resident-" + os.urandom(12).hex()
+    record, _status = _intel_collect_tracked(run_id, trigger="resident")
+    if record.get("runId") == run_id:
+        _INTEL_COLLECT_LAST["residentStarted"] = int(_INTEL_COLLECT_LAST.get("residentStarted") or 0) + 1
+    return record.get("runId") == run_id
 
 
 @app.route("/api/argus/institutional-intelligence/collect", methods=["POST"])
@@ -34091,6 +34120,13 @@ def api_argus_admin_memory_attribution():
     payload["briefSchedule"] = copy.deepcopy(_MARKET_BRIEF_SCHEDULE)
     payload["financialVerify"] = dict(_JP_FINANCIAL_VERIFY)
     payload["materialReactionResearch"] = _material_research_diagnostics()
+    with _INTEL_COLLECT_LOCK:
+        payload["intelCollect"] = {"lastFinishedAt": _INTEL_COLLECT_LAST.get("finishedAt"),
+                                   "lastStatus": _INTEL_COLLECT_LAST.get("status"),
+                                   "lastTrigger": _INTEL_COLLECT_LAST.get("trigger"),
+                                   "residentStarted": _INTEL_COLLECT_LAST.get("residentStarted"),
+                                   "running": _INTEL_COLLECT_RUN.get("status") == "running",
+                                   "intervalSeconds": INTEL_COLLECT_RESIDENT_INTERVAL_SECONDS}
     payload["indexResearch"] = {
         **{k: copy.deepcopy(v) for k, v in _INDEX_RESEARCH_STATUS.items() if k != "lastAttemptMonotonic"},
         "savedCalculatedAt": {key: (row or {}).get("calculatedAt") for key, row in _INDEX_RESEARCH_REPORTS.items()},
@@ -34284,6 +34320,10 @@ def api_argus_admin_missions_tick():
 
 
 _MISSION_LOOP_MIN_SECONDS = 20
+# 2026-10-19: outcome resolution shared the batch deadline with the stages
+# before it and had no floor of its own; measured on 10/19 04:14 the third
+# attempt resolved 0 of 2 due outcomes and the run failed as "partial".
+_OUTCOME_LOOP_MIN_SECONDS = 15
 
 
 def _api_argus_admin_missions_tick_impl():
@@ -34597,11 +34637,13 @@ def _api_argus_admin_missions_tick_impl():
     outcome_retry_candidates = sum(
         1 for o in _OUTCOME_LEDGER
         if argus_decision_ledger.outcome_retry_due(o, now_iso=now_iso))
+    outcome_deadline = max(batch_started + time_budget_seconds,
+                           time.monotonic() + _OUTCOME_LOOP_MIN_SECONDS)
     outcome_stats = _memory_operation_run(
         "internal", "mission.outcome_resolution",
         _dl_resolve_matured, now_iso, max_records=max_outcomes,
         return_stats=True,
-        deadline_monotonic=batch_started + time_budget_seconds)
+        deadline_monotonic=outcome_deadline)
     outcome_resolved_this_tick = outcome_stats["resolved"]
     if outcome_stats["processed"]:
         _MISSION_BATCH_STATE["cursor"] = (
@@ -34969,6 +35011,9 @@ def _api_argus_admin_missions_tick_impl():
                     "processedMissionCount": processed_missions,
                     "processedOutcomeCount": int(outcome_stats["processed"]),
                     "remainingCount": remaining_count,
+                    "remainingMissionCount": remaining_missions,
+                    "remainingOutcomeCount": int(outcome_stats["remaining"]),
+                    "elapsedMs": elapsed_ms,
                     "hasMore": has_more,
                     "cursorBefore": cursor_before,
                     "cursorAfter": cursor_after,
@@ -51430,6 +51475,7 @@ def run_scheduler():
         threading.Thread(target=_web_push_tick, daemon=True, name="web-push").start()
         threading.Thread(target=_future_map_fallback_tick, daemon=True, name="future-map-fallback").start()
         threading.Thread(target=_future_lines_tick, daemon=True, name="future-lines-daily").start()
+        threading.Thread(target=_intel_collect_resident_tick, daemon=True, name="intel-collect-resident").start()
         threading.Thread(target=_heavy_tick, daemon=True, name="sector-heatmap",
                          args=("jp_sector_heatmap_tick",
                                _jp_sector_heatmap_tick)).start()
