@@ -32802,6 +32802,7 @@ def _validate_durable_storage():
             "errorReason": exc.reason,
             "runtimeVerified": False,
             **_storage_capacity_measurement(),
+            "cleanup": dict(argus_persistent_storage.LAST_RECONCILIATION),
         }
         return False
     except Exception as exc:
@@ -34316,6 +34317,13 @@ def api_argus_admin_memory_attribution():
             _JP_INPUT_BACKUP_STATUS, worker_active=_JP_INPUT_BACKUP_LOCK.locked())
     # 2026-10-20 (owner): what occupies the persistent disk, stat-only (no
     # file is opened or changed and no file name is returned).
+    # 2026-10-20 (owner): the start's removal of abandoned save copies and work
+    # directories, counts and sizes only (recorded before removal).
+    payload["storageCleanup"] = {
+        key: {k: v for k, v in (value or {}).items() if k != "entries"}
+        for key, value in (_DURABLE_STORAGE_STATUS.get("cleanup") or {
+            "recoveryStaging": _DURABLE_STORAGE_STATUS.get("abandonedRecoveryStaging"),
+            "workDirectories": _DURABLE_STORAGE_STATUS.get("abandonedWorkDirectories")}).items()}
     if str(request.args.get("storage-groups") or "") == "1":
         import argus_storage_attribution
         payload["storageAttribution"] = argus_storage_attribution.attribute(

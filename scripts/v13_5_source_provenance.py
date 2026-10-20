@@ -314,7 +314,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_presentation_intent.py': 'e79beae902a1382fae9e5ea3359e09301abf9733',
     'docs/V13_6_PRESENTATION_INTENT.md': '88d35d6f5f603628e7e89bae56308e16b7c76ea6',
     'argus_presentation_intent.py': '9ac401c4ea52103cb0efeedcf5774d25b78cda7d',
-    'argus_persistent_storage.py': '4cb3737d9e865772a42ee238ca246e47158eee4f',
+    'argus_persistent_storage.py': 'e27ff4149198cf0b8ab75610a008fcf1b649642d',
     'test_argus_checkpoint_stream_batches.py': 'a3e03b9cb28f6f62b88096bf651ef4eef02d451f',
     'web/src/components/today/ReadingHierarchy.css': 'a583f3ae076992339e520de0ff67796a1ea7d681',
     'web/src/components/AppShell.tsx': '039fee81ed187008fae6d51d09bafe7cd165fac5',
@@ -686,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_storage_orphan_cleanup.py",
     "test_argus_storage_attribution.py",
     "argus_storage_attribution.py",
     "test_storage_failure_diagnostics.py",
