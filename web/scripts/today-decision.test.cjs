@@ -125,12 +125,12 @@ assert.equal((unavailableStrip.split('today-strip__tiles')[1].split('</div>')[0]
 assert.ok(unavailableStrip.includes('確認中'));
 assert.ok(!unavailableStrip.includes('過去の同じ段階で'),'missing data never gets a calculated alert');
 console.log('欠測中も４カードを維持し数字を捏造しない PASS');
-// docs/TODAY_CARD_ORDER.md 1-1〜1-5 (owner order 2026-10-15): value → verdict → market position → four tiles → inputs.
+// docs/TODAY_CARD_ORDER.md 1-1〜1-5 (owner order 2026-10-20): value → verdict → four tiles → market position → inputs.
 for (const html of [normalStrip, unavailableStrip]) {
-  const at = ['today-strip__verdict', 'data-market-position', 'today-strip__tiles'].map(key => html.indexOf(key));
-  assert.ok(at.every(i => i >= 0) && at[0] < at[1] && at[1] < at[2], `market position sits right under the verdict: ${at}`);
+  const at = ['today-strip__verdict', 'today-strip__tiles', 'data-market-position'].map(key => html.indexOf(key));
+  assert.ok(at.every(i => i >= 0) && at[0] < at[1] && at[1] < at[2], `market position sits under the four tiles: ${at}`);
   assert.equal(html.split('data-market-position').length, 2, 'the market position appears once');
 }
 assert.ok(normalStrip.indexOf('today-strip__close') < normalStrip.indexOf('today-strip__verdict'));
-assert.ok(normalStrip.indexOf('today-strip__tiles') < normalStrip.indexOf('today-strip__rows'));
-console.log('見立ての直下に市場の現在位置 PASS');
+assert.ok(normalStrip.indexOf('data-market-position') < normalStrip.indexOf('today-strip__rows'));
+console.log('タイル4つの下に市場の現在位置 PASS');

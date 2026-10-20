@@ -101,8 +101,6 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
         昨夜の日経先物は終値比<b>{signed(strip.overnightGapPct!)}</b>。{OVERNIGHT_HISTORY.since}年以降、同じ程度の夜のあと5日後に上がっていたのは
         <b>{gapRecord.upPct}%</b>(普段{OVERNIGHT_HISTORY.baseUpPct}%)、5日間の値動きの中央値は{signed(gapRecord.medianPct)}({gapRecord.n}回)。</p>}
     </div>
-    {/* Owner order 2026-10-15 (docs/TODAY_CARD_ORDER.md 2-3): the market position sits right under the verdict. */}
-    <MarketPositionCard brief={brief} />
     <div className="today-strip__tiles">
       <button type="button" className={`today-strip__tile alert-${strip.alert ?? 'pending'}`} onClick={() => jumpTo('today-nikkei-chart')}>
         <small>急落警戒(5日で-5%以上)</small><b>{strip.alert ? alertLabel[strip.alert] : '確認中'}</b>
@@ -121,6 +119,8 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
         <small>次の山場</small><b className="today-strip__event">{friendlyEventText(brief.chips.nextEvent)}</b>
         {/SQ/i.test(brief.chips.nextEvent) && <span>SQ＝先物・オプションの清算<br />前後に株価が大きく上下することも</span>}</button> : <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}><small>次の山場</small><b>確認中</b><span>予定の更新待ち</span></button>}
     </div>
+    {/* Owner order 2026-10-20 (docs/TODAY_CARD_ORDER.md 1-4): verdict, the four tiles, then the market position. */}
+    <MarketPositionCard brief={brief} />
     {strip.rows.length > 0 && <div className="today-strip__rows" aria-label="材料ごとの向き">
       <h2>材料ごとの向き</h2>
       {strip.rows.map(row => <details key={row.id} className="today-strip__row" data-lean={row.lean} data-row={row.id}>
