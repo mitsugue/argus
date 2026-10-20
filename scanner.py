@@ -123,6 +123,7 @@ import jp_market_internals
 import jp_index_contribution  # 2026-10-17: Nikkei 225 contributions by member
 import jp_index_price_factors  # 2026-10-20: official price adjustment factors (owner file)
 import argus_us_price_quality  # 2026-10-20: US price lamp by coverage/source time (pure)
+import argus_level_map_backfill  # 2026-10-21: EPS backfill position and set-aside dates (pure)
 import jp_market_positioning
 import argus_analysis_history
 import argus_index_live
@@ -34383,6 +34384,7 @@ def api_argus_admin_memory_attribution():
                                    "intervalSeconds": INTEL_COLLECT_RESIDENT_INTERVAL_SECONDS}
         payload["indexOfficialFactors"] = _jp_index_official_factor_status()
         payload["jsfDaily"] = dict(_JSF_DAILY_STATUS)
+        payload["usdJpyTokyoClose"] = {k: v for k, v in _USDJPY_TOKYO_CLOSE.items() if k != "lastAttemptMonotonic"}
     payload["indexResearch"] = {
         **{k: copy.deepcopy(v) for k, v in _INDEX_RESEARCH_STATUS.items() if k != "lastAttemptMonotonic"},
         "savedCalculatedAt": {key: (row or {}).get("calculatedAt") for key, row in _INDEX_RESEARCH_REPORTS.items()},
@@ -34426,6 +34428,9 @@ def api_argus_admin_memory_attribution():
         import argus_level_map_acquisition
         payload["levelMapInputs"] = argus_level_map_acquisition.projection(
             _LEVEL_MAP, worker_active=_LEVEL_MAP_LOCK.locked())
+        payload["levelMapInputs"]["backfill"] = {
+            **argus_level_map_backfill.summary(_LEVEL_MAP_BACKFILL.get("state") or argus_level_map_backfill.empty()),
+            "lastSaveError": _LEVEL_MAP_BACKFILL.get("lastSaveError")}
     return jsonify(payload)
 
 
@@ -40481,6 +40486,45 @@ def _level_map_admitted_eps():
             if jp_market_level_map.estimate_input_usable(row)}
 
 
+# 2026-10-21 (owner decision): the backfill position and the set-aside dates
+# survive restarts (argus_level_map_backfill). Read once, written after each
+# historical warm; a missing or malformed file starts empty.
+_LEVEL_MAP_BACKFILL = {"state": None, "lastSaveError": None}
+
+
+def _level_map_backfill_path():
+    if not _cost_policy_durable_enabled():
+        return None
+    return os.path.join(_DURABILITY_PATHS["root"], argus_level_map_backfill.FILENAME)
+
+
+def _level_map_backfill_state():
+    if _LEVEL_MAP_BACKFILL["state"] is None:
+        state = argus_level_map_backfill.empty()
+        path = _level_map_backfill_path()
+        if path and os.path.isfile(path) and not os.path.islink(path):
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    state = argus_level_map_backfill.parse(json.loads(handle.read(4 * 1024 * 1024)))
+            except (OSError, ValueError):
+                state = argus_level_map_backfill.empty()
+        _LEVEL_MAP_BACKFILL["state"] = state
+    return _LEVEL_MAP_BACKFILL["state"]
+
+
+def _level_map_backfill_save():
+    path = _level_map_backfill_path()
+    state = _LEVEL_MAP_BACKFILL.get("state")
+    if not path or state is None:
+        return
+    state["cursor"] = _LEVEL_MAP.get("epsBackfillCursor")
+    try:
+        argus_persistent_storage.atomic_write_json(path, state, maximum_bytes=4 * 1024 * 1024)
+        _LEVEL_MAP_BACKFILL["lastSaveError"] = None
+    except Exception as exc:
+        _LEVEL_MAP_BACKFILL["lastSaveError"] = type(exc).__name__
+
+
 def _level_map_warm(nikkei_rows, *, current_only=False):
     if not _LEVEL_MAP_LOCK.acquire(blocking=False):
         return
@@ -40515,6 +40559,10 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
         # correction instead of changing the original or an issued morning.
         _LEVEL_MAP['eps'] = _level_map_admitted_eps()
         _LEVEL_MAP['mornings'] = [m for m in _LEVEL_MAP['mornings'] if jp_market_level_map.morning_input_usable(m)]
+        backfill = _level_map_backfill_state()
+        if not current_only and _LEVEL_MAP.get('epsBackfillCursor') is None and backfill.get('cursor'):
+            _LEVEL_MAP['epsBackfillCursor'] = backfill['cursor']
+            acquisition['cursorBefore'] = backfill['cursor']
         bars = _level_map_completed_bars(nikkei_rows, now)
         if len(bars) < 30:
             _LEVEL_MAP.update(status="PRICES_COLD", lastErrorReason="nikkei_history_not_ready")
@@ -40538,6 +40586,10 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                     wanted.append(before[-1])
             if not current_only:
                 wanted += [day for day in reversed(estimate_sessions) if day >= _LEVEL_MAP_EPS_SINCE]
+                # 2026-10-21 (owner): dates whose retries gave the same result
+                # three times are set aside (tried again after thirty days).
+                wanted = argus_level_map_backfill.wanted_without_set_aside(
+                    wanted, argus_level_map_backfill.set_aside(backfill, now), sessions[-1])
             pending = jp_market_level_map.pending_eps_sessions(
                 wanted, _LEVEL_MAP['eps'], limit=1 if current_only else _LEVEL_MAP_EPS_PER_WARM,
                 cursor=None if current_only else _LEVEL_MAP.get('epsBackfillCursor'))
@@ -40551,6 +40603,9 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                 values = _jq_valuation_for_date(day, headers)
                 if not values:
                     argus_level_map_acquisition.outcome(acquisition, day, 'NO_VALUATION_ROWS')
+                    if not current_only and day != sessions[-1]:
+                        argus_level_map_backfill.note(backfill, day,
+                            argus_level_map_backfill.signature('NO_VALUATION_ROWS'), _ai_now_iso())
                     continue
                 members, members_label = jp_market_level_map.constituents_on(
                     day, constituents, as_of, _nikkei225_constituent_changes())
@@ -40582,6 +40637,9 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                     if not jp_market_level_map.estimate_input_usable(estimate, strict=True):
                         argus_level_map_acquisition.outcome(
                             acquisition, day, 'INPUT_INCOMPLETE', estimate.get('coverage'))
+                        if not current_only and day != sessions[-1]:
+                            argus_level_map_backfill.note(backfill, day, argus_level_map_backfill.signature(
+                                'INPUT_INCOMPLETE', estimate.get('coverage')), _ai_now_iso())
                         _JQ_VALUATION_DAY_CACHE.pop(day, None)
                         if day == sessions[-1]:
                             _LEVEL_MAP.update(lastErrorReason='constituent_valuation_incomplete',
@@ -40589,6 +40647,9 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                         continue
                 except jp_market_level_map.LevelMapError:
                     argus_level_map_acquisition.outcome(acquisition, day, 'INVALID_ESTIMATE')
+                    if not current_only and day != sessions[-1]:
+                        argus_level_map_backfill.note(backfill, day,
+                            argus_level_map_backfill.signature('INVALID_ESTIMATE'), _ai_now_iso())
                     continue
                 estimate["recordedAt"] = _ai_now_iso()
                 stored = argus_analysis_history.append_level_map_eps(path, estimate)
@@ -40599,6 +40660,7 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                     acquisition, day,
                     ('STORED_CORRECTION' if correction_attempted else 'STORED_ORIGINAL')
                     if stored['inserted'] else 'ALREADY_SAVED', estimate.get('coverage'))
+                argus_level_map_backfill.clear(backfill, day)
                 if stored["inserted"]:
                     _LEVEL_MAP["eps"][day] = estimate
                     _LEVEL_MAP["estimatesLastWarm"] += 1
@@ -40677,6 +40739,8 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                 argus_level_map_acquisition.finish(
                     acquisition, cursor=_LEVEL_MAP.get('epsBackfillCursor'),
                     warm_status=_LEVEL_MAP.get('status'), error_class=acquisition_error)
+            if not current_only:
+                _level_map_backfill_save()
         finally:
             _LEVEL_MAP_LOCK.release()
 
@@ -51875,6 +51939,79 @@ def _nikkei_close_refresh_tick():
         return {"status": "failed", "errorClass": type(exc).__name__}
 
 
+# 2026-10-21 (owner decision): the USD/JPY at the Tokyo close, kept every
+# trading day so the dollar-denominated Nikkei can be computed at one moment
+# (the 15:30 cash close and the 15:30 rate). One read of the existing Yahoo
+# quote right after 15:30; only a rate whose own time is within 90 seconds of
+# 15:30 JST is kept (first receipt, selected_feature_inputs). No history is
+# reconstructed and nothing is shown until enough sessions are kept.
+_USDJPY_TOKYO_CLOSE = {"status": "NOT_RUN", "lastDate": None, "lastAttemptAt": None,
+                       "lastAttemptMonotonic": None, "offsetSeconds": None, "reason": None}
+_USDJPY_TOKYO_CLOSE_LOCK = threading.Lock()
+USDJPY_TOKYO_CLOSE_TOLERANCE_SEC = 90
+USDJPY_TOKYO_CLOSE_WINDOW_SEC = 240
+
+
+def _usdjpy_tokyo_close_tick(now_utc=None):
+    if not _USDJPY_TOKYO_CLOSE_LOCK.acquire(blocking=False):
+        return None
+    try:
+        now_utc = now_utc or datetime.now(pytz.utc)
+        now_jst = now_utc.astimezone(TZ_JST)
+        day = now_jst.date().isoformat()
+        if _USDJPY_TOKYO_CLOSE.get("lastDate") == day:
+            return None
+        close_at = TZ_JST.localize(datetime(now_jst.year, now_jst.month, now_jst.day, 15, 30))
+        elapsed = (now_jst - close_at).total_seconds()
+        if elapsed < 0:
+            return None
+        midday = TZ_JST.localize(datetime(now_jst.year, now_jst.month, now_jst.day, 14, 0))
+        if argus_market_clock.market_session(argus_market_clock.JP_EQUITY,
+                                             midday.astimezone(pytz.utc))["session"] != "AFTERNOON_SESSION":
+            return None                                  # not a trading day
+        if elapsed > USDJPY_TOKYO_CLOSE_WINDOW_SEC:
+            if _USDJPY_TOKYO_CLOSE.get("missedDate") != day:
+                _USDJPY_TOKYO_CLOSE.update(status="MISSED", missedDate=day,
+                                           reason=_USDJPY_TOKYO_CLOSE.get("reason") or "no_read_in_window")
+            return None
+        mono = time.monotonic()
+        last = _USDJPY_TOKYO_CLOSE.get("lastAttemptMonotonic")
+        if last is not None and mono - last < 20:
+            return None
+        _USDJPY_TOKYO_CLOSE.update(lastAttemptMonotonic=mono, lastAttemptAt=_ai_now_iso())
+        quote = _yf_quote("JPY=X")
+        if not quote or not isinstance(quote[2], (int, float)):
+            _USDJPY_TOKYO_CLOSE.update(status="WAITING", reason="quote_unavailable")
+            return None
+        price, _, source_epoch = quote
+        offset = float(source_epoch) - close_at.timestamp()
+        if abs(offset) > USDJPY_TOKYO_CLOSE_TOLERANCE_SEC:
+            _USDJPY_TOKYO_CLOSE.update(status="WAITING", reason="source_time_outside_tolerance",
+                                       offsetSeconds=round(offset, 1))
+            return None
+        received = _ai_now_iso()
+        row = {"date": day, "instrumentId": "USDJPY", "unit": "JPY_PER_USD", "value": float(price),
+               "observationJst": "15:30", "sourceTimestamp": datetime.fromtimestamp(
+                   float(source_epoch), pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "offsetSeconds": round(offset, 1), "availableFrom": received,
+               "sourceRef": "yahoo:chart:JPY=X:regularMarketTime"}
+        path = (os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3")
+                if _cost_policy_durable_enabled() else None)
+        if not path:
+            _USDJPY_TOKYO_CLOSE.update(status="NOT_DURABLE")
+            return None
+        jp_market_acquisition.retain_first_receipts([row], path=path, source_id="usdjpy_tokyo_1530",
+                                                    received_at=received)
+        _USDJPY_TOKYO_CLOSE.update(status="RETAINED", lastDate=day, offsetSeconds=round(offset, 1),
+                                   reason=None, keptAt=received)
+        return row
+    except Exception as exc:
+        _USDJPY_TOKYO_CLOSE.update(status="FAILED", reason=type(exc).__name__)
+        return None
+    finally:
+        _USDJPY_TOKYO_CLOSE_LOCK.release()
+
+
 def run_scheduler():
     add_log("⏰ Scheduler started", echo=True)
     while True:
@@ -51913,6 +52050,7 @@ def run_scheduler():
         threading.Thread(target=_future_map_fallback_tick, daemon=True, name="future-map-fallback").start()
         threading.Thread(target=_future_lines_tick, daemon=True, name="future-lines-daily").start()
         threading.Thread(target=_intel_collect_resident_tick, daemon=True, name="intel-collect-resident").start()
+        threading.Thread(target=_usdjpy_tokyo_close_tick, daemon=True, name="usdjpy-tokyo-close").start()
         # 2026-10-20: the history backup used to run only after a brief was
         # generated (11 times a weekday), so the v3 migration of 48 editions a
         # call would have taken two days. The call keeps its own lock and its
