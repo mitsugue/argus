@@ -104,7 +104,18 @@ def _existing_endpoint(state):
              "_process_peak_memory_mb": lambda: 1, "_startup_rss_mib": lambda: 1,
              "_market_store_residency_projection": lambda: {}, "_LEVEL_MAP": state,
              "_LEVEL_MAP_LOCK": threading.Lock(), "_level_map_warm": forbidden,
-             "_jq_valuation_for_date": forbidden, "_index_research_warm": forbidden}
+             "_jq_valuation_for_date": forbidden, "_index_research_warm": forbidden,
+             # 2026-10-20: names the current endpoint reads (diagnostics added
+             # after 2026-10-14), as harmless scalars; none of them collects.
+             "_diagnostic_counters_copy": lambda value: dict(value or {}),
+             "_MISSION_PHASE_TIMING": {"phases": {}, "startedAt": None}, "_CHECKPOINT_PERSIST_STATS": {},
+             "_MARKET_BRIEF_SCHEDULE": {}, "_JP_FINANCIAL_VERIFY": {}, "_material_research_diagnostics": lambda: {},
+             "_INTEL_COLLECT_LOCK": threading.Lock(), "_INTEL_COLLECT_LAST": {}, "_INTEL_COLLECT_RUN": {},
+             "INTEL_COLLECT_RESIDENT_INTERVAL_SECONDS": 1800,
+             "_jp_index_official_factor_status": lambda: {"status": "NOT_CONFIGURED"}, "_JSF_DAILY_STATUS": {},
+             "_INDEX_RESEARCH_STATUS": {}, "_INDEX_RESEARCH_REPORTS": {}, "_JP_MARKET_FEATURE_HISTORY": {},
+             "_JP_ANALOG_RESEARCH_INPUTS": {}, "_JP_INPUT_BACKUP_STATUS": {}, "_JP_INPUT_BACKUP_LOCK": threading.Lock(),
+             "_resident_inventory": forbidden, "_runtime_thread_dump": forbidden}
     exec(compile(ast.Module(body=[function], type_ignores=[]), "scanner.py", "exec"), scope)
     app.add_url_rule("/api/argus/admin/memory-attribution", view_func=scope[function.name])
     return app, calls
