@@ -15703,6 +15703,12 @@ _SAVED_VIEW_CALL_REPORT_LOCK = threading.Lock()
 _BRIDGE_RESTART_WAIT_SEC = 180
 
 
+# 2026-10-20: the free-space lamp warns at ten times and turns red at twice what
+# the start's storage check requires (that check itself is unchanged).
+STORAGE_FREE_WARN_FACTOR = 10
+STORAGE_FREE_STOP_FACTOR = 2
+
+
 def _system_health(*, allow_provider_fetch=True):
     """PUBLIC-safe at-a-glance health lamps for the metered/important systems
     (green=ok, amber=warning, red=stopped). Colors + coarse JA only — NO dollar
@@ -15880,6 +15886,26 @@ def _system_health(*, allow_provider_fetch=True):
         us_quality = {**us_quality, "status": "warning",
                       "detailJa": us_quality["detailJa"] + " · Twelve Data 要設定"}
     L("prices_us", "米国株価格", us_quality["status"], us_quality["detailJa"])
+    # 2026-10-20 (owner: 恒久性): the persistent disk's free space against what the
+    # start's storage check requires, measured now (file sizes only). On 10/20
+    # the start stopped at 108.9 MiB free; this warns long before that.
+    try:
+        capacity = _storage_capacity_measurement()
+        free, required = capacity.get("freeBytes"), capacity.get("requiredFreeBytes")
+        if isinstance(free, int) and isinstance(required, int) and required > 0:
+            free_text = (f"空き {free / 1024 ** 3:.1f}GiB" if free >= 1024 ** 3
+                         else f"空き {free // (1024 ** 2)}MiB")
+            need_text = f"起動に必要な空き {required // (1024 ** 2)}MiB"
+            if free < STORAGE_FREE_STOP_FACTOR * required:
+                L("storage", "保存先の空き", "stopped", f"{free_text} · {need_text} — このままでは次の起動が止まる")
+            elif free < STORAGE_FREE_WARN_FACTOR * required:
+                L("storage", "保存先の空き", "warning", f"{free_text} · {need_text}の{STORAGE_FREE_WARN_FACTOR}倍を下回った")
+            else:
+                L("storage", "保存先の空き", "ok", f"{free_text} · {need_text}")
+        else:
+            L("storage", "保存先の空き", "warning", "未確認 — 空きを測れない")
+    except Exception:
+        L("storage", "保存先の空き", "warning", "未確認 — 空きを測れない")
     L("crypto", "暗号資産", "ok", "CoinGecko" + ("(Demo鍵)" if _COINGECKO_KEY else "(鍵なし)") + " + Coinbaseフォールバック")
     L("macro", "金利/VIX", "ok" if conf("fred") else "warning",
       "FRED 設定済" if conf("fred") else "要設定")
