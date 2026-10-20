@@ -1143,6 +1143,10 @@ def test_public_projection_is_unchanged_by_unknown_internal_fields(monkeypatch):
     # between the two requests (observed once in CI on an unchanged tree).
     frozen_epoch = scanner.time.time()
     monkeypatch.setattr(scanner.time, "time", lambda: frozen_epoch)
+    # 2026-10-21: the free-space lamp measures the disk live; other tests and
+    # CI writes change it between the two requests, so it is fixed here too.
+    monkeypatch.setattr(scanner, "_storage_capacity_measurement", lambda: {
+        "freeBytes": 12 * 1024 ** 3, "requiredFreeBytes": 111 * 1024 ** 2, "totalBytes": 15 * 1024 ** 3})
     client = scanner.app.test_client()
     before = client.get("/api/argus/data-quality/status").get_json()
     monkeypatch.setitem(scanner._REMOTE_CYCLE, "futureNested", {
