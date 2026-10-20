@@ -448,7 +448,10 @@ def _scheduled_selection(row):
 # receipt and drops its oldest session every day (2026-10-02): the J-Quants
 # TOPIX window (receivedAt and the whole-response digest on every row), FRED
 # US 10y (the newest 2,600 observations) and Yahoo USD/JPY (a ten-year range).
-STABLE_FEATURE_SOURCES = frozenset({'topix', 'us10y', 'usdjpy'})
+STABLE_FEATURE_SOURCES = frozenset({'topix', 'us10y', 'usdjpy', 'jsf_daily'})
+# 2026-10-20 (owner decision): 'jsf_daily' keeps each day's JSF loan/stock-lending
+# balances. The public file holds only the latest day and no free history exists,
+# so the series has to be accumulated before its predictive value can be measured.
 # Fields that record a receipt, not the observation. Every other field is
 # compared, so a changed value, availability or source is still a change.
 RECEIPT_FIELDS = frozenset({'receivedAt', 'sourceResponseSha256', 'rawId'})

@@ -44,11 +44,12 @@ def _points(value: Decimal) -> float:
 def period(*, start: str, end: str, members_start: Iterable[str], members_end: Iterable[str],
            closes: Mapping[str, Mapping[str, Any]], index_close: Mapping[str, Any],
            derived_factors: Mapping[str, Any],
-           names: Optional[Mapping[str, str]] = None, factors_as_of: Optional[str] = None) -> Dict[str, Any]:
+           names: Optional[Mapping[str, str]] = None, factors_as_of: Optional[str] = None,
+           factor_basis: str = "RECOVERED_FROM_WEIGHTS_OR_OWNER_ENTRY") -> Dict[str, Any]:
     """One period's contributions, or why they cannot be shown."""
     names = names or {}
     base = {"schemaVersion": SCHEMA, "startDate": start, "endDate": end, "factorsAsOf": factors_as_of,
-            "factorBasis": "RECOVERED_FROM_WEIGHTS_OR_OWNER_ENTRY", "priceBasis": "JQUANTS_UNADJUSTED_CLOSE",
+            "factorBasis": factor_basis, "priceBasis": "JQUANTS_UNADJUSTED_CLOSE",
             "quoteSelectionVerified": False, "actionAuthority": False}
     first, last = set(members_start), set(members_end)
     if not first or not last:
