@@ -115,7 +115,8 @@ def _existing_endpoint(state):
              "_jp_index_official_factor_status": lambda: {"status": "NOT_CONFIGURED"}, "_JSF_DAILY_STATUS": {},
              "_INDEX_RESEARCH_STATUS": {}, "_INDEX_RESEARCH_REPORTS": {}, "_JP_MARKET_FEATURE_HISTORY": {},
              "_JP_ANALOG_RESEARCH_INPUTS": {}, "_JP_INPUT_BACKUP_STATUS": {}, "_JP_INPUT_BACKUP_LOCK": threading.Lock(),
-             "_resident_inventory": forbidden, "_runtime_thread_dump": forbidden}
+             "_resident_inventory": forbidden, "_runtime_thread_dump": forbidden,
+             "_DURABLE_STORAGE_STATUS": {}}
     exec(compile(ast.Module(body=[function], type_ignores=[]), "scanner.py", "exec"), scope)
     app.add_url_rule("/api/argus/admin/memory-attribution", view_func=scope[function.name])
     return app, calls

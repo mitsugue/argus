@@ -582,6 +582,235 @@ def reconcile_abandoned_checkpoint_temps(
             "entries": entries}
 
 
+# 2026-10-20 (owner): the recovery-pair save stages a full checkpoint copy and
+# a sidecar candidate next to the checkpoint and removes them in `finally`; a
+# process killed mid-save (deploy restart, OOM) leaves them behind, and the
+# temporary reconciliation above never matched their names. 107 copies
+# (about 9.4 GiB) filled the disk and the start stopped on free space. The
+# same rules apply to them: the PID-stamped writer holds no descriptor for the
+# exact inode, an exclusive non-blocking flock succeeds, the 24-hour retention
+# has passed, and the identity is unchanged at removal. Pre-hotfix incident
+# evidence never matches these names and stays untouched.
+STAGING_RETENTION_SECONDS = POST_HOTFIX_TEMP_RETENTION_SECONDS
+WORK_DIRECTORY_PREFIXES = (".analysis-recovery-", ".analysis-compact-")
+WORK_DIRECTORY_MAX_FILES = 5000
+#: The last start's reconciliation, kept even when the free-space check then fails.
+LAST_RECONCILIATION: Dict[str, Any] = {}
+
+
+def _record_before_removal(event: str, detected: int, detected_bytes: int, eligible: int,
+                           eligible_bytes: int) -> None:
+    """One log line with counts and sizes before anything is removed (no names)."""
+    print(json.dumps({"event": event, "detectedCount": detected, "detectedBytes": detected_bytes,
+                      "eligibleCount": eligible, "eligibleBytes": eligible_bytes},
+                     sort_keys=True), flush=True)
+
+
+def _flock_removable(path: str) -> bool:
+    descriptor = None
+    try:
+        descriptor = os.open(path, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        return True
+    except (BlockingIOError, OSError):
+        return False
+    finally:
+        if descriptor is not None:
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
+
+
+def _staging_patterns(checkpoint_name: str, sidecar_name: str):
+    hexid = r"\.(\d+)\.[0-9a-f]{32}\."
+    stage = (rf"(?:{re.escape(checkpoint_name)}{hexid}recovery-pair-checkpoint"
+             rf"|{re.escape(sidecar_name)}{hexid}candidate)")
+    return (re.compile(rf"^({stage})(\.writer\.lock)?$"),
+            # A temporary of the staged copy itself (post-hotfix marker only).
+            re.compile(rf"^{stage}\.(\d+)\.[0-9a-f]{{32}}\.v1338-(?:tmp|bootstrap-[A-Za-z0-9_.-]+)$"))
+
+
+def reconcile_abandoned_recovery_staging(
+        temp_directory: str, *, checkpoint_name: str, sidecar_name: str,
+        cleanup: bool = False, now: Optional[float] = None,
+        owner_probe=_writer_pid_has_open_inode) -> Dict[str, Any]:
+    """Counts and sizes are recorded before anything is removed."""
+    staged, nested = _staging_patterns(checkpoint_name, sidecar_name)
+    observed_at = float(time.time() if now is None else now)
+    rows = []
+    try:
+        candidates = list(os.scandir(os.path.realpath(temp_directory)))
+    except OSError as exc:
+        return {"scanned": False, "errorClass": type(exc).__name__, "detectedCount": 0,
+                "detectedBytes": 0, "removedCount": 0, "removedBytes": 0,
+                "retainedCount": 0, "retainedBytes": 0}
+    for entry in candidates:
+        match = staged.fullmatch(entry.name)
+        writer_pid = None
+        if match:
+            groups = [g for g in match.groups()[1:] if g and g.isdigit()]
+            writer_pid = int(groups[0]) if groups else None
+        else:
+            inner = nested.fullmatch(entry.name)
+            if inner:
+                digits = [g for g in inner.groups() if g and g.isdigit()]
+                writer_pid = int(digits[-1]) if digits else None
+        if writer_pid is None or entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+            continue
+        try:
+            metadata = entry.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        rows.append((entry, metadata, writer_pid))
+    detected_bytes = sum(int(m.st_size) for _, m, _ in rows)
+    eligible = []
+    for entry, metadata, writer_pid in rows:
+        owner_open = owner_probe(writer_pid, device=metadata.st_dev, inode=metadata.st_ino)
+        age = max(0, int(observed_at - metadata.st_mtime))
+        if owner_open is False and age >= STAGING_RETENTION_SECONDS and _flock_removable(entry.path):
+            eligible.append((entry, metadata))
+    if rows:
+        _record_before_removal("abandoned_recovery_staging", len(rows), detected_bytes,
+                               len(eligible), sum(int(m.st_size) for _, m in eligible))
+    removed = removed_bytes = 0
+    for entry, metadata in eligible:
+        if cleanup:
+            try:
+                current = os.stat(entry.path, follow_symlinks=False)
+                if _file_identity(current) == _file_identity(metadata):
+                    os.unlink(entry.path)
+                    removed += 1
+                    removed_bytes += int(metadata.st_size)
+            except OSError:
+                pass
+    if removed:
+        with contextlib.suppress(OSError):
+            _fsync_directory(os.path.realpath(temp_directory))
+    return {"scanned": True, "errorClass": None, "detectedCount": len(rows),
+            "detectedBytes": detected_bytes, "eligibleCount": len(eligible),
+            "eligibleBytes": sum(int(m.st_size) for _, m in eligible),
+            "removedCount": removed, "removedBytes": removed_bytes,
+            "retainedCount": len(rows) - removed, "retainedBytes": detected_bytes - removed_bytes}
+
+
+def _open_inodes_of_any_process() -> Optional[set]:
+    """Every (device, inode) open in any process, or None when procfs cannot prove it."""
+    if not os.path.isdir("/proc"):
+        return None
+    found = set()
+    try:
+        pids = [name for name in os.listdir("/proc") if name.isdigit()]
+    except OSError:
+        return None
+    for pid in pids:
+        fd_root = os.path.join("/proc", pid, "fd")
+        try:
+            names = os.listdir(fd_root)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return None
+        for name in names:
+            try:
+                st = os.stat(os.path.join(fd_root, name))
+            except OSError:
+                continue
+            found.add((st.st_dev, st.st_ino))
+    return found
+
+
+def reconcile_abandoned_work_directories(
+        root: str, *, cleanup: bool = False, now: Optional[float] = None,
+        open_inodes=_open_inodes_of_any_process) -> Dict[str, Any]:
+    """Temporary work directories of the analysis-history recovery/compaction.
+
+    Their names carry no writer PID, so the proof is stricter: no process has
+    any of their files open (procfs over all processes; unprovable keeps
+    them), every file and the directory are older than the retention, the
+    files can be flocked, and each file is unchanged at removal."""
+    observed_at = float(time.time() if now is None else now)
+    root = os.path.realpath(root)
+    directories = []
+    try:
+        entries = list(os.scandir(root))
+    except OSError as exc:
+        return {"scanned": False, "errorClass": type(exc).__name__, "detectedCount": 0,
+                "detectedBytes": 0, "removedCount": 0, "removedBytes": 0,
+                "retainedCount": 0, "retainedBytes": 0}
+    for entry in entries:
+        if (entry.name.startswith(WORK_DIRECTORY_PREFIXES) and not entry.is_symlink()
+                and entry.is_dir(follow_symlinks=False)):
+            directories.append(entry.path)
+    inventory = []
+    for directory in directories:
+        files, newest, size, bounded = [], os.lstat(directory).st_mtime, 0, False
+        for current, dirs, names in os.walk(directory, followlinks=False):
+            for name in names:
+                path = os.path.join(current, name)
+                try:
+                    st = os.lstat(path)
+                except OSError:
+                    continue
+                if not os.path.isfile(path) or os.path.islink(path):
+                    bounded = True          # anything unexpected keeps the directory
+                    continue
+                files.append((path, st))
+                size += int(st.st_size)
+                newest = max(newest, st.st_mtime)
+            for name in dirs:
+                with contextlib.suppress(OSError):
+                    newest = max(newest, os.lstat(os.path.join(current, name)).st_mtime)
+            if len(files) > WORK_DIRECTORY_MAX_FILES:
+                bounded = True
+                break
+        inventory.append((directory, files, size, newest, bounded))
+    detected_bytes = sum(item[2] for item in inventory)
+    in_use = open_inodes() if inventory else set()
+    eligible = []
+    for directory, files, size, newest, bounded in inventory:
+        if bounded or in_use is None or observed_at - newest < STAGING_RETENTION_SECONDS:
+            continue
+        if any((st.st_dev, st.st_ino) in in_use for _, st in files):
+            continue
+        if not all(_flock_removable(path) for path, _ in files):
+            continue
+        eligible.append((directory, files, size))
+    if inventory:
+        _record_before_removal("abandoned_work_directories", len(inventory), detected_bytes,
+                               len(eligible), sum(item[2] for item in eligible))
+    removed = removed_bytes = 0
+    for directory, files, size in eligible:
+        changed = False
+        for path, st in files:
+            try:
+                if _file_identity(os.stat(path, follow_symlinks=False)) != _file_identity(st):
+                    changed = True
+                    break
+            except OSError:
+                changed = True
+                break
+        if changed or not cleanup:
+            continue
+        try:
+            for path, _ in files:
+                os.unlink(path)
+            for current, dirs, _ in sorted(os.walk(directory), key=lambda w: -len(w[0])):
+                os.rmdir(current)
+            removed += 1
+            removed_bytes += size
+        except OSError:
+            continue
+    if removed:
+        with contextlib.suppress(OSError):
+            _fsync_directory(root)
+    return {"scanned": True, "errorClass": None, "detectedCount": len(inventory),
+            "detectedBytes": detected_bytes, "eligibleCount": len(eligible),
+            "eligibleBytes": sum(item[2] for item in eligible),
+            "removedCount": removed, "removedBytes": removed_bytes,
+            "retainedCount": len(inventory) - removed, "retainedBytes": detected_bytes - removed_bytes,
+            "openInodesProven": in_use is not None}
+
+
 def required_free_bytes(*, checkpoint_bytes: int, wal_bytes: int) -> int:
     """Capacity for current + temp + WAL growth + a dynamic safety reserve."""
     checkpoint = max(1, int(checkpoint_bytes))
@@ -682,6 +911,13 @@ def validate_storage(
     abandoned = reconcile_abandoned_checkpoint_temps(
         resolved["checkpoint"], temp_directory=temp_directory,
         cleanup=bool(production))
+    staging = reconcile_abandoned_recovery_staging(
+        temp_directory, checkpoint_name=os.path.basename(resolved["checkpoint"]),
+        sidecar_name=os.path.basename(resolved.get("recovery") or "argus_remote_recovery.json"),
+        cleanup=bool(production))
+    work_directories = reconcile_abandoned_work_directories(root, cleanup=bool(production))
+    LAST_RECONCILIATION.clear()
+    LAST_RECONCILIATION.update(recoveryStaging=staging, workDirectories=work_directories)
     checkpoint_bytes = _file_bytes(resolved["checkpoint"])
     wal_bytes = _file_bytes(resolved["wal"])
     checkpoint_temp_bytes = _temp_bytes(
@@ -708,6 +944,8 @@ def validate_storage(
         "walBytes": wal_bytes,
         "checkpointTempBytes": checkpoint_temp_bytes,
         "abandonedTempReconciliation": abandoned,
+        "abandonedRecoveryStaging": staging,
+        "abandonedWorkDirectories": work_directories,
         "estimatedSafetyRatio": safety_ratio,
         "warning": "low_free_space" if safety_ratio is not None and
         safety_ratio < 2 else None,
