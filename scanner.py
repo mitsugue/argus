@@ -38383,7 +38383,7 @@ def _asset_chart_provider_history(symbol, market):
         else:
             if not _TWELVEDATA_API_KEY:
                 raise RuntimeError("twelvedata_not_configured")
-            response = _td_get("time_series", 
+            response = _td_get("time_series",
                 _TWELVEDATA_TS,
                 params={
                     "symbol": symbol,
