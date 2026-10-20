@@ -15799,12 +15799,15 @@ def _system_health(*, allow_provider_fetch=True):
         # bridge push is therefore the expected state, not a warning — only
         # a US session without pushes is.
         bridge_open = us_open
+        idle_ja = ("US市場時間外(待機) · 日本株はTachibana経由(ブリッジ対象外)"
+                   if jp_open and not us_open else "市場時間外(待機)")
         if not ages:
-            # 2026-10-20 (owner decision): the EC2 bridge is retired (no
-            # heartbeat or push since September); US ETF prices come from
-            # Twelve Data. A silent bridge is the expected state, not a warning.
-            L("bridge", "moomooブリッジ", "off",
-              "退役(2026-10-20) · push無し · 米国ETFの価格はTwelve Data")
+            # 2026-10-20: back to warning during a US session without pushes.
+            # The bridge delivered US prices on 2026-10-08, so its silence is
+            # not established as expected; the lamp only reports, never restarts.
+            L("bridge", "moomooブリッジ", "warning" if bridge_open else "off",
+              ("US市場時間中なのにpush無し" if bridge_open else idle_ja)
+              + " · 旧ブリッジ(heartbeat未対応)")
         elif min(ages) <= 120:
             L("bridge", "moomooブリッジ", "ok",
               f"最終push {int(min(ages))}秒前 · 旧ブリッジ(heartbeat未対応)")

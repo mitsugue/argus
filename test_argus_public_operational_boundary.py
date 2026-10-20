@@ -2142,19 +2142,19 @@ def test_legacy_bridge_lamp_is_idle_not_warning_during_a_tokyo_only_session(monk
     monkeypatch.setattr(scanner, "_PUSHED_QUOTES", {"US": {}, "JP": {}})
     lamps = {l["key"]: l for l in scanner._system_health(allow_provider_fetch=False)["lamps"]}
     assert lamps["bridge"]["status"] == "off"
-    assert "退役" in lamps["bridge"]["detailJa"]          # 2026-10-20: the bridge is retired
+    assert "Tachibana" in lamps["bridge"]["detailJa"]
+    assert "旧ブリッジ" in lamps["bridge"]["detailJa"]
 
 
-def test_retired_bridge_lamp_is_off_during_a_us_session_without_pushes(monkeypatch):
-    """2026-10-20 (owner decision): the EC2 bridge is retired; silence is expected."""
+def test_legacy_bridge_lamp_still_warns_during_a_us_session_without_pushes(monkeypatch):
     monkeypatch.setitem(scanner._BRIDGE_HB, "data", None)
     monkeypatch.setitem(scanner._BRIDGE_HB, "receivedAt", 0.0)
     monkeypatch.setattr(scanner, "_jp_market_open", lambda: False)
     monkeypatch.setattr(scanner, "_us_market_open", lambda: True)
     monkeypatch.setattr(scanner, "_PUSHED_QUOTES", {"US": {}, "JP": {}})
     lamps = {l["key"]: l for l in scanner._system_health(allow_provider_fetch=False)["lamps"]}
-    assert lamps["bridge"]["status"] == "off"
-    assert "退役" in lamps["bridge"]["detailJa"] and "Twelve Data" in lamps["bridge"]["detailJa"]
+    assert lamps["bridge"]["status"] == "warning"
+    assert "US市場時間中なのにpush無し" in lamps["bridge"]["detailJa"]
 
 
 # ── owner-only thread dump ───────────────────────────────────────────────────
