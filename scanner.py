@@ -122,6 +122,7 @@ import argus_ai_usage_runtime
 import jp_market_internals
 import jp_index_contribution  # 2026-10-17: Nikkei 225 contributions by member
 import jp_index_price_factors  # 2026-10-20: official price adjustment factors (owner file)
+import argus_us_price_quality  # 2026-10-20: US price lamp by coverage/source time (pure)
 import jp_market_positioning
 import argus_analysis_history
 import argus_index_live
@@ -15823,8 +15824,20 @@ def _system_health(*, allow_provider_fetch=True):
 
     L("prices_jp", "日本株価格", "ok" if conf("jquants") else "warning",
       "J-Quants 設定済" if conf("jquants") else "要設定")
-    L("prices_us", "米国株価格", "ok" if conf("twelvedata") else "warning",
-      "Twelve Data 設定済" if conf("twelvedata") else "要設定")
+    # 2026-10-20 (owner): the US price lamp is the service quality — every
+    # target's own source time, whichever route — apart from the bridge's route
+    # state above. A configured key is not a receipt; unread is 未確認.
+    try:
+        universe = _TD_WARM_UNIVERSE_CACHE.get("data")
+        us_targets = list(universe["symbols"]) if isinstance(universe, dict) else None
+        us_rows = {sym: _quote_cached_only(sym, "US") for sym in (us_targets or [])}
+        us_quality = argus_us_price_quality.assess(us_targets, us_rows, session_open=us_open)
+    except Exception:
+        us_quality = {"status": "warning", "detailJa": "未確認 — 価格の保存を読めない"}
+    if not conf("twelvedata"):
+        us_quality = {**us_quality, "status": "warning",
+                      "detailJa": us_quality["detailJa"] + " · Twelve Data 要設定"}
+    L("prices_us", "米国株価格", us_quality["status"], us_quality["detailJa"])
     L("crypto", "暗号資産", "ok", "CoinGecko" + ("(Demo鍵)" if _COINGECKO_KEY else "(鍵なし)") + " + Coinbaseフォールバック")
     L("macro", "金利/VIX", "ok" if conf("fred") else "warning",
       "FRED 設定済" if conf("fred") else "要設定")
