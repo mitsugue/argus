@@ -48691,6 +48691,15 @@ _JSF_DAILY_STATUS = {"status": "NOT_RUN", "lastDate": None, "lastAt": None, "err
 
 
 def _nikkei225_members_on(day):
+    if not _JP_INDEX_PROXY.get("factors") and not _JP_INDEX_PROXY.get("restoreAttempted"):
+        # Right after a deploy: read the saved member list now (a local file)
+        # instead of waiting for the index warm.
+        if _JP_INDEX_PROXY_LOCK.acquire(blocking=False):
+            try:
+                if not _JP_INDEX_PROXY.get("restoreAttempted"):
+                    _jp_index_proxy_restore()
+            finally:
+                _JP_INDEX_PROXY_LOCK.release()
     factors = (_JP_INDEX_PROXY.get("factors") or {}).get("factors") or {}
     if factors:
         try:
