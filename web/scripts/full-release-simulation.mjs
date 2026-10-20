@@ -166,7 +166,7 @@ try {
   assert.equal(await page.locator('.at-urgent-news').count(), 0, 'news has one list rather than a detached leading article');
   const topSignalsText = (await topSignals.innerText()).trim();
   assert.match(topSignalsText, /^(成立している条件 [0-7]件|成立状況を確認中)$/, `top MARKET SIGNALS count: ${topSignalsText}`);
-  assert.ok((await page.locator('.at-seven summary small').first().innerText()).includes('日本株の7条件'),
+  assert.ok((await page.locator('.at-seven summary small').first().innerText()).includes('6サイン'),
     'top block carries the owner-facing name');
   evidence.publicProductAcceptance = { status: 'pass', brand, topSignals: topSignalsText,
     surfaces: ['Today', 'Watchlist', 'Notifications', 'Settings'] };

@@ -27,7 +27,7 @@ assert.ok(render().includes('過去データを復元した検査：3件中2件�
 signals[4].performance.horizons['5'].falls=4;
 assert.ok(!render().includes('3件中4件'));
 const coverage=warningCoverageJa(marketSignalsView(projection));
-assert.equal(coverage.undefinedLabel,'3・4・7');
+assert.equal(coverage.undefinedLabel,'3・4'   /* 2026-10-21: ⑦ closed, not shown */);
 assert.equal(coverage.measured,0);
 assert.equal(coverage.missing.length,4);
 signals[0].state='CLEAR'; signals[0].conditionMet=false; signals[0].value=900e9; signals[0].knowledgeTime=at;

@@ -122,7 +122,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   // v13.5.38 MARKET SIGNALS (SIG-01..07) states
   signal_active: {
     term: '点灯',
-    explanationJa: 'このシグナルの条件が現在のデータで成立しています。7つのうち点灯している数だけを「x / 7」に数えます。',
+    explanationJa: 'このシグナルの条件が現在のデータで成立しています。6サインのうち点灯している数だけを「x / 6」に数えます。',
   },
   signal_clear: {
     term: '消灯',

@@ -35,22 +35,24 @@ const derivedZero = ms.marketSignalsView({ families: {
   D01: fam('AVAILABLE', false), D02: fam('AVAILABLE', false), D03: fam('AVAILABLE', false),
   D04: fam('AVAILABLE', false), D05: fam('AVAILABLE', false), D06: fam('AVAILABLE', false),
   D07: fam('AVAILABLE', false) } });
-assert.equal(derivedZero.countLabel, '0 / 7');
+assert.equal(derivedZero.countLabel, '0 / 6');   // 2026-10-21: ⑦ closed, the 6 signs
 const derivedThree = ms.marketSignalsView({ families: {
   D01: fam('AVAILABLE', true), D02: fam('AVAILABLE', true), D03: fam('AVAILABLE', true),
   D04: fam('LICENSE_BLOCKED', null), D05: fam('AVAILABLE', false), D06: fam('AVAILABLE', null),
   D07: fam('MISSING', null) } });
-assert.equal(derivedThree.countLabel, '3 / 7');
+assert.equal(derivedThree.countLabel, '3 / 6');
 assert.equal(derivedThree.source, 'derived');
 const derivedSeven = ms.marketSignalsView({ families: Object.fromEntries(
   ['D01', 'D02', 'D03', 'D04', 'D05', 'D06', 'D07'].map((k) => [k, fam('AVAILABLE', true)])) });
-assert.equal(derivedSeven.countLabel, '7 / 7');
+assert.equal(derivedSeven.countLabel, '6 / 6');   // ⑦ never counts nor shows
+assert.equal(ms.SIGN_TOTAL, 6);
+assert.ok(!derivedSeven.signals.some((s) => s.family === 'D07'));
 
 // 3) independent, truthful per-signal states (missing provider => UNAVAILABLE, never CLEAR/zero-silent).
 const states = Object.fromEntries(derivedThree.signals.map((s) => [s.id, s.state]));
 assert.deepEqual(states, {
   'SIG-01': 'ACTIVE', 'SIG-02': 'ACTIVE', 'SIG-03': 'ACTIVE', 'SIG-04': 'LICENSE_BLOCKED',
-  'SIG-05': 'CLEAR', 'SIG-06': 'DATA_GATED', 'SIG-07': 'UNAVAILABLE',
+  'SIG-05': 'CLEAR', 'SIG-06': 'DATA_GATED',
 });
 assert.equal(ms.marketSignalsView({ families: {} }).signals.every((s) => s.state === 'UNAVAILABLE'), true);
 
@@ -64,7 +66,7 @@ const server = ms.marketSignalsView({
   families: {},
 });
 assert.equal(server.source, 'server');
-assert.equal(server.countLabel, '2 / 7');
+assert.equal(server.countLabel, '1 / 6');      // the server's seventh row is received but not counted
 assert.equal(server.signals.find((s) => s.id === 'SIG-05').stateJa, '古い');
 
 // 5) every rendered state has a Japanese label and a glossary entry.
@@ -85,7 +87,7 @@ assert.ok(panel.includes('`成立している条件 ${topSignals.activeCount}件
 // v13.5.63 (GPT additional item 1): with the US market selected the seven signals
 // are labelled as Japan's and the US conditioning inputs are named instead.
 assert.ok(panel.includes('data-argus-contract="market-signals-market-v1"'), 'US selection labels the signals as Japanese');
-assert.ok(panel.includes('7条件は日本固有（米国は適用外）'), 'US selection says the seven are not applicable');
+assert.ok(panel.includes('6サインは日本固有（米国は適用外）'), 'US selection says the 6 signs are not applicable');
 assert.ok(!/["'`]\s*1 \/ 7\s*["'`]/.test(panel), 'no hard-coded 1 / 7 literal');
 assert.ok(panel.includes('data-signal-state={row.state}'), 'per-signal state rendered independently');
 
@@ -95,7 +97,7 @@ assert.ok(panel.includes('data-argus-contract="market-signals-top-v1"'), 'top bl
 assert.ok(panel.includes('const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null)'),
   'top block derives from the projection');
 assert.ok(panel.includes("{topSignals ? `成立している条件 ${topSignals.activeCount}件` : '成立状況を確認中'}"), 'top count from the view or truthful placeholder');
-assert.ok(panel.includes('日本株の7つの警戒条件') && panel.includes('日本株の7条件'), 'new warning direction and legacy names are distinct');
+assert.ok(panel.includes('6サイン（日本株の警戒条件）') && panel.includes("'6サイン'"), 'warning direction and legacy names are distinct (2026-10-21: the 6 signs)');
 assert.ok(panel.includes('data-argus-contract="market-signals-top-detail-v1"'), 'seven per-signal states expand at the top');
 assert.ok(!/<b>1 \/ 7<\/b>/.test(panel), 'no hard-coded 1 / 7');
 
@@ -175,7 +177,8 @@ for (const r of adopted.signals.filter(r=>['D03','D04','D07'].includes(r.family)
   r.performance={ruleId:r.ruleId,status:'UNVALIDATED',evaluated:0};
 }
 const adoptedView=ms.marketSignalsView({informationCutoff:at,warningSignals:adopted});
-assert.equal(adoptedView.measurableCount,7);
+assert.equal(adoptedView.measurableCount,6);   // 2026-10-21: ⑦ received, checked, not shown
+assert.ok(!adoptedView.signals.some(r=>r.family==='D07'));
 assert.equal(adoptedView.signals[3].lineage,'ARGUS_VALIDATION_RULE');
 assert.equal(adoptedView.signals[3].performance.evaluated,0);
 const wrongLineage=structuredClone(adopted);wrongLineage.signals[3].lineage='ORIGINAL_DIRECTION';
@@ -187,7 +190,7 @@ assert.equal(reading.warningDistanceJa({...view.signals[1],state:'CLEAR',distanc
 assert.equal(reading.warningDistanceJa({...view.signals[1],state:'STALE'}),null);
 assert.equal(reading.warningDistanceJa({...view.signals[3],state:'CLEAR',distance:{signedFromBoundary:12.5,unit:'JPY_EPS',operator:'<',atBoundary:false,boundaryCounts:false}}),'基準まであと12.5円（下回ると成立）');
 assert.equal(reading.warningDistanceJa({...view.signals[2],state:'ACTIVE',distance:{signedFromBoundary:-.01,unit:'INDEX_RATIO',operator:'<',atBoundary:false,boundaryCounts:false}}),'基準より指数比の差 0.01低い・成立中');
-assert.equal(reading.warningDistanceJa({...view.signals[6],state:'CLEAR',distance:{signedFromBoundary:-.1,unit:'FRACTION',operator:'>=',atBoundary:false,boundaryCounts:true}}),'成立まであと10ポイントの上昇');
+assert.equal(reading.warningDistanceJa({...view.signals[0],family:'D07',id:'SIG-07',state:'CLEAR',distance:{signedFromBoundary:-.1,unit:'FRACTION',operator:'>=',atBoundary:false,boundaryCounts:true}}),'成立まであと10ポイントの上昇');
 assert.match(reading.warningDistanceJa({...view.signals[5],state:'CLEAR',distance:{signedFromBoundary:-1e-10,unit:'MACD_GAP',operator:'>',atBoundary:false,boundaryCounts:false}}),/0.0000000001/);
 console.log('警戒v2：旧支持規則の非流用・版/時点/重複/未定義拒否・距離境界 PASS');
 
@@ -202,6 +205,6 @@ assert.match(html,/条件の計算が動くことと、下落を予測できる�
 assert.match(html,/時間がたつだけで検証済みにはなりません/);
 assert.match(html,/測定できる条件 4件/);
 assert.match(html,/成績：まだ採点できる記録がありません/);
-assert.match(html,/3・4・7番は判定基準の確定待ち/);
+assert.match(html,/3・4番は判定基準の確定待ち/);
 
-assert.equal(reading.warningDistanceJa({...view.signals[6],state:'CLEAR',distance:{signedFromBoundary:-1,unit:'CASES',operator:'>=',atBoundary:false,boundaryCounts:true}}),'最低件数まであと1件（5件以上で株価反応を判定）');
+assert.equal(reading.warningDistanceJa({...view.signals[0],family:'D07',id:'SIG-07',state:'CLEAR',distance:{signedFromBoundary:-1,unit:'CASES',operator:'>=',atBoundary:false,boundaryCounts:true}}),'最低件数まであと1件（5件以上で株価反応を判定）');

@@ -57,7 +57,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   // information cutoff, so the two never show different counts.
   const cutoffJa = cutoff ? new Date(cutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : null;
   const chartChip = signals ? `成立している条件 ${signals.activeCount}件${cutoffJa ? `（${cutoffJa} 時点）` : ''}`
-    : market === 'US' ? '米国: 7条件は適用外（類似局面のみ）' : brief?.chips.chart;
+    : market === 'US' ? '米国: 6サインは適用外（類似局面のみ）' : brief?.chips.chart;
   const updateState = brief ? (loading || error || retained ? <span role="status" className="at-brief__update">
     {loading ? (retained ? retainedBriefNote(responseBrief, false) : '確認中') : retainedBriefNote(responseBrief, Boolean(error))}
     {error && <button type="button" onClick={retry} disabled={loading} aria-label="見立てを再確認">↻</button>}

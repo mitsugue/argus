@@ -81,6 +81,14 @@ export const MARKET_SIGNAL_DEFINITIONS: ReadonlyArray<{
   { id: 'SIG-07', family: 'D07', nameEn: 'Earnings Reaction', nameJa: '決算反応' },
 ];
 
+// 2026-10-21 (owner): ⑦ (earnings reaction) is closed as not evaluable — ten years of
+// history could not judge it on what was received at the time. The server still
+// computes and records it (its seven-row contract and checks are unchanged); the
+// owner sees the 6 signs, counted out of six.
+export const CLOSED_SIGNAL_FAMILIES: ReadonlySet<string> = new Set(['D07']);
+export const SIGN_TOTAL = MARKET_SIGNAL_DEFINITIONS.length - CLOSED_SIGNAL_FAMILIES.size;
+const shown = <T extends { family: string }>(rows: T[]): T[] => rows.filter(row => !CLOSED_SIGNAL_FAMILIES.has(row.family));
+
 export const MARKET_SIGNAL_STATE_JA: Record<MarketSignalState, string> = {
   ACTIVE: '点灯', CLEAR: '消灯', DATA_GATED: '判定不能', STALE: '古い',
   LICENSE_BLOCKED: '要ライセンス', NOT_APPLICABLE: '該当なし', UNAVAILABLE: '欠測',
@@ -163,10 +171,11 @@ export function marketSignalsView(
         factNoteJa: raw?.factNoteJa, valuationBasis: raw?.valuationBasis,
         performance: raw && raw.performance?.ruleId === raw.ruleId ? raw.performance : undefined };
     });
-    const activeCount = rows.filter(row => row.state === 'ACTIVE').length;
-    return { label: 'MARKET SIGNALS', total: 7, activeCount, countLabel: `${activeCount} / 7`,
-      source: 'server', kind: 'warning', measurableCount: rows.filter(row => ['ACTIVE', 'CLEAR'].includes(row.state)).length,
-      signals: rows.map(decorate) };
+    const six = shown(rows);
+    const activeCount = six.filter(row => row.state === 'ACTIVE').length;
+    return { label: 'MARKET SIGNALS', total: six.length, activeCount, countLabel: `${activeCount} / ${six.length}`,
+      source: 'server', kind: 'warning', measurableCount: six.filter(row => ['ACTIVE', 'CLEAR'].includes(row.state)).length,
+      signals: six.map(decorate) };
   }
   const server = projection.marketSignals;
   const serverRows = Array.isArray(server?.signals) ? server!.signals! : null;
@@ -186,11 +195,12 @@ export function marketSignalsView(
     });
     // The numerator is always recounted from the per-signal states so a
     // server count can never disagree with what is shown.
-    const activeCount = rows.filter((r) => r.state === 'ACTIVE').length;
+    const six = shown(rows);
+    const activeCount = six.filter((r) => r.state === 'ACTIVE').length;
     return {
-      label: 'MARKET SIGNALS', total: rows.length, activeCount,
-      countLabel: `${activeCount} / ${rows.length}`, source: 'server',
-      signals: rows.map(decorate),
+      label: 'MARKET SIGNALS', total: six.length, activeCount,
+      countLabel: `${activeCount} / ${six.length}`, source: 'server',
+      signals: six.map(decorate),
     };
   }
   const families = projection.families ?? {};
@@ -204,10 +214,11 @@ export function marketSignalsView(
       conditionRuleJa: fam?.conditionRuleJa ?? null,
     };
   });
-  const activeCount = rows.filter((r) => r.state === 'ACTIVE').length;
+  const six = shown(rows);
+  const activeCount = six.filter((r) => r.state === 'ACTIVE').length;
   return {
-    label: 'MARKET SIGNALS', total: rows.length, activeCount,
-    countLabel: `${activeCount} / ${rows.length}`, source: 'derived',
-    signals: rows.map(decorate),
+    label: 'MARKET SIGNALS', total: six.length, activeCount,
+    countLabel: `${activeCount} / ${six.length}`, source: 'derived',
+    signals: six.map(decorate),
   };
 }

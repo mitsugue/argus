@@ -20,7 +20,7 @@ const cards = [
   [2, 'FUTURE MAP', '<FutureMapCard />', JP_1321],
   [3, '日経平均のチャート', '<JapanMarketHorizonComparison />', '&&'],
   [4, '価格の目盛り', '<LevelMapCard />', JP_1321],
-  [5, '七つの警戒条件', '<article className={`at-decision at-primary-hero', ALWAYS],
+  [5, '6サイン', '<article className={`at-decision at-primary-hero', ALWAYS],
   [6, '自分の銘柄への影響', 'aria-label="自分の銘柄への影響"', '{view.holdingsReview.length > 0 && <section className="at-priorities card"'],
   [7, '重大ニュース・市場リスク', '<section id="today-material-news"', ALWAYS],
   [8, 'ニュースの一覧', '<details id="today-news-details"', ALWAYS],
