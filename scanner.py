@@ -34284,6 +34284,10 @@ def api_argus_admin_memory_attribution():
         import argus_market_input_backup
         payload["marketInputBackup"] = argus_market_input_backup.status_projection(
             _JP_INPUT_BACKUP_STATUS, worker_active=_JP_INPUT_BACKUP_LOCK.locked())
+    if str(request.args.get("level-map-inputs") or "") == "1":
+        import argus_level_map_acquisition
+        payload["levelMapInputs"] = argus_level_map_acquisition.projection(
+            _LEVEL_MAP, worker_active=_LEVEL_MAP_LOCK.locked())
     return jsonify(payload)
 
 
@@ -40342,9 +40346,16 @@ def _level_map_admitted_eps():
 def _level_map_warm(nikkei_rows, *, current_only=False):
     if not _LEVEL_MAP_LOCK.acquire(blocking=False):
         return
+    acquisition = None
+    acquisition_error = None
     try:
+        import argus_level_map_acquisition
         now = _ai_now_iso()
         _LEVEL_MAP.update(lastAttemptAt=now, estimatesLastWarm=0)
+        acquisition = argus_level_map_acquisition.begin(
+            current_only=current_only, attempted_at=now,
+            cursor=_LEVEL_MAP.get('epsBackfillCursor'))
+        _LEVEL_MAP.setdefault('acquisitionDiagnostics', {})[acquisition['mode']] = acquisition
         path = _level_map_history_path()
         if not path:
             _LEVEL_MAP.update(status="NOT_CONFIGURED", lastErrorReason="history_storage_not_configured")
@@ -40392,13 +40403,16 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
             pending = jp_market_level_map.pending_eps_sessions(
                 wanted, _LEVEL_MAP['eps'], limit=1 if current_only else _LEVEL_MAP_EPS_PER_WARM,
                 cursor=None if current_only else _LEVEL_MAP.get('epsBackfillCursor'))
+            argus_level_map_acquisition.selected(acquisition, pending)
             headers = {"x-api-key": _JQUANTS_API_KEY}
             daily_close_attempted = False
             for day in pending:
                 if not current_only and day != sessions[-1]:
                     _LEVEL_MAP['epsBackfillCursor'] = day
+                argus_level_map_acquisition.outcome(acquisition, day, 'STARTED')
                 values = _jq_valuation_for_date(day, headers)
                 if not values:
+                    argus_level_map_acquisition.outcome(acquisition, day, 'NO_VALUATION_ROWS')
                     continue
                 members, members_label = jp_market_level_map.constituents_on(
                     day, constituents, as_of, _nikkei225_constituent_changes())
@@ -40428,17 +40442,25 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                                 'members': len(used), 'receivedAt': _ai_now_iso(),
                                 'historicalPublicationTimeVerified': False}
                     if not jp_market_level_map.estimate_input_usable(estimate, strict=True):
+                        argus_level_map_acquisition.outcome(
+                            acquisition, day, 'INPUT_INCOMPLETE', estimate.get('coverage'))
                         _JQ_VALUATION_DAY_CACHE.pop(day, None)
                         if day == sessions[-1]:
                             _LEVEL_MAP.update(lastErrorReason='constituent_valuation_incomplete',
                                              pendingEstimateDate=day, pendingEstimateCoverage=estimate['coverage'])
                         continue
                 except jp_market_level_map.LevelMapError:
+                    argus_level_map_acquisition.outcome(acquisition, day, 'INVALID_ESTIMATE')
                     continue
                 estimate["recordedAt"] = _ai_now_iso()
                 stored = argus_analysis_history.append_level_map_eps(path, estimate)
+                correction_attempted = bool(stored.get('conflict'))
                 if stored.get('conflict'):
                     stored = argus_analysis_history.append_level_map_eps_correction(path, estimate)
+                argus_level_map_acquisition.outcome(
+                    acquisition, day,
+                    ('STORED_CORRECTION' if correction_attempted else 'STORED_ORIGINAL')
+                    if stored['inserted'] else 'ALREADY_SAVED', estimate.get('coverage'))
                 if stored["inserted"]:
                     _LEVEL_MAP["eps"][day] = estimate
                     _LEVEL_MAP["estimatesLastWarm"] += 1
@@ -40509,9 +40531,16 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                           "AVAILABLE" if _LEVEL_MAP["mornings"] else "WAITING_FOR_ESTIMATE",
                           lastError=None, lastErrorReason='constituent_valuation_incomplete' if pending_current else None)
     except Exception as exc:
+        acquisition_error = type(exc).__name__
         _LEVEL_MAP.update(status="FAILED", lastError=type(exc).__name__, lastErrorReason=str(exc)[:80])
     finally:
-        _LEVEL_MAP_LOCK.release()
+        try:
+            if acquisition is not None:
+                argus_level_map_acquisition.finish(
+                    acquisition, cursor=_LEVEL_MAP.get('epsBackfillCursor'),
+                    warm_status=_LEVEL_MAP.get('status'), error_class=acquisition_error)
+        finally:
+            _LEVEL_MAP_LOCK.release()
 
 
 # ── Analyst consensus target prices (owner decision 2026-10-04) ───────────────
