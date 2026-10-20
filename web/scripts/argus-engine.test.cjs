@@ -513,7 +513,7 @@ console.log('argus-engine.test: all checks passed');
     && panel.includes('米国の条件付けはVIX水準・VIX10日変化・対SPY相対力') && panel.includes("市場状態で条件付け".length ? '' : '')
     && viewSrc3.includes("vixLevel: 'VIX水準', vixChange10: 'VIX10日変化', rs20: '対SPY相対力'"));
   check('the brief chart chip does not borrow the Japanese count for the US market',
-    fs.readFileSync(path.join(root, 'src/components/today/MarketBriefCard.tsx'), 'utf8').includes("market === 'US' ? '米国: 7条件は適用外") && panel.includes('signals={topSignals && !usSelected ?'));
+    fs.readFileSync(path.join(root, 'src/components/today/MarketBriefCard.tsx'), 'utf8').includes("market === 'US' ? '米国: 6サインは適用外") && panel.includes('signals={topSignals && !usSelected ?'));
   const { deskCoverage, deskCoverageJa, deskCoverageDetailJa } = require(path.join(root, 'src/domain/deskCoverage.ts'));
   const cov = deskCoverage({
     assets: [{ symbol: '5803', market: 'JP' }, { symbol: '1321', market: 'JP' }, { symbol: 'NVDA', market: 'US' }, { symbol: 'BTC', market: 'CRYPTO' }],

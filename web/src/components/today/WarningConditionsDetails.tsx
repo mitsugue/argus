@@ -27,9 +27,9 @@ export function WarningConditionsDetails({ view }: { view: MarketSignalsView }) 
   const coverage = warningCoverageJa(view);
   return <div className="at-seven-signals" data-argus-contract="warning-conditions-v2">
     <div role="status" data-argus-contract="warning-coverage-v1">
-      <p>7条件の判定状況：{coverage.measured}件を測定できています。</p>
+      <p>6サインの判定状況：{coverage.measured}件を測定できています。</p>
       {coverage.undefinedLabel && <p>{coverage.undefinedLabel}番は判定基準の確定待ちです。データを取得し直すだけでは判定できません。</p>}
-      {coverage.missing.length > 0 && <ul aria-label="7条件で確認が必要な入力">
+      {coverage.missing.length > 0 && <ul aria-label="6サインで確認が必要な入力">
         {coverage.missing.map(line => <li key={line}>{line}</li>)}
       </ul>}
     </div>
@@ -51,6 +51,7 @@ export function WarningConditionsDetails({ view }: { view: MarketSignalsView }) 
     <details><summary>「成績：未検証」の意味</summary>
       <p>条件の計算が動くことと、下落を予測できることは別です。判定基準を固定し、当時利用できたデータで過去の下落を測り、普段の下落割合との比較と件数を確認します。基準を上回らない場合もあり、時間がたつだけで検証済みにはなりません。</p>
     </details>
-    <small>測定できる条件 {coverage.measured}件／全7条件。成立件数から暴落の確率は出しません。</small>
+    <small>測定できる条件 {coverage.measured}件／全{view.total}サイン。成立件数から暴落の確率は出しません。</small>
+    <small className="at-seven-closed">7番目の条件（好決算でも株価下落）は、10年分の過去を当時受け取ったデータで判定できず、2026年10月21日に外しました（計算と記録は続けています）。</small>
   </div>;
 }

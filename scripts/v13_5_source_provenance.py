@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.149"
+PRODUCT_VERSION = "v13.8.150"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -56,7 +56,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/credit-conditions.test.cjs': 'feadd87bf9da171dee89d8bf5864f9294e4a3fce',
     'web/src/components/today/CreditConditionsDetails.css': 'cd4c4e8e641c1dc909b5d834370919174c4a88f7',
     'web/src/components/today/CreditConditionsDetails.tsx': '58940ae3fe128467f65dbcfa58e5a9c2ea0f7094',
-    'web/src/components/today/WarningConditionsDetails.tsx': 'dad40e37c1843bf507e169cc42022443347f396e',
+    'web/src/components/today/WarningConditionsDetails.tsx': 'acfc46f860464eb0b43c69fcbee71cffd64a9ef4',
     'test_argus_warning_conditions.py': 'f5e93fb949d11721829e0f00930d9c72aa0da84a',
     'argus_warning_conditions.py': '18ef85b018b329895d25a66673e3f77057db817d',
     'test_argus_jgb_auction.py': '4a3e3565b99b6b3e87d21024a4706a65a7ca89cf',
@@ -161,7 +161,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '742649253e9b21a17a57d0f8b630e8d5febbe902',
+    'web/scripts/owner-today-https.mjs': '01ddd48bd4a8ef6430a10bf1a8d86e438ca55182',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -381,7 +381,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/assetDesk/AssetMarketContext.tsx': '5417dfa8b80f81bf7c9d1c62ca80bea5a196d555',
     'web/src/components/dialogue/OwnerDialogue.css': '99f542e0fc1391a58a1cb60ac1c5bec249fe9a28',
     'web/src/components/dialogue/OwnerDialogue.tsx': 'ee84e0b33570373650bb69c2208bafae960eae8e',
-    'web/src/components/today/MarketBriefCard.tsx': '233425edb62286fe57d8e3666de491ecf9d5bed9',
+    'web/src/components/today/MarketBriefCard.tsx': '0b83469df51bb541e5d663fdad3e463a1ca451bb',
     'web/src/components/today/MarketInternalsCard.tsx': 'b5a5e300d2d3f37578dab38ee2cc30aa3fce2dca',
     'web/src/components/today/SharedMarketContext.tsx': '4ec63a0ed76a28d86933cc128c033225d30d7244',
     'web/src/lib/marketInternals.ts': 'c9df9fe130a956dc08285542e0118c34938eb164',

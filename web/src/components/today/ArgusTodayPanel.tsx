@@ -801,7 +801,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       aria-label="A.R.G.U.S. Primary Action">
       <details className="at-data-detail" data-argus-contract="other-analysis-data-status-v1">
       <summary>登録銘柄・他の分析データの状態</summary>
-      <small>7条件の判定状況は下の各項目で確認できます。</small>
+      <small>6サインの判定状況は下の各項目で確認できます。</small>
       <div className="at-kpis"><span className="at-data-label">他の分析データの状態 <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></span>
         {view.dataQualityReasonCodes.length > 0 && <ul className="at-data-summary" aria-label="不足しているデータ">
           {view.dataQualityReasonCodes.map(code => <li key={code}>{DATA_PARTIAL_REASON_JA[code] ?? '未確認のデータがあります'}</li>)}
@@ -838,8 +838,8 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         data-seven-level={view.actionScore ?? undefined}
         data-market-signals-active={topSignals?.activeCount ?? undefined}
         data-market-signals-total={topSignals?.total ?? undefined}>
-        <summary aria-label={topSignals ? `成立している条件 ${topSignals.activeCount}件、全7条件` : '7条件の成立状況を確認中'}>
-          <small>{topSignals?.kind === 'warning' ? '日本株の7つの警戒条件' : '日本株の7条件'}</small>
+        <summary aria-label={topSignals ? `成立している条件 ${topSignals.activeCount}件、全6サイン` : '6サインの成立状況を確認中'}>
+          <small>{topSignals?.kind === 'warning' ? '6サイン（日本株の警戒条件）' : '6サイン'}</small>
           {/* v13.5.63 (GPT review item 1): the seven conditions are Japanese
               market inputs (credit balances, 1570, foreign flow…). With the US
               market selected they are labelled as Japan's, and the US
@@ -851,7 +851,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
             {new Date(decisionEvidence.marketView.informationCutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })} 時点</i>}
           <b data-argus-contract="market-signals-top-v1">
             {topSignals ? `成立している条件 ${topSignals.activeCount}件` : '成立状況を確認中'}</b>
-          {usSelected&&<span className="at-seven-status">米国の条件付けはVIX水準・VIX10日変化・対SPY相対力です。7条件は日本固有（米国は適用外）。</span>}
+          {usSelected&&<span className="at-seven-status">米国の条件付けはVIX水準・VIX10日変化・対SPY相対力です。6サインは日本固有（米国は適用外）。</span>}
           <span className="at-seven-status">{topSignals?.kind === 'warning' ? '各条件の成立状況を表示。下落を予測できるかは未検証です。' : '現行規則の向きと過去の成績を並べています。予測としての有効性は未検証です。'}</span>
         </summary>
         <div className="at-seven-detail">
