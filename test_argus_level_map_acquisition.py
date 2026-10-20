@@ -11,6 +11,7 @@ from flask import Flask, jsonify, request
 import pytest
 
 import argus_level_map_acquisition as diagnostic
+import argus_level_map_backfill
 import jp_market_level_map as level_map
 
 
@@ -117,6 +118,9 @@ def _existing_endpoint(state):
              "_JP_ANALOG_RESEARCH_INPUTS": {}, "_JP_INPUT_BACKUP_STATUS": {}, "_JP_INPUT_BACKUP_LOCK": threading.Lock(),
              "_resident_inventory": forbidden, "_runtime_thread_dump": forbidden,
              "_ANALYSIS_HISTORY_FORM": {},
+             "argus_level_map_backfill": argus_level_map_backfill,
+             "_LEVEL_MAP_BACKFILL": {"state": None, "lastSaveError": None},
+             "_USDJPY_TOKYO_CLOSE": {},
              "_DURABLE_STORAGE_STATUS": {}}
     exec(compile(ast.Module(body=[function], type_ignores=[]), "scanner.py", "exec"), scope)
     app.add_url_rule("/api/argus/admin/memory-attribution", view_func=scope[function.name])
@@ -175,6 +179,7 @@ def _existing_warm(*, fail_at=None):
     arithmetic.constituents_on = lambda day, constituents, as_of, changes: (members, day)
     arithmetic.score_records = lambda *a: {}
     arithmetic.morning_map = no_retrospective
+    backfill_state = argus_level_map_backfill.empty()
     scope = {"_LEVEL_MAP": state, "_LEVEL_MAP_LOCK": threading.Lock(),
              "_ai_now_iso": lambda: "2026-10-14T00:17:24Z", "_level_map_history_path": lambda: "synthetic-history",
              "argus_analysis_history": SimpleNamespace(initialize=lambda p: None, append_level_map_eps=original,
@@ -186,7 +191,10 @@ def _existing_warm(*, fail_at=None):
              "_LEVEL_MAP_MAP_SINCE": "2026-06-01", "jp_market_level_map": arithmetic,
              "_jq_valuation_for_date": valuation, "_nikkei225_constituent_changes": lambda: [],
              "_JQ_VALUATION_DAY_CACHE": {}, "_level_map_next_session": lambda day: None,
-             "_CANDIDATES": {}, "_candidates_warm": lambda *a: None, "_level_map_remote": lambda: None}
+             "_CANDIDATES": {}, "_candidates_warm": lambda *a: None, "_level_map_remote": lambda: None,
+             # 2026-10-21: the backfill position and set-aside dates (fresh, not written here).
+             "argus_level_map_backfill": argus_level_map_backfill,
+             "_level_map_backfill_state": lambda: backfill_state, "_level_map_backfill_save": lambda: None}
     exec(compile(ast.Module(body=[function], type_ignores=[]), "scanner.py", "exec"), scope)
     return scope, requests, writes, corrections, bars
 
