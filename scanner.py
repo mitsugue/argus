@@ -15669,6 +15669,11 @@ def _saved_view_call_report(days=30):
 _SAVED_VIEW_CALL_REPORT_MEMO = {}
 _SAVED_VIEW_CALL_REPORT_LOCK = threading.Lock()
 
+# 2026-10-20: the bridge heartbeat comes every 60 s; three minutes after a
+# start without any receipt is no longer "waiting".
+_BRIDGE_RESTART_WAIT_SEC = 180
+
+
 def _system_health(*, allow_provider_fetch=True):
     """PUBLIC-safe at-a-glance health lamps for the metered/important systems
     (green=ok, amber=warning, red=stopped). Colors + coarse JA only — NO dollar
@@ -15800,15 +15805,24 @@ def _system_health(*, allow_provider_fetch=True):
         # bridge push is therefore the expected state, not a warning — only
         # a US session without pushes is.
         bridge_open = us_open
-        idle_ja = ("US市場時間外(待機) · 日本株はTachibana経由(ブリッジ対象外)"
-                   if jp_open and not us_open else "市場時間外(待機)")
+        idle_ja = ("US市場時間外 · 日本株はTachibana経由(ブリッジ対象外)"
+                   if jp_open and not us_open else "市場時間外")
         if not ages:
-            # 2026-10-20: back to warning during a US session without pushes.
-            # The bridge delivered US prices on 2026-10-08, so its silence is
-            # not established as expected; the lamp only reports, never restarts.
-            L("bridge", "moomooブリッジ", "warning" if bridge_open else "off",
-              ("US市場時間中なのにpush無し" if bridge_open else idle_ja)
-              + " · 旧ブリッジ(heartbeat未対応)")
+            # 2026-10-20 (owner): nothing received yet is not the legacy
+            # (heartbeat-less) bridge. The bridge sends a heartbeat every 60 s,
+            # so for the first three minutes after a start the lamp says it is
+            # waiting; after that it says nothing has arrived. A US session
+            # without receipt stays a warning in both cases (never hidden as
+            # standby). The lamp only reports; it never restarts anything.
+            uptime = max(0.0, time.monotonic() - _INTEL_COLLECT_PROCESS_STARTED)
+            if uptime <= _BRIDGE_RESTART_WAIT_SEC:
+                L("bridge", "moomooブリッジ", "warning" if bridge_open else "off",
+                  f"再起動後の受信待ち(起動{int(uptime)}秒)"
+                  + (" · US市場時間中" if bridge_open else " · " + idle_ja))
+            else:
+                L("bridge", "moomooブリッジ", "warning" if bridge_open else "off",
+                  ("US市場時間中なのに受信なし" if bridge_open else idle_ja)
+                  + f" · 起動から{int(uptime // 60)}分、生存の知らせ・価格とも未受信")
         elif min(ages) <= 120:
             L("bridge", "moomooブリッジ", "ok",
               f"最終push {int(min(ages))}秒前 · 旧ブリッジ(heartbeat未対応)")

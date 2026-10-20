@@ -314,7 +314,9 @@ def test_legacy_bridge_without_heartbeat(monkeypatch):
     monkeypatch.setitem(scanner._BRIDGE_HB, "receivedAt", 0.0)
     lamps = {l["key"]: l for l in scanner._system_health()["lamps"]}
     assert "bridge" in lamps
-    assert "旧ブリッジ" in lamps["bridge"]["detailJa"] or "push" in lamps["bridge"]["detailJa"]
+    # 2026-10-20 (owner): with nothing received the lamp says so (a restart
+    # wait or no receipt); "旧ブリッジ" is kept for pushes without a heartbeat.
+    assert "受信" in lamps["bridge"]["detailJa"]
     assert "us_realtime" not in lamps          # segmented lamps need a heartbeat
 
 

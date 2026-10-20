@@ -2143,7 +2143,8 @@ def test_legacy_bridge_lamp_is_idle_not_warning_during_a_tokyo_only_session(monk
     lamps = {l["key"]: l for l in scanner._system_health(allow_provider_fetch=False)["lamps"]}
     assert lamps["bridge"]["status"] == "off"
     assert "Tachibana" in lamps["bridge"]["detailJa"]
-    assert "旧ブリッジ" in lamps["bridge"]["detailJa"]
+    # 2026-10-20: nothing received is not the legacy bridge, and not "standby".
+    assert "旧ブリッジ" not in lamps["bridge"]["detailJa"] and "待機" not in lamps["bridge"]["detailJa"]
 
 
 def test_legacy_bridge_lamp_still_warns_during_a_us_session_without_pushes(monkeypatch):
@@ -2154,7 +2155,7 @@ def test_legacy_bridge_lamp_still_warns_during_a_us_session_without_pushes(monke
     monkeypatch.setattr(scanner, "_PUSHED_QUOTES", {"US": {}, "JP": {}})
     lamps = {l["key"]: l for l in scanner._system_health(allow_provider_fetch=False)["lamps"]}
     assert lamps["bridge"]["status"] == "warning"
-    assert "US市場時間中なのにpush無し" in lamps["bridge"]["detailJa"]
+    assert "US市場時間中" in lamps["bridge"]["detailJa"]
 
 
 # ── owner-only thread dump ───────────────────────────────────────────────────
