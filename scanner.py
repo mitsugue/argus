@@ -121,6 +121,7 @@ import argus_ai_usage_store
 import argus_ai_usage_runtime
 import jp_market_internals
 import jp_index_contribution  # 2026-10-17: Nikkei 225 contributions by member
+import jp_index_price_factors  # 2026-10-20: official price adjustment factors (owner file)
 import jp_market_positioning
 import argus_analysis_history
 import argus_index_live
@@ -34233,6 +34234,8 @@ def api_argus_admin_memory_attribution():
                                    "residentStarted": _INTEL_COLLECT_LAST.get("residentStarted"),
                                    "running": _INTEL_COLLECT_RUN.get("status") == "running",
                                    "intervalSeconds": INTEL_COLLECT_RESIDENT_INTERVAL_SECONDS}
+        payload["indexOfficialFactors"] = _jp_index_official_factor_status()
+        payload["jsfDaily"] = dict(_JSF_DAILY_STATUS)
     payload["indexResearch"] = {
         **{k: copy.deepcopy(v) for k, v in _INDEX_RESEARCH_STATUS.items() if k != "lastAttemptMonotonic"},
         "savedCalculatedAt": {key: (row or {}).get("calculatedAt") for key, row in _INDEX_RESEARCH_REPORTS.items()},
@@ -40058,6 +40061,65 @@ def _jp_index_keep_member_closes(day, bars, factors):
     _JP_INDEX_PROXY.setdefault("memberCloses", {})[day] = kept
 
 
+# 2026-10-20 (owner decision): Nikkei's official price adjustment factors, from
+# the owner's secret file (a browser download, like the weight table). The file
+# never leaves the process; its date, member count and digest are reported.
+_NK225_PRICE_FACTOR_DEFAULT_NAME = "nikkei_price_adjustment_factor.csv"
+_JP_INDEX_OFFICIAL_FACTORS = {"sha256": None, "table": None, "status": "NOT_CONFIGURED", "reason": None}
+
+
+def _jp_index_official_factors():
+    """The official factor table, or None (re-read only when the file changes)."""
+    raw = None
+    for path in (os.path.join(_NK225_SECRET_DIR, _NK225_PRICE_FACTOR_DEFAULT_NAME),
+                 os.path.join(os.getcwd(), _NK225_PRICE_FACTOR_DEFAULT_NAME)):
+        try:
+            with open(path, "rb") as handle:
+                raw = handle.read(jp_index_price_factors.MAX_BYTES + 1)
+            break
+        except OSError:
+            continue
+    if raw is None:
+        # Judged by content like the weight table: a file under another name still counts.
+        try:
+            names = sorted(os.listdir(_NK225_SECRET_DIR))
+        except OSError:
+            names = []
+        for name in names:
+            path = os.path.join(_NK225_SECRET_DIR, name)
+            try:
+                if not os.path.isfile(path) or os.path.getsize(path) > jp_index_price_factors.MAX_BYTES:
+                    continue
+                with open(path, "rb") as handle:
+                    candidate = handle.read(jp_index_price_factors.MAX_BYTES + 1)
+                if jp_index_price_factors.looks_like(jp_index_price_factors.decode(candidate)):
+                    raw = candidate
+                    break
+            except (OSError, ValueError, UnicodeDecodeError):
+                continue
+    if raw is None:
+        _JP_INDEX_OFFICIAL_FACTORS.update(sha256=None, table=None, status="NOT_CONFIGURED", reason=None)
+        return None
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest == _JP_INDEX_OFFICIAL_FACTORS.get("sha256"):
+        return _JP_INDEX_OFFICIAL_FACTORS.get("table")
+    try:
+        table = jp_index_price_factors.parse(jp_index_price_factors.decode(raw))
+        _JP_INDEX_OFFICIAL_FACTORS.update(sha256=digest, table=table, status="AVAILABLE", reason=None)
+        return table
+    except (ValueError, UnicodeDecodeError) as exc:
+        _JP_INDEX_OFFICIAL_FACTORS.update(sha256=digest, table=None, status="INVALID",
+                                          reason=str(exc)[:60] if isinstance(exc, ValueError) else "decode")
+        return None
+
+
+def _jp_index_official_factor_status():
+    table = _JP_INDEX_OFFICIAL_FACTORS.get("table") or {}
+    return {"status": _JP_INDEX_OFFICIAL_FACTORS.get("status"), "reason": _JP_INDEX_OFFICIAL_FACTORS.get("reason"),
+            "asOf": table.get("asOf"), "members": table.get("members"),
+            "sha256": _JP_INDEX_OFFICIAL_FACTORS.get("sha256")}
+
+
 def _jp_index_contribution_for(start, end, index_rows):
     """Contributions for one period from cached inputs only (no fetch)."""
     factors = _JP_INDEX_PROXY.get("factors") or {}
@@ -40073,6 +40135,16 @@ def _jp_index_contribution_for(start, end, index_rows):
             names[code] = _jq_name_for(code, allow_provider_fetch=False)
         except Exception:
             names[code] = None
+    official = _jp_index_official_factors()
+    if official and jp_index_price_factors.applies(official, start=start, members_start=members[start],
+                                                   members_end=members[end]):
+        # The exact official factors; the start close still implies the divisor.
+        return jp_index_contribution.period(
+            start=start, end=end, members_start=members[start], members_end=members[end],
+            closes=_JP_INDEX_PROXY.get("memberCloses") or {},
+            index_close={str(r.get("date"))[:10]: r.get("close") for r in index_rows or []},
+            derived_factors=official["factors"], names=names, factors_as_of=official["asOf"],
+            factor_basis=jp_index_price_factors.FACTOR_BASIS)
     result = jp_index_contribution.period(
         start=start, end=end, members_start=members[start], members_end=members[end],
         closes=_JP_INDEX_PROXY.get("memberCloses") or {},
@@ -48556,7 +48628,7 @@ def _jsf_balance_table():
     now = time.time()
     if _JSF_CACHE["table"] is not None and now < _JSF_CACHE["expires"]:
         return _JSF_CACHE["table"], _JSF_CACHE["date"]
-    table, dt = None, None
+    table, dt, kinds = None, None, set()
     try:
         # Browser-ish UA + 30s: the 858KB file is fetched US→JP from Render.
         r = requests.get(_JSF_URL, timeout=30,
@@ -48593,13 +48665,93 @@ def _jsf_balance_table():
                     table[code] = rec
                 if dt is None:
                     dt = (row[0] or "").strip()
+                if (row[0] or "").strip() == dt:
+                    kinds.add((row[6] or "").strip())
             if not table:
                 table = None
     except Exception as e:
         add_log(f"[scout] JSF fetch failed: {type(e).__name__}")
     _JSF_CACHE.update({"table": table, "date": dt,
                        "expires": now + (_JSF_TTL if table else 1800)})
+    if table:
+        try:
+            _jsf_daily_retain(table, dt, kinds)
+        except Exception as exc:                       # keeping history never blocks the reading
+            _JSF_DAILY_STATUS.update(status="FAILED", errorClass=type(exc).__name__)
     return table, dt
+
+
+# 2026-10-20 (owner decision): the JSF file holds only its latest day and no free
+# history exists, so each day is kept here before the series can be measured:
+# the totals of every listed stock and the balances of the Nikkei 225 members,
+# with this receipt as their availability (the site does not state a time).
+_JSF_DAILY_STATUS = {"status": "NOT_RUN", "lastDate": None, "lastAt": None, "errorClass": None}
+
+
+def _nikkei225_members_on(day):
+    factors = (_JP_INDEX_PROXY.get("factors") or {}).get("factors") or {}
+    if factors:
+        try:
+            return set(jp_market_level_map.constituents_on(day, factors, _JP_INDEX_PROXY.get("weightsAsOf"),
+                                                           _nikkei225_constituent_changes() or {})[0])
+        except Exception:
+            pass
+    official = _JP_INDEX_OFFICIAL_FACTORS.get("table") or {}
+    return set(official.get("factors") or ())
+
+
+def _jsf_daily_row(table, date_text, kinds, received_at, members):
+    """One day's row: totals over every stock and the Nikkei 225 members' balances."""
+    match = re.fullmatch(r"(\d{4})/(\d{2})/(\d{2})", str(date_text or "").strip())
+    if not match:
+        raise ValueError("jsf_date")
+    day = "-".join(match.groups())
+    keys = ("loan", "short", "loanNew", "loanRepay", "shortNew", "shortRepay")
+    totals = {k: sum((rec.get(k) or 0) for rec in table.values()) for k in keys}
+    return {"date": day, "instrumentId": "JSF_MARGIN_LOAN_BALANCE", "unit": "SHARES",
+            "availableFrom": received_at, "sourceRef": _JSF_URL,
+            "publicationKinds": sorted(kinds), "stocks": len(table), "totals": totals,
+            "nikkei225": {code: {"loan": table[code].get("loan"), "short": table[code].get("short")}
+                          for code in sorted(members) if code in table}}
+
+
+def _jsf_daily_retain(table, date_text, kinds=()):
+    if not _cost_policy_durable_enabled():
+        _JSF_DAILY_STATUS.update(status="NOT_DURABLE")
+        return
+    now_iso = _ai_now_iso()
+    path = os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3")
+    row = _jsf_daily_row(table, date_text, kinds, now_iso, _nikkei225_members_on(_jsf_iso(date_text)))
+    first = _jsf_daily_first_seen(path, row)
+    if first:
+        row["availableFrom"] = first    # the same figures re-read: keep the first receipt
+    jp_market_acquisition.retain_first_receipts([row], path=path, source_id="jsf_daily", received_at=now_iso)
+    _JSF_DAILY_STATUS.update(status="RETAINED", lastDate=row["date"], lastAt=now_iso, errorClass=None,
+                             nikkei225=len(row["nikkei225"]), stocks=row["stocks"])
+
+
+def _jsf_daily_first_seen(path, row):
+    """The stored receipt of the same day's same figures, else None."""
+    if not os.path.exists(path):
+        return None
+    import sqlite3
+    conn = sqlite3.connect(path)
+    try:
+        found = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='selected_feature_inputs'").fetchone()
+        last = found and conn.execute("SELECT body FROM selected_feature_inputs WHERE source_id='jsf_daily' AND session=? "
+                                      "ORDER BY seq DESC LIMIT 1", (row["date"],)).fetchone()
+    finally:
+        conn.close()
+    if not last:
+        return None
+    stored = json.loads(last[0])
+    same = lambda r: {k: v for k, v in r.items() if k != "availableFrom"}
+    return stored.get("availableFrom") if same(stored) == same(row) else None
+
+
+def _jsf_iso(date_text):
+    match = re.fullmatch(r"(\d{4})/(\d{2})/(\d{2})", str(date_text or "").strip())
+    return "-".join(match.groups()) if match else ""
 
 def _jsf_for(code):
     """One stock's JSF balance signal, or None if it is not a 貸借銘柄."""
