@@ -36,7 +36,10 @@ def test_no_file_name_leaves_and_nothing_changes(tmp_path):
                       for root, _, names in os.walk(tmp_path) for name in names)
     before = snapshot()
     out = json.dumps(a.attribute(str(tmp_path), checkpoint=str(tmp_path / "state.json"), wal=str(tmp_path / "wal.jsonl")))
-    assert "secret-looking-name" not in out and "chart.bin" not in out
+    # 2026-10-20: names leave only as shapes (digits and digests replaced),
+    # and only in the shape table; the other tables carry directories and kinds.
+    parsed = json.loads(out)
+    assert all("secret-looking-name" not in json.dumps(parsed[k]) for k in parsed if k != "otherFilesByShape")
     assert snapshot() == before                     # nothing written, moved or deleted
 
 
@@ -55,3 +58,14 @@ def test_the_owner_route_adds_it_only_on_request(tmp_path, monkeypatch):
         denied = c.get("/api/argus/admin/memory-attribution?storage-groups=1")
     assert "storageAttribution" not in plain and asked["storageAttribution"]["schemaVersion"] == a.SCHEMA
     assert denied.status_code in (401, 503) and "storageAttribution" not in (denied.get_json() or {})
+
+
+def test_unexplained_files_are_also_counted_by_name_shape(tmp_path):
+    (tmp_path / "state.json").write_bytes(b"c")
+    for stamp in ("20261019T010203Z", "20261020T040506Z"):
+        (tmp_path / f"market_analysis_history.sqlite3.{stamp}-0123456789abcdef").write_bytes(b"z" * 500)
+    out = a.attribute(str(tmp_path), checkpoint=str(tmp_path / "state.json"), wal=str(tmp_path / "w"))
+    shapes = out["otherFilesByShape"]
+    key = "(root)/" + a._shape("market_analysis_history.sqlite3.20261019T010203Z-0123456789abcdef")
+    assert list(shapes) == [key] and shapes[key]["files"] == 2 and shapes[key]["logicalBytes"] == 1000
+    assert "20261019" not in json.dumps(out) and "0123456789abcdef" not in json.dumps(out)
