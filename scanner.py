@@ -4042,6 +4042,31 @@ def _td_owner_us_members():
         return []
 
 
+def _us_price_targets(now=None):
+    """2026-10-20: the symbols the service keeps priced, built from memory only.
+
+    The warm universe cache is cleared on every watchlist read (hints), so the
+    price lamp builds the same universe from the curated list, the owner's
+    registrations already held in memory and the trusted hints, without any
+    external read. None while the registrations are not loaded yet."""
+    now = time.time() if now is None else now
+    with _OWNER_OVERVIEW_MEMBERSHIP_LOCK:
+        members = _OWNER_OVERVIEW_MEMBERSHIP.get("members")
+    if members is None:
+        return None
+    owner = _sanitize_symbols([
+        m.get("symbol") for m in members if isinstance(m, dict)
+        and str(m.get("market") or "").upper() == "US"
+        and m.get("enabled", True) is not False and not m.get("removedAt")
+    ], _US_SYM_RE, _US_UNIVERSE_CAP)
+    with _US_WARM_HINT_LOCK:
+        hints = [sym for sym, stamp in _US_WARM_HINTS.items()
+                 if 0 <= now - stamp <= _US_WARM_HINT_TTL]
+    return argus_td_warm.build_universe(
+        curated=[s["symbol"] for s in _US_WATCHLIST], owner_members=owner,
+        hints=hints, universe_cap=_US_UNIVERSE_CAP)["symbols"]
+
+
 def _td_warm_universe(now=None):
     now = time.time() if now is None else now
     cached = _TD_WARM_UNIVERSE_CACHE
@@ -15846,8 +15871,7 @@ def _system_health(*, allow_provider_fetch=True):
     # target's own source time, whichever route — apart from the bridge's route
     # state above. A configured key is not a receipt; unread is 未確認.
     try:
-        universe = _TD_WARM_UNIVERSE_CACHE.get("data")
-        us_targets = list(universe["symbols"]) if isinstance(universe, dict) else None
+        us_targets = _us_price_targets()
         us_rows = {sym: _quote_cached_only(sym, "US") for sym in (us_targets or [])}
         us_quality = argus_us_price_quality.assess(us_targets, us_rows, session_open=us_open)
     except Exception:
@@ -34324,6 +34348,13 @@ def api_argus_admin_memory_attribution():
         for key, value in (_DURABLE_STORAGE_STATUS.get("cleanup") or {
             "recoveryStaging": _DURABLE_STORAGE_STATUS.get("abandonedRecoveryStaging"),
             "workDirectories": _DURABLE_STORAGE_STATUS.get("abandonedWorkDirectories")}).items()}
+    # 2026-10-20 (owner): the released 2026-08-03 incident temporaries, as recorded before removal.
+    temps = _DURABLE_STORAGE_STATUS.get("abandonedTempReconciliation") or {}
+    payload["storageCleanup"]["checkpointTemps"] = {
+        **{k: v for k, v in temps.items() if k != "entries"},
+        "released": [{k: row.get(k) for k in ("bytes", "mtimeNs", "sha256", "removed")}
+                     for row in temps.get("entries") or []
+                     if row.get("classification") == "released_incident_evidence"]}
     if str(request.args.get("storage-groups") or "") == "1":
         import argus_storage_attribution
         payload["storageAttribution"] = argus_storage_attribution.attribute(

@@ -98,3 +98,36 @@ def test_a_symlink_inside_keeps_the_directory(tmp_path):
     os.symlink(target, directory / "link")
     out = storage.reconcile_abandoned_work_directories(str(tmp_path), cleanup=True, open_inodes=lambda: set())
     assert out["removedCount"] == 0 and directory.exists() and target.exists()
+
+
+def test_owner_released_incident_evidence_is_recorded_then_removed(tmp_path, capsys):
+    import hashlib
+    evidence = make(tmp_path / f"{CHECKPOINT}.7.{HEX}.tmp", 700, mtime=storage.INCIDENT_EVIDENCE_RELEASE_BEFORE - 86400)
+    expected = hashlib.sha256(evidence.read_bytes()).hexdigest()
+    newer = make(tmp_path / f"{CHECKPOINT}.8.{HEX}.tmp", 300)       # after the cutoff: still evidence
+    out = storage.reconcile_abandoned_checkpoint_temps(
+        str(tmp_path / CHECKPOINT), cleanup=True, owner_probe=lambda *a, **k: False,
+        release_incident_evidence=True)
+    assert not evidence.exists() and newer.exists()
+    assert out["releasedIncidentEvidenceCount"] == 1 and out["releasedIncidentEvidenceBytes"] == 700
+    released = [r for r in out["entries"] if r["classification"] == "released_incident_evidence"][0]
+    assert released["sha256"] == expected and released["removed"] is True
+    logged = json.loads([l for l in capsys.readouterr().out.splitlines() if "incident_evidence_release" in l][0])
+    assert logged["sha256"] == expected and logged["bytes"] == 700
+
+
+def test_released_evidence_still_needs_no_owner(tmp_path):
+    evidence = make(tmp_path / f"{CHECKPOINT}.7.{HEX}.tmp", 700, mtime=storage.INCIDENT_EVIDENCE_RELEASE_BEFORE - 86400)
+    for probe in (lambda *a, **k: True, lambda *a, **k: None):
+        out = storage.reconcile_abandoned_checkpoint_temps(
+            str(tmp_path / CHECKPOINT), cleanup=True, owner_probe=probe, release_incident_evidence=True)
+        assert out["releasedIncidentEvidenceCount"] == 0 and evidence.exists()
+
+
+def test_without_the_release_the_no_read_contract_stays(tmp_path):
+    from unittest import mock
+    evidence = make(tmp_path / f"{CHECKPOINT}.7.{HEX}.tmp", 700, mtime=storage.INCIDENT_EVIDENCE_RELEASE_BEFORE - 86400)
+    with mock.patch.object(storage.os, "open", side_effect=AssertionError("opened")):
+        out = storage.reconcile_abandoned_checkpoint_temps(
+            str(tmp_path / CHECKPOINT), cleanup=True, owner_probe=lambda *a, **k: False)
+    assert out["retainedIncidentEvidenceCount"] == 1 and evidence.exists()
