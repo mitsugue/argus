@@ -8639,6 +8639,10 @@ def _operational_diagnostics_snapshot():
             "checkpointBytes": int(
                 _DURABLE_STORAGE_STATUS.get("checkpointBytes") or 0),
             "walBytes": int(_DURABLE_STORAGE_STATUS.get("walBytes") or 0),
+            "errorReason": _DURABLE_STORAGE_STATUS.get("errorReason"),
+            "freeBytes": _DURABLE_STORAGE_STATUS.get("freeBytes"),
+            "requiredFreeBytes": _DURABLE_STORAGE_STATUS.get("requiredFreeBytes"),
+            "totalBytes": _DURABLE_STORAGE_STATUS.get("totalBytes"),
         },
         durability={
             "integrityStatus": _DURABLE_STATE.get("integrityStatus"),
@@ -32743,6 +32747,31 @@ _SHUTDOWN = {"done": False, "requested": False, "requestedAt": None,
              "signal": None, "walSynced": False, "cursorSaved": False}
 
 
+def _storage_capacity_measurement():
+    """2026-10-20 (owner): after a failed storage check, the same capacity the
+    check compares (free bytes against the required free bytes), measured
+    read-only. The check itself and its threshold are unchanged; anything that
+    cannot be measured stays absent."""
+    out = {}
+    try:
+        root = _DURABILITY_PATHS["root"]
+        usage = shutil.disk_usage(root)
+        out.update(freeBytes=int(usage.free), totalBytes=int(usage.total))
+        def size(path):
+            try:
+                return int(os.path.getsize(path)) if path and os.path.isfile(path) else 0
+            except OSError:
+                return 0
+        checkpoint_bytes = size(_DURABILITY_PATHS.get("checkpoint"))
+        wal_bytes = size(_DURABILITY_PATHS.get("wal"))
+        out.update(checkpointBytes=checkpoint_bytes, walBytes=wal_bytes,
+                   requiredFreeBytes=int(argus_persistent_storage.required_free_bytes(
+                       checkpoint_bytes=checkpoint_bytes, wal_bytes=wal_bytes)))
+    except Exception:
+        pass
+    return out
+
+
 def _validate_durable_storage():
     global _DURABLE_STORAGE_STATUS
     try:
@@ -32772,6 +32801,7 @@ def _validate_durable_storage():
             "errorClass": exc.error_class,
             "errorReason": exc.reason,
             "runtimeVerified": False,
+            **_storage_capacity_measurement(),
         }
         return False
     except Exception as exc:

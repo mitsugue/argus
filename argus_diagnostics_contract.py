@@ -61,6 +61,13 @@ def _count(value: Any) -> int:
     return value
 
 
+def _optional_count(value: Any) -> Optional[int]:
+    """A byte count, or None when it was not measured (never a guessed 0)."""
+    if value is None:
+        return None
+    return _count(value)
+
+
 def _number(value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise DiagnosticsContractError("number_invalid")
@@ -280,6 +287,13 @@ def build_operational_diagnostics(
             "statusCode": _code(storage.get("statusCode")),
             "checkpointBytes": _count(storage.get("checkpointBytes", 0)),
             "walBytes": _count(storage.get("walBytes", 0)),
+            # 2026-10-20 (owner): why a start stopped, read-only. The reason is
+            # the fixed name of the failed check; sizes are byte counts only.
+            "errorReason": (_code(storage.get("errorReason"))
+                            if storage.get("errorReason") else None),
+            "freeBytes": _optional_count(storage.get("freeBytes")),
+            "requiredFreeBytes": _optional_count(storage.get("requiredFreeBytes")),
+            "totalBytes": _optional_count(storage.get("totalBytes")),
         },
         "durability": {
             "integrityStatus": _status(durability.get("integrityStatus")),
