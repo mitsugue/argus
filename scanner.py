@@ -48678,6 +48678,8 @@ def _jsf_balance_table():
             _jsf_daily_retain(table, dt, kinds)
         except Exception as exc:                       # keeping history never blocks the reading
             _JSF_DAILY_STATUS.update(status="FAILED", errorClass=type(exc).__name__)
+        if _JSF_DAILY_STATUS.get("status") == "MEMBERS_PENDING":
+            _JSF_CACHE["expires"] = min(_JSF_CACHE["expires"], now + 600)   # read again before the day passes
     return table, dt
 
 
@@ -48719,9 +48721,15 @@ def _jsf_daily_retain(table, date_text, kinds=()):
     if not _cost_policy_durable_enabled():
         _JSF_DAILY_STATUS.update(status="NOT_DURABLE")
         return
+    members = _nikkei225_members_on(_jsf_iso(date_text))
+    if not members:
+        # Right after a deploy the member list is not restored yet: the day
+        # is kept on a later read of the table, never without its members.
+        _JSF_DAILY_STATUS.update(status="MEMBERS_PENDING", pendingDate=_jsf_iso(date_text))
+        return
     now_iso = _ai_now_iso()
     path = os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3")
-    row = _jsf_daily_row(table, date_text, kinds, now_iso, _nikkei225_members_on(_jsf_iso(date_text)))
+    row = _jsf_daily_row(table, date_text, kinds, now_iso, members)
     first = _jsf_daily_first_seen(path, row)
     if first:
         row["availableFrom"] = first    # the same figures re-read: keep the first receipt

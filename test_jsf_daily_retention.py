@@ -41,3 +41,28 @@ def test_each_day_is_kept_once_and_a_revision_is_added(tmp_path, monkeypatch):
 
 def test_the_series_is_a_known_kept_source():
     assert "jsf_daily" in sources.STABLE_FEATURE_SOURCES
+
+
+def test_nothing_is_kept_before_the_member_list_is_restored(tmp_path, monkeypatch):
+    monkeypatch.setattr(scanner, "_cost_policy_durable_enabled", lambda: True)
+    monkeypatch.setitem(scanner._DURABILITY_PATHS, "root", str(tmp_path))
+    monkeypatch.setattr(scanner, "_nikkei225_members_on", lambda day: set())
+    scanner._jsf_daily_retain(table(), "2026/10/19", {"速報"})
+    assert not (tmp_path / "jp_market_source_history.sqlite3").exists()
+    assert scanner._JSF_DAILY_STATUS["status"] == "MEMBERS_PENDING"
+
+
+def test_a_pending_day_is_read_again_soon(monkeypatch):
+    class Response:
+        status_code = 200
+        content = ("申込日,決済日,銘柄コード,銘柄名,取引所,区分,速報確報,融資新規,融資返済,融資残高,"
+                   "貸株新規,貸株返済,貸株残高,差引残高\n"
+                   "2026/10/19,2026/10/21,7203,トヨタ,東証,制度,確報,10,5,1000,3,1,400,600\n").encode("cp932")
+    monkeypatch.setattr(scanner.requests, "get", lambda *a, **k: Response())
+    monkeypatch.setattr(scanner, "_jsf_daily_retain",
+                        lambda *a, **k: scanner._JSF_DAILY_STATUS.update(status="MEMBERS_PENDING"))
+    monkeypatch.setattr(scanner, "_JSF_CACHE", {"table": None, "date": None, "expires": 0.0})
+    monkeypatch.setattr(scanner.time, "time", lambda: 1000.0)
+    table, day = scanner._jsf_balance_table()
+    assert table["7203"]["loan"] == 1000 and day == "2026/10/19"
+    assert scanner._JSF_CACHE["expires"] == 1000.0 + 600      # not the six hours of a kept day
