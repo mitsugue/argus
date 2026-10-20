@@ -686,6 +686,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_storage_attribution.py",
+    "argus_storage_attribution.py",
     "test_storage_failure_diagnostics.py",
     "test_argus_level_map_acquisition.py",
     "docs/operations/level-map-input-diagnostics.md",
