@@ -17084,6 +17084,9 @@ def _market_brief_history_sync():
                                                 v2="READ_ONLY_V3_MIGRATING")
             return
         if v3_complete:
+            # 2026-10-20 (owner): with every local edition verified in the
+            # remote v3 copy, the local file moves to its kept-once form.
+            _analysis_history_form_step(path)
             _MARKET_BRIEF_HISTORY_REMOTE.update(status="VERIFIED", formatVersion=3,
                                                 counts={k: v3["counts"][k] for k in ("views", "outcomes")},
                                                 latestRecordId=v3.get("latestRecordId"),
@@ -17103,6 +17106,38 @@ def _market_brief_history_sync():
         _MARKET_BRIEF_HISTORY_REMOTE.update(status="FAILED", errorClass=type(exc).__name__)
     finally:
         _MARKET_BRIEF_HISTORY_SYNC_LOCK.release()
+
+
+# 2026-10-20 (owner decision, 設計_分析履歴の手元の保存の形): the local history
+# keeps each edition's calculation parts once. Up to 48 editions a round, only
+# after the remote v3 copy holds every local edition; each edition is replaced
+# only when its rebuild matches its original byte for byte. Once all are
+# converted, every edition is checked once and the freed pages are returned.
+_ANALYSIS_HISTORY_FORM = {"status": "NOT_RUN"}
+ANALYSIS_HISTORY_COMPACT_MIN_FREE_BYTES = 32 * 1024 * 1024
+
+
+def _analysis_history_form_step(path):
+    try:
+        batch = argus_analysis_history.migrate_to_parts(path, now_iso=_ai_now_iso(), limit=48)
+        status = argus_analysis_history.form_status(path)
+        update = {"status": "CONVERTING" if status["remaining"] else "CONVERTED",
+                  "lastAt": _ai_now_iso(), "lastBatch": {k: batch[k] for k in
+                  ("migrated", "unchanged", "partsAdded", "partBytesAdded")},
+                  "failureCount": int(_ANALYSIS_HISTORY_FORM.get("failureCount") or 0) + len(batch["failures"]),
+                  "lastFailureReasons": [f["reason"] for f in batch["failures"]][:5], **status,
+                  "errorClass": None}
+        if not status["remaining"] and not batch["failures"]:
+            if not _ANALYSIS_HISTORY_FORM.get("verifiedAll"):
+                check = argus_analysis_history.verify_all_bodies(path)
+                update["verifiedAll"] = check if not check["mismatches"] else None
+                update["verifyResult"] = check
+            if (update.get("verifiedAll") or _ANALYSIS_HISTORY_FORM.get("verifiedAll")) and \
+                    argus_analysis_history.free_page_bytes(path) >= ANALYSIS_HISTORY_COMPACT_MIN_FREE_BYTES:
+                update["compact"] = {**argus_analysis_history.compact_file(path), "at": _ai_now_iso()}
+        _ANALYSIS_HISTORY_FORM.update(update)
+    except Exception as exc:
+        _ANALYSIS_HISTORY_FORM.update(status="FAILED", errorClass=type(exc).__name__, lastAt=_ai_now_iso())
 
 
 def _analysis_history_backup_tick():
@@ -34311,6 +34346,7 @@ def api_argus_admin_memory_attribution():
     payload["checkpointPersist"] = _diagnostic_counters_copy(_CHECKPOINT_PERSIST_STATS)
     payload["briefSchedule"] = copy.deepcopy(_MARKET_BRIEF_SCHEDULE)
     payload["financialVerify"] = dict(_JP_FINANCIAL_VERIFY)
+    payload["analysisHistoryForm"] = copy.deepcopy(_ANALYSIS_HISTORY_FORM)
     payload["materialReactionResearch"] = _material_research_diagnostics()
     with _INTEL_COLLECT_LOCK:
         payload["intelCollect"] = {"lastFinishedAt": _INTEL_COLLECT_LAST.get("finishedAt"),

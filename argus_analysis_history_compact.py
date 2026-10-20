@@ -114,7 +114,8 @@ def _snapshot(path, directory, *, check_deadline=lambda: None, prefixes=None):
     try:
         conn.execute('BEGIN')
         for table, validator in (('views', history.validate_record), ('outcomes', legacy._outcome)):
-            cursor = conn.execute(f'SELECT body FROM {table} ORDER BY sequence')
+            key = 'record_id' if table == 'views' else 'result_id'
+            cursor = conn.execute(f'SELECT {key}, body FROM {table} ORDER BY sequence')
             # Group boundaries stay at GROUP_RECORDS so completed groups keep
             # their content addresses; only one record body is alive at a time
             # (batching a whole group held thirty-two multi-megabyte bodies).
@@ -125,7 +126,9 @@ def _snapshot(path, directory, *, check_deadline=lambda: None, prefixes=None):
                     if row is None:
                         return
                     count += 1
-                    yield row[0]
+                    # 2026-10-20: a converted view is rebuilt to its original body.
+                    yield (history.local_form.full_body(conn, row[0], row[1])
+                           if table == 'views' else row[1])
             while True:
                 group_rows = next_group()
                 first = next(group_rows, None)
