@@ -91,7 +91,7 @@ def build_source_registry() -> Dict[str, Any]:
         ("TSE (TDnet)", "tdnet", "exchange", "live", "J-Quants TDnet Add-on(公式適時開示)"),
         ("FSA Japan", None, "government", "disabled", "未構成"),
         ("Ministry of Finance Japan", None, "government", "disabled", "未構成(介入は報道メタデータで検知)"),
-        ("METI", "meti_official", "government", "live", "公式RSS"),
+        ("METI", "meti_official", "government", "disabled", "外した(本番の場所から取得を拒否される・2026-10-20)"),
     ]
     return {
         "schemaVersion": "institutional-source-registry-v1",

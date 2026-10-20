@@ -6999,7 +6999,9 @@ _INTEL_FEEDS = [
     # integrated as official catalyst); TDnet/株探/みんかぶ/FISCO have no free public RSS
     # (HTML/403) so they stay out of the allow-list. Official feeds remain active:
     ("boj_official",         "boj:whatsnew",     "https://www.boj.or.jp/rss/whatsnew.xml", "rss"),           # 日銀 公表資料
-    ("meti_official",        "meti:release",     "https://www.meti.go.jp/ml_index_release_atom.xml", "rss"), # 経産省 (Atom — _parse_rss handles <entry>)
+    # 2026-10-20 (owner decision): the METI feed is removed. It answered HTTP 403
+    # to the production host in every collection (0.1 s) while the same request
+    # from Japan returned the feed: the source refuses the hosting location.
     # The two third-party Japanese wire feeds return 403. Do not retry or bypass them.
     # V11.5.3 watchtower coverage: NHK 経済 (JP professional media) + crypto specialist
     # media (Core Portfolio CRYPTO_BTC_ETH had no news source). Public RSS, metadata only.
