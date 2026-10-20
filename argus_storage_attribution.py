@@ -3,7 +3,9 @@
 The start of 2026-10-20 stopped because free space fell below what the
 storage check requires, and the free space fell by about 44 MiB a day after
 2026-10-11. This walks the persistent root once with lstat only: no file is
-opened, read, written, moved or deleted, and no file name leaves the module.
+opened, read, written, moved or deleted, and no file name leaves the module
+(only name shapes: digests and digits replaced, 2026-10-20 owner request to
+locate the unexplained share).
 Groups follow the 2026-10-11 stat-only attribution; files that match none of
 them are further split by their top-level directory and their kind (the file
 extension), so the unexplained share can be located.
@@ -23,6 +25,7 @@ MAX_SECONDS = 5.0
 TOP = 30
 _KIND_RE = re.compile(r'^[a-z0-9]{1,12}$')
 _DIR_RE = re.compile(r'^[A-Za-z0-9_.-]{1,64}$')
+_SHAPE_SAFE = re.compile(r'[^A-Za-z0-9_.-]')
 
 
 def _group(path: str, name: str, root: str, checkpoint: str, wal: str) -> str:
@@ -61,6 +64,17 @@ def _kind(name: str) -> str:
     return ext if _KIND_RE.fullmatch(ext) else 'otherExtension'
 
 
+def _shape(name: str) -> str:
+    """The name's shape: runs of 8+ hex characters become H, digits become 9.
+
+    Application-generated names only differ by stamps and digests, so files of
+    one kind collapse into one shape; nothing else of the name is kept."""
+    shape = re.sub(r'[0-9a-fA-F]{8,}', 'H', name)
+    shape = re.sub(r'[0-9]+', '9', shape)
+    shape = _SHAPE_SAFE.sub('?', shape)
+    return shape[:60] or '(empty)'
+
+
 def _top_directory(path: str, root: str) -> str:
     parts = os.path.relpath(path, root).split(os.sep)
     if len(parts) == 1:
@@ -91,6 +105,7 @@ def attribute(root: str, *, checkpoint: str, wal: str, now=time.monotonic,
     groups: Dict[str, Dict[str, int]] = {}
     other_dirs: Dict[str, Dict[str, int]] = {}
     other_kinds: Dict[str, Dict[str, int]] = {}
+    other_shapes: Dict[str, Dict[str, int]] = {}
     all_dirs: Dict[str, Dict[str, int]] = {}
     visited = errors = links = 0
     stopped = False
@@ -127,6 +142,7 @@ def attribute(root: str, *, checkpoint: str, wal: str, now=time.monotonic,
         if group == 'otherFiles':
             _add(other_dirs, top_dir, st)
             _add(other_kinds, _kind(name), st)
+            _add(other_shapes, _top_directory(path, root) + '/' + _shape(name), st)
     try:
         vfs = statvfs(root)
         available: Optional[int] = int(vfs.f_bavail * vfs.f_frsize)
@@ -138,5 +154,7 @@ def attribute(root: str, *, checkpoint: str, wal: str, now=time.monotonic,
             'symlinksSkipped': links, 'availableBytes': available, 'totalBytes': total,
             'groups': dict(sorted(groups.items())), 'byTopDirectory': _top(all_dirs),
             'otherFilesByTopDirectory': _top(other_dirs), 'otherFilesByKind': _top(other_kinds),
+            'otherFilesByShape': _top(other_shapes),
             'elapsedSeconds': round(now() - started, 3), 'fileNamesOutput': False,
+            'fileNameShapesOnly': True,
             'bodyReads': 0, 'writes': 0, 'deletions': 0}
