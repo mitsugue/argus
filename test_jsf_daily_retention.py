@@ -66,3 +66,16 @@ def test_a_pending_day_is_read_again_soon(monkeypatch):
     table, day = scanner._jsf_balance_table()
     assert table["7203"]["loan"] == 1000 and day == "2026/10/19"
     assert scanner._JSF_CACHE["expires"] == 1000.0 + 600      # not the six hours of a kept day
+
+
+def test_the_saved_member_list_is_read_when_the_index_warm_has_not_run(tmp_path, monkeypatch):
+    saved = {"schemaVersion": scanner.argus_index_valuation_proxy.SCHEMA, "weightsAsOf": "2026-08-31",
+             "factors": {"factors": {"7203": "1", "9984": "1"}}}
+    path = tmp_path / "proxy.json"
+    path.write_text(json.dumps(saved), encoding="utf-8")
+    monkeypatch.setattr(scanner, "_jp_index_proxy_path", lambda: str(path))
+    monkeypatch.setattr(scanner, "_nikkei225_constituent_changes", lambda: {})
+    monkeypatch.setattr(scanner, "_JP_INDEX_PROXY", {**scanner._JP_INDEX_PROXY, "factors": None,
+                                                    "restoreAttempted": False, "weightsAsOf": None})
+    assert scanner._nikkei225_members_on("2026-10-19") == {"7203", "9984"}
+    assert scanner._JP_INDEX_PROXY["restoreAttempted"] is True
