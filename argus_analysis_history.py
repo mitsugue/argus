@@ -14,6 +14,7 @@ import tempfile
 from datetime import datetime
 
 from argus_product_naming import require_allowed
+import argus_analysis_history_local as local_form
 
 SCHEMA = 'argus-market-analysis-record-v1'
 MAX_RECORD_BYTES = 2 * 1024 * 1024
@@ -78,7 +79,10 @@ def _connect(path, readonly=False):
         raise ValueError('analysis_history_regular_file_required')
     conn = sqlite3.connect(path.resolve().as_uri() + ('?mode=ro' if readonly else '?mode=rw'),
                            uri=True, timeout=15, isolation_level=None)
-    if conn.execute('PRAGMA user_version').fetchone()[0] != 1:
+    # 1 = every body is the full record; 2 = some bodies are skeletons whose
+    # calculation parts live in view_parts (2026-10-20). An older build only
+    # accepts 1, so it refuses a converted file instead of misreading it.
+    if conn.execute('PRAGMA user_version').fetchone()[0] not in (1, local_form.FORM_SCHEMA_VERSION):
         conn.close(); raise ValueError('analysis_history_schema_invalid')
     if not readonly:
         conn.execute('PRAGMA synchronous=FULL')
@@ -118,7 +122,8 @@ def append(path, record):
     try:
         conn.execute('BEGIN IMMEDIATE')
         existing = conn.execute('SELECT body FROM views WHERE record_id=?', (record['recordId'],)).fetchone()
-        if existing and existing[0] != body: raise ValueError('conflicting_analysis_record_id')
+        if existing and local_form.full_body(conn, record['recordId'], existing[0]) != body:
+            raise ValueError('conflicting_analysis_record_id')
         if not existing:
             conn.execute('INSERT INTO views(record_id,recorded_at,body) VALUES(?,?,?)',
                          (record['recordId'], record['recordedAt'], body))
@@ -140,7 +145,7 @@ def read_record(path, record_id=None, *, presentation_only=False):
                    + ("WHERE json_extract(body,'$.brief.presentationStatus')='GENERATED' " if presentation_only else '')
                    + 'ORDER BY julianday(recorded_at) DESC,sequence DESC LIMIT 1').fetchone())
         if not row: return None
-        record = validate_record(json.loads(row[1]))
+        record = validate_record(json.loads(local_form.full_body(conn, row[0], row[1])))
         if record['recordId'] != row[0]: raise ValueError('analysis_index_integrity_mismatch')
         return record
     finally: conn.close()
@@ -287,7 +292,7 @@ def read_page(path, *, before_sequence=None, limit=20):
                             (before_sequence if before_sequence is not None else 9223372036854775807, limit + 1)).fetchall()
         entries = []
         for seq, identity, body in rows[:limit]:
-            record = validate_record(json.loads(body))
+            record = validate_record(json.loads(local_form.full_body(conn, identity, body)))
             if record['recordId'] != identity: raise ValueError('analysis_index_integrity_mismatch')
             entries.append({'sequence': seq, 'recordId': identity, 'recordedAt': record['recordedAt'],
                 'inputSnapshotDigest': record['inputSnapshotDigest'],
@@ -701,4 +706,158 @@ def read_future_map_state(path):
             if outcome['recordId'] not in ids:
                 raise ValueError('future_map_outcome_registration_missing')
         return {'versions': versions, 'outcomes': outcomes}
+    finally: conn.close()
+
+
+# ── Local form (2026-10-20 owner decision) ──────────────────────────────────
+FORM_BATCH_LIMIT = 48
+
+
+def read_full_body(path, table, column, identity):
+    """One short read of one row's original body (views rebuilt from parts)."""
+    if table not in ('views', 'outcomes') or column not in ('record_id', 'result_id'):
+        raise ValueError('analysis_history_table_invalid')
+    conn = _connect(path, True)
+    try:
+        rows = conn.execute(f'SELECT body FROM {table} WHERE {column}=?', (identity,)).fetchall()
+        if len(rows) != 1:
+            return None
+        return local_form.full_body(conn, identity, rows[0][0]) if table == 'views' else rows[0][0]
+    finally: conn.close()
+
+
+def form_status(path):
+    """Counts and bytes of both forms; reads no record body."""
+    conn = _connect(path, True)
+    try:
+        views = conn.execute('SELECT COUNT(*) FROM views').fetchone()[0]
+        out = {'views': int(views), 'migrated': 0, 'remaining': int(views), 'partCount': 0,
+               'partStoredBytes': 0, 'fullBytesMigrated': 0, 'skeletonBytes': 0,
+               'userVersion': conn.execute('PRAGMA user_version').fetchone()[0]}
+        if local_form.tables_present(conn):
+            migrated, full_bytes, skeleton_bytes = conn.execute(
+                'SELECT COUNT(*), COALESCE(SUM(full_bytes),0), COALESCE(SUM(skeleton_bytes),0) FROM form_migrations').fetchone()
+            parts, stored = conn.execute('SELECT COUNT(*), COALESCE(SUM(length(body)),0) FROM view_parts').fetchone()
+            out.update(migrated=int(migrated), remaining=int(views) - int(migrated), partCount=int(parts),
+                       partStoredBytes=int(stored), fullBytesMigrated=int(full_bytes),
+                       skeletonBytes=int(skeleton_bytes))
+        return out
+    finally: conn.close()
+
+
+def migrate_to_parts(path, *, now_iso, limit=FORM_BATCH_LIMIT):
+    """Move up to `limit` full rows into the local form, one short transaction each.
+
+    A row is replaced only after its skeleton and stored parts rebuild the
+    original body byte for byte; otherwise it stays full and is reported."""
+    if type(limit) is not int or not 1 <= limit <= 500:
+        raise ValueError('analysis_history_form_limit')
+    conn = _connect(path)
+    result = {'migrated': 0, 'unchanged': 0, 'partsAdded': 0, 'partBytesAdded': 0, 'failures': []}
+    try:
+        if not local_form.tables_present(conn):
+            conn.executescript('BEGIN IMMEDIATE;' + local_form.TABLES + 'COMMIT;')
+        ids = [r[0] for r in conn.execute(
+            'SELECT record_id FROM views WHERE record_id NOT IN (SELECT record_id FROM form_migrations) '
+            'ORDER BY sequence LIMIT ?', (limit,))]
+        for record_id in ids:
+            conn.execute('BEGIN IMMEDIATE')
+            try:
+                row = conn.execute('SELECT body FROM views WHERE record_id=?', (record_id,)).fetchone()
+                done = conn.execute('SELECT 1 FROM form_migrations WHERE record_id=?', (record_id,)).fetchone()
+                if not row or done:
+                    conn.execute('COMMIT'); continue
+                body = row[0]
+                record = validate_record(json.loads(body))
+                if _json(record) != body:
+                    raise ValueError('analysis_history_body_not_canonical')
+                skeleton, parts = local_form.split(record)
+                if not parts:
+                    result['unchanged'] += 1
+                for identity, raw in sorted(parts.items()):
+                    added = local_form.store_part(conn, identity, raw)
+                    if added:
+                        result['partsAdded'] += 1; result['partBytesAdded'] += added
+                skeleton_body = local_form.canonical(skeleton)
+                rebuilt = local_form.canonical(local_form.assemble(
+                    json.loads(skeleton_body), lambda identity: local_form.read_part(conn, identity)))
+                if rebuilt != body:
+                    raise ValueError('analysis_history_rebuild_mismatch')
+                encoded = body.encode()
+                conn.execute('INSERT INTO form_migrations(record_id,full_sha256,full_bytes,skeleton_bytes,migrated_at) '
+                             'VALUES(?,?,?,?,?)', (record_id, local_form.digest(encoded), len(encoded),
+                                                   len(skeleton_body.encode()), now_iso))
+                updated = conn.execute('UPDATE views SET body=? WHERE record_id=? AND body=?',
+                                       (skeleton_body, record_id, body)).rowcount
+                if updated != 1:
+                    raise ValueError('analysis_history_row_changed')
+                if conn.execute('PRAGMA user_version').fetchone()[0] != local_form.FORM_SCHEMA_VERSION:
+                    conn.execute(f'PRAGMA user_version={local_form.FORM_SCHEMA_VERSION}')
+                conn.execute('COMMIT')
+                result['migrated'] += 1
+            except Exception as exc:
+                if conn.in_transaction: conn.execute('ROLLBACK')
+                result['failures'].append({'recordId': record_id, 'reason': str(exc)[:80]})
+        return result
+    finally: conn.close()
+
+
+def restore_full_bodies(path, *, limit=FORM_BATCH_LIMIT):
+    """Write rebuilt original bodies back (the way back); verified by the recorded SHA-256."""
+    conn = _connect(path)
+    restored = 0
+    try:
+        if not local_form.tables_present(conn):
+            return {'restored': 0, 'remaining': 0}
+        ids = [r[0] for r in conn.execute('SELECT record_id FROM form_migrations LIMIT ?', (limit,))]
+        for record_id in ids:
+            conn.execute('BEGIN IMMEDIATE')
+            try:
+                body = conn.execute('SELECT body FROM views WHERE record_id=?', (record_id,)).fetchone()[0]
+                full = local_form.full_body(conn, record_id, body)
+                conn.execute('UPDATE views SET body=? WHERE record_id=? AND body=?', (full, record_id, body))
+                conn.execute('DELETE FROM form_migrations WHERE record_id=?', (record_id,))
+                if not conn.execute('SELECT COUNT(*) FROM form_migrations').fetchone()[0]:
+                    conn.execute('PRAGMA user_version=1')
+                conn.execute('COMMIT')
+                restored += 1
+            except Exception:
+                if conn.in_transaction: conn.execute('ROLLBACK')
+                raise
+        remaining = conn.execute('SELECT COUNT(*) FROM form_migrations').fetchone()[0]
+        return {'restored': restored, 'remaining': int(remaining)}
+    finally: conn.close()
+
+
+def verify_all_bodies(path):
+    """Rebuild every converted row and check it against its recorded SHA-256."""
+    conn = _connect(path, True)
+    try:
+        if not local_form.tables_present(conn):
+            return {'checked': 0, 'mismatches': 0}
+        ids = [r[0] for r in conn.execute('SELECT record_id FROM form_migrations ORDER BY record_id')]
+    finally: conn.close()
+    mismatches = 0
+    for record_id in ids:
+        try:
+            read_full_body(path, 'views', 'record_id', record_id)
+        except ValueError:
+            mismatches += 1
+    return {'checked': len(ids), 'mismatches': mismatches}
+
+
+def free_page_bytes(path):
+    conn = _connect(path, True)
+    try:
+        return int(conn.execute('PRAGMA freelist_count').fetchone()[0]) * int(conn.execute('PRAGMA page_size').fetchone()[0])
+    finally: conn.close()
+
+
+def compact_file(path):
+    """Return freed pages to the filesystem once every row is converted (VACUUM)."""
+    conn = _connect(path)
+    try:
+        before = Path(path).stat().st_size
+        conn.execute('VACUUM')
+        return {'beforeBytes': before, 'afterBytes': Path(path).stat().st_size}
     finally: conn.close()

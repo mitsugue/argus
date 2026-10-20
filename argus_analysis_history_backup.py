@@ -60,7 +60,11 @@ def _snapshot(path, directory):
         with archive.open('wb') as out:
             out.write(encode({'schemaVersion': SCHEMA}) + b'\n')
             for kind, table, validator in (('view', 'views', history.validate_record), ('outcome', 'outcomes', _outcome)):
-                for (raw,) in conn.execute(f'SELECT body FROM {table} ORDER BY sequence'):
+                key = 'record_id' if table == 'views' else 'result_id'
+                for identity, raw in conn.execute(f'SELECT {key}, body FROM {table} ORDER BY sequence'):
+                    # 2026-10-20: a converted view is rebuilt to its original body.
+                    if table == 'views':
+                        raw = history.local_form.full_body(conn, identity, raw)
                     value = validator(json.loads(raw))
                     out.write(encode({'kind': kind, 'value': value}) + b'\n')
                     if out.tell() > MAX_ARCHIVE_BYTES: raise ValueError('history_archive_bound_exceeded')
@@ -166,8 +170,14 @@ def _merge_validated(path, staging):
         conn.execute('BEGIN IMMEDIATE')
         for table, column in (('views', 'record_id'), ('outcomes', 'result_id')):
             # Never replace a local immutable ID with a different remote body.
-            conflicts = conn.execute(f'SELECT a.body,b.body FROM main.{table} a JOIN recovered.{table} b ON a.{column}=b.{column} WHERE a.body<>b.body').fetchall()
-            if table == 'views' and conflicts: raise ValueError('history_recovery_identity_conflict')
+            conflicts = conn.execute(f'SELECT a.{column},a.body,b.body FROM main.{table} a JOIN recovered.{table} b ON a.{column}=b.{column} WHERE a.body<>b.body').fetchall()
+            if table == 'views':
+                # 2026-10-20: a converted local row holds a skeleton; compare its
+                # rebuilt original body (checked against its recorded SHA-256).
+                if any(history.local_form.full_body(conn, identity, a) != b for identity, a, b in conflicts):
+                    raise ValueError('history_recovery_identity_conflict')
+                conflicts = []
+            conflicts = [(a, b) for _, a, b in conflicts]
             for a,b in conflicts:
                 left,right = _outcome(json.loads(a)),_outcome(json.loads(b))
                 if {k:v for k,v in left.items() if k not in ('receivedAt','resultDigest')} != {k:v for k,v in right.items() if k not in ('receivedAt','resultDigest')}:
