@@ -57,8 +57,10 @@ def test_feed_allowlist_is_valid_and_no_dead_reuters():
     sources = {e[0] for e in scanner._INTEL_FEEDS}
     assert {"bloomberg_public", "nikkei_web", "cnbc_public", "marketwatch_public",
             "nasdaq_public", "yahoo_finance_public", "federal_reserve", "sec_press"} <= sources
-    assert {"meti_official", "boj_official"} <= sources
-    assert not ({"bloomberg_jp", "reuters_jp"} & sources)
+    assert {"boj_official"} <= sources
+    # 2026-10-20: METI refused the production host (HTTP 403); removed by owner decision.
+    assert not ({"bloomberg_jp", "reuters_jp", "meti_official"} & sources)
+    assert "meti_official" in M.SOURCE_RIGHTS          # stored items keep their source identity
     # Disabling failed acquisition must not delete source identity for stored news.
     assert {"bloomberg_jp", "reuters_jp"} <= M.SOURCE_RIGHTS.keys()
 
