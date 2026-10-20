@@ -34314,6 +34314,13 @@ def api_argus_admin_memory_attribution():
         import argus_market_input_backup
         payload["marketInputBackup"] = argus_market_input_backup.status_projection(
             _JP_INPUT_BACKUP_STATUS, worker_active=_JP_INPUT_BACKUP_LOCK.locked())
+    # 2026-10-20 (owner): what occupies the persistent disk, stat-only (no
+    # file is opened or changed and no file name is returned).
+    if str(request.args.get("storage-groups") or "") == "1":
+        import argus_storage_attribution
+        payload["storageAttribution"] = argus_storage_attribution.attribute(
+            _DURABILITY_PATHS["root"], checkpoint=_DURABILITY_PATHS.get("checkpoint") or "",
+            wal=_DURABILITY_PATHS.get("wal") or "")
     if str(request.args.get("level-map-inputs") or "") == "1":
         import argus_level_map_acquisition
         payload["levelMapInputs"] = argus_level_map_acquisition.projection(
