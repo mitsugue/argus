@@ -3821,7 +3821,7 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
         if not _TWELVEDATA_API_KEY:
             return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
         try:
-            r = requests.get(_TWELVEDATA_QUOTE,
+            r = _td_get("quote", _TWELVEDATA_QUOTE,
                              params={"symbol": ",".join(syms), "apikey": _TWELVEDATA_API_KEY},
                              timeout=10)
             r.raise_for_status()
@@ -3876,7 +3876,7 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
         _TD_WARM_STATE["requestsToday"] = int(_TD_WARM_STATE.get("requestsToday") or 0) + 1
     try:
         symbols_q = ",".join(s["symbol"] for s in _US_WATCHLIST)
-        r = requests.get(_TWELVEDATA_QUOTE,
+        r = _td_get("quote", _TWELVEDATA_QUOTE,
                          params={"symbol": symbols_q, "apikey": _TWELVEDATA_API_KEY},
                          timeout=10)
         r.raise_for_status()
@@ -4130,7 +4130,7 @@ def _td_warm_fetch(batch):
     """ONE /quote request for a batch (one credit per symbol). Returns
     (rows, ok, rate_limited, error_class). Never raises."""
     try:
-        r = requests.get(_TWELVEDATA_QUOTE,
+        r = _td_get("quote", _TWELVEDATA_QUOTE,
                          params={"symbol": ",".join(batch), "apikey": _TWELVEDATA_API_KEY},
                          timeout=10)
         if r.status_code == 429:
@@ -4224,12 +4224,89 @@ def _td_warm_diagnostics():
         reserve=_TD_DAILY_RESERVE, fit=fit or None)
 
 
+# 2026-10-21 (owner: measure the daily use): every Twelve Data call goes through
+# this one wrapper, which counts calls and credits (one per symbol) per UTC day
+# (the provider's day) in a small file on the persistent disk, so a restart no
+# longer resets the measurement. The request itself is unchanged.
+_TD_USAGE = {"days": None, "lastSaveError": None}
+_TD_USAGE_LOCK = threading.Lock()
+_TD_USAGE_KEEP_DAYS = 35
+
+
+def _td_usage_path():
+    return (os.path.join(_DURABILITY_PATHS["root"], "twelvedata_usage.json")
+            if _cost_policy_durable_enabled() else None)
+
+
+def _td_usage_days():
+    if _TD_USAGE["days"] is None:
+        days = {}
+        path = _td_usage_path()
+        if path and os.path.isfile(path) and not os.path.islink(path):
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    value = json.loads(handle.read(512 * 1024))
+                if isinstance(value, dict) and isinstance(value.get("days"), dict):
+                    days = {k: v for k, v in value["days"].items()
+                            if isinstance(k, str) and len(k) == 10 and isinstance(v, dict)}
+            except (OSError, ValueError):
+                days = {}
+        _TD_USAGE["days"] = days
+    return _TD_USAGE["days"]
+
+
+def _td_note_usage(kind, credits, status_code, now_utc=None):
+    day = (now_utc or datetime.now(pytz.utc)).strftime("%Y-%m-%d")
+    with _TD_USAGE_LOCK:
+        days = _td_usage_days()
+        row = days.setdefault(day, {"calls": 0, "credits": 0, "errors": 0, "byKind": {}})
+        row["calls"] += 1
+        row["credits"] += int(credits)
+        if status_code is None or int(status_code) >= 400:
+            row["errors"] += 1
+        kind_row = row["byKind"].setdefault(str(kind)[:32], {"calls": 0, "credits": 0})
+        kind_row["calls"] += 1
+        kind_row["credits"] += int(credits)
+        for old in sorted(days)[:-_TD_USAGE_KEEP_DAYS]:
+            days.pop(old, None)
+        path = _td_usage_path()
+        if path:
+            try:
+                argus_persistent_storage.atomic_write_json(
+                    path, {"schemaVersion": "twelvedata-usage-v1", "days": days}, maximum_bytes=512 * 1024)
+                _TD_USAGE["lastSaveError"] = None
+            except Exception as exc:
+                _TD_USAGE["lastSaveError"] = type(exc).__name__
+
+
+def _td_get(kind, url, **kwargs):
+    params = kwargs.get("params") or {}
+    symbols = [s for s in str(params.get("symbol") or "").split(",") if s.strip()]
+    credits = max(1, len(symbols))
+    response = None
+    try:
+        response = requests.get(url, **kwargs)
+        return response
+    finally:
+        try:
+            _td_note_usage(kind, credits, getattr(response, "status_code", None))
+        except Exception:
+            pass
+
+
 @app.route("/api/argus/twelvedata-budget")
 def api_argus_twelvedata_budget():
     """Truthful provider budget status: plan (never impersonated), request batch
     cap vs authorized universe cap, daily budget, estimated/actual usage and
     headroom. Counts only — the owner's symbols are never listed here."""
-    return jsonify(_td_warm_diagnostics())
+    body = _td_warm_diagnostics()
+    # 2026-10-21: the measured use per UTC day, kept across restarts (counts only).
+    with _TD_USAGE_LOCK:
+        days = copy.deepcopy(_td_usage_days())
+    body["measuredDaily"] = {"basis": "every_call_one_credit_per_symbol_utc_day",
+                             "days": dict(sorted(days.items())[-14:]),
+                             "lastSaveError": _TD_USAGE.get("lastSaveError")}
+    return jsonify(body)
 
 
 def get_us_watchlist_snapshot(symbols=None, allow_provider_fetch=True):
@@ -11434,7 +11511,7 @@ def _td_timeseries(symbols):
     if not _TWELVEDATA_API_KEY:
         return dict(usable_prev)
     try:
-        r = requests.get(_TWELVEDATA_TS, params={
+        r = _td_get("time_series", _TWELVEDATA_TS, params={
             "symbol": ",".join(symbols), "interval": "1day",
             "outputsize": 22, "apikey": _TWELVEDATA_API_KEY,
         }, timeout=15)
@@ -11536,7 +11613,7 @@ def _td_price_history(sym):
     data = None
     if _TWELVEDATA_API_KEY:
         try:
-            r = requests.get(_TWELVEDATA_TS, params={
+            r = _td_get("time_series", _TWELVEDATA_TS, params={
                 # v13.5.14: ten-year corpus (≈252 sessions × 10) for the
                 # JP_MARKET_ENGINE-conditioned forecast engine.
                 "symbol": sym, "interval": "1day", "outputsize": 2520,
@@ -38306,7 +38383,7 @@ def _asset_chart_provider_history(symbol, market):
         else:
             if not _TWELVEDATA_API_KEY:
                 raise RuntimeError("twelvedata_not_configured")
-            response = requests.get(
+            response = _td_get("time_series", 
                 _TWELVEDATA_TS,
                 params={
                     "symbol": symbol,
@@ -47638,13 +47715,13 @@ def _provider_diagnostics():
         return r.status_code, len((r.json() or {}).get("results", []) if r.status_code == 200 else [])
 
     def _td_quote():
-        r = requests.get(_TWELVEDATA_QUOTE, params={"symbol": "AAPL", "apikey": _TWELVEDATA_API_KEY},
+        r = _td_get("quote", _TWELVEDATA_QUOTE, params={"symbol": "AAPL", "apikey": _TWELVEDATA_API_KEY},
                          timeout=_DIAG_TIMEOUT)
         j = r.json() if r.status_code == 200 else {}
         return r.status_code, (1 if isinstance(j, dict) and j.get("symbol") else 0)
 
     def _td_ts():
-        r = requests.get("https://api.twelvedata.com/time_series",
+        r = _td_get("time_series", "https://api.twelvedata.com/time_series",
                          params={"symbol": "SPY", "interval": "5min", "outputsize": 1,
                                  "apikey": _TWELVEDATA_API_KEY}, timeout=_DIAG_TIMEOUT)
         j = r.json() if r.status_code == 200 else {}
@@ -47667,7 +47744,7 @@ def _provider_diagnostics():
     # endpoint, so only a body with the field counts).
     def _td_analysis(endpoint, field, params):
         def probe():
-            r = requests.get(f"https://api.twelvedata.com/{endpoint}",
+            r = _td_get(endpoint, f"https://api.twelvedata.com/{endpoint}",
                              params={**params, "apikey": _TWELVEDATA_API_KEY}, timeout=_DIAG_TIMEOUT)
             j = r.json() if r.status_code == 200 else {}
             if isinstance(j, dict) and j.get("status") == "error":
@@ -47875,7 +47952,7 @@ def _vwap_probe():
         else:
             syms = sorted({str(x["symbol"]).upper() for x in _US_WATCHLIST})[:_TD_VWAP_MAX]
             if syms:
-                r = requests.get(_TWELVEDATA_TS, params={
+                r = _td_get("time_series", _TWELVEDATA_TS, params={
                     "symbol": ",".join(syms), "interval": "5min", "outputsize": 96,
                     "apikey": _TWELVEDATA_API_KEY}, timeout=15)
                 body = r.json() if r.ok else {}
@@ -51677,7 +51754,7 @@ def _search_us(q):
     if not _TWELVEDATA_API_KEY:
         return [], "unavailable"
     try:
-        r = requests.get("https://api.twelvedata.com/symbol_search",
+        r = _td_get("symbol_search", "https://api.twelvedata.com/symbol_search",
                          params={"symbol": q, "outputsize": 20, "apikey": _TWELVEDATA_API_KEY}, timeout=10)
         r.raise_for_status()
         data = r.json().get("data", []) if isinstance(r.json(), dict) else []
