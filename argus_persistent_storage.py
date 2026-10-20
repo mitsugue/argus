@@ -33,6 +33,14 @@ JSON_STREAM_CHUNK_BYTES = 1024 * 1024
 MAXIMUM_JSON_SCALAR_CHARS = 8 * 1024 * 1024
 POST_HOTFIX_TEMP_MARKER = "v1338"
 POST_HOTFIX_TEMP_RETENTION_SECONDS = 24 * 60 * 60
+#: 2026-10-20 (owner decision): the pre-v13.3.8 temporaries left by the
+#: 2026-08-03 OOM incident are no longer needed as evidence (the hotfix has run
+#: since August and no open item refers to them). At start they are released:
+#: each is recorded (name, size, mtime, SHA-256) before removal, under the same
+#: ownership, lock, age and identity rules. Only files written before the
+#: cutoff below match; anything newer keeps the no-read evidence contract.
+INCIDENT_EVIDENCE_RELEASED = True
+INCIDENT_EVIDENCE_RELEASE_BEFORE = dt.datetime(2026, 8, 5, tzinfo=dt.timezone.utc).timestamp()
 
 
 class PersistentStorageError(RuntimeError):
@@ -470,10 +478,67 @@ def _writer_pid_has_open_inode(pid: int, *, device: int, inode: int):
     return False
 
 
+def _release_incident_evidence(entry, metadata, writer_pid, owner_open, observed_at,
+                               cleanup, directory) -> Dict[str, Any]:
+    """Record, then remove, one owner-released pre-hotfix temporary."""
+    descriptor = None
+    lock_acquired = False
+    digest = None
+    removed = False
+    try:
+        descriptor = os.open(entry.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        if _file_identity(os.fstat(descriptor)) == _file_identity(metadata):
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_acquired = True
+            sha = hashlib.sha256()
+            while True:
+                block = os.read(descriptor, 4 * 1024 * 1024)
+                if not block:
+                    break
+                sha.update(block)
+            digest = sha.hexdigest()
+    except (BlockingIOError, OSError):
+        lock_acquired = False
+    age_seconds = max(0, int(observed_at - metadata.st_mtime))
+    safe = bool(owner_open is False and lock_acquired and digest
+                and age_seconds >= POST_HOTFIX_TEMP_RETENTION_SECONDS)
+    record = {"name": entry.name, "writerPid": writer_pid, "bytes": metadata.st_size,
+              "device": metadata.st_dev, "inode": metadata.st_ino,
+              "mtimeNs": metadata.st_mtime_ns, "ctimeNs": metadata.st_ctime_ns,
+              "ageSeconds": age_seconds, "sha256": digest,
+              "writerHasOpenInode": owner_open, "exclusiveLockAcquired": lock_acquired,
+              "contentOpenAttempted": True, "postHotfix": False,
+              "retentionSeconds": POST_HOTFIX_TEMP_RETENTION_SECONDS,
+              "retentionSatisfied": age_seconds >= POST_HOTFIX_TEMP_RETENTION_SECONDS,
+              "classification": "released_incident_evidence" if safe else "retained_incident_evidence",
+              "safeToRemove": safe, "removed": False}
+    if cleanup and safe:
+        # Recorded before removal (2026-10-20 owner): one line per file.
+        print(json.dumps({"event": "incident_evidence_release",
+                          **{k: record[k] for k in ("name", "bytes", "mtimeNs", "sha256")}},
+                         sort_keys=True), flush=True)
+        try:
+            current = os.stat(entry.path, follow_symlinks=False)
+            if _file_identity(current) == _file_identity(metadata):
+                os.unlink(entry.path)
+                _fsync_directory(directory)
+                removed = True
+        except OSError:
+            removed = False
+    if descriptor is not None:
+        with contextlib.suppress(OSError):
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
+    record["removed"] = removed
+    return record
+
+
 def reconcile_abandoned_checkpoint_temps(
         path: str, *, temp_directory: Optional[str] = None,
         cleanup: bool = False, now: Optional[float] = None,
-        owner_probe=_writer_pid_has_open_inode) -> Dict[str, Any]:
+        owner_probe=_writer_pid_has_open_inode,
+        release_incident_evidence: bool = False) -> Dict[str, Any]:
     """Stat-only discovery and conservative recovery of writer temporaries.
 
     Pre-v13.3.8 temporaries are immutable incident evidence.  A post-hotfix
@@ -514,6 +579,16 @@ def reconcile_abandoned_checkpoint_temps(
         lock_acquired = False
         content_open_attempted = False
         descriptor = None
+        released = bool(release_incident_evidence and not post_hotfix
+                        and metadata.st_mtime < INCIDENT_EVIDENCE_RELEASE_BEFORE)
+        if released:
+            entries.append(_release_incident_evidence(
+                entry, metadata, writer_pid, owner_open, observed_at, cleanup, directory))
+            if entries[-1]["removed"]:
+                removed += 1
+            else:
+                retained += 1
+            continue
         # A pre-hotfix file is immutable incident evidence.  Even opening its
         # inode would violate the evidence-retention contract and can update
         # access metadata on some filesystems.  Only V13.3.8-owned ordinary
@@ -579,6 +654,12 @@ def reconcile_abandoned_checkpoint_temps(
             "retainedIncidentEvidenceCount": sum(
                 row["classification"] == "retained_incident_evidence"
                 for row in entries),
+            "releasedIncidentEvidenceCount": sum(
+                1 for row in entries
+                if row["classification"] == "released_incident_evidence" and row["removed"]),
+            "releasedIncidentEvidenceBytes": sum(
+                int(row["bytes"]) for row in entries
+                if row["classification"] == "released_incident_evidence" and row["removed"]),
             "entries": entries}
 
 
@@ -910,7 +991,8 @@ def validate_storage(
 
     abandoned = reconcile_abandoned_checkpoint_temps(
         resolved["checkpoint"], temp_directory=temp_directory,
-        cleanup=bool(production))
+        cleanup=bool(production),
+        release_incident_evidence=bool(production) and INCIDENT_EVIDENCE_RELEASED)
     staging = reconcile_abandoned_recovery_staging(
         temp_directory, checkpoint_name=os.path.basename(resolved["checkpoint"]),
         sidecar_name=os.path.basename(resolved.get("recovery") or "argus_remote_recovery.json"),

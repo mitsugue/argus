@@ -47,7 +47,13 @@ def test_mock_rows_and_a_missing_source_time_are_not_counted_as_fresh():
 
 
 def test_the_lamp_is_wired_and_names_no_symbol(monkeypatch):
-    monkeypatch.setitem(scanner._TD_WARM_UNIVERSE_CACHE, "data", {"symbols": ["NVDA", "AAPL"]})
+    # 2026-10-20: the targets are built from memory (curated + registrations), not
+    # from the warm cache that every watchlist read clears.
+    monkeypatch.setattr(scanner, "_US_WATCHLIST", [{"symbol": "NVDA"}])
+    monkeypatch.setattr(scanner, "_OWNER_OVERVIEW_MEMBERSHIP", {"checkedAt": 1.0, "members": [
+        {"symbol": "AAPL", "market": "US"}, {"symbol": "7203", "market": "JP"}]})
+    monkeypatch.setattr(scanner, "_US_WARM_HINTS", {})
+    monkeypatch.setitem(scanner._TD_WARM_UNIVERSE_CACHE, "data", None)
     monkeypatch.setattr(scanner, "_us_market_open", lambda: True)
     monkeypatch.setattr(scanner, "_quote_cached_only",
                         lambda sym, market: row(60) if sym == "NVDA" else None)
@@ -56,3 +62,11 @@ def test_the_lamp_is_wired_and_names_no_symbol(monkeypatch):
     assert lamp["status"] == "warning" and "1/2銘柄" in lamp["detailJa"]
     assert "NVDA" not in lamp["detailJa"] and "AAPL" not in lamp["detailJa"]
     assert "設定済" not in lamp["detailJa"]           # a configured key is not a receipt
+
+
+def test_targets_wait_for_the_registrations_instead_of_guessing(monkeypatch):
+    monkeypatch.setattr(scanner, "_OWNER_OVERVIEW_MEMBERSHIP", {"checkedAt": 0.0, "members": None})
+    assert scanner._us_price_targets() is None
+    monkeypatch.setattr(scanner, "_us_market_open", lambda: True)
+    lamps = {l["key"]: l for l in scanner._system_health(allow_provider_fetch=False)["lamps"]}
+    assert "未確認" in lamps["prices_us"]["detailJa"]

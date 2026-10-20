@@ -156,6 +156,14 @@ and this matrix. Do not merge it separately. No partial extraction is needed.
 
 ## Incident evidence no-read contract
 
+**2026-10-20 owner release.** The owner released the pre-v13.3.8 temporaries
+of the 2026-08-03 OOM incident (10 files, about 1.1 GiB): the hotfix has run
+since August and no open item refers to them. At start, files written before
+2026-08-05 are opened read-only, locked, hashed and recorded (name, size,
+mtime, SHA-256) before removal, under the same ownership, age and identity
+rules (`argus_persistent_storage.INCIDENT_EVIDENCE_RELEASED`). Without that
+release, and for anything newer, the contract below is unchanged.
+
 Pre-v13.3.8 legacy temp evidence is discovered only through directory metadata.
 The target inode is not opened, locked, read, hashed, copied, renamed, deleted,
 or timestamp-mutated. Only aggregate public diagnostics are exposed. V2 uses
