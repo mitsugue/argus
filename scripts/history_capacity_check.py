@@ -6,6 +6,13 @@ local file (the workflow stores it in the private repository) and prints only
 whether a threshold is crossed. Exit 1 when either v3 bound or the repository
 reaches 70% (GitHub's recommended maximum on-disk size is 10 GB), so the
 failure notice reaches the owner without anyone having to remember the date.
+
+2026-10-21: the same weekly run also records the production's local copy of
+the history (file size from the stat-only disk breakdown, the local form's
+edition counts, and the persistent disk's free and required bytes), read once
+from the owner-only diagnostic. It adds no threshold: the disk-free lamp is the
+warning; this keeps the weekly series. A missing admin token or a failed read
+is recorded as unmeasured, never as zero.
 """
 import argparse
 import base64
@@ -19,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argus_analysis_history_parts as v3  # noqa: E402
 
 REPOSITORY = 'mitsugue/argus-l2b-private'
+BACKEND = 'https://argus-backend-3j2m.onrender.com'
 V2_STORED_LIMIT = 128 * 1024 * 1024
 
 
@@ -63,6 +71,34 @@ def measure(token, opener=urllib.request.urlopen):
     return out
 
 
+def _admin(path, token, opener):
+    request = urllib.request.Request(BACKEND + path, headers={'X-ARGUS-ADMIN-TOKEN': token})
+    with opener(request, timeout=150) as response:
+        return json.loads(response.read(16 * 1024 * 1024))
+
+
+def measure_local(token, opener=urllib.request.urlopen):
+    """The production's local history copy; counts and bytes only, no record body."""
+    if not token:
+        return {'measured': False, 'reason': 'admin_token_not_configured'}
+    try:
+        attribution = _admin('/api/argus/admin/memory-attribution?storage-groups=1', token, opener)
+        operational = _admin('/api/argus/admin/diagnostics/operational', token, opener)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return {'measured': False, 'reason': 'read_failed:' + type(exc).__name__}
+    groups = ((attribution.get('storageAttribution') or {}).get('groups')) or {}
+    database = groups.get('analysisHistoryDb') or {}
+    form = attribution.get('analysisHistoryForm') or {}
+    storage = operational.get('storage') or {}
+    return {'measured': 'logicalBytes' in database,
+            'analysisHistoryBytes': database.get('logicalBytes'),
+            'analysisHistoryAllocatedBytes': database.get('allocatedBytes'),
+            'views': form.get('views'), 'formStatus': form.get('status'),
+            'skeletonBytes': form.get('skeletonBytes'), 'partStoredBytes': form.get('partStoredBytes'),
+            'freeBytes': storage.get('freeBytes'), 'requiredFreeBytes': storage.get('requiredFreeBytes'),
+            'totalBytes': storage.get('totalBytes')}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True)
@@ -71,6 +107,7 @@ def main(argv=None):
     if not token:
         print('history capacity: token not configured'); return 1
     result = measure(token)
+    result['local'] = measure_local(os.environ.get('ARGUS_ADMIN_TOKEN', ''))
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, 'w', encoding='utf-8') as handle:
         json.dump(result, handle, ensure_ascii=False, indent=1)

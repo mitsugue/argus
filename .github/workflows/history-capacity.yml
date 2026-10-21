@@ -14,7 +14,7 @@ concurrency:
 jobs:
   measure:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
@@ -23,6 +23,8 @@ jobs:
         id: measure
         env:
           PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+          # 2026-10-21: also the production's local history size (owner-only diagnostic, read once).
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: python3 -B scripts/history_capacity_check.py --output "$RUNNER_TEMP/capacity/capacity.json"
       - name: Store privately
         if: always()
