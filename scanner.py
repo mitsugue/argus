@@ -52124,6 +52124,16 @@ def _usdjpy_tokyo_close_tick(now_utc=None):
         now_utc = now_utc or datetime.now(pytz.utc)
         now_jst = now_utc.astimezone(TZ_JST)
         day = now_jst.date().isoformat()
+        path = (os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3")
+                if _cost_policy_durable_enabled() else None)
+        if path and _USDJPY_TOKYO_CLOSE.get("keptSessions") is None:
+            # 2026-10-21: what an earlier process kept survives a restart; a day
+            # kept before the restart is neither repeated nor reported as missed.
+            kept = jp_market_acquisition.selected_sessions(path, "usdjpy_tokyo_1530")
+            _USDJPY_TOKYO_CLOSE.update(keptSessions=len(kept), firstKeptDate=kept[0] if kept else None,
+                                       lastDate=kept[-1] if kept else _USDJPY_TOKYO_CLOSE.get("lastDate"))
+            if kept and kept[-1] == day:
+                _USDJPY_TOKYO_CLOSE.update(status="RETAINED", reason=None)
         if _USDJPY_TOKYO_CLOSE.get("lastDate") == day:
             return None
         close_at = TZ_JST.localize(datetime(now_jst.year, now_jst.month, now_jst.day, 15, 30))
@@ -52160,15 +52170,14 @@ def _usdjpy_tokyo_close_tick(now_utc=None):
                    float(source_epoch), pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                "offsetSeconds": round(offset, 1), "availableFrom": received,
                "sourceRef": "yahoo:chart:JPY=X:regularMarketTime"}
-        path = (os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3")
-                if _cost_policy_durable_enabled() else None)
         if not path:
             _USDJPY_TOKYO_CLOSE.update(status="NOT_DURABLE")
             return None
         jp_market_acquisition.retain_first_receipts([row], path=path, source_id="usdjpy_tokyo_1530",
                                                     received_at=received)
         _USDJPY_TOKYO_CLOSE.update(status="RETAINED", lastDate=day, offsetSeconds=round(offset, 1),
-                                   reason=None, keptAt=received)
+                                   reason=None, keptAt=received,
+                                   keptSessions=int(_USDJPY_TOKYO_CLOSE.get("keptSessions") or 0) + 1)
         return row
     except Exception as exc:
         _USDJPY_TOKYO_CLOSE.update(status="FAILED", reason=type(exc).__name__)

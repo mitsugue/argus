@@ -57,3 +57,25 @@ def test_nothing_before_the_close_or_on_a_holiday(store, monkeypatch):
     holiday = datetime(2026, 11, 3, 6, 30, 20, tzinfo=pytz.utc)  # 文化の日
     assert scanner._usdjpy_tokyo_close_tick(holiday) is None
     assert called == []
+
+
+def test_a_restart_after_the_close_keeps_what_was_kept(store, monkeypatch):
+    # 2026-10-21: the 13.8.152 restart at 16:50 reported the day as missed
+    # although the earlier process had read the window; the store decides.
+    monkeypatch.setattr(scanner, "_yf_quote", lambda sym: (151.234, 151.0, CLOSE.timestamp() + 12))
+    assert scanner._usdjpy_tokyo_close_tick(at(20))["date"] == "2026-10-21"
+    monkeypatch.setattr(scanner, "_USDJPY_TOKYO_CLOSE", {"status": "NOT_RUN", "lastDate": None,
+                                                         "lastAttemptMonotonic": None})
+    called = []
+    monkeypatch.setattr(scanner, "_yf_quote", lambda sym: called.append(sym))
+    assert scanner._usdjpy_tokyo_close_tick(at(4800)) is None         # 16:50 JST, after the window
+    state = scanner._USDJPY_TOKYO_CLOSE
+    assert state["status"] == "RETAINED" and state["lastDate"] == "2026-10-21" and state["keptSessions"] == 1
+    assert state.get("missedDate") is None and called == [] and len(rows(store)) == 1
+
+
+def test_a_day_not_kept_is_still_reported_missed_after_a_restart(store, monkeypatch):
+    monkeypatch.setattr(scanner, "_yf_quote", lambda sym: None)
+    assert scanner._usdjpy_tokyo_close_tick(at(4800)) is None
+    state = scanner._USDJPY_TOKYO_CLOSE
+    assert state["status"] == "MISSED" and state["keptSessions"] == 0 and state["lastDate"] is None

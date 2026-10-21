@@ -458,6 +458,28 @@ RECEIPT_FIELDS = frozenset({'receivedAt', 'sourceResponseSha256', 'rawId'})
 STABLE_FEATURE_MAX_SESSIONS = 3000
 
 
+def selected_sessions(path, source_id):
+    """Sessions already kept for a stable source, read-only (no table: none kept).
+
+    Lets a resident collector know what an earlier process already kept, so a
+    restart neither repeats the day nor reports it as missed (2026-10-21).
+    """
+    if source_id not in STABLE_FEATURE_SOURCES:
+        raise ValueError('stable_feature_source_unknown')
+    import os
+    import sqlite3
+    if not path or not os.path.isfile(path):
+        return []
+    db = sqlite3.connect('file:' + path + '?mode=ro', uri=True)
+    try:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='selected_feature_inputs'").fetchone():
+            return []
+        return [session for (session,) in db.execute(
+            'SELECT DISTINCT session FROM selected_feature_inputs WHERE source_id=? ORDER BY session', (source_id,))]
+    finally:
+        db.close()
+
+
 def retain_first_receipts(rows, *, path, source_id, received_at,
                           maximum=STABLE_FEATURE_MAX_SESSIONS):
     """Keep each session's first receipt and the series' fixed origin.

@@ -212,7 +212,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/V13_7_ACQUISITION_PACK_ACCEPTANCE.md': '6857081ce69e53bca54d900562800b54e4384897',
     'scripts/import_index_valuation.py': 'bd9278e7a166855aff8777cb41aa1628bcd07420',
     'test_jp_market_acquisition.py': 'b02e1559ce0d67fb08e05f7a84c40e7ac65c3df9',
-    'jp_market_acquisition.py': '3917e9640ca3afd0ce363ca7ded8df3d736f9835',
+    'jp_market_acquisition.py': 'e985828413118edc00dbe12308d70166beaab7aa',
     'ops/imports/README.md': '0c3a8010eebfa90f6c20be3d46e0d59fd3039404',
     'web/src/components/today/SectorHeatmap.css': 'df03c8879cd667ad4e580a9b4044222ab4940e2e',
     'web/src/components/today/SectorHeatmap.tsx': 'ee11313a4503b80a498d571e15fdfb3704bbc1be',
