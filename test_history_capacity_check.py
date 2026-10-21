@@ -51,3 +51,35 @@ def test_v3_bound_over_seventy_percent_warns(monkeypatch):
 def test_no_token_is_a_failed_check_not_a_pass(monkeypatch, tmp_path):
     monkeypatch.delenv('PRIVATE_DIAGNOSTICS_TOKEN', raising=False)
     assert check.main(['--output', str(tmp_path / 'c.json')]) == 1
+
+
+def admin_opener(attribution, operational, seen):
+    def opener(request, timeout=None):
+        assert request.headers['X-argus-admin-token'] == 'admin-test-only'
+        seen.append(request.full_url.split(check.BACKEND, 1)[1])
+        if 'memory-attribution' in request.full_url:
+            return io.BytesIO(json.dumps(attribution).encode())
+        return io.BytesIO(json.dumps(operational).encode())
+    return opener
+
+
+def test_local_history_size_is_recorded_from_the_owner_diagnostic():
+    seen = []
+    attribution = {'storageAttribution': {'groups': {'analysisHistoryDb': {'files': 1, 'logicalBytes': 170_000_000,
+                                                                           'allocatedBytes': 171_000_000}}},
+                   'analysisHistoryForm': {'views': 799, 'status': 'CONVERTED', 'skeletonBytes': 134, 'partStoredBytes': 23,
+                                           'lastFailureReasons': []}}
+    operational = {'storage': {'freeBytes': 13_000_000_000, 'requiredFreeBytes': 116_000_000, 'totalBytes': 20_000_000_000}}
+    local = check.measure_local('admin-test-only', admin_opener(attribution, operational, seen))
+    assert local['measured'] is True and local['analysisHistoryBytes'] == 170_000_000 and local['views'] == 799
+    assert local['freeBytes'] == 13_000_000_000
+    assert seen == ['/api/argus/admin/memory-attribution?storage-groups=1', '/api/argus/admin/diagnostics/operational']
+
+
+def test_local_history_unmeasured_is_never_zero():
+    assert check.measure_local('') == {'measured': False, 'reason': 'admin_token_not_configured'}
+    def failing(request, timeout=None):
+        raise check.urllib.error.URLError('down')
+    assert check.measure_local('admin-test-only', failing)['measured'] is False
+    missing = check.measure_local('admin-test-only', admin_opener({}, {}, []))
+    assert missing['measured'] is False and missing['analysisHistoryBytes'] is None
