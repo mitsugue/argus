@@ -43265,6 +43265,10 @@ def _jp_market_feature_history_warm():
         # 2026-10-20: the same observation imported twice (same series, period,
         # receipt and value) reached the features twice (foreign flow: 2 weeks).
         ledger = jp_market_series_reconciliation.drop_exact_duplicates(ledger)
+        # 2026-10-21: the same observation received again later is one row
+        # (its first receipt); a different value for the same revision still
+        # stops the history at the point-in-time admission.
+        ledger = jp_market_series_reconciliation.keep_first_receipt(ledger)
         last_csv = max((r["periodEnd"] for r in credit), default="")
         credit += [r for r in ledger if r.get("seriesId") in ("credit.long_balance", "credit.short_balance")
                    and r.get("periodEnd", "") > last_csv]
