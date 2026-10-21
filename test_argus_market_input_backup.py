@@ -357,7 +357,8 @@ def test_company_receipts_survive_private_restore_and_identical_response_reuse(t
         earnings.retain(path,[row()],received_at=at,member_codes=['1000'],query_code='1000')
     earnings.retain(path,[],received_at=LATER,member_codes=['1001'],query_code='1001')
     result=backup.synchronize(path,remote)
-    assert result['counts']['coverageReceipts']==3
+    # Owner decision 2026-10-22: 1000's identical second response is not another receipt.
+    assert result['counts']['coverageReceipts']==2
     manifest=json.loads(remote.files[backup.PREFIX+'/manifests/'+result['manifestSha256']+'.json'])
     content=b''.join(remote.files[backup.PREFIX+'/chunks/'+c['sha256']+'.bin'] for c in manifest['chunks'])
     restored=tmp_path/'restored.sqlite3';db=sources.connect(restored)

@@ -69,6 +69,34 @@ def _published(row):
     return None
 
 
+# What may differ between two receipts of the same content: the receipt's own
+# time, its digest (which binds that time), how many observations were new at
+# that moment, and the component proof's time-stamped wrapper of the same rows.
+_CODE_RECEIPT_TIMES = frozenset({'receivedAt', 'receiptSha256'})
+_DATE_RECEIPT_TIMES = frozenset({'receivedAt', 'knownAt', 'coverageSha256', 'newObservations', 'componentReceipt'})
+
+
+def _same_receipt(old, new, ignored, db=None):
+    """Same original (rawId and its SHA-256) and the same scope and counts.
+
+    With `db`, the stored original's bytes must still hash to that SHA-256;
+    otherwise the new receipt is kept, so readers check it against the
+    stored bytes as before (a replaced or broken original is still found at
+    the next collection, not only at the next restart)."""
+    if not isinstance(old, dict) or not old.get('rawId') or old.get('rawId') != new.get('rawId') \
+            or old.get('sourceResponseSha256') != new.get('sourceResponseSha256'):
+        return False
+    strip = lambda row: {k: v for k, v in row.items() if k not in ignored}
+    if strip(old) != strip(new):
+        return False
+    if db is not None:
+        stored = db.execute('SELECT raw,sha256 FROM raw_sources WHERE id=?', (new['rawId'],)).fetchone()
+        if not stored or stored[1] != new['sourceResponseSha256'] \
+                or hashlib.sha256(stored[0]).hexdigest() != stored[1]:
+            return False
+    return True
+
+
 def retain(path, rows, *, received_at, member_codes, query_date=None, complete_scope=None, query_code=None, component_receipt=None):
     if component_receipt is not None:
         import argus_earnings_scope as scopes
@@ -133,8 +161,18 @@ def retain(path, rows, *, received_at, member_codes, query_date=None, complete_s
                                 'rawId': raw_id, 'sourceResponseSha256': digest, 'retainedRows': len(selected)}
                 receipt_hash = hashlib.sha256(sources._json(receipt_body).encode()).hexdigest()
                 receipt_body['receiptSha256'] = receipt_hash
-                db.execute('INSERT OR IGNORE INTO metadata VALUES(?,?)',
-                           ('financial-summary-code:' + query_code + ':revision:' + receipt_hash, sources._json(receipt_body)))
+                # Owner decision 2026-10-22: the same response received again
+                # (same original, scope and counts; only the receipt time
+                # differs) is not kept as another revision. The first receipt
+                # stays; it is the earlier, still-valid proof.
+                same = any(_same_receipt(json.loads(value), receipt_body, _CODE_RECEIPT_TIMES, db)
+                           for (value,) in db.execute('SELECT value FROM metadata WHERE key LIKE ?',
+                                                      ('financial-summary-code:' + query_code + ':revision:%',)))
+                if same:
+                    status['unchangedReceipt'] = True
+                else:
+                    db.execute('INSERT OR IGNORE INTO metadata VALUES(?,?)',
+                               ('financial-summary-code:' + query_code + ':revision:' + receipt_hash, sources._json(receipt_body)))
             if query_date is not None:
                 if date.fromisoformat(query_date).isoformat() != query_date:
                     raise ValueError('financial_query_date_required')
@@ -149,6 +187,15 @@ def retain(path, rows, *, received_at, member_codes, query_date=None, complete_s
                         raise ValueError('financial_composite_selected_input')
                     status.update(collectionKind='COMPANY_DATE_COMPONENT_SET', componentReceipt=component_receipt)
                 status['coverageSha256']=hashlib.sha256(sources._json(status).encode()).hexdigest()
+                # Owner decision 2026-10-22: a re-read of the same date with the
+                # same original and scope is not another revision (it grew by
+                # about 84 a day and every read re-checks each one). The newest
+                # stored receipt stays as it is.
+                latest_row = db.execute('SELECT value FROM metadata WHERE key=?',
+                                        ('financial-summary-date:' + query_date,)).fetchone()
+                if latest_row and _same_receipt(json.loads(latest_row[0]), status, _DATE_RECEIPT_TIMES, db):
+                    status['unchangedReceipt'] = True
+                    return status
                 # Keep each corrected coverage receipt, not just the newest
                 # cursor. An old cutoff must still recover its earlier scope.
                 db.execute('INSERT OR IGNORE INTO metadata VALUES(?,?)',
