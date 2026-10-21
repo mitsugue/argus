@@ -454,3 +454,193 @@ def test_receipt_originals_are_verified_once_per_process(tmp_path, monkeypatch):
     db.execute("UPDATE metadata SET value=? WHERE key=?", (_json.dumps(edited), key)); db.commit(); db.close()
     with pytest.raises(ValueError, match='financial_company_receipt_integrity'):
         history.read_company_coverage(path, cutoff=LATER, member_codes=['1000'])
+
+
+# ── 2026-10-21: date receipts checked once per content ─────────────────────
+# The checks are the same as before; only repeats of an identical content
+# (the newest-date key and its revision) or of an identical stored text on a
+# later read are not redone. The previous reader is kept here, without any
+# remembered result, as the reference for results and rejections.
+
+def _previous_read_coverage(path, *, cutoff):
+    import hashlib, sqlite3
+    limit = sources._time(cutoff); output = {}
+    db = sqlite3.connect(path)
+    try:
+        for key, raw in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-date:%'"):
+            row = json.loads(raw); digest = row.pop('coverageSha256', None)
+            if digest is None:
+                continue
+            if hashlib.sha256(sources._json(row).encode()).hexdigest() != digest:
+                raise ValueError('financial_coverage_integrity')
+            source = db.execute('SELECT raw,sha256 FROM raw_sources WHERE id=?', (row.get('rawId'),)).fetchone()
+            if not source or hashlib.sha256(source[0]).hexdigest() != source[1] or source[1] != row.get('sourceResponseSha256'):
+                raise ValueError('financial_coverage_integrity')
+            history.validate_composite_coverage(row, source[0])
+            if sources._time(row['receivedAt']) <= limit and sources._time(row['knownAt']) <= limit:
+                day = row.get('queryDate')
+                if not day or key.split(':', 2)[1] != day:
+                    raise ValueError('financial_coverage_integrity')
+                old = output.get(day)
+                if old is None or sources._time(row['knownAt']) > sources._time(old['knownAt']):
+                    output[day] = {**row, 'coverageSha256': digest}
+        return output
+    finally:
+        db.close()
+
+
+COMPOSITE_AT = '2026-10-12T16:00:01+00:00'
+DATE_REVISIONS = ('2026-10-07T01:00:00Z', '2026-10-07T07:00:00Z', '2026-10-08T01:00:00Z')
+
+
+def _receipt_store(tmp_path):
+    """A company receipt, one date queried three times (one original, three
+    revisions) and one 225-company component set, as production keeps them."""
+    import argus_earnings_scope as scope
+    from test_argus_earnings_scope import fixture, bind, add_row
+    path = tmp_path/'shared.sqlite3'
+    history.retain(path, [row()], received_at=AT, member_codes=['1000'], query_code='1000')
+    members = [str(n) for n in range(1000, 1225)]
+    for at in DATE_REVISIONS:
+        history.retain(path, [row()], received_at=at, member_codes=members, query_date='2026-10-06',
+                       complete_scope=members)
+    inputs = fixture(); add_row(inputs); bind(inputs)
+    proof, rows = scope.admit(**inputs)
+    history.retain_composite(path, rows, receipt_proof=proof)
+    return path
+
+
+def _date_raws(path):
+    import sqlite3
+    db = sqlite3.connect(path)
+    try:
+        return {raw_id: bytes(raw) for raw_id, raw in db.execute(
+            "SELECT id,raw FROM raw_sources WHERE id IN (SELECT json_extract(value,'$.rawId') FROM metadata "
+            "WHERE key LIKE 'financial-summary-date:%')")}
+    finally:
+        db.close()
+
+
+def _resign(path, key, mutate):
+    import sqlite3
+    db = sqlite3.connect(path)
+    value = json.loads(db.execute('SELECT value FROM metadata WHERE key=?', (key,)).fetchone()[0])
+    value.pop('coverageSha256'); mutate(value)
+    value['coverageSha256'] = __import__('hashlib').sha256(sources._json(value).encode()).hexdigest()
+    db.execute('UPDATE metadata SET value=? WHERE key=?', (sources._json(value), key)); db.commit(); db.close()
+
+
+def test_date_receipts_are_checked_once_per_content_with_unchanged_results(tmp_path, monkeypatch):
+    import hashlib as real_hashlib
+    import argus_earnings_scope as scope
+    path = _receipt_store(tmp_path)
+    cutoffs = ('2026-10-07T03:00:00Z', '2026-10-21T00:00:00Z', '2026-10-06T00:00:00Z')
+    expected = {cutoff: _previous_read_coverage(path, cutoff=cutoff) for cutoff in cutoffs}
+    assert len(expected['2026-10-21T00:00:00Z']) == 2
+    originals = {raw: raw_id for raw_id, raw in _date_raws(path).items()}
+    hashed, composite_checks = [], []
+    class Counting:
+        @staticmethod
+        def sha256(data=b''):
+            if bytes(data) in originals:
+                hashed.append(originals[bytes(data)])
+            return real_hashlib.sha256(data)
+    real_validate = scope.validate
+    monkeypatch.setattr(history, 'hashlib', Counting)
+    monkeypatch.setattr(scope, 'validate', lambda *a: composite_checks.append(1) or real_validate(*a))
+    for cutoff in cutoffs:
+        result = history.read_coverage(path, cutoff=cutoff)
+        # Same receipts, same order of keys as before.
+        assert json.dumps(result) == json.dumps(expected[cutoff])
+    # The component set: its revision and its newest-date key are one
+    # content, checked once (before: twice, and again on every read). The
+    # date queried three times: each revision is its own content and is
+    # checked against the original's bytes (before: four times, the newest
+    # key repeating one revision).
+    composite_raw = next(raw_id for raw_id, raw in _date_raws(path).items() if b'receipt-1' in raw)
+    assert composite_checks == [1]
+    assert hashed.count(composite_raw) == 1
+    assert len([h for h in hashed if h != composite_raw]) == len(DATE_REVISIONS)
+
+
+@pytest.mark.parametrize('warm', [False, True], ids=['fresh', 'after-verified-read'])
+@pytest.mark.parametrize('case', ['edited-not-resigned', 'resigned-nested-component', 'resigned-other-original',
+                                  'replaced-original-new-revision', 'broken-original-new-revision',
+                                  'observation-not-in-original'])
+def test_rejections_are_unchanged_by_remembered_checks(tmp_path, warm, case):
+    import sqlite3, hashlib
+    path = _receipt_store(tmp_path)
+    late = '2026-10-21T00:00:00Z'
+    if warm:   # every reader has accepted the store once in this process
+        history.read(path, cutoff=late, member_codes=['1000'])
+        history.read_coverage(path, cutoff=late)
+        history.read_company_coverage(path, cutoff=late, member_codes=['1000'])
+    db = sqlite3.connect(path)
+    plain = 'financial-summary-date:2017-05-12'
+    date_raw = json.loads(db.execute("SELECT value FROM metadata WHERE key='financial-summary-date:2026-10-06'").fetchone()[0])['rawId']
+    db.close()
+    reader = lambda: history.read_coverage(path, cutoff=late)
+    if case == 'edited-not-resigned':
+        db = sqlite3.connect(path)
+        value = json.loads(db.execute('SELECT value FROM metadata WHERE key=?', (plain,)).fetchone()[0])
+        value['retainedRows'] = 7
+        db.execute('UPDATE metadata SET value=? WHERE key=?', (sources._json(value), plain)); db.commit(); db.close()
+    elif case == 'resigned-nested-component':
+        # The newest-date key no longer equals its revision; the revision's
+        # remembered check must not cover it.
+        _resign(path, plain, lambda v: v['componentReceipt']['components'][0].update(selectedRowsSha256='a'*64))
+    elif case == 'resigned-other-original':
+        _resign(path, plain, lambda v: v.update(rawId=date_raw))
+    elif case in ('replaced-original-new-revision', 'broken-original-new-revision'):
+        db = sqlite3.connect(path)
+        if case == 'replaced-original-new-revision':
+            other = sources._json({'data': [history._compact({**row(), 'FOP': '1'})]}).encode()
+            db.execute('UPDATE raw_sources SET raw=?, sha256=? WHERE id=?', (other, hashlib.sha256(other).hexdigest(), date_raw))
+        else:
+            broken = bytes(db.execute('SELECT raw FROM raw_sources WHERE id=?', (date_raw,)).fetchone()[0]) + b' '
+            db.execute('UPDATE raw_sources SET raw=? WHERE id=?', (broken, date_raw))
+        db.commit(); db.close()
+        # A new collection of the same date names the same original: the new
+        # receipt is checked against the stored bytes, as before.
+        members = [str(n) for n in range(1000, 1225)]
+        history.retain(path, [row()], received_at='2026-10-09T01:00:00Z', member_codes=members,
+                       query_date='2026-10-06', complete_scope=members)
+    elif case == 'observation-not-in-original':
+        db = sqlite3.connect(path)
+        summary = history._compact({**row(), 'DiscNo': 'absent', 'FOP': '5'})
+        raw_id, digest = db.execute("SELECT id,sha256 FROM raw_sources WHERE url=? LIMIT 1", (history.URL,)).fetchone()
+        received = db.execute('SELECT received_at FROM raw_sources WHERE id=?', (raw_id,)).fetchone()[0]
+        identity = hashlib.sha256(sources._json(summary).encode()).hexdigest()
+        body = {'summary': summary, 'receivedAt': received, 'knownAt': received,
+                'publishedAt': history._published(summary).isoformat(), 'historicalVintageVerified': False,
+                'sourceRef': history.URL, 'sourceResponseSha256': digest, 'rawId': raw_id, 'observationId': identity}
+        db.execute('INSERT INTO observations(source_id,session,raw_id,body) VALUES(?,?,?,?)',
+                   ('financial-summary:1000', identity, raw_id, sources._json(body)))
+        db.commit(); db.close()
+        reader = lambda: history.read(path, cutoff=late, member_codes=['1000'])
+    if case != 'observation-not-in-original':
+        with pytest.raises(ValueError):              # the previous reader rejects it too
+            _previous_read_coverage(path, cutoff=late)
+    with pytest.raises(ValueError):
+        reader()
+    history.clear_verified_originals()                          # a restart
+    with pytest.raises(ValueError):
+        reader()
+
+
+def test_private_snapshot_reuses_only_identical_checked_content(tmp_path):
+    import argus_market_input_backup as backup
+    path = _receipt_store(tmp_path)
+    fresh = tmp_path/'fresh'; fresh.mkdir()
+    before = backup.snapshot(path, fresh)
+    history.clear_verified_originals()
+    history.read_coverage(path, cutoff='2026-10-21T00:00:00Z')    # remembers each content
+    warm = tmp_path/'warm'; warm.mkdir()
+    assert backup.snapshot(path, warm) == before                  # same archive, byte for byte
+    # A changed content is checked in the snapshot even when its date's
+    # other receipts were remembered.
+    _resign(path, 'financial-summary-date:2017-05-12',
+            lambda v: v['componentReceipt']['components'][0].update(selectedRowsSha256='a'*64))
+    again = tmp_path/'again'; again.mkdir()
+    with pytest.raises(ValueError, match='COMPOSITE_HASH|COMPONENT_SELECTED_INPUT'):
+        backup.snapshot(path, again)

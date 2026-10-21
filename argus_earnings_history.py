@@ -211,6 +211,25 @@ def _remember_receipt(key, value):
         _VERIFIED_RECEIPTS[key] = value
 
 
+# 2026-10-21: date receipts are remembered by their content. The newest-date
+# key always holds the same content as one of its revisions, and both were
+# checked against the same original, including the 225-company component
+# check (77 KB per receipt). Every new content (each collection adds a
+# revision with its own receipt time) is still checked against the bytes of
+# its original.
+def coverage_content_verified(coverage_sha256):
+    """True when a date receipt with exactly this content (its coverageSha256,
+    which binds rawId and sourceResponseSha256) passed the original and
+    composite checks in this process. The caller must have recomputed the
+    digest from the stored receipt and hashed the original's bytes itself."""
+    with _VERIFIED_LOCK:
+        return _VERIFIED_RECEIPTS.get(('date-content', coverage_sha256)) is True
+
+
+def remember_coverage_content(coverage_sha256):
+    _remember_receipt(('date-content', coverage_sha256), True)
+
+
 def clear_verified_originals():
     with _VERIFIED_LOCK:
         _VERIFIED_PRESENT.clear()
@@ -335,27 +354,48 @@ def read_coverage(path, *, cutoff):
     output={}
     try:
         for key,raw in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-date:%'"):
-            row=json.loads(raw); digest=row.pop('coverageSha256',None)
-            if digest is None:continue  # Older receipts did not certify a 225-member scope.
-            if hashlib.sha256(sources._json(row).encode()).hexdigest()!=digest:
-                raise ValueError('financial_coverage_integrity')
-            # Owner decision 2026-10-16: the original behind a receipt is
-            # verified once per process; the receipt's own digest every read.
-            verified_key=('date',key,digest)
+            # 2026-10-21: every read parsed, re-serialized and hashed each
+            # receipt again (dozens of revisions per date, 77 KB for a
+            # component set). The stored text is now hashed on every read
+            # instead; a text accepted by the full check below in this
+            # process is the same bytes, so the full check would accept it
+            # again. Any other text (an edit, a new revision) gets the full
+            # check. A receipt is parsed for output only when it becomes the
+            # newest one seen for its date.
+            row=None
+            stored=hashlib.sha256(raw.encode() if isinstance(raw,str) else bytes(raw)).digest()
             with _VERIFIED_LOCK:
-                verified=verified_key in _VERIFIED_RECEIPTS
-            if not verified:
-                source=db.execute('SELECT raw,sha256 FROM raw_sources WHERE id=?',(row.get('rawId'),)).fetchone()
-                if not source or hashlib.sha256(source[0]).hexdigest()!=source[1] or source[1]!=row.get('sourceResponseSha256'):
+                fields=_VERIFIED_RECEIPTS.get(('date-text',stored))
+            if fields is None:
+                row=json.loads(raw); digest=row.pop('coverageSha256',None)
+                if digest is None:
+                    _remember_receipt(('date-text',stored),False)
+                    continue  # Older receipts did not certify a 225-member scope.
+                if hashlib.sha256(sources._json(row).encode()).hexdigest()!=digest:
                     raise ValueError('financial_coverage_integrity')
-                validate_composite_coverage(row, source[0])
-                _remember_receipt(verified_key, True)
-            if sources._time(row['receivedAt'])<=limit and sources._time(row['knownAt'])<=limit:
-                day=row.get('queryDate')
+                # Owner decision 2026-10-16: the original behind a receipt is
+                # verified once per process; the receipt's own digest on every
+                # read (above, or as the stored text's hash once accepted).
+                # 2026-10-21: remembered by the receipt's content (the digest
+                # binds rawId and sourceResponseSha256), not by its key.
+                if not coverage_content_verified(digest):
+                    source=db.execute('SELECT raw,sha256 FROM raw_sources WHERE id=?',(row.get('rawId'),)).fetchone()
+                    if not source or hashlib.sha256(source[0]).hexdigest()!=source[1] or source[1]!=row.get('sourceResponseSha256'):
+                        raise ValueError('financial_coverage_integrity')
+                    validate_composite_coverage(row, source[0])
+                    remember_coverage_content(digest)
+                fields=(row['receivedAt'],row['knownAt'],row.get('queryDate'))
+                _remember_receipt(('date-text',stored),fields)
+            elif fields is False:
+                continue
+            received,known,day=fields
+            if sources._time(received)<=limit and sources._time(known)<=limit:
                 if not day or key.split(':',2)[1]!=day:
                     raise ValueError('financial_coverage_integrity')
                 old=output.get(day)
-                if old is None or sources._time(row['knownAt'])>sources._time(old['knownAt']):
+                if old is None or sources._time(known)>sources._time(old['knownAt']):
+                    if row is None:
+                        row=json.loads(raw); digest=row.pop('coverageSha256')
                     output[day]={**row,'coverageSha256':digest}
         return output
     finally:db.close()
