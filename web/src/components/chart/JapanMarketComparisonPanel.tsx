@@ -1,12 +1,20 @@
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React, { useState } from 'react';
 import { useJapanMarketComparison } from '../../hooks/useJapanMarketComparison';
+import { useMarketBrief } from '../../hooks/useMarketBrief';
+import { readableBriefEdition } from '../../lib/presentationIntent';
+import { comparisonAgreement } from '../../lib/japanMarketComparison';
 import { JapanMarketComparisonChart } from './JapanMarketComparisonChart';
 import { NikkeiResearchChart } from './NikkeiResearchChart';
 import { FutureLinesChart } from './FutureLinesChart';
 
 export function JapanMarketComparisonPanel({ horizon }: { horizon: number }) {
   const state = useJapanMarketComparison(horizon);
+  // The same edition Today shows (a retained one when the newest is not readable).
+  const { brief: responseBrief } = useMarketBrief();
+  const brief = readableBriefEdition(responseBrief) ?? responseBrief;
+  const agreement = comparisonAgreement(brief?.calculationSnapshots?.[String(horizon)]?.comparison, state.document,
+    horizon, brief ? brief.aiDiagnostics?.completedAt ?? brief.generatedAt : null);
   return <div className="jp-comparison-panel" data-argus-contract="jp-market-comparison-runtime-v1" aria-busy={state.loading}>
     {state.loading && <p><TriangleStepLoader label={state.document ? "前回の比較を表示しながら更新しています" : "日経平均の過去比較を読み込んでいます"} /></p>}
     {state.error && <p role="status">
@@ -15,6 +23,7 @@ export function JapanMarketComparisonPanel({ horizon }: { horizon: number }) {
     </p>}
     {state.lastSuccessfulAcquisitionAt && <p className="jp-comparison__scale">指数データの最終取得：
       {new Date(state.lastSuccessfulAcquisitionAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST</p>}
+    {agreement && <p className="jp-comparison__scale" data-comparison-agreement={agreement.kind}>{agreement.textJa}</p>}
     {state.document && <JapanMarketComparisonChart document={state.document} />}
   </div>;
 }

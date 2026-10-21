@@ -230,3 +230,31 @@ console.log('日経の新しい終値・過去比較の独立更新・引け後�
 assert.equal(comparisonReadInterval(fresh,Date.parse('2026-10-06T06:25:00Z')),300_000,'15:30へ切り替わる境界を10分間隔で通り過ぎない');
 assert.equal(comparisonReadInterval(fresh,Date.parse('2026-10-06T06:29:59Z')),1_000);
 assert.equal(comparisonReadInterval(fresh,Date.parse('2026-10-10T06:25:00Z')),600_000);
+
+// 2026-10-21 (owner): 従来の過去比較 says whether it is the comparison the 見立て used, with each time.
+{
+  const { comparisonAgreement } = require('../src/lib/japanMarketComparison.ts');
+  const cand = (snapshotId, anchorDate) => ({ snapshotId, anchorDate, comparisonKind: 'MARKET_ANALOG',
+    comparison: [{ offsetSessions: 0, value: 100 }], subsequentReference: [{ offsetSessions: 1, value: 101 }],
+    missingFeatures: [], missingGroups: [], similarReasons: [], differences: [] });
+  const live = structuredClone(document);
+  live.candidates = [cand('a', '2020-01-06'), cand('b', '2018-02-05')];
+  assert(validJapanMarketComparison(live, 5));
+  const sameCut = structuredClone(live);
+  const same = comparisonAgreement(sameCut, live, 5, '2026-09-11T11:01:00Z');
+  assert.equal(same.kind, 'SAME');
+  assert.ok(same.textJa.includes('見立て(9/11 20:01)と同じ比較です(9/11 17:00 時点)'), same.textJa);
+  const older = structuredClone(live); older.informationCutoff = '2026-09-11T06:00:00Z';
+  older.candidates = [cand('c', '2015-01-05')];
+  const differ = comparisonAgreement(older, live, 5, '2026-09-11T11:01:00Z');
+  assert.equal(differ.kind, 'DIFFERENT');
+  assert.ok(differ.textJa.includes('9/11 15:00 時点') && differ.textJa.includes('9/11 17:00 時点の最新'), differ.textJa);
+  const sameTimeOtherCandidates = structuredClone(live); sameTimeOtherCandidates.candidates = [cand('a', '2020-01-06')];
+  assert.equal(comparisonAgreement(sameTimeOtherCandidates, live, 5, '2026-09-11T11:01:00Z').kind, 'DIFFERENT');
+  assert.equal(comparisonAgreement(undefined, live, 5, '2026-09-11T11:01:00Z').kind, 'NOT_SAVED');
+  assert.equal(comparisonAgreement(structuredClone(document), live, 20, '2026-09-11T11:01:00Z').kind, 'NOT_SAVED',
+    'a saved comparison of another period is not this period');
+  assert.equal(comparisonAgreement(older, live, 5, null), null, 'no edition, no line');
+  assert.equal(comparisonAgreement(older, null, 5, '2026-09-11T11:01:00Z'), null);
+  console.log('Comparison agreement with the integrated view PASS');
+}

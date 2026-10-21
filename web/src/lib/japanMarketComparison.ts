@@ -245,3 +245,26 @@ export function validMaterialReactionResearch(v: unknown): boolean {
     && Number.isSafeInteger(r.researchReactionRows) && Number.isSafeInteger(r.candidatesWithReactions)
     && ['decisionWith', 'decisionWithout', 'heldOutWith', 'heldOutWithout'].every(k => metric(r[k]));
 }
+
+// 2026-10-21 (owner): the 従来の過去比較 view says whether it shows the same
+// comparison the integrated view (見立て) used, and the time of each. The view
+// is rebuilt at fixed times; the chart recalculates about every thirty
+// minutes, so between editions the two can name different past periods.
+const jstShort = (iso: string) => new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo',
+  month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const candidateIds = (doc: JapanMarketComparison) => (doc.candidates ?? []).map(c => c.snapshotId).sort().join('|');
+export type ComparisonAgreement = { kind: 'SAME' | 'DIFFERENT' | 'NOT_SAVED'; textJa: string };
+export function comparisonAgreement(saved: unknown, live: JapanMarketComparison | null | undefined,
+  horizon: number, editionAt: string | null | undefined): ComparisonAgreement | null {
+  if (!live || !editionAt || !Number.isFinite(Date.parse(editionAt))) return null;
+  const edition = jstShort(editionAt), current = jstShort(live.informationCutoff);
+  if (!validJapanMarketComparison(saved, horizon)) {
+    return { kind: 'NOT_SAVED', textJa: `見立て(${edition})にはこの期間の比較が保存されていません。このチャートは ${current} 時点です。` };
+  }
+  if (saved.informationCutoff === live.informationCutoff && saved.anchorDate === live.anchorDate
+    && candidateIds(saved) === candidateIds(live)) {
+    return { kind: 'SAME', textJa: `見立て(${edition})と同じ比較です(${current} 時点)。` };
+  }
+  return { kind: 'DIFFERENT', textJa: `見立て(${edition})が使った比較は ${jstShort(saved.informationCutoff)} 時点、`
+    + `このチャートは ${current} 時点の最新です。似た過去の局面が違うことがあります。` };
+}
