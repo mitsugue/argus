@@ -118,3 +118,42 @@
 .at-view-hero .at-brief--current .at-brief__rows b {font-size:12px;color:var(--cyan);margin-bottom:4px}
 .at-view-hero .at-brief--current .at-brief__rows span {font-size:14px;line-height:1.7}
 .at-view-hero .at-brief--current > details {border:1px solid var(--line);border-radius:14px;padding:8px 14px}
+
+/* 2026-10-21 owner request: every Today block title in one recognisable
+   form, white like FUTURE MAP and a little larger, with a cyan bar so a title
+   reads as a title. Two levels only: the block title, and a heading inside a
+   block. Colours and sizes come from here, not from each card. */
+.argus-today .argus-editorial .argus-editorial__edition > span:first-child,
+.argus-today .at-brief .at-brief__edition > span:first-child,
+.argus-today .fm-head > b,
+.argus-today #today-nikkei-chart > h3,
+.argus-today .lm-card .lm-heading > b,
+.argus-today .at-primary-hero > .at-seven > summary > small,
+.argus-today .at-priorities .at-head > b,
+.argus-today #today-material-news .at-head > b,
+.argus-today #today-events > .at-head > b,
+.argus-today #today-news-details > summary,
+.argus-today .sector-heatmap > h3,
+.argus-today .at-internals > h3,
+.argus-today .at-margin-dynamics > h3,
+.argus-today .at-other-markets > summary,
+.argus-today .at-context > summary,
+.argus-today .at-evidence > summary {
+  color: var(--text-main); font-size: 17px; font-weight: 700; letter-spacing: .02em; line-height: 1.4;
+  opacity: 1; text-transform: none; border-left: 3px solid var(--cyan); padding-left: 10px;
+}
+.argus-today .mp-card .at-head > b,
+.argus-today .today-strip__rows h2,
+.argus-today .argus-editorial .argus-editorial__digest h2,
+.argus-today .argus-editorial .argus-editorial__vault > summary {
+  color: var(--text-main); font-size: 15px; font-weight: 650; letter-spacing: .02em; line-height: 1.5; opacity: 1;
+}
+/* Folded block titles keep their 44px tap height; the text sits in the middle of the bar. */
+.argus-today #today-news-details > summary,
+.argus-today .at-context > summary,
+.argus-today .at-evidence > summary { align-content: center; }
+.argus-today .at-other-markets > summary { align-items: center; }
+@media (max-width: 350px) {
+  .argus-today .fm-head > b, .argus-today .lm-card .lm-heading > b, .argus-today #today-nikkei-chart > h3,
+  .argus-today .at-head > b, .argus-today .sector-heatmap > h3, .argus-today .at-margin-dynamics > h3 { font-size: 16px; }
+}

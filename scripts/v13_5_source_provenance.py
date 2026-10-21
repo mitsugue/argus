@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.151"
+PRODUCT_VERSION = "v13.8.152"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -161,7 +161,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'ce976c7e34ef6411bc3418550a44487288870730',
+    'web/scripts/owner-today-https.mjs': 'aceaca2b5f6a8377e64429bd83059982764505cf',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -316,7 +316,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_presentation_intent.py': '9ac401c4ea52103cb0efeedcf5774d25b78cda7d',
     'argus_persistent_storage.py': 'c62ab9a1d6c5c2c273f93772115d31622b7f15e5',
     'test_argus_checkpoint_stream_batches.py': 'a3e03b9cb28f6f62b88096bf651ef4eef02d451f',
-    'web/src/components/today/ReadingHierarchy.css': 'a583f3ae076992339e520de0ff67796a1ea7d681',
+    'web/src/components/today/ReadingHierarchy.css': 'de8728db9522569115d5d1219e1907445bba7161',
     'web/src/components/AppShell.tsx': '039fee81ed187008fae6d51d09bafe7cd165fac5',
     'web/src/routes/BackupPage.tsx': '7d082a20c08964bb00dc4de227827f7bcfc19abb',
     'web/src/navigation.ts': '7bbea49bee28dd07ead0273ea84f1092255a3ca3',
@@ -686,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/scripts/today-block-titles.test.mjs",
     "test_jp_market_level_map_supply.py",
     "test_twelvedata_usage_ledger.py",
     "test_usdjpy_tokyo_close.py",
