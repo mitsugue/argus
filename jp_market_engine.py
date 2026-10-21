@@ -569,13 +569,15 @@ def point_in_time_rows(rows: Iterable[Mapping[str, Any]], cutoff: str) \
         revision_key = (*key, revision)
         seen_hash = seen_revision_hashes.get(revision_key)
         if seen_hash is not None and seen_hash != candidate_hash:
-            raise ValueError("conflicting_row_revision")
+            # 2026-10-21: name the observation (series, session, revision; no
+            # value) so a stuck feature history can be traced to its input.
+            raise ValueError("conflicting_row_revision:%s:%s:%s:%d" % (*key, revision))
         seen_revision_hashes[revision_key] = candidate_hash
         previous = admitted.get(key)
         if previous is not None and revision == previous[1]:
             previous_hash = _sha256(previous[2])
             if candidate_hash != previous_hash:
-                raise ValueError("conflicting_row_revision")
+                raise ValueError("conflicting_row_revision:%s:%s:%s:%d" % (*key, revision))
             continue
         candidate_rank = (revision, known, candidate_hash)
         previous_rank = ((previous[1], previous[0], _sha256(previous[2]))

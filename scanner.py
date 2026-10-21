@@ -43337,7 +43337,7 @@ def _jp_market_feature_history_warm():
         # eighty characters are enough to tell them apart and carry no data.
         _JP_MARKET_FEATURE_HISTORY = {**_JP_MARKET_FEATURE_HISTORY, "status": "FAILED",
                                      "errorClass": type(exc).__name__,
-                                     "errorReason": str(exc)[:80]}
+                                     "errorReason": str(exc)[:160]}
     finally:
         _JP_MARKET_FEATURE_HISTORY_LOCK.release()
 
