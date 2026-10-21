@@ -17536,7 +17536,10 @@ def _brief_market_view_summary():
                       if (r or {}).get("status") == "AVAILABLE"
                       and (r or {}).get("conditionMet") is True)
             bits.append(f"6サイン成立{met}/{len(six)}")
-        return {"label": "・".join(bits)}
+        # 2026-10-22: the judgement's own time travels with the label, so the
+        # brief's market-view fact names when the six signs were read (N-17).
+        cutoff = (view or {}).get("informationCutoff") or proj.get("informationCutoff")
+        return {"label": "・".join(bits), "informationCutoff": cutoff if isinstance(cutoff, str) else None}
     except Exception:
         return {"label": ""}
 

@@ -391,3 +391,23 @@ def test_generation_gate_names_the_budget_refusal_and_when_it_resumes(monkeypatc
     monkeypatch.setattr(scanner, "_OPENAI_PROSE_LAST", {"purpose": "news_intel", "outcome": "skipped",
                                                         "reason": "scheduled_daily_budget_exhausted", "at": None})
     assert scanner._market_brief_generation_gate()["reason"] is None
+
+
+def test_market_view_fact_carries_its_judgement_time(monkeypatch):
+    # 2026-10-22 (N-17): the market-view fact named no time; the page accepts
+    # this provenance shape (eventId, observedAt, sourceRowSha256).
+    import argus_market_brief
+    monkeypatch.setattr(scanner, "_jp_market_engine_market_view", lambda: {
+        "informationCutoff": "2026-10-22T02:30:00Z",
+        "projection": {"reversal": {"reversalState": "MIXED"},
+                       "families": {"D01": {"status": "AVAILABLE", "conditionMet": True}}}})
+    summary = scanner._brief_market_view_summary()
+    assert summary["informationCutoff"] == "2026-10-22T02:30:00Z"
+    brief = argus_market_brief.compose_brief(now_iso="2026-10-22T03:00:00Z", market_view_summary=summary)
+    fact = next(f for f in brief["facts"] if f.get("source") == "market_view")
+    prov = fact["provenance"]
+    assert prov["eventId"] == "market-view" and prov["observedAt"] == "2026-10-22T02:30:00Z"
+    assert len(prov["sourceRowSha256"]) == 64 and prov["publishedAt"] is None
+    without = argus_market_brief.compose_brief(now_iso="2026-10-22T03:00:00Z",
+                                               market_view_summary={"label": summary["label"]})
+    assert "provenance" not in next(f for f in without["facts"] if f.get("source") == "market_view")
