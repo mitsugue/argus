@@ -281,8 +281,25 @@ def test_brief_market_view_chip_counts_real_family_enum(monkeypatch):
                 "D07": {"status": "MISSING"},
             }}})
     label = scanner._brief_market_view_summary()["label"]
-    assert "成立2/7" in label, label
+    assert "6サイン成立2/6" in label, label
     assert "反転:回復試験" in label and "下方:混在" in label
+
+
+def test_brief_counts_the_six_signs_like_the_screen(monkeypatch):
+    # 2026-10-21: the brief said 成立5/7 (family flags, closed D07 included)
+    # while Today showed the six warning signs with their own gates.
+    def row(family, state, **extra):
+        return {"family": family, "state": state, "status": "AVAILABLE",
+                "conditionMet": state == "ACTIVE", "ruleStatus": "DEFINED", **extra}
+    signals = [row("D01", "ACTIVE"), row("D02", "CLEAR"), row("D03", "ACTIVE"),
+               row("D04", "ACTIVE", lineage="ARGUS_VALIDATION_RULE"), row("D05", "ACTIVE"),
+               row("D06", "CLEAR"), row("D07", "ACTIVE")]
+    monkeypatch.setattr(scanner, "_jp_market_engine_market_view", lambda: {"projection": {
+        "reversal": {}, "warningSignals": {"schemaVersion": "jp-warning-conditions-v3", "signals": signals},
+        "families": {f"D0{i}": {"status": "AVAILABLE", "conditionMet": True} for i in range(1, 8)}}})
+    label = scanner._brief_market_view_summary()["label"]
+    # D03 lacks the adopted lineage and D07 is closed, as on the screen.
+    assert label == "6サイン成立3/6", label
 
 
 def test_same_day_event_keeps_its_slot_in_the_now_line():

@@ -17511,14 +17511,31 @@ def _brief_market_view_summary():
             state = rev.get(key)
             if state:
                 bits.append(f"{label}:{_JP_MARKET_ENGINE_STATE_JA.get(str(state), str(state))}")
-        if fams:
+        # 2026-10-21: counted like the screen's 6 signs (web/src/domain/
+        # marketSignals.ts): the closed seventh condition (D07) is left out,
+        # and the warning rows are counted with the same gates when present.
+        # The brief said 成立5/7 from the family flags while Today showed
+        # a different count of six.
+        warning = proj.get("warningSignals") if isinstance(proj.get("warningSignals"), dict) else None
+        rows = warning.get("signals") if warning else None
+        if isinstance(rows, list) and rows:
+            adopted = warning.get("schemaVersion") == "jp-warning-conditions-v3"
+            six = [r for r in rows if isinstance(r, dict) and r.get("family") != "D07"]
+            met = sum(1 for r in six
+                      if r.get("state") == "ACTIVE" and r.get("status") == "AVAILABLE"
+                      and r.get("conditionMet") is True and r.get("ruleStatus") != "RULE_NOT_DEFINED"
+                      and (r.get("family") not in ("D03", "D04")
+                           or (adopted and r.get("lineage") == "ARGUS_VALIDATION_RULE")))
+            bits.append(f"6サイン成立{met}/{len(six)}")
+        elif fams:
             # v13.5.36: the real family enum is AVAILABLE/LICENSE_BLOCKED/
             # MISSING (not "EVALUATED") — the chip showed 0/7 while two
             # families were 成立 on the strip right above it.
-            met = sum(1 for r in fams.values()
+            six = {k: v for k, v in fams.items() if k != "D07"}
+            met = sum(1 for r in six.values()
                       if (r or {}).get("status") == "AVAILABLE"
                       and (r or {}).get("conditionMet") is True)
-            bits.append(f"成立{met}/{len(fams)}")
+            bits.append(f"6サイン成立{met}/{len(six)}")
         return {"label": "・".join(bits)}
     except Exception:
         return {"label": ""}
