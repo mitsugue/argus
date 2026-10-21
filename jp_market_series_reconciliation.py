@@ -210,6 +210,54 @@ def drop_exact_duplicates(rows: Sequence[Mapping[str, Any]]) -> list:
     return out
 
 
+def _known(row: Mapping[str, Any]):
+    """The latest of the row's publication/availability/knowledge times, as the
+    point-in-time admission reads it; None when one of them is unreadable."""
+    from datetime import datetime as _dt
+    times = []
+    for key in ('publishedAt', 'availableFrom', 'knownAt'):
+        raw = row.get(key)
+        if raw is None:
+            continue
+        try:
+            parsed = _dt.fromisoformat(str(raw).replace('Z', '+00:00'))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return None
+        times.append(parsed)
+    return max(times) if times else None
+
+
+def keep_first_receipt(rows: Sequence[Mapping[str, Any]]) -> list:
+    """One row per observation: same series, period, revision and value (2026-10-21).
+
+    The same weekly observation imported again later (another receipt time,
+    another import id) reached the features as a second row of the same
+    revision, and the point-in-time admission stopped the whole feature
+    history (conflicting_row_revision, flow.foreign, since 2026-10-20). The
+    earliest knowable receipt is kept, as the first receipt is everywhere
+    else. Rows of the same revision with different values still both reach
+    the admission and still stop it; unreadable times are left as they are.
+    """
+    groups: Dict[tuple, list] = {}
+    order = []
+    for index, row in enumerate(rows or ()):
+        key = (row.get('seriesId'), _day(row), row.get('revision', 0), repr(row.get('value')))
+        if key not in groups:
+            order.append(key)
+        groups.setdefault(key, []).append((index, row))
+    keep = set()
+    for key in order:
+        members = groups[key]
+        times = [(_known(row), index) for index, row in members]
+        if len(members) == 1 or any(t is None for t, _ in times):
+            keep.update(index for index, _ in members)
+            continue
+        keep.add(min(times)[1])
+    return [row for index, row in enumerate(rows or ()) if index in keep]
+
+
 def reconcile(inputs: Mapping[str, Any], *, open_days: Iterable[str], unknown_days: Iterable[str] = (),
               measured_at: Optional[str] = None) -> Dict[str, Any]:
     """Every input list of the condition features, keyed like the input spans."""
