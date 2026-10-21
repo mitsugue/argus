@@ -40,7 +40,9 @@ for (const file of walk(root)) {
   }
 }
 // BootConsole reads the brief's loading state only (progress lane); it renders no brief text.
-const expected = ['components/dialogue/OwnerOverview.tsx', 'components/today/ArgusTodayPanel.tsx', 'components/today/BootConsole.tsx', 'components/today/MarketBriefCard.tsx', 'components/today/SharedMarketContext.tsx', 'routes/DataQualityPage.tsx'];
+// The comparison panel (2026-10-22, owner) reads the saved comparison and the
+// edition time only, to say whether the chart shows the comparison the view used.
+const expected = ['components/chart/JapanMarketComparisonPanel.tsx', 'components/dialogue/OwnerOverview.tsx', 'components/today/ArgusTodayPanel.tsx', 'components/today/BootConsole.tsx', 'components/today/MarketBriefCard.tsx', 'components/today/SharedMarketContext.tsx', 'routes/DataQualityPage.tsx'];
 if (JSON.stringify(importers.sort()) !== JSON.stringify(expected)) {
   fail(`useMarketBrief importers must be exactly ${JSON.stringify(expected)}, `
     + `got ${JSON.stringify(importers)}`);
