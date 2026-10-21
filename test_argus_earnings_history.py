@@ -140,7 +140,8 @@ def test_company_coverage_reads_original_identities_span_and_latest_receipt_with
     history.retain(path,records,received_at=LATER,member_codes=['1000'],query_code='1000')
     before=path.read_bytes()
     proof=history.read_company_coverage(path,cutoff=LATER,member_codes=['1000'])['1000']
-    assert proof['receivedAt']==LATER and proof['firstDisclosureDay']=='2026-07-01'
+    # Owner decision 2026-10-22: the same response received again keeps the first receipt.
+    assert proof['receivedAt']==AT and proof['firstDisclosureDay']=='2026-07-01'
     assert proof['lastDisclosureDay']=='2026-10-06'
     actual=history.read(path,cutoff=LATER,member_codes=['1000'])
     assert set(proof['observationIds'])=={r['observationId'] for r in actual}
@@ -501,9 +502,11 @@ def _receipt_store(tmp_path):
     path = tmp_path/'shared.sqlite3'
     history.retain(path, [row()], received_at=AT, member_codes=['1000'], query_code='1000')
     members = [str(n) for n in range(1000, 1225)]
-    for at in DATE_REVISIONS:
-        history.retain(path, [row()], received_at=at, member_codes=members, query_date='2026-10-06',
-                       complete_scope=members)
+    for index, at in enumerate(DATE_REVISIONS):
+        # Each revision a different response (owner decision 2026-10-22: the
+        # same response received again is not another revision).
+        history.retain(path, [{**row(), 'FOP': str(100 + index)}], received_at=at, member_codes=members,
+                       query_date='2026-10-06', complete_scope=members)
     inputs = fixture(); add_row(inputs); bind(inputs)
     proof, rows = scope.admit(**inputs)
     history.retain_composite(path, rows, receipt_proof=proof)
@@ -603,7 +606,8 @@ def test_rejections_are_unchanged_by_remembered_checks(tmp_path, warm, case):
         # A new collection of the same date names the same original: the new
         # receipt is checked against the stored bytes, as before.
         members = [str(n) for n in range(1000, 1225)]
-        history.retain(path, [row()], received_at='2026-10-09T01:00:00Z', member_codes=members,
+        history.retain(path, [{**row(), 'FOP': str(100 + len(DATE_REVISIONS) - 1)}],
+                       received_at='2026-10-09T01:00:00Z', member_codes=members,
                        query_date='2026-10-06', complete_scope=members)
     elif case == 'observation-not-in-original':
         db = sqlite3.connect(path)
@@ -644,3 +648,27 @@ def test_private_snapshot_reuses_only_identical_checked_content(tmp_path):
     again = tmp_path/'again'; again.mkdir()
     with pytest.raises(ValueError, match='COMPOSITE_HASH|COMPONENT_SELECTED_INPUT'):
         backup.snapshot(path, again)
+
+
+def test_the_same_response_received_again_is_not_another_revision(tmp_path):
+    # Owner decision 2026-10-22: 「同じ中身を受け取り直した分は残さない。重複を避ける」.
+    import sqlite3
+    path = tmp_path/'shared.sqlite3'
+    members = [str(n) for n in range(1000, 1225)]
+    for at in DATE_REVISIONS:
+        history.retain(path, [row()], received_at=at, member_codes=members, query_date='2026-10-06',
+                       complete_scope=members)
+        history.retain(path, [row()], received_at=at, member_codes=['1000'], query_code='1000')
+    history.retain(path, [{**row(), 'FOP': '9'}], received_at='2026-10-09T01:00:00Z', member_codes=members,
+                   query_date='2026-10-06', complete_scope=members)
+    db = sqlite3.connect(path)
+    try:
+        dates = db.execute("SELECT count(*) FROM metadata WHERE key LIKE 'financial-summary-date:2026-10-06:revision:%'").fetchone()[0]
+        codes = db.execute("SELECT count(*) FROM metadata WHERE key LIKE 'financial-summary-code:1000:revision:%'").fetchone()[0]
+        newest = json.loads(db.execute("SELECT value FROM metadata WHERE key='financial-summary-date:2026-10-06'").fetchone()[0])
+    finally:
+        db.close()
+    assert dates == 2 and codes == 1            # the first receipt, then the changed response
+    assert newest['receivedAt'] == '2026-10-09T01:00:00Z'
+    coverage = history.read_coverage(path, cutoff='2026-10-08T00:00:00Z')['2026-10-06']
+    assert coverage['receivedAt'] == DATE_REVISIONS[0]   # the first receipt is the proof kept
