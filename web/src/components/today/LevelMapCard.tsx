@@ -33,14 +33,17 @@ function Tally({ score, title }: { score: LevelMapScore; title: string }) {
   </div>;
 }
 
-function Calculations({ map, current }: { map: NonNullable<LevelMapState['latest']>; current: boolean }) {
+function Calculations({ map, current, suppliedDays }: { map: NonNullable<LevelMapState['latest']>; current: boolean; suppliedDays: number }) {
   const cov = map.epsCoverage;
+  const supplied = cov?.suppliedEarnings ?? 0;
   return <>
     <p className="lm-note">{current ? `${map.previousSession} 終値の表示用計算` : `${map.morningOf} 朝 · 寄付前に固定保存`}（{jst(map.createdAt)}）</p>
     <p className="lm-note">{current ? '最新終値' : '前日終値'} {yen(map.previousClose)}（{map.previousSession}）· ATR14 {yen(map.atr14)} ·
       EPS {map.eps.toFixed(1)}（{map.epsDate}）· PER {map.per.toFixed(2)}倍</p>
     <p className="lm-note lm-eps">{map.epsLabelJa}{cov ? `。予想が無く実績で補った社 ${cov.filledFromTrailing ?? 0}・赤字予想 ${cov.negativeForecast ?? 0}` : ''}
       {map.constituentsAsOf ? `。構成銘柄は ${map.constituentsAsOf} 時点` : ''}</p>
+    {supplied > 0 && <p className="lm-note lm-supplied" data-supplied={supplied}>この日の推計は補った推計です（評価値が空だった{supplied}社を、日足の時価総額と前日までの決算短信の予想純利益で補いました）。</p>}
+    {suppliedDays > 0 && <p className="lm-small lm-supplied-days" data-supplied-days={suppliedDays}>過去の推計のうち{suppliedDays}日は、評価値が空だった社を日足と決算短信で補った推計です（そろった日とは別に数えています）。</p>}
     {map.epsJumped && <p className="lm-note lm-jump">EPSが前の推計から3%以上動きました（線が飛んでいます）。</p>}
     <div className="lm-scroll"><table className="lm-table">
       <thead><tr><th>価格（円）</th><th>{current ? '最新終値との差' : '前日終値との差'}</th><th>この価格の意味</th><th>山・谷ができた頻度</th><th>10営業日以内に届いた</th><th>到達までの日数</th></tr></thead>
@@ -106,10 +109,10 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
       <small>株価が動いた時の位置を確かめる表です。ここで反転するかは未確認のため、売買時期の判断には使えません。</small>
     </details>
     <details className="lm-all-levels"><summary>価格一覧・計算の根拠</summary>
-    <Calculations map={map} current={current} />
+    <Calculations map={map} current={current} suppliedDays={Number.isInteger(state.estimateSuppliedCount) ? state.estimateSuppliedCount! : 0} />
     </details>
     <details className="lm-records"><summary>PER線の答え合わせ・過去の記録</summary>
-    {current && <details className="lm-morning"><summary>朝の固定記録を見る</summary><Calculations map={state.latest} current={false} /></details>}
+    {current && <details className="lm-morning"><summary>朝の固定記録を見る</summary><Calculations map={state.latest} current={false} suppliedDays={0} /></details>}
     {state.missedMornings.length > 0 && <p className="lm-small">寄付前に作れなかった朝: {state.missedMornings.join('、')}（後から作り直していません）</p>}
     {state.score && <Tally score={state.score} title={`答え合わせ（${state.score.firstMorning ?? ''}からの事前記録）`} />}
     {state.score && state.score.mornings < 60 && <p className="lm-small">件数が少ないうちは、成績として判断に使いません。精度の評価は数か月単位です。</p>}

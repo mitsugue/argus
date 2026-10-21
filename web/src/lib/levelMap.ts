@@ -9,7 +9,7 @@ export type LevelMapRow = {
 export type LevelMapRecord = {
   schemaVersion: string; morningOf: string; createdAt: string; previousClose: number; previousSession: string;
   atr14: number; eps: number; epsDate: string; per: number; epsJumped: boolean; epsLabelJa: string;
-  epsCoverage?: { members?: number; filledFromTrailing?: number; negativeForecast?: number; missingEarnings?: number } | null;
+  epsCoverage?: { members?: number; filledFromTrailing?: number; negativeForecast?: number; missingEarnings?: number; suppliedEarnings?: number } | null;
   constituentsAsOf?: string | null; rows: LevelMapRow[]; atrGuides: { UP: number[]; DOWN: number[] };
   fixedNotesJa: string[]; actionAuthority: false;
 };
@@ -39,6 +39,7 @@ export type LevelMapState = {
   schemaVersion: 'jp-market-level-map-state-v1'; status: string; latest: LevelMapRecord | null;
   chart?: { nearest?: unknown; today?: string; closePending?: boolean; valuationHistory?: unknown; displayMap?: LevelMapRecord & { displayOnly: true; asOf: string; valuationPending: boolean } };
   morningCount: number; missedMornings: string[]; score: LevelMapScore | null; retrospective: LevelMapScore | null;
+  estimateCount?: number; estimateSuppliedCount?: number;
   actionAuthority: false;
 };
 

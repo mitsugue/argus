@@ -97,3 +97,13 @@ assert.ok(mergedHtml.includes('近接するPER18倍線')&&mergedHtml.includes('�
 const staleStats=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:mergedMap,nearest:[
  {side:'UP',multiple:18,price:72000,distancePct:8,distanceAtr:4,reachedWithin10SessionsPct:99,sessionsMedian:1}]}}}));
 assert.ok(!staleStats.includes('99%')&&staleStats.includes('未集計'),'ignore stats from another distance');
+
+// 2026-10-21: an estimate whose blank members were supplied is marked apart,
+// and the count of such days is shown once; complete days carry no mark.
+assert.ok(!html.includes('補った推計'), 'a complete day is not marked as supplied');
+const suppliedHtml = renderToStaticMarkup(React.createElement(LevelMapView, { state: { ...state, estimateSuppliedCount: 175,
+  latest: { ...latest, epsCoverage: { ...latest.epsCoverage, suppliedEarnings: 1 } } } }));
+assert.ok(suppliedHtml.includes('この日の推計は補った推計です') && suppliedHtml.includes('評価値が空だった1社'));
+assert.ok(suppliedHtml.includes('過去の推計のうち175日は') && suppliedHtml.split('過去の推計のうち').length === 2);
+assert.ok(!renderToStaticMarkup(React.createElement(LevelMapView, { state: { ...state, estimateSuppliedCount: 'x' } })).includes('過去の推計のうち'));
+console.log('Level map supplied estimate PASS');

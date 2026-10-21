@@ -15,6 +15,11 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, Optional, Set
 
 SCHEMA = 'level-map-eps-backfill-v1'
+# The estimate method the set-aside dates were tried with. A new method (for
+# example the 2026-10-21 supplement of blank members) starts the position and
+# the set-aside dates afresh, so dates the old method could not fill are
+# tried again at once instead of after thirty days.
+METHOD = 'blank-member-supplement-2026-10-21'
 EXHAUST_AFTER = 3
 RETRY_AFTER = timedelta(days=30)
 MAX_ENTRIES = 4000
@@ -22,7 +27,7 @@ FILENAME = 'level_map_backfill_state.json'
 
 
 def empty() -> Dict[str, Any]:
-    return {'schemaVersion': SCHEMA, 'cursor': None, 'attempts': {}, 'exhausted': {}}
+    return {'schemaVersion': SCHEMA, 'method': METHOD, 'cursor': None, 'attempts': {}, 'exhausted': {}}
 
 
 def _day(value: Any) -> Optional[str]:
@@ -40,7 +45,7 @@ def _instant(value: str) -> datetime:
 
 def parse(value: Any) -> Dict[str, Any]:
     """A validated state; anything malformed starts empty rather than guessing."""
-    if not isinstance(value, dict) or value.get('schemaVersion') != SCHEMA:
+    if not isinstance(value, dict) or value.get('schemaVersion') != SCHEMA or value.get('method') != METHOD:
         return empty()
     state = empty()
     state['cursor'] = _day(value.get('cursor'))
