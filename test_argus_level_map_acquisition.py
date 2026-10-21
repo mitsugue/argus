@@ -121,6 +121,8 @@ def _existing_endpoint(state):
              "argus_level_map_backfill": argus_level_map_backfill,
              "_LEVEL_MAP_BACKFILL": {"state": None, "lastSaveError": None},
              "_USDJPY_TOKYO_CLOSE": {},
+             # 2026-10-21: the blank-member supply summary (in-memory counts only).
+             "_level_map_supply_summary": lambda: {"requests": 0, "suppliedDays": 0},
              "_DURABLE_STORAGE_STATUS": {}}
     exec(compile(ast.Module(body=[function], type_ignores=[]), "scanner.py", "exec"), scope)
     app.add_url_rule("/api/argus/admin/memory-attribution", view_func=scope[function.name])
@@ -142,6 +144,10 @@ def test_existing_get_requires_auth_and_explicit_opt_in_without_collection():
     assert view["admittedEstimateCount"] == 1
     assert "sensitive-sentinel" not in json.dumps(view)
     assert calls == [] and state == before
+
+
+def forbidden_supply(*args, **kwargs):
+    raise AssertionError("no blank member: the supply lane must not request")
 
 
 def _existing_warm(*, fail_at=None):
@@ -174,7 +180,8 @@ def _existing_warm(*, fail_at=None):
     def no_retrospective(*args, **kwargs):
         raise level_map.LevelMapError("synthetic_no_morning")
     arithmetic = SimpleNamespace(**{k: getattr(level_map, k) for k in (
-        "pending_eps_sessions", "weighted_eps", "estimate_input_usable", "daily_close_repairable", "LevelMapError")})
+        "pending_eps_sessions", "weighted_eps", "estimate_input_usable", "daily_close_repairable", "LevelMapError",
+        "blank_members", "valuation_with_supplied_members", "SUPPLY_MAX_MEMBERS")})
     arithmetic.zigzag = lambda rows: []
     arithmetic.constituents_on = lambda day, constituents, as_of, changes: (members, day)
     arithmetic.score_records = lambda *a: {}
@@ -194,7 +201,10 @@ def _existing_warm(*, fail_at=None):
              "_CANDIDATES": {}, "_candidates_warm": lambda *a: None, "_level_map_remote": lambda: None,
              # 2026-10-21: the backfill position and set-aside dates (fresh, not written here).
              "argus_level_map_backfill": argus_level_map_backfill,
-             "_level_map_backfill_state": lambda: backfill_state, "_level_map_backfill_save": lambda: None}
+             "_level_map_backfill_state": lambda: backfill_state, "_level_map_backfill_save": lambda: None,
+             # 2026-10-21: no member here is blank, so the supply lane must not request.
+             "_LEVEL_MAP_SUPPLY": {"suppliedDays": 0, "lastSuppliedDate": None},
+             "_LEVEL_MAP_SUPPLY_REQUESTS_PER_WARM": 2, "_level_map_supply_inputs": forbidden_supply}
     exec(compile(ast.Module(body=[function], type_ignores=[]), "scanner.py", "exec"), scope)
     return scope, requests, writes, corrections, bars
 

@@ -34508,6 +34508,7 @@ def api_argus_admin_memory_attribution():
         payload["levelMapInputs"]["backfill"] = {
             **argus_level_map_backfill.summary(_LEVEL_MAP_BACKFILL.get("state") or argus_level_map_backfill.empty()),
             "lastSaveError": _LEVEL_MAP_BACKFILL.get("lastSaveError")}
+        payload["levelMapInputs"]["blankMemberSupply"] = _level_map_supply_summary()
     return jsonify(payload)
 
 
@@ -40602,6 +40603,59 @@ def _level_map_backfill_save():
         _LEVEL_MAP_BACKFILL["lastSaveError"] = type(exc).__name__
 
 
+# 2026-10-21 (owner decision, docs/PER_CURRENT_AUTHORITY.md): a member whose
+# valuation row is entirely blank is supplied from that code's daily bars
+# (market cap) and the forecast net income it disclosed before that day.
+# Each code's bars and disclosures are read once per kind and kept in memory;
+# at most two such requests a warm. Only the fields the supplement uses are kept.
+_LEVEL_MAP_SUPPLY = {"bars": {}, "disclosures": {}, "requests": 0, "lastError": None,
+                     "suppliedDays": 0, "lastSuppliedDate": None}
+_LEVEL_MAP_SUPPLY_REQUESTS_PER_WARM = 2
+_LEVEL_MAP_SUPPLY_REFRESH_SECONDS = 6 * 3600
+_LEVEL_MAP_SUPPLY_FIELDS = {
+    "bars": ("Date", "Code", "MktCap"),
+    "disclosures": ("Code", "DiscDate", "DiscTime", "DiscNo", "DocType", "FNP", "NxFNp", "FNCNP", "NxFNCNP"),
+}
+_LEVEL_MAP_SUPPLY_PATHS = {"bars": "/equities/bars/daily", "disclosures": "/fins/summary"}
+
+
+def _level_map_supply_inputs(codes, day, budget):
+    """({code: bars}, {code: disclosures}, {kind:code: receipt}) or None when not all known yet."""
+    found = {"bars": {}, "disclosures": {}}
+    receipts = {}
+    today = datetime.now(TZ_JST).date().isoformat()
+    for kind in ("bars", "disclosures"):
+        store = _LEVEL_MAP_SUPPLY[kind]
+        for code in codes:
+            entry = store.get(code)
+            if entry is None or (day >= entry["through"]
+                                 and time.time() - entry["fetchedAt"] >= _LEVEL_MAP_SUPPLY_REFRESH_SECONDS):
+                if budget[0] <= 0:
+                    return None
+                budget[0] -= 1
+                _LEVEL_MAP_SUPPLY["requests"] += 1
+                try:
+                    rows = _jquants_paginated(_LEVEL_MAP_SUPPLY_PATHS[kind], {"code": code},
+                                              max_pages=3, request_timeout=15)
+                except Exception as exc:
+                    _LEVEL_MAP_SUPPLY["lastError"] = type(exc).__name__
+                    return None
+                kept = [{key: row.get(key) for key in _LEVEL_MAP_SUPPLY_FIELDS[kind]}
+                        for row in rows or () if isinstance(row, dict) and str(row.get("Code") or "")[:4] == code]
+                entry = store[code] = {"rows": kept, "through": today, "fetchedAt": time.time(),
+                                       "receivedAt": _ai_now_iso(), "rowsSha256": hashlib.sha256(json.dumps(
+                                           kept, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()}
+            found[kind][code] = entry["rows"]
+            receipts[kind + ":" + code] = {"receivedAt": entry["receivedAt"], "rowsSha256": entry["rowsSha256"]}
+    return found["bars"], found["disclosures"], receipts
+
+
+def _level_map_supply_summary():
+    return {"requests": _LEVEL_MAP_SUPPLY["requests"], "lastError": _LEVEL_MAP_SUPPLY["lastError"],
+            "suppliedDays": _LEVEL_MAP_SUPPLY["suppliedDays"], "lastSuppliedDate": _LEVEL_MAP_SUPPLY["lastSuppliedDate"],
+            "codesRead": sorted(set(_LEVEL_MAP_SUPPLY["bars"]) | set(_LEVEL_MAP_SUPPLY["disclosures"]))}
+
+
 def _level_map_warm(nikkei_rows, *, current_only=False):
     if not _LEVEL_MAP_LOCK.acquire(blocking=False):
         return
@@ -40673,6 +40727,7 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
             argus_level_map_acquisition.selected(acquisition, pending)
             headers = {"x-api-key": _JQUANTS_API_KEY}
             daily_close_attempted = False
+            supply_budget = [_LEVEL_MAP_SUPPLY_REQUESTS_PER_WARM]
             for day in pending:
                 if not current_only and day != sessions[-1]:
                     _LEVEL_MAP['epsBackfillCursor'] = day
@@ -40690,6 +40745,31 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                     estimate = jp_market_level_map.weighted_eps(
                         values, members, index_close=float(close_by_day[day]), date=day,
                         constituents_as_of=members_label)
+                    supplement = None
+                    blanks = (jp_market_level_map.blank_members(values, members)
+                              if estimate['coverage']['missingMarketCap'] > 0 else [])
+                    if (blanks and len(blanks) == estimate['coverage']['missingMarketCap']
+                            and len(blanks) <= jp_market_level_map.SUPPLY_MAX_MEMBERS):
+                        inputs = _level_map_supply_inputs(blanks, day, supply_budget)
+                        if inputs is not None:
+                            joined, supplied = jp_market_level_map.valuation_with_supplied_members(
+                                {code: values[code] for code in members if code in values}, members,
+                                inputs[0], inputs[1], date=day)
+                            if supplied:
+                                values = joined
+                                estimate = jp_market_level_map.weighted_eps(
+                                    values, members, index_close=float(close_by_day[day]), date=day,
+                                    constituents_as_of=members_label)
+                                supplement = {
+                                    'date': day, 'members': sorted(supplied),
+                                    'sourceRefs': ['jquants:v2:equities/bars/daily:MktCap',
+                                                   'jquants:v2:fins/summary:FNP/NxFNp'],
+                                    'disclosures': {code: row['disclosure']['discNo'] for code, row in supplied.items()},
+                                    'normalizedInputsSha256': hashlib.sha256(json.dumps(
+                                        supplied, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest(),
+                                    'receipts': {key: value for key, value in inputs[2].items()
+                                                 if key.split(':', 1)[1] in supplied},
+                                    'historicalPublicationTimeVerified': False}
                     if (estimate['coverage']['missingEarnings'] > 0
                             and estimate['coverage']['missingMarketCap'] == 0
                             and jp_market_level_map.daily_close_repairable(values, members)
@@ -40711,6 +40791,8 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                                     used, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest(),
                                 'members': len(used), 'receivedAt': _ai_now_iso(),
                                 'historicalPublicationTimeVerified': False}
+                    if supplement:
+                        estimate['memberSupplement'] = supplement
                     if not jp_market_level_map.estimate_input_usable(estimate, strict=True):
                         argus_level_map_acquisition.outcome(
                             acquisition, day, 'INPUT_INCOMPLETE', estimate.get('coverage'))
@@ -40738,6 +40820,9 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                     ('STORED_CORRECTION' if correction_attempted else 'STORED_ORIGINAL')
                     if stored['inserted'] else 'ALREADY_SAVED', estimate.get('coverage'))
                 argus_level_map_backfill.clear(backfill, day)
+                if stored["inserted"] and estimate.get('memberSupplement'):
+                    _LEVEL_MAP_SUPPLY["suppliedDays"] += 1
+                    _LEVEL_MAP_SUPPLY["lastSuppliedDate"] = day
                 if stored["inserted"]:
                     _LEVEL_MAP["eps"][day] = estimate
                     _LEVEL_MAP["estimatesLastWarm"] += 1
@@ -41590,6 +41675,9 @@ def _level_map_public():
             "latest": mornings[-1] if mornings else None, "morningCount": len(mornings),
             "firstMorning": mornings[0].get("morningOf") if mornings else None,
             "estimateCount": len(eps), "estimateFirst": min(eps) if eps else None,
+            # 2026-10-21: days whose blank members were supplied (counted apart).
+            "estimateSuppliedCount": sum(1 for row in eps.values() if isinstance(row, dict)
+                                         and ((row.get("coverage") or {}).get("suppliedEarnings") or 0) > 0),
             "estimateLatest": ({k: latest_eps.get(k) for k in ("date", "eps", "per", "forwardOnly", "coverage", "constituentsAsOf",
                                                               "basis", "labelJa", "officialValue")}
                                if latest_eps else None),

@@ -175,6 +175,84 @@ def valuation_with_daily_closes(valuation, daily_bars, *, date):
     return result, used
 
 
+# 2026-10-21 (owner decision, docs/PER_CURRENT_AUTHORITY.md): a member whose
+# valuation row is entirely blank (new holding companies before their first
+# statement under the new code: 9147 in 2022, 5831 in 2022-23, 543A in 2026)
+# is supplied from the same-day daily-bar market cap and the latest forecast
+# net income disclosed before that day. Measured against complete days
+# (2026-10-21): median 0.004 %, 99th percentile 0.76 %, maximum 3.18 % on the
+# estimate. Supplied estimates are kept apart by their coverage counts.
+SUPPLY_MAX_MEMBERS = 3
+_EARNINGS_FIELDS = ('MktCap', 'FwdPER', 'PER', 'FwdEPS', 'EPS')
+
+
+def blank_members(valuation, constituents):
+    """Members listed for the day whose market cap and earnings are all blank."""
+    return sorted(code for code in set(constituents)
+                  if isinstance(valuation.get(code), dict)
+                  and all(_finite(valuation[code].get(key)) is None for key in _EARNINGS_FIELDS))
+
+
+def forecast_net_income(disclosures, *, before):
+    """(million yen, disclosure) from the newest forecast disclosed before `before`.
+
+    Full-year statements carry the next year's forecast (NxFNp); other
+    documents the current year's (FNP). Non-consolidated figures stand in only
+    when the consolidated one is absent. A disclosure on the day itself is not
+    used (it comes at or after the close); nothing older is borrowed when the
+    newest disclosure has no forecast at all.
+    """
+    rows = []
+    for row in disclosures or ():
+        if not isinstance(row, dict):
+            continue
+        day = str(row.get('DiscDate') or '')
+        if len(day) != 10 or day >= before:
+            continue
+        full_year = str(row.get('DocType') or '').startswith('FY')
+        value = _finite(row.get('NxFNp') if full_year else row.get('FNP'))
+        if value is None:
+            value = _finite(row.get('NxFNCNP') if full_year else row.get('FNCNP'))
+        if value is None or value == 0:
+            continue
+        rows.append(((day, str(row.get('DiscTime') or ''), str(row.get('DiscNo') or '')), value, row))
+    if not rows:
+        return None
+    key, value, row = max(rows, key=lambda item: item[0])
+    return value / 1e6, {'discDate': key[0], 'discTime': key[1] or None, 'discNo': key[2] or None,
+                         'docType': str(row.get('DocType') or '') or None, 'forecastNetIncomeYen': value}
+
+
+def valuation_with_supplied_members(valuation, constituents, bars_by_code, disclosures_by_code, *, date):
+    """Copy rows, filling only blank members from dated bars and prior forecasts.
+
+    Returns (rows, supplied) where supplied maps each filled code to the exact
+    inputs used. Every blank member must be fillable, otherwise nothing is
+    supplied (a partial supplement is not a complete day). Duplicate bars for
+    one code and date are rejected rather than choosing one.
+    """
+    blanks = blank_members(valuation, constituents)
+    if not blanks or len(blanks) > SUPPLY_MAX_MEMBERS:
+        return {code: dict(row) for code, row in valuation.items()}, {}
+    supplied = {}
+    for code in blanks:
+        bars = [row for row in (bars_by_code.get(code) or ())
+                if isinstance(row, dict) and row.get('Date') == date
+                and str(row.get('Code') or '')[:4] == code]
+        if len(bars) != 1:
+            return {c: dict(r) for c, r in valuation.items()}, {}
+        cap = _finite(bars[0].get('MktCap'))
+        forecast = forecast_net_income(disclosures_by_code.get(code), before=date)
+        if cap is None or cap <= 0 or forecast is None:
+            return {c: dict(r) for c, r in valuation.items()}, {}
+        supplied[code] = {'marketCap': cap, 'barDate': date, 'forecastNetIncome': forecast[0],
+                          'disclosure': forecast[1]}
+    result = {code: dict(row) for code, row in valuation.items()}
+    for code, row in supplied.items():
+        result[code].update(MktCap=row['marketCap'], suppliedForecastNetIncome=row['forecastNetIncome'])
+    return result, supplied
+
+
 def daily_close_repairable(valuation, constituents):
     """Spend the bounded price request only when prices can fill every gap.
 
@@ -226,7 +304,9 @@ def weighted_eps(valuation: Mapping[str, Mapping[str, Any]], constituents: Itera
     (MktCap in million yen; FwdPER, FwdEPS, PER, EPS, PBR, BPS).
     Forecast net income of a member = MktCap / FwdPER (signed). A member
     without FwdPER uses MktCap * FwdEPS / price when a price is derivable,
-    otherwise its trailing figure (counted as filled). Members with no
+    otherwise its trailing figure (counted as filled). A member supplied by
+    valuation_with_supplied_members uses its supplied forecast net income
+    (counted as suppliedMarketCap/suppliedEarnings). Members with no
     market cap or no earnings at all are left out of both sums (counted).
     """
     close = _finite(index_close)
@@ -249,7 +329,11 @@ def weighted_eps(valuation: Mapping[str, Mapping[str, Any]], constituents: Itera
         income = None
         forward_per = _finite(row.get("FwdPER"))
         forward_eps = _finite(row.get("FwdEPS"))
-        if forward_per:
+        supplied = _finite(row.get("suppliedForecastNetIncome"))
+        if supplied:
+            income = supplied
+            counts["supplied"] = counts.get("supplied", 0) + 1
+        elif forward_per:
             income = cap / forward_per
         elif forward_eps is not None and _price(row):
             income = cap * forward_eps / _price(row)
@@ -272,6 +356,10 @@ def weighted_eps(valuation: Mapping[str, Mapping[str, Any]], constituents: Itera
         cap_used += cap
     if income_total <= 0 or cap_total <= 0:
         raise LevelMapError("aggregate_earnings_not_positive")
+    # Only supplied days carry these counts, so every other record is unchanged.
+    supplied_count = counts.pop("supplied", 0)
+    if supplied_count:
+        counts.update(suppliedMarketCap=supplied_count, suppliedEarnings=supplied_count)
     per = cap_total / income_total
     # The same aggregate over members with a forecast only, kept beside the
     # chosen estimate so the effect of filling from trailing figures is
