@@ -272,7 +272,13 @@ def snapshot(path,directory,*,check_budget=None,progress=None):
                 if any(not re.fullmatch(r'[0-9A-Z]{4}',c) for c in row.get('memberCodes',[])):raise ValueError('private_coverage_fields')
                 source=db.execute('SELECT sha256,raw FROM raw_sources WHERE id=?',(row['rawId'],)).fetchone()
                 if not source or row.get('sourceResponseSha256')!=source[0]:raise ValueError('private_coverage_integrity')
-                earnings.validate_composite_coverage(row, source[1])
+                # 2026-10-21: the digest above was recomputed from this row and
+                # the original's bytes were hashed in this snapshot (rawId in
+                # ids), so a content already checked in this process gives the
+                # same answer; anything else is checked here and remembered.
+                if not (checksum and earnings.coverage_content_verified(checksum)):
+                    earnings.validate_composite_coverage(row, source[1])
+                    if checksum:earnings.remember_coverage_content(checksum)
                 sources._time(row['knownAt']);sources._time(row['receivedAt'])
                 write({'kind':'coverage','key':key,'body':row});counts['coverageReceipts']+=1
             company_allowed={'code','complete','receivedAt','rawId','sourceResponseSha256','retainedRows','receiptSha256'}
