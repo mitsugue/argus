@@ -448,10 +448,18 @@ def synchronize(path, remote, *, max_packs=MAX_PACKS_PER_SYNC, max_views=MAX_VIE
             index = _sidecar_load(path, manifest_sha) if Path(path).exists() else None
             local_views, local_outcomes = (_local_ids(path) if Path(path).exists() else ([], []))
             if index is None or not (index['views'] <= set(local_views) and index['outcomes'] <= set(local_outcomes)):
-                index = scan(path, remote, manifest, directory, restore=False)
-                if not (index['views'] <= set(local_views) and index['outcomes'] <= set(local_outcomes)):
+                if not local_views and not local_outcomes:
+                    # 2026-10-21: an empty local file needs every remote record.
+                    # The restoring pass makes every check of the id pass, so
+                    # the remote is read once instead of twice; an empty-disk
+                    # start was 72 s of a 180 s deadline and grows with history.
                     index = scan(path, remote, manifest, directory, restore=True)
                     restored = {k: len(index[k]) for k in ('views', 'outcomes')}
+                else:
+                    index = scan(path, remote, manifest, directory, restore=False)
+                    if not (index['views'] <= set(local_views) and index['outcomes'] <= set(local_outcomes)):
+                        index = scan(path, remote, manifest, directory, restore=True)
+                        restored = {k: len(index[k]) for k in ('views', 'outcomes')}
                 _sidecar_save(path, manifest_sha, index)
         history.initialize(path)
         local_views, local_outcomes = _local_ids(path)

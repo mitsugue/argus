@@ -190,3 +190,33 @@ def test_a_writer_is_not_blocked_while_v3_splits_records(tmp_path):
     next(reader)                                    # the caller is now splitting the first record
     history.append(local, edition('2026-10-03T00:00:00Z'))   # a writer commits meanwhile
     assert len(list(reader)) == 1
+
+
+def test_an_empty_disk_reads_the_remote_once_and_restores_everything(tmp_path):
+    # 2026-10-21 (N-25): an empty-disk start read every pack twice (an id pass,
+    # then a restoring pass) inside the 180 s remote deadline. One pass now.
+    records = [edition(f'2026-10-{d:02d}T00:00:00Z', 100 + d) for d in range(1, 5)]
+    local = local_file(tmp_path, 'local.sqlite3', records)
+    remote = Remote()
+    v3.synchronize(local, remote)
+    reads = []
+    original = remote.get
+    remote.get = lambda path: (reads.append(path), original(path))[1]
+    for fresh in (tmp_path / 'missing.sqlite3', local_file(tmp_path, 'empty.sqlite3', [])):
+        reads.clear()
+        result = v3.synchronize(fresh, remote)
+        packs = [p for p in reads if '/packs/' in p]
+        assert packs and len(packs) == len(set(packs)), 'each pack is read once'
+        assert result['restoredCounts'] == {'views': 4, 'outcomes': 0}
+        assert bodies(fresh) == bodies(local)
+
+
+def test_a_damaged_remote_leaves_an_empty_disk_empty(tmp_path):
+    remote = Remote()
+    v3.synchronize(local_file(tmp_path, 'a.sqlite3', [edition('2026-10-01T00:00:00Z')]), remote)
+    pack = next(k for k in remote.files if '/packs/' in k)
+    remote.files[pack] = remote.files[pack][:-1] + bytes([remote.files[pack][-1] ^ 1])
+    fresh = local_file(tmp_path, 'empty.sqlite3', [])
+    with pytest.raises(ValueError):
+        v3.synchronize(fresh, remote)
+    assert bodies(fresh) == ({}, {})
