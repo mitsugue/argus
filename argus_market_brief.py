@@ -328,8 +328,17 @@ def compose_brief(*, now_iso: str,
     # ── P1: 現在の相場方向 ──
     view_label = str((market_view_summary or {}).get("label") or "").strip()
     if view_label:
+        cutoff = (market_view_summary or {}).get("informationCutoff")
+        origin = None
+        if isinstance(cutoff, str) and cutoff:
+            # 2026-10-22 (N-17): when the market view was read, and an identity
+            # of exactly what the fact states (label and that time).
+            origin = {"eventId": "market-view", "asOf": cutoff,
+                      "sourceRowSha256": hashlib.sha256(json.dumps(
+                          {"label": view_label[:70], "informationCutoff": cutoff},
+                          sort_keys=True, ensure_ascii=False).encode()).hexdigest()}
         facts.append(_fact(f"市場観（検証前の参考）: {view_label[:70]}",
-                           "P1", "market_view", "VERIFIED"))
+                           "P1", "market_view", "VERIFIED", origin))
     news_line = _news_direction_summary(material_news or news_events)
     facts.append(_fact(f"ニュース方向: {news_line}", "P1",
                        "trusted_mail", "CORROBORATED"
