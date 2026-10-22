@@ -97,4 +97,6 @@ def test_actual_observation_preserves_minute_precision_as_a_separate_field():
     assert out['sourceTimestampPrecision'] == 'MINUTE'
     assert out['sourceTimestamp'].endswith('01:47:00+00:00')
     assert out['receivedAt'].endswith('01:47:45+00:00')
-    assert out['freshness'] != 'FRESH'
+    # 2026-10-22: 45 s after the stated minute start is still that minute.
+    assert out['freshness'] == 'FRESH'
+    assert out['freshUntil'].endswith('01:48:00+00:00')  # receipt + 15 s

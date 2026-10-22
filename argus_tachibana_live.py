@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 import argus_market_clock
 from argus_providers.tachibana.config import TachibanaConfig
 from argus_providers.tachibana.models import ErrorClass, Freshness, TachibanaError
+from argus_providers.tachibana.normalization import fresh_age_limit_seconds
 
 SCHEMA = "argus-tachibana-live-evidence-v1"
 PROVIDER = "TACHIBANA"
@@ -225,6 +226,38 @@ def observation_evidence(observation: Any, *, now: datetime) -> Dict[str, Any]:
         "degradedFields": [issue.field for issue in observation.normalization_issues][:8],
     })
     return row
+
+
+def row_trade_current(row: Mapping[str, Any], now: datetime, *,
+                      fresh_for_seconds: int = 15) -> bool:
+    """Shared current-price admission for display consumers (2026-10-22).
+
+    Receipt within 15 s (transport freshness) AND the stated trade time within
+    the precision-aware window: SECOND (or an unstated precision) 15 s; MINUTE
+    up to the end of the stated minute + 15 s (= 75 s from the minute start).
+    The trade time is never replaced by the receipt time. Unknown dates/times,
+    future times and non-minute-aligned MINUTE times are not admitted. Market
+    status and FRESH labels are checked by the caller as before.
+    """
+    if not isinstance(row, Mapping) or now.tzinfo is None:
+        return False
+    precision = row.get("sourceTimestampPrecision")
+    if precision == "UNAVAILABLE":
+        return False
+    try:
+        source = datetime.fromisoformat(str(row.get("sourceTimestamp") or ""))
+        received = datetime.fromisoformat(str(row.get("receivedAt") or ""))
+    except ValueError:
+        return False
+    if source.tzinfo is None or received.tzinfo is None:
+        return False
+    if precision == "MINUTE" and (source.second or source.microsecond):
+        return False
+    age = (now - source).total_seconds()
+    transport_age = (now - received).total_seconds()
+    return (0 <= transport_age <= fresh_for_seconds
+            and 0 <= age <= fresh_age_limit_seconds(
+                "MINUTE" if precision == "MINUTE" else "SECOND", fresh_for_seconds))
 
 
 def derive_status(*, enabled: bool, running: bool, last_error_class: Optional[str],

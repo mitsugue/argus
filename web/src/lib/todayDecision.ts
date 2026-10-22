@@ -19,6 +19,10 @@ export interface DecisionStrip {
   sigma: number | null; alert: 'low' | 'normal' | 'high' | null;
   band: { lower: number; upper: number } | null;
   momentum: 'strong' | 'normal' | 'weak' | null;
+  /** The yardstick behind `momentum`: the latest close against the last 20 closes, in standard deviations. */
+  momentumZ: number | null;
+  /** The session date of the latest close the drop alert, momentum and band were computed from (YYYY-MM-DD). */
+  closeDate: string | null;
   rows: MaterialRow[]; tone: 'tail' | 'head' | 'wait';
   overnightGapPct: number | null;
 }
@@ -58,6 +62,8 @@ export const US10Y_RISE_HISTORY = { upPct: 61, n: 293, baseUpPct: 57 } as const;
 export function overnightRecord(gapPct: number) {
   return OVERNIGHT_HISTORY.buckets.find(b => gapPct >= b.from && gapPct < b.to) ?? OVERNIGHT_HISTORY.buckets[2];
 }
+/** The momentum headline: the latest close this many standard deviations from the 20-close mean. */
+export const MOMENTUM_Z = 1.8;
 const BAND_LOWER = 1.278; const BAND_UPPER = 1.371;
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -139,10 +145,11 @@ export function materialRows(features: FeatureRow[], fiveDayChangePct: number | 
     what: '1ドルが何円かの動きです。日経平均は輸出企業の比重が大きく、円安で上がりやすい傾向があります。',
     now: `${fx > 0 ? '円安' : '円高'}方向に動いています。`, soWhat: fx > 0 ? '日経には追い風です。' : '日経には逆風です。' });
   if (fiveDayChangePct !== null) rows.push({ id: 'trend', lean: fiveDayChangePct >= 1.5 ? 'tail' : fiveDayChangePct <= -1.5 ? 'head' : 'neutral',
-    title: `日経平均の勢い 5日で${pct(fiveDayChangePct)}`,
+    title: `日経平均の5日騰落率 ${pct(fiveDayChangePct)}`,
     meaning: fiveDayChangePct >= 1.5 ? '上昇の流れが続いている。' : fiveDayChangePct <= -1.5 ? '下落の流れが続いている。' : '方向感は小さい。',
     what: '直近5営業日の日経平均の騰落率です。',
-    now: `${pct(fiveDayChangePct)}です。`, soWhat: '流れの向きの確認用で、この先を当てる指標ではありません。' });
+    // Owner check 2026-10-22: the tile headline reads the 20-close deviation, this row the 5-session change.
+    now: `${pct(fiveDayChangePct)}です。`, soWhat: '5日騰落率で見た流れの向きです。上の「日経の勢い」は20日平均からの離れ具合で判定しており、物差しが違います。流れの向きの確認用で、この先を当てる指標ではありません。' });
   const sq = f('event.sq_sessions');
   if (sq !== undefined && sq <= 5) rows.push({ id: 'sq', lean: 'neutral',
     title: `SQ(先物・オプションの清算日)まであと${Math.round(sq)}営業日`,
@@ -152,8 +159,26 @@ export function materialRows(features: FeatureRow[], fiveDayChangePct: number | 
   return rows;
 }
 
+const isDate = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+/**
+ * The saved comparison's anchor date is its latest close. The point's own date
+ * stands in when the anchor is absent; when the two disagree nothing is shown.
+ */
+function closeDate(sorted: ComparisonPoint[], anchorDate: string | null): string | null {
+  const latest = sorted.find(p => p.offsetSessions === 0);
+  if (!latest) return null;
+  if (isDate(anchorDate) && isDate(latest.date) && anchorDate !== latest.date) return null;
+  return isDate(anchorDate) ? anchorDate : isDate(latest.date) ? latest.date : null;
+}
+/** "2026-10-21" → "10/21終値時点"; nothing when the date is unknown (never guessed). */
+export function closeBasisLabel(date: string | null): string | null {
+  if (!isDate(date)) return null;
+  const [, month, day] = date.split('-').map(Number);
+  return `${month}/${day}終値時点`;
+}
+
 export function decisionStrip(actual: ComparisonPoint[] | null, features: FeatureRow[],
-                              overnightGapPct: number | null = null): DecisionStrip {
+                              overnightGapPct: number | null = null, anchorDate: string | null = null): DecisionStrip {
   const sorted = (actual ?? []).filter(p => finite(p.value) && p.offsetSessions <= 0)
     .sort((a, b) => a.offsetSessions - b.offsetSessions);
   const at = (o: number) => sorted.find(p => p.offsetSessions === o)?.value;
@@ -163,20 +188,22 @@ export function decisionStrip(actual: ComparisonPoint[] | null, features: Featur
   const rv = realisedVol20(sorted);
   const vix = features.find(row => row.seriesId === 'vix.level' && finite(row.value))?.value;
   const sigma = rv !== null && vix !== undefined ? (vix / 100 + rv) / 2 : null;
-  let momentum: DecisionStrip['momentum'] = null;
+  let momentum: DecisionStrip['momentum'] = null; let momentumZ: number | null = null;
   const window = sorted.slice(-20).map(p => p.value);
   if (window.length === 20 && last) {
     const mean = window.reduce((a, b) => a + b, 0) / 20;
     const sd = Math.sqrt(window.reduce((a, b) => a + (b - mean) ** 2, 0) / 19);
     const z = sd > 0 ? (last - mean) / sd : 0;
-    momentum = z >= 1.8 ? 'strong' : z <= -1.8 ? 'weak' : 'normal';
+    momentum = z >= MOMENTUM_Z ? 'strong' : z <= -MOMENTUM_Z ? 'weak' : 'normal';
+    momentumZ = z;
   }
   const gap = overnightGapPct !== null && finite(overnightGapPct) ? overnightGapPct : null;
   const rows = materialRows(features, fiveDayChangePct, gap);
   const score = rows.reduce((s, r) => s + (r.id === 'futures' ? 2 : 1)
     * (r.lean === 'tail' ? 1 : r.lean === 'head' ? -1 : r.lean === 'soft-head' ? -0.5 : 0), 0);
   const base = sigma === null ? null : fiveDayBand(sigma);
-  return { close: last ?? null, dayChangePct, fiveDayChangePct, sigma,
+  return { close: last ?? null, dayChangePct, fiveDayChangePct, sigma, momentumZ,
+    closeDate: closeDate(sorted, anchorDate),
     alert: sigma === null ? null : alertLevel(sigma),
     band: base && gap !== null ? { lower: base.lower + gap, upper: base.upper + gap } : base, momentum,
     rows, tone: score >= 1.5 ? 'tail' : score <= -1.5 ? 'head' : 'wait', overnightGapPct: gap };

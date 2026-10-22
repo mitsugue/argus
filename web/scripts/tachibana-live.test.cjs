@@ -348,14 +348,67 @@ try {
     ...referenceDoc.symbols['8058'],freshness:'FRESH',receivedAt:'2026-10-14T01:47:09Z'}}};
   Date.now=()=>freshPoint;
   assert.match(quoteCardModule.exports.render(freshReference,cardData),/リアルタイム/);
-  Date.now=()=>Date.parse('2026-10-14T01:47:15.001Z');
+  // 2026-10-22: a minute time stays current within its minute + 15 s while
+  // the receipt is within 15 s; the shown time stays the stated minute.
+  Date.now=()=>Date.parse('2026-10-14T01:47:24Z');
+  assert.match(quoteCardModule.exports.render(freshReference,cardData),/リアルタイム/);
+  Date.now=()=>Date.parse('2026-10-14T01:47:24.001Z');   // receipt 15.001 s old
   const afterExpiry=quoteCardModule.exports.render(freshReference,cardData);
   assert.match(afterExpiry,/123\.4円/);assert.doesNotMatch(afterExpiry,/リアルタイム|100円/);
   assert.match(afterExpiry,/10:47（分精度）/);
+  const lateReceipt={...freshReference,symbols:{'8058':{...freshReference.symbols['8058'],receivedAt:'2026-10-14T01:48:14Z'}}};
+  Date.now=()=>Date.parse('2026-10-14T01:48:15Z');       // 75 s from the minute start
+  assert.match(quoteCardModule.exports.render(lateReceipt,cardData),/リアルタイム/);
+  Date.now=()=>Date.parse('2026-10-14T01:48:15.001Z');   // past the minute + 15 s
+  assert.doesNotMatch(quoteCardModule.exports.render(lateReceipt,cardData),/リアルタイム/);
   Date.now=()=>quoteNow;
   const renderedClosed=quoteCardModule.exports.render(closedReference,cardData);
   assert.match(renderedClosed,/市場クローズ・受信価格/);assert.match(renderedClosed,/価格時刻不明/);
   assert.doesNotMatch(renderedClosed,/リアルタイム/);
   assert.equal(cardData.strat.price,100,'reference display cannot alter analysis basis');
 } finally { Date.now=clockBeforeQuoteTest;tl.setTachibanaLiveDocument(null); }
+// Shared admission (same as the server's row_trade_current, 2026-10-22).
+{
+  const start='2026-10-22T06:00:00Z', t=(sec)=>Date.parse(start)+sec*1000, iso=(sec)=>new Date(t(sec)).toISOString();
+  const cur=tl.tachibanaTradeTimeCurrent;
+  assert.equal(cur(start,'MINUTE',iso(25),t(26)),true,'minute 26 s');
+  assert.equal(cur(start,'MINUTE',iso(79),t(80)),false,'minute 80 s');
+  assert.equal(cur(start,'MINUTE',iso(75),t(75)),true,'minute end + 15 s');
+  assert.equal(cur(start,'SECOND',iso(15),t(16)),false,'second 16 s');
+  assert.equal(cur(start,'SECOND',iso(15),t(15)),true,'second 15 s');
+  assert.equal(cur(start,null,iso(15),t(16)),false,'unstated precision keeps 15 s');
+  assert.equal(cur(start,'MINUTE',iso(10),t(30)),false,'receipt 20 s');
+  assert.equal(cur(iso(60),'MINUTE',iso(25),t(26)),false,'future minute');
+  assert.equal(cur(iso(10),'MINUTE',iso(25),t(26)),false,'unaligned minute');
+  assert.equal(cur(null,'UNAVAILABLE',iso(25),t(26)),false,'no trade time');
+  const doc={provider:'TACHIBANA',enabled:true,displayApproved:true,mode:'DISPLAY',shadowOnly:true,
+    authoritative:false,status:'LIVE',providerHealth:'AVAILABLE',symbols:{'8058':{provider:'TACHIBANA',price:1,
+    sourceTimestamp:start,sourceTimestampPrecision:'MINUTE',receivedAt:iso(25),freshness:'FRESH',marketStatus:'OPEN'}}};
+  assert.equal(tl.tachibanaCurrentRows(doc,t(26)).size,1);
+  assert.equal(tl.tachibanaCurrentRows({...doc,symbols:{'8058':{...doc.symbols['8058'],marketStatus:'CLOSED'}}},t(26)).size,0);
+  assert.equal(tl.tachibanaCurrentRows({...doc,symbols:{'8058':{...doc.symbols['8058'],receivedAt:iso(79)}}},t(80)).size,0);
+}
 console.log('tachibana price reference: actual card, scope merge, chronology, closed/missing/future/precision and unchanged LIVE boundary pass');
+
+// 2026-10-22: the Today Nikkei value uses the same minute-aware rule as the server.
+{
+  const esbuild=require('esbuild');const Module=require('node:module');
+  const entry=`export {nikkeiLiveCurrent} from ${JSON.stringify(path.join(src,'hooks/useJapanMarketComparison.ts'))};`;
+  const built=esbuild.buildSync({stdin:{contents:entry,resolveDir:path.join(__dirname,'..'),loader:'ts'},
+    bundle:true,write:false,platform:'node',format:'cjs',external:['react','react-dom'],
+    define:{'import.meta.env':'{}'},logLevel:'silent'}).outputFiles[0].text;
+  const mod=new Module(path.join(__dirname,'synthetic-nikkei-live.cjs'),module);
+  mod.filename=path.join(__dirname,'synthetic-nikkei-live.cjs');mod.paths=module.paths;mod._compile(built,mod.filename);
+  const {nikkeiLiveCurrent}=mod.exports;
+  const start=Date.parse('2026-10-22T06:00:00Z'), iso=(sec)=>new Date(start+sec*1000).toISOString();
+  const q=(extra)=>({price:49000,previousClose:48900,changePct:.2,tradedAt:iso(0),tradedAtPrecision:'MINUTE',
+    receivedAt:iso(25),delaySeconds:26,sessionOpen:true,realtime:true,...extra});
+  assert.equal(nikkeiLiveCurrent(q(),start+26_000),true,'Nikkei minute 26 s');
+  assert.equal(nikkeiLiveCurrent(q({receivedAt:iso(79)}),start+80_000),false,'Nikkei minute 80 s');
+  assert.equal(nikkeiLiveCurrent(q({tradedAtPrecision:'SECOND',receivedAt:iso(15)}),start+16_000),false,'Nikkei second 16 s');
+  assert.equal(nikkeiLiveCurrent(q({tradedAtPrecision:undefined,receivedAt:iso(15)}),start+16_000),false,'older payload keeps 15 s');
+  assert.equal(nikkeiLiveCurrent(q({receivedAt:iso(10)}),start+30_000),false,'Nikkei receipt 20 s');
+  assert.equal(nikkeiLiveCurrent(q({tradedAt:iso(60)}),start+26_000),false,'Nikkei future minute');
+  assert.equal(nikkeiLiveCurrent(q({realtime:false,receivedAt:undefined}),start+600_000),true,'delayed source unchanged');
+  console.log('tachibana Nikkei minute-precision admission PASS');
+}

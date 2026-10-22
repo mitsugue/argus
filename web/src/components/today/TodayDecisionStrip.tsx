@@ -1,8 +1,8 @@
 import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
 import type { ComparisonPoint } from '../../types/japanMarketComparison';
-import { ALERT_HISTORY, OVERNIGHT_HISTORY, TONE_HISTORY, decisionStrip, friendlyEventText, overnightGap, overnightRecord, type FeatureRow, type Lean } from '../../lib/todayDecision';
-import { useNikkeiLive } from '../../hooks/useJapanMarketComparison';
+import { ALERT_HISTORY, MOMENTUM_Z, OVERNIGHT_HISTORY, TONE_HISTORY, closeBasisLabel, decisionStrip, friendlyEventText, overnightGap, overnightRecord, type FeatureRow, type Lean } from '../../lib/todayDecision';
+import { nikkeiLiveCurrent, useNikkeiLive } from '../../hooks/useJapanMarketComparison';
 import { marketHeadline } from '../../lib/marketWording';
 import { MarketPositionCard } from './MarketPositionCard';
 import './TodayDecisionStrip.css';
@@ -23,6 +23,11 @@ function jumpTo(id: string, openRow?: string) {
   target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 const signed = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`;
+// One decimal, or two when rounding would carry the value across the headline's cut point.
+const sigmaText = (v: number) => {
+  const digits = (Math.abs(Number(v.toFixed(1))) >= MOMENTUM_Z) !== (Math.abs(v) >= MOMENTUM_Z) ? 2 : 1;
+  return `${v > 0 ? '+' : ''}${v.toFixed(digits)}σ`;
+};
 
 function features(brief: MarketBrief): FeatureRow[] {
   const snapshot = (brief.calculationSnapshots?.['5'] as { marketFeatureSnapshot?: { features?: unknown } } | undefined)
@@ -61,24 +66,28 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
   const comparison = fresh ? current : stored ? { actual: stored.actual, anchorDate: stored.anchorDate } : undefined;
   const stripActual = Array.isArray(comparison?.actual) ? comparison!.actual : null;
   const stripFeatures = fresh ? currentFeatures : stored?.features ?? [];
-  const closeStrip = decisionStrip(stripActual, stripFeatures);
+  const stripAnchor = typeof comparison?.anchorDate === 'string' ? comparison.anchorDate : null;
+  const closeStrip = decisionStrip(stripActual, stripFeatures, null, stripAnchor);
   const headline = marketHeadline(brief.unifiedSummary?.sections.view, brief.unifiedSummary?.sections.reasons);
   const { quote: live, futures } = useNikkeiLive();
   // The delayed intraday value replaces the last close once it is from a later session.
   const lastActual = typeof comparison?.anchorDate === 'string' ? Date.parse(comparison.anchorDate) : NaN;
-  const liveTradeAge = live ? Date.now() - Date.parse(live.tradedAt) : NaN;
-  const liveReceiptAge = live ? Date.now() - Date.parse(live.receivedAt ?? '') : NaN;
-  const liveCurrent = live && (!live.realtime || liveTradeAge >= 0 && liveTradeAge <= 15_000
-    && liveReceiptAge >= 0 && liveReceiptAge <= 15_000) && (!Number.isFinite(lastActual) || Date.parse(live.tradedAt) > lastActual + 9 * 3600_000);
+  const liveCurrent = live && nikkeiLiveCurrent(live)
+    && (!Number.isFinite(lastActual) || Date.parse(live.tradedAt) > lastActual + 9 * 3600_000);
   // Owner check 2026-10-03: the overnight future against the close it followed.
   const gap = overnightGap(futures, liveCurrent && !live!.sessionOpen ? live!.price : closeStrip.close,
     liveCurrent ? Date.parse(live!.tradedAt) : lastActual + 6.5 * 3600_000, !!live?.sessionOpen);
-  const strip = gap === null ? closeStrip : decisionStrip(stripActual, stripFeatures, gap);
+  const strip = gap === null ? closeStrip : decisionStrip(stripActual, stripFeatures, gap, stripAnchor);
   const gapRecord = strip.overnightGapPct !== null ? overnightRecord(strip.overnightGapPct) : null;
   const shownPrice = liveCurrent ? live!.price : strip.close;
+  // Owner request 2026-10-22: these three tiles use the saved closes, not the intraday price; say which close.
+  const basis = closeBasisLabel(strip.closeDate);
+  const basisLine = (shown: boolean, text = basis) => shown && text ? <span className="today-strip__basis" data-close-basis={strip.closeDate!}>{text}</span> : null;
+  // The band's yen line multiplies the shown (possibly delayed intraday) price; the band itself stays close-based.
+  const bandBasis = basis && liveCurrent && shownPrice !== strip.close ? `${basis}の幅を現在値で円に換算` : basis;
   const shownChange = liveCurrent ? live!.changePct : strip.dayChangePct;
   const liveLabel = liveCurrent ? (live!.sessionOpen
-    ? `${new Date(live!.tradedAt).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}時点・${live!.realtime ? '立花証券 リアルタイム' : `約${Math.max(1, Math.round(live!.delaySeconds / 60))}分遅れ`}`
+    ? `${new Date(live!.tradedAt).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}時点${live!.realtime && live!.tradedAtPrecision === 'MINUTE' ? '（分精度）' : ''}・${live!.realtime ? '立花証券 リアルタイム' : `約${Math.max(1, Math.round(live!.delaySeconds / 60))}分遅れ`}`
     : `${new Date(live!.tradedAt).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })} 大引け`) : '前日終値';
   const preparing = !fresh;
   return <section className="today-strip" aria-label="今日の結論と数字" data-argus-contract="today-decision-strip-v1">
@@ -104,13 +113,17 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
     <div className="today-strip__tiles">
       <button type="button" className={`today-strip__tile alert-${strip.alert ?? 'pending'}`} onClick={() => jumpTo('today-nikkei-chart')}>
         <small>急落警戒(5日で-5%以上)</small><b>{strip.alert ? alertLabel[strip.alert] : '確認中'}</b>
-        <span>{strip.alert ? `過去の同じ段階で${ALERT_HISTORY[strip.alert]}%` : '値動きの大きさを取得待ち'}</span></button>
+        <span>{strip.alert ? `過去の同じ段階で${ALERT_HISTORY[strip.alert]}%` : '値動きの大きさを取得待ち'}</span>{basisLine(strip.alert !== null)}</button>
       <button type="button" className={`today-strip__tile momentum-${strip.momentum ?? 'pending'}`} onClick={() => jumpTo('today-nikkei-chart', 'trend')}>
-        <small>日経の勢い</small><b>{strip.momentum ? momentumLabel[strip.momentum] : '確認中'}</b>
-        <span>{strip.fiveDayChangePct !== null ? `5日で${signed(strip.fiveDayChangePct)}` : strip.momentum ? '直近20営業日との比較' : '直近20営業日の価格を取得待ち'}</span></button>
+        <small>日経の勢い(20日平均からの離れ具合)</small><b>{strip.momentum ? momentumLabel[strip.momentum] : '確認中'}</b>
+        {/* Owner check 2026-10-22: the headline and the 5-session change are different yardsticks; name both. */}
+        <span className="today-strip__measure" data-momentum-z={strip.momentumZ !== null ? strip.momentumZ.toFixed(2) : undefined}>
+          {strip.momentumZ !== null ? `20日平均から${sigmaText(strip.momentumZ)}(±${MOMENTUM_Z}σ以上で注意)` : '直近20営業日の価格を取得待ち'}</span>
+        {strip.fiveDayChangePct !== null && <span className="today-strip__measure-other">{`別の物差し:5日騰落率 ${signed(strip.fiveDayChangePct)}`}</span>}
+        {basisLine(strip.momentum !== null)}</button>
       <button type="button" className="today-strip__tile tile-range" onClick={() => jumpTo('today-nikkei-chart')}>
         <small>5日間の予想値幅(8割{strip.overnightGapPct !== null ? '・昨夜の先物を反映' : ''})</small><b>{strip.band ? `${signed(strip.band.lower)}〜${signed(strip.band.upper)}` : '確認中'}</b>
-        <span>{strip.band && shownPrice !== null ? `${yen(shownPrice * (1 + strip.band.lower / 100))}〜${yen(shownPrice * (1 + strip.band.upper / 100))}円` : '値幅の計算に必要なデータを取得待ち'}</span></button>
+        <span>{strip.band && shownPrice !== null ? `${yen(shownPrice * (1 + strip.band.lower / 100))}〜${yen(shownPrice * (1 + strip.band.upper / 100))}円` : '値幅の計算に必要なデータを取得待ち'}</span>{basisLine(strip.band !== null, bandBasis)}</button>
       {criticalNews.length > 0 ? <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-material-news')}>
         <small>重大ニュース・市場変化 {criticalNews.length}件</small><b className="today-strip__event">{criticalNews[0].title}</b>
         <span className="today-strip__news-preview">{criticalNews[0].why}</span><span className="today-strip__news-meta">{criticalNews[0].meta}</span>
