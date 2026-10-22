@@ -166,6 +166,7 @@ def test_writer_contention_and_validation_failure_release_throwaway_snapshot(
 def test_allocator_reclaim_is_scoped_and_reports_only_scalar_values():
     trim = mock.MagicMock(return_value=1)
     allocator = SimpleNamespace(malloc_trim=trim)
+    v2._ALLOCATOR_LIBRARY.clear()   # the handle is made once a process (2026-10-21)
     with mock.patch.object(v2, "_process_rss_bytes",
                            side_effect=[100_000_000, 40_000_000]), \
             mock.patch.object(v2.ctypes, "CDLL", return_value=allocator), \
@@ -186,6 +187,7 @@ def test_allocator_reclaim_is_scoped_and_reports_only_scalar_values():
         small = v2._release_unused_allocator_memory(1024)
     assert small["attempted"] is False
     loader.assert_not_called()
+    v2._ALLOCATOR_LIBRARY.clear()   # do not keep the test's stand-in handle
     assert all(value is None or isinstance(value, (bool, int))
                for value in report.values())
 
