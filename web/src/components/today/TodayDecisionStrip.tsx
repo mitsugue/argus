@@ -9,7 +9,8 @@ import './TodayDecisionStrip.css';
 
 const toneLabel = { tail: '材料は追い風寄り', head: '材料は逆風寄り', wait: '材料はまちまち' } as const;
 const leanLabel: Record<Lean, string> = { tail: '追い風', head: '逆風', 'soft-head': 'やや逆風', neutral: '中立' };
-const alertLabel = { low: '低', normal: '通常', high: '高' } as const;
+// Owner check 2026-10-22: the tile is how likely a further fall is, not how far the market has fallen; say so.
+const alertLabel = { low: '起きにくい', normal: '普段並み', high: '起きやすい' } as const;
 const momentumLabel = { strong: '上昇・過熱に注意', normal: '通常の範囲', weak: '下落・売られすぎに注意' } as const;
 const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
 export type CriticalTodayNews = { id: string; title: string; why: string; meta: string };
@@ -80,11 +81,11 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
   const strip = gap === null ? closeStrip : decisionStrip(stripActual, stripFeatures, gap, stripAnchor);
   const gapRecord = strip.overnightGapPct !== null ? overnightRecord(strip.overnightGapPct) : null;
   const shownPrice = liveCurrent ? live!.price : strip.close;
-  // Owner request 2026-10-22: these three tiles use the saved closes, not the intraday price; say which close.
+  // Owner request 2026-10-22: the three numbers use the saved closes, not the intraday price; one line under the tiles says which.
   const basis = closeBasisLabel(strip.closeDate);
-  const basisLine = (shown: boolean, text = basis) => shown && text ? <span className="today-strip__basis" data-close-basis={strip.closeDate!}>{text}</span> : null;
+  const computed = strip.alert !== null || strip.momentum !== null || strip.band !== null;
   // The band's yen line multiplies the shown (possibly delayed intraday) price; the band itself stays close-based.
-  const bandBasis = basis && liveCurrent && shownPrice !== strip.close ? `${basis}の幅を現在値で円に換算` : basis;
+  const basisNote = basis && computed ? `上の3つは${basis}で計算${strip.band && liveCurrent && shownPrice !== strip.close ? '・値幅の円は現在値で換算' : ''}` : null;
   const shownChange = liveCurrent ? live!.changePct : strip.dayChangePct;
   const liveLabel = liveCurrent ? (live!.sessionOpen
     ? `${new Date(live!.tradedAt).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}時点${live!.realtime && live!.tradedAtPrecision === 'MINUTE' ? '（分精度）' : ''}・${live!.realtime ? '立花証券 リアルタイム' : `約${Math.max(1, Math.round(live!.delaySeconds / 60))}分遅れ`}`
@@ -112,18 +113,16 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
     </div>
     <div className="today-strip__tiles">
       <button type="button" className={`today-strip__tile alert-${strip.alert ?? 'pending'}`} onClick={() => jumpTo('today-nikkei-chart')}>
-        <small>急落警戒(5日で-5%以上)</small><b>{strip.alert ? alertLabel[strip.alert] : '確認中'}</b>
-        <span>{strip.alert ? `過去の同じ段階で${ALERT_HISTORY[strip.alert]}%` : '値動きの大きさを取得待ち'}</span>{basisLine(strip.alert !== null)}</button>
+        <small>この先5日の急落(-5%以上)</small><b>{strip.alert ? alertLabel[strip.alert] : '確認中'}</b>
+        <span>{strip.alert ? `過去の同じ状態で${ALERT_HISTORY[strip.alert]}%` : '値動きの大きさを取得待ち'}</span></button>
       <button type="button" className={`today-strip__tile momentum-${strip.momentum ?? 'pending'}`} onClick={() => jumpTo('today-nikkei-chart', 'trend')}>
-        <small>日経の勢い(20日平均からの離れ具合)</small><b>{strip.momentum ? momentumLabel[strip.momentum] : '確認中'}</b>
-        {/* Owner check 2026-10-22: the headline and the 5-session change are different yardsticks; name both. */}
+        <small>日経の勢い</small><b>{strip.momentum ? momentumLabel[strip.momentum] : '確認中'}</b>
+        {/* Owner check 2026-10-22: the headline is the distance from the 20-day mean, not the 5-session change. */}
         <span className="today-strip__measure" data-momentum-z={strip.momentumZ !== null ? strip.momentumZ.toFixed(2) : undefined}>
-          {strip.momentumZ !== null ? `20日平均から${sigmaText(strip.momentumZ)}(±${MOMENTUM_Z}σ以上で注意)` : '直近20営業日の価格を取得待ち'}</span>
-        {strip.fiveDayChangePct !== null && <span className="today-strip__measure-other">{`別の物差し:5日騰落率 ${signed(strip.fiveDayChangePct)}`}</span>}
-        {basisLine(strip.momentum !== null)}</button>
+          {strip.momentumZ !== null ? `20日平均${strip.momentumZ < 0 ? 'より下' : strip.momentumZ > 0 ? 'より上' : 'ちょうど'}(${sigmaText(strip.momentumZ)})` : '直近20営業日の価格を取得待ち'}</span></button>
       <button type="button" className="today-strip__tile tile-range" onClick={() => jumpTo('today-nikkei-chart')}>
         <small>5日間の予想値幅(8割{strip.overnightGapPct !== null ? '・昨夜の先物を反映' : ''})</small><b>{strip.band ? `${signed(strip.band.lower)}〜${signed(strip.band.upper)}` : '確認中'}</b>
-        <span>{strip.band && shownPrice !== null ? `${yen(shownPrice * (1 + strip.band.lower / 100))}〜${yen(shownPrice * (1 + strip.band.upper / 100))}円` : '値幅の計算に必要なデータを取得待ち'}</span>{basisLine(strip.band !== null, bandBasis)}</button>
+        <span>{strip.band && shownPrice !== null ? `${yen(shownPrice * (1 + strip.band.lower / 100))}〜${yen(shownPrice * (1 + strip.band.upper / 100))}円` : '値幅の計算に必要なデータを取得待ち'}</span></button>
       {criticalNews.length > 0 ? <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-material-news')}>
         <small>重大ニュース・市場変化 {criticalNews.length}件</small><b className="today-strip__event">{criticalNews[0].title}</b>
         <span className="today-strip__news-preview">{criticalNews[0].why}</span><span className="today-strip__news-meta">{criticalNews[0].meta}</span>
@@ -132,6 +131,7 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
         <small>次の山場</small><b className="today-strip__event">{friendlyEventText(brief.chips.nextEvent)}</b>
         {/SQ/i.test(brief.chips.nextEvent) && <span>SQ＝先物・オプションの清算<br />前後に株価が大きく上下することも</span>}</button> : <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}><small>次の山場</small><b>確認中</b><span>予定の更新待ち</span></button>}
     </div>
+    {basisNote && <p className="today-strip__basis" data-close-basis={strip.closeDate!}>{basisNote}</p>}
     {/* Owner order 2026-10-20 (docs/TODAY_CARD_ORDER.md 1-4): verdict, the four tiles, then the market position. */}
     <MarketPositionCard brief={brief} />
     {strip.rows.length > 0 && <div className="today-strip__rows" aria-label="材料ごとの向き">

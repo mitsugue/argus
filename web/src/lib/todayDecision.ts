@@ -145,11 +145,11 @@ export function materialRows(features: FeatureRow[], fiveDayChangePct: number | 
     what: '1ドルが何円かの動きです。日経平均は輸出企業の比重が大きく、円安で上がりやすい傾向があります。',
     now: `${fx > 0 ? '円安' : '円高'}方向に動いています。`, soWhat: fx > 0 ? '日経には追い風です。' : '日経には逆風です。' });
   if (fiveDayChangePct !== null) rows.push({ id: 'trend', lean: fiveDayChangePct >= 1.5 ? 'tail' : fiveDayChangePct <= -1.5 ? 'head' : 'neutral',
-    title: `日経平均の5日騰落率 ${pct(fiveDayChangePct)}`,
+    title: `日経平均の勢い 5日で${pct(fiveDayChangePct)}`,
     meaning: fiveDayChangePct >= 1.5 ? '上昇の流れが続いている。' : fiveDayChangePct <= -1.5 ? '下落の流れが続いている。' : '方向感は小さい。',
     what: '直近5営業日の日経平均の騰落率です。',
     // Owner check 2026-10-22: the tile headline reads the 20-close deviation, this row the 5-session change.
-    now: `${pct(fiveDayChangePct)}です。`, soWhat: '5日騰落率で見た流れの向きです。上の「日経の勢い」は20日平均からの離れ具合で判定しており、物差しが違います。流れの向きの確認用で、この先を当てる指標ではありません。' });
+    now: `${pct(fiveDayChangePct)}です。`, soWhat: '流れの向きの確認用で、この先を当てる指標ではありません。' });
   const sq = f('event.sq_sessions');
   if (sq !== undefined && sq <= 5) rows.push({ id: 'sq', lean: 'neutral',
     title: `SQ(先物・オプションの清算日)まであと${Math.round(sq)}営業日`,
@@ -174,7 +174,7 @@ function closeDate(sorted: ComparisonPoint[], anchorDate: string | null): string
 export function closeBasisLabel(date: string | null): string | null {
   if (!isDate(date)) return null;
   const [, month, day] = date.split('-').map(Number);
-  return `${month}/${day}終値時点`;
+  return `${month}/${day}終値`;
 }
 
 export function decisionStrip(actual: ComparisonPoint[] | null, features: FeatureRow[],
