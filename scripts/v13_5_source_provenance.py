@@ -225,7 +225,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_queue_v1152_backend.py': 'ec3d8c65c5b48755539e0dfdc0f93ccf6362cfb1',
     'test_argus_shared_bridge.py': 'eca86a497ce6fed0c89d463e363a5492f51652ae',
     'bridge/README.md': '9bcd2afec193b966d963ad7382c43136ed283e7c',
-    'bridge/bridge.env.example': 'd514273baa10eadeef6d274a9befc553e88e656e',
+    'bridge/bridge.env.example': 'b6dbd6d5d7185d2949908ab8699bb3160bd26a31',
     'bridge/moomoo_push.py': '5268c303608bad317a6e47bbe891a64860959674',
     'test_argus_saved_overview.py': 'a0a24d21fa9d37ee44d3e69a9e2991b3dbbe910a',
     'test_argus_overview_policy.py': '3051e457321f71c6e7a4ba1e9ce34179e42a0877',
