@@ -223,7 +223,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_sector_heatmap.py': '5a149728db22320a40a0e2d00d7ce3f95dc32035',
     'test_argus_material_translation.py': '80f68a5abad282c920926dbb8b9541d97da016ae',
     'test_argus_queue_v1152_backend.py': 'ec3d8c65c5b48755539e0dfdc0f93ccf6362cfb1',
-    'test_argus_shared_bridge.py': '5140426d122bce98289952eb528e6fda34fd8536',
+    'test_argus_shared_bridge.py': '6b5497cbdff126bd5e2fd7cf2f6482f6c987e152',
     'bridge/README.md': '9bcd2afec193b966d963ad7382c43136ed283e7c',
     'bridge/bridge.env.example': 'd514273baa10eadeef6d274a9befc553e88e656e',
     'bridge/moomoo_push.py': '5268c303608bad317a6e47bbe891a64860959674',
@@ -686,6 +686,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_moomoo_us_extended_hours.py",
     "test_td_bridge_cover.py",
     "test_argus_route_usage.py",
     "argus_route_usage.py",
