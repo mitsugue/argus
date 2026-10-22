@@ -14,6 +14,14 @@ assert(d.TONE_HISTORY.upAfter.head >= 50, 'after a headwind tone the index still
 assert.equal(d.alertLevel(0.10), 'low');
 assert.equal(d.alertLevel(0.20), 'normal');
 assert.equal(d.alertLevel(0.2608), 'high');
+// Owner decision 2026-10-22 (plan E): a recent fall moves the level up one step, never past high.
+assert.deepEqual(d.raisedAlert(0.232, -2.65, -2.4), { level: 'high', raised: true }, '10/22: -2.65% on the day');
+assert.deepEqual(d.raisedAlert(0.232, -1.99, -4.99), { level: 'normal', raised: false }, 'just above both cut points');
+assert.deepEqual(d.raisedAlert(0.10, null, -5), { level: 'normal', raised: true }, '5 sessions at -5%');
+assert.deepEqual(d.raisedAlert(0.30, -4, -8), { level: 'high', raised: false }, 'high stays high');
+assert.deepEqual(d.raisedAlert(0.232, null, null), { level: 'normal', raised: false }, 'no change without the moves');
+assert.deepEqual([d.ALERT_HISTORY.low, d.ALERT_HISTORY.normal, d.ALERT_HISTORY.high], [2.9, 8.5, 17.3]);
+assert.deepEqual(d.ALERT_RAISED_HISTORY.high, { pct: 18.6, hits: 27, days: 145, falls: 13 });
 const band = d.fiveDayBand(0.198);
 assert(band.lower < 0 && band.upper > 0 && Math.abs(band.lower + 3.58) < 0.05 && Math.abs(band.upper - 3.84) < 0.05, JSON.stringify(band));
 
@@ -192,4 +200,17 @@ const liveHook = () => ({ quote: { price: 105, changePct: 1, tradedAt: '2026-10-
   realtime: false, delaySeconds: 1200, sessionOpen: true }, futures: null });
 const liveHtml = renderToStaticMarkup(React.createElement(stripWith(null, liveHook), { brief }));
 assert.equal(noteOf(liveHtml), '上の3つは10/2終値で計算・値幅の円は現在値で換算');
+// A fall raises the tile and shows the raised days' own record with the count.
+{
+  const fallPath = path.map(p => p.offsetSessions === 0 ? { ...p, value: 101 * 0.97 } : p);
+  const fallBrief = { ...brief, calculationSnapshots: { '5': { ...brief.calculationSnapshots['5'],
+    comparison: { ...brief.calculationSnapshots['5'].comparison, actual: fallPath } } } };
+  const fs1 = d.decisionStrip(fallPath, brief.calculationSnapshots['5'].marketFeatureSnapshot.features);
+  const base = d.alertLevel(fs1.sigma);
+  assert(fs1.dayChangePct <= -2.99 && base !== 'high' && fs1.alertRaised, JSON.stringify([fs1.dayChangePct, base]));
+  assert.equal(fs1.alert, base === 'low' ? 'normal' : 'high');
+  const tile = tileOf(renderToStaticMarkup(React.createElement(stripContext.exports.TodayDecisionStrip, { brief: fallBrief })), 'alert-');
+  assert(tile.includes(base === 'low' ? '直近の下げで一段上げ・過去の例は3日のみ' : '直近の下げで一段上げ・過去18.6%(145日中27日)'), tile);
+  assert(tileOf(normalStrip, 'alert-').includes('過去の同じ状態で'), 'no fall, no raise wording');
+}
 console.log('タイルは1行・終値の日付は下に1行 PASS');
