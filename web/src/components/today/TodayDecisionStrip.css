@@ -22,7 +22,7 @@
 .today-strip__tile small { color: var(--text-sub); font-size: 11px; }
 .today-strip__tile b { color: var(--text-main); font-size: 18px; font-weight: 600; }
 .today-strip__tile span { color: var(--text-sub); font-size: 11px; }
-.today-strip__tile.alert-low b { color: var(--green); }
+.today-strip__tile.alert-low b { color: var(--text-main); }
 .today-strip__tile.alert-normal b { color: var(--text-main); }
 .today-strip__tile.alert-high b { color: var(--red); }
 .today-strip__tile .today-strip__news-meta { color:var(--text-muted); font-size:10px; line-height:1.5; }
@@ -47,12 +47,12 @@
 .today-strip__tile:active { background: var(--surface-soft); }
 .today-strip__tile:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .today-strip__preparing { margin: 0; padding: 8px 12px; border-radius: 10px; color: var(--amber); background: var(--action-trim-bg); font-size: 12px; line-height: 1.5; }
-.today-strip__tile { --tile-accent: var(--cyan); background: linear-gradient(135deg, color-mix(in srgb, var(--tile-accent) 16%, var(--surface)), var(--surface) 85%); border-color: color-mix(in srgb, var(--tile-accent) 40%, var(--line)); border-top: 2px solid var(--tile-accent); gap: 5px; }
-.today-strip__tile.alert-low { --tile-accent: var(--green); }
-.today-strip__tile.alert-normal { --tile-accent: var(--cyan); }
+.today-strip__tile { --tile-accent: var(--text-muted); background: linear-gradient(135deg, color-mix(in srgb, var(--tile-accent) 16%, var(--surface)), var(--surface) 85%); border-color: color-mix(in srgb, var(--tile-accent) 40%, var(--line)); border-top: 2px solid var(--tile-accent); gap: 5px; }
+/* Owner check 2026-10-22: colour only for a warning; ordinary states stay uncoloured. */
+.today-strip__tile.alert-low, .today-strip__tile.alert-normal { --tile-accent: var(--text-muted); }
 .today-strip__tile.alert-high { --tile-accent: var(--red); }
 .today-strip__tile.momentum-strong { --tile-accent: var(--amber); }
-.today-strip__tile.momentum-normal { --tile-accent: var(--cyan); }
+.today-strip__tile.momentum-normal { --tile-accent: var(--text-muted); }
 .today-strip__tile.momentum-weak { --tile-accent: var(--red); }
 .today-strip__tile.tile-event { --tile-accent: var(--amber); }
 .today-strip__tile.momentum-strong b, .today-strip__tile.momentum-weak b { color: var(--tile-accent); font-size: 15px; }
@@ -65,6 +65,5 @@
 
 /* A preview cannot enlarge one tile beyond all neighbouring tiles. Full text remains in news detail. */
 .today-strip__tile .today-strip__news-preview { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; line-height:1.6; }
-/* Owner request 2026-10-22: which close the tile was computed from, and the second yardstick, in quieter type. */
-.today-strip__tile .today-strip__basis { color: var(--text-muted); font-size: 10px; }
-.today-strip__tile .today-strip__measure-other { color: var(--text-muted); font-size: 10px; }
+/* Owner request 2026-10-22: one quiet line under the tiles says which close the numbers use. */
+.today-strip__basis { margin: -2px 2px 0; color: var(--text-muted); font-size: 11px; }
