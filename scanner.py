@@ -39,6 +39,7 @@ import argus_market_clock  # Calibration Ledger v4 Phase 2: market-specific fore
 import argus_jp_fiscal_runtime
 import argus_credit_conditions
 import argus_td_warm  # v13.5.54: Twelve Data Basic-plan warm scheduler core (pure; owner 2026-09-05)
+import argus_moomoo_us  # 2026-10-22: moomoo の米国の日足・銘柄一覧の受け取り規則(純粋)
 import argus_market_data_truth  # v13 Round 2A: canonical provider-neutral market truth
 import argus_posture  # Calibration Ledger v4: multidimensional posture scoring (pure, v10.74)
 import argus_decision_value  # Decision Value Ledger v1: net expectancy / risk (pure, research-only, v10.75)
@@ -6443,11 +6444,54 @@ def api_argus_us_universe():
         return jsonify({"codes": [f"US.{sym}" for sym in syms],
                         "count": len(syms), "scope": "registered",
                         "asOf": _ai_now_iso()})
+    if request.args.get("scope") == "reference":
+        # 2026-10-22: ブリッジが moomoo から取る米国の参照データの依頼
+        # (日足の確定足)。そろっている銘柄は載せない。管理者専用。
+        plan, end = _moomoo_daily_plan()
+        return jsonify({"scope": "reference", "daily": plan[:60],
+                        "dailyEnd": end.isoformat(), "asOf": _ai_now_iso()})
     syms = {s.strip().upper() for s in _US_MOVER_UNIVERSE if s.strip()}
     syms |= {s["symbol"].upper() for s in _US_WATCHLIST}
     syms |= {e.upper() for e in _REGIME_ETFS}
     return jsonify({"codes": sorted(f"US.{s}" for s in syms), "count": len(syms),
                     "asOf": _ai_now_iso()})
+
+_US_REFERENCE_ERROR_RE = re.compile(r"^[a-z_]{1,40}$")
+
+
+@app.route("/api/argus/us-reference-push", methods=["POST"])
+def api_argus_us_reference_push():
+    """Bridge → backend: moomoo の米国の参照データ(admin+HMAC、quote-push と同じ門番)。
+
+    kind=dailyBars: 1銘柄の日足の確定足 [[日付, 始値, 高値, 安値, 終値, 出来高], ...]。
+    full=true は全期間の取り直し。error は取得できなかった理由の短い記号だけ。"""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    raw = request.get_data() or b""
+    sig_ok, sig_reason = _verify_bridge_signature(raw)
+    if not sig_ok:
+        send_security_alert({"type": "bridge_signature_rejected", "reason": sig_reason,
+                             "meta": _client_meta()})
+        return jsonify({"error": "signature_invalid", "reason": sig_reason}), 401
+    body = request.get_json(silent=True) or {}
+    kind = body.get("kind")
+    if kind == "dailyBars":
+        sym = str(body.get("symbol") or "").strip().upper()
+        rows = body.get("rows")
+        error = body.get("error")
+        if not argus_moomoo_us.SYMBOL_RE.match(sym):
+            return jsonify({"error": "bad_payload", "message": "symbol"}), 400
+        if error is not None:
+            if not isinstance(error, str) or not _US_REFERENCE_ERROR_RE.match(error):
+                return jsonify({"error": "bad_payload", "message": "error"}), 400
+            return jsonify({"ok": True, **_moomoo_daily_receive(sym, [], full=False, error=error)})
+        if not isinstance(rows, list) or len(rows) > argus_moomoo_us.MAX_BARS + 200:
+            return jsonify({"error": "bad_payload", "message": "rows"}), 400
+        result = _moomoo_daily_receive(sym, rows, full=body.get("full") is True)
+        return jsonify({"ok": True, **result})
+    return jsonify({"error": "bad_payload", "message": "kind"}), 400
+
 
 @app.route("/api/argus/us-movers-push", methods=["POST"])
 def api_argus_us_movers_push():
@@ -11378,6 +11422,9 @@ def _etf_series_with_moomoo(symbols):
         if not p or now - p.get("ts", 0) > _PUSH_TTL:
             continue
         row = p.get("row") or {}
+        if row.get("extendedHours") is True:
+            # 時間外の価格は地合いの「今」の値にしない(取引中の価格だけ)。
+            continue
         price = row.get("price")
         if not (isinstance(price, (int, float)) and price > 0):
             continue
@@ -11389,7 +11436,16 @@ def _etf_series_with_moomoo(symbols):
             # provider history it cannot create one.
             continue
         if series.get(sym):
-            series[sym] = [float(price)] + series[sym][1:]   # realtime current + TD history
+            # Twelve Data's newest value is today's in-progress bar (replace it);
+            # moomoo's newest value is the last CONFIRMED close (keep it and put
+            # the realtime price in front).
+            stash = _ETF_LAST_PRICE.get(str(sym).upper()) or {}
+            latest_bar = str(stash.get("sourceTimestamp") or "")[:10]
+            today_us = datetime.fromtimestamp(now, TZ_ET).strftime("%Y-%m-%d")
+            if stash.get("source") == "moomoo" and latest_bar and latest_bar < today_us:
+                series[sym] = [float(price)] + series[sym]
+            else:
+                series[sym] = [float(price)] + series[sym][1:]   # realtime current + TD history
     return series
 
 
@@ -11631,7 +11687,258 @@ def _etf_last_price_decision_row(symbol, *, max_transport_age_sec,
         return None
     return dict(row)
 
+# ━━━ moomoo 米国日足(2026-10-22, owner: 米国株のデータは moomoo が主役) ━━━
+# ブリッジが request_history_kline(日足・確定足・前方調整)で取り、
+# /api/argus/us-reference-push へ送る。ここでは受け取り・保存(永続ディスクの
+# 小さなファイル・Twelve Data の使用量の記録と同じ書き方)・読み出しだけを行う。
+# Twelve Data は、ここに使える日足が無い時の最後の手段(呼んだ回数は _td_get の
+# 使用量の記録に残る)。
+_MOOMOO_DAILY = {"index": None, "mem": {}, "lastPushAt": None,
+                 "lastStatus": None, "lastSaveError": None}
+_MOOMOO_DAILY_LOCK = threading.RLock()
+_MOOMOO_DAILY_INTEREST = {}            # SYMBOL -> epoch(サーバー内で履歴を求めた銘柄)
+_MOOMOO_DAILY_INTEREST_TTL = 14 * 86400
+_MOOMOO_DAILY_INTEREST_MAX = 20
+_MOOMOO_DAILY_CONFIRM_SEC = 3600       # 引けから1時間たった取引日を確定足とみなす
+_MOOMOO_DAILY_FILE_MAX = 2 * 1024 * 1024
+_MOOMOO_DAILY_INDEX_MAX = 1024 * 1024
+
+
+def _moomoo_daily_dir():
+    return (os.path.join(_DURABILITY_PATHS["root"], "moomoo_us_daily")
+            if _cost_policy_durable_enabled() else None)
+
+
+def _moomoo_daily_read_json(path, limit):
+    if not path or not os.path.isfile(path) or os.path.islink(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read(limit + 1)
+        if len(text) > limit:
+            return None
+        value = json.loads(text)
+        return value if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _moomoo_daily_index():
+    with _MOOMOO_DAILY_LOCK:
+        if _MOOMOO_DAILY["index"] is None:
+            index = {}
+            directory = _moomoo_daily_dir()
+            doc = _moomoo_daily_read_json(
+                os.path.join(directory, "index.json") if directory else None,
+                _MOOMOO_DAILY_INDEX_MAX)
+            for sym, entry in ((doc or {}).get("symbols") or {}).items():
+                if isinstance(sym, str) and argus_moomoo_us.SYMBOL_RE.match(sym) \
+                        and isinstance(entry, dict):
+                    index[sym] = entry
+            _MOOMOO_DAILY["index"] = index
+        return _MOOMOO_DAILY["index"]
+
+
+def _moomoo_daily_bars(sym):
+    directory = _moomoo_daily_dir()
+    if not directory:
+        return [list(row) for row in (_MOOMOO_DAILY["mem"].get(sym) or [])]
+    doc = _moomoo_daily_read_json(os.path.join(directory, f"{sym}.json"),
+                                  _MOOMOO_DAILY_FILE_MAX)
+    if not doc or doc.get("schemaVersion") != argus_moomoo_us.DAILY_SCHEMA \
+            or doc.get("symbol") != sym or not isinstance(doc.get("bars"), list):
+        return []
+    return [list(row) for row in doc["bars"] if isinstance(row, list) and len(row) >= 6]
+
+
+def _moomoo_daily_save(sym, bars, index):
+    directory = _moomoo_daily_dir()
+    if not directory:
+        if bars is not None:
+            _MOOMOO_DAILY["mem"][sym] = [list(row) for row in bars]
+        return
+    try:
+        os.makedirs(directory, exist_ok=True)
+        if bars is not None:
+            argus_persistent_storage.atomic_write_json(
+                os.path.join(directory, f"{sym}.json"),
+                {"schemaVersion": argus_moomoo_us.DAILY_SCHEMA, "symbol": sym,
+                 "adjust": argus_moomoo_us.ADJUSTMENT, "bars": bars},
+                maximum_bytes=_MOOMOO_DAILY_FILE_MAX)
+        argus_persistent_storage.atomic_write_json(
+            os.path.join(directory, "index.json"),
+            {"schemaVersion": argus_moomoo_us.DAILY_SCHEMA + "-index", "symbols": index},
+            maximum_bytes=_MOOMOO_DAILY_INDEX_MAX)
+        _MOOMOO_DAILY["lastSaveError"] = None
+    except Exception as exc:
+        _MOOMOO_DAILY["lastSaveError"] = type(exc).__name__
+
+
+def _moomoo_daily_end(now_epoch=None):
+    """確定足として頼む最後の取引日(引けから1時間たった取引日)。"""
+    now = time.time() if now_epoch is None else float(now_epoch)
+    now_utc = datetime.fromtimestamp(now, pytz.utc)
+    latest = argus_market_clock.latest_completed_session_date(
+        argus_market_clock.US_EQUITY, now_utc)
+    bounds = argus_market_clock.market_session_bounds(argus_market_clock.US_EQUITY, latest)
+    close_epoch = _coerce_epoch(bounds.get("regularCloseUtc"))
+    if close_epoch is not None and now - close_epoch < _MOOMOO_DAILY_CONFIRM_SEC:
+        day = latest - timedelta(days=1)
+        while not argus_market_clock.is_trading_day(argus_market_clock.US_EQUITY, day):
+            day -= timedelta(days=1)
+        latest = day
+    return latest
+
+
+def _note_moomoo_daily_interest(symbols, now=None):
+    """サーバー内の処理(銘柄の画面の図・発表時の調査)が米国株の履歴を求めた印。
+    公開の読み取りの指定銘柄はここに入れない(日足の取得枠を外から使わせない)。"""
+    now = time.time() if now is None else now
+    with _MOOMOO_DAILY_LOCK:
+        for raw in symbols or []:
+            sym = str(raw or "").strip().upper()
+            if argus_moomoo_us.SYMBOL_RE.match(sym):
+                _MOOMOO_DAILY_INTEREST[sym] = now
+        for sym, stamp in list(_MOOMOO_DAILY_INTEREST.items()):
+            if not 0 <= now - stamp <= _MOOMOO_DAILY_INTEREST_TTL:
+                _MOOMOO_DAILY_INTEREST.pop(sym, None)
+        for sym in sorted(_MOOMOO_DAILY_INTEREST, key=_MOOMOO_DAILY_INTEREST.get)[
+                :-_MOOMOO_DAILY_INTEREST_MAX]:
+            _MOOMOO_DAILY_INTEREST.pop(sym, None)
+
+
+def _moomoo_daily_wanted_symbols(now=None):
+    """地合いのETF・警戒用ETF・センサーETF・定番銘柄・登録米国株・サーバー内で開いた米国株。"""
+    now = time.time() if now is None else now
+    with _MOOMOO_DAILY_LOCK:
+        interest = [sym for sym, stamp in _MOOMOO_DAILY_INTEREST.items()
+                    if 0 <= now - stamp <= _MOOMOO_DAILY_INTEREST_TTL]
+    out = []
+    for sym in (list(_REGIME_ETFS) + list(_ALERT_ETF_SYMS) + list(_SENSOR_ETF_EXTRA)
+                + [s["symbol"] for s in _US_WATCHLIST] + list(_td_owner_us_members())
+                + sorted(interest)):
+        sym = str(sym or "").upper()
+        if sym and sym not in out:
+            out.append(sym)
+    return out
+
+
+def _moomoo_daily_plan(now_epoch=None):
+    end = _moomoo_daily_end(now_epoch)
+    with _MOOMOO_DAILY_LOCK:
+        index = {k: dict(v) for k, v in _moomoo_daily_index().items()}
+    # その確定日に「データなし」と返った銘柄は、同じ日にもう頼まない(取得枠を守る)。
+    plan = [item for item in argus_moomoo_us.plan_daily_requests(
+                _moomoo_daily_wanted_symbols(now_epoch), index, end=end)
+            if (index.get(item["symbol"]) or {}).get("failedFor") != end.isoformat()]
+    return plan, end
+
+
+def _moomoo_daily_receive(sym, rows, *, full, error=None, now_epoch=None):
+    now = time.time() if now_epoch is None else float(now_epoch)
+    end = _moomoo_daily_end(now)
+    received_at = datetime.fromtimestamp(now, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with _MOOMOO_DAILY_LOCK:
+        index = _moomoo_daily_index()
+        prior = dict(index.get(sym) or {})
+        if error:
+            index[sym] = {**prior, "failedFor": end.isoformat(),
+                          "lastError": str(error)[:40], "checkedAt": received_at}
+            _moomoo_daily_save(sym, None, index)
+            return {"status": "provider_error", "accepted": 0, "rejected": 0}
+        incoming, rejected = argus_moomoo_us.normalize_daily_rows(
+            rows, end=end, is_trading_day=lambda day: argus_market_clock.is_trading_day(
+                argus_market_clock.US_EQUITY, day))
+        stored = [] if full else _moomoo_daily_bars(sym)
+        merged, status = argus_moomoo_us.merge_daily_bars(stored, incoming, full=full)
+        if status in ("replaced", "appended"):
+            entry = argus_moomoo_us.index_entry(
+                merged, full_history=bool(full or prior.get("fullHistory")),
+                needs_refill=False, received_at=received_at)
+            index[sym] = {**entry, "checkedAt": received_at}
+            _moomoo_daily_save(sym, merged, index)
+        elif status in ("overlap_mismatch", "no_overlap"):
+            # 配当などで過去の調整値が変わった。混ぜずに全期間を頼み直す。
+            index[sym] = {**prior, "needsRefill": True, "checkedAt": received_at}
+            _moomoo_daily_save(sym, None, index)
+        elif status == "empty" and full:
+            index[sym] = {**prior, "failedFor": end.isoformat(),
+                          "lastError": "no_rows", "checkedAt": received_at}
+            _moomoo_daily_save(sym, None, index)
+        else:
+            index[sym] = {**prior, "checkedAt": received_at}
+            _moomoo_daily_save(sym, None, index)
+        _MOOMOO_DAILY["lastPushAt"] = received_at
+        _MOOMOO_DAILY["lastStatus"] = status
+    return {"status": status, "accepted": len(incoming), "rejected": rejected}
+
+
+def _moomoo_daily_history(sym, limit=None, now_epoch=None):
+    """(Twelve Data と同じ形の新しい順の履歴, 索引) — 使える時だけ。
+
+    全期間を受け取った銘柄で、最新の足が直近の確定した取引日(7暦日以内)の時だけ。"""
+    sym = str(sym or "").strip().upper()
+    with _MOOMOO_DAILY_LOCK:
+        entry = dict(_moomoo_daily_index().get(sym) or {})
+    if not entry.get("fullHistory") or not entry.get("lastDate"):
+        return None
+    if _bounded_market_session_date(
+            entry["lastDate"], "US", _ETF_DAILY_MAX_CALENDAR_DAYS,
+            accepted_formats=("%Y-%m-%d",), now_epoch=now_epoch)[0] is None:
+        return None
+    bars = _moomoo_daily_bars(sym)
+    if len(bars) < 2 or bars[-1][0] != entry["lastDate"]:
+        return None
+    return argus_moomoo_us.history_newest_first(bars, limit), entry
+
+
+def _moomoo_daily_status():
+    """公開してよい数だけ(銘柄名なし)。"""
+    with _MOOMOO_DAILY_LOCK:
+        index = dict(_moomoo_daily_index())
+        status = {"lastPushAt": _MOOMOO_DAILY["lastPushAt"],
+                  "lastStatus": _MOOMOO_DAILY["lastStatus"],
+                  "lastSaveError": _MOOMOO_DAILY["lastSaveError"]}
+    try:
+        end = _moomoo_daily_end()
+        current = sum(1 for entry in index.values()
+                      if entry.get("fullHistory") and entry.get("lastDate") == end.isoformat())
+        end_text = end.isoformat()
+    except Exception:
+        current, end_text = None, None
+    return {**status, "symbolCount": len(index), "currentThrough": end_text,
+            "currentCount": current,
+            "needsRefillCount": sum(1 for e in index.values() if e.get("needsRefill"))}
+
+
 def _td_timeseries(symbols):
+    """ETF の日足の終値(新しい順)。moomoo の確定足を先に使い、無い銘柄だけ
+    Twelve Data へ(最後の手段)。moomoo の値は当日の途中の足を含まない。"""
+    out, missing = {}, []
+    now = time.time()
+    for raw in symbols:
+        sym = str(raw).upper()
+        found = _moomoo_daily_history(sym, limit=22, now_epoch=now)
+        closes = (found[0]["closes"] if found else [])
+        if len(closes) >= 2 and closes[1]:
+            out[raw] = closes
+            _ETF_LAST_PRICE[sym] = {
+                "price": closes[0],
+                "m1d": round((closes[0] / closes[1] - 1) * 100, 2),
+                "ts": now,
+                "source": "moomoo",
+                "sourceTimestamp": found[0]["dates"][0],
+                "receivedAt": found[1].get("receivedAt"),
+                "status": "delayed",
+            }
+        else:
+            missing.append(raw)
+    if missing:
+        out.update(_td_timeseries_provider(missing))
+    return out
+
+
+def _td_timeseries_provider(symbols):
     """Batched daily closes for the ETF universe.
 
     Returns {symbol: [latest_close, ..., older]} (newest-first). A transient
@@ -11775,8 +12082,24 @@ _TD_HISTORY_CACHE = {}
 _TD_HISTORY_TTL = 6 * 3600
 
 def _td_price_history(sym):
+    """US daily history, newest-first. moomoo の確定足(全期間を受け取った銘柄)を
+    先に使い、無い時だけ Twelve Data(最後の手段)。キャッシュの provider に出所を残す。"""
     now = time.time()
     c = _TD_HISTORY_CACHE.get(sym)
+    found = _moomoo_daily_history(sym, now_epoch=now)
+    if found is not None:
+        received = found[1].get("receivedAt")
+        if c and c.get("provider") == "moomoo" and c.get("storeRevision") == received \
+                and now < c["expires"]:
+            return c["data"]
+        _TD_HISTORY_CACHE[sym] = {
+            "data": found[0], "expires": now + _TD_HISTORY_TTL,
+            "provider": "moomoo", "storeRevision": received,
+            # 知った時刻は moomoo の足を受け取った時刻(後ろへずらさない)。
+            "acquiredAt": received,
+        }
+        return found[0]
+    _note_moomoo_daily_interest([sym], now)
     if c and now < c["expires"]:
         return c["data"]
     data = None
@@ -11813,6 +12136,7 @@ def _td_price_history(sym):
         "data": data, "expires": now + (_TD_HISTORY_TTL if data else 150),
         "acquiredAt": (datetime.fromtimestamp(now, pytz.utc).strftime(
             "%Y-%m-%dT%H:%M:%S.%fZ") if data else None),
+        "provider": "twelvedata",
     }
     return data
 
@@ -16188,7 +16512,11 @@ _HB_ALLOWED_KEYS = ("at", "bridgeVersion", "bridgeMode", "openDStatus",
                     # 2026-10-22: 米国の時間外の価格の数(銘柄名なし)。
                     # no_price_in_session = その時間帯の価格が1つも無い(夜間の権利なし等)。
                     "usExtendedSession", "usExtendedPriced", "usExtendedUnpriced",
-                    "usExtendedStatus", "usExtendedCheckedAt")
+                    "usExtendedStatus", "usExtendedCheckedAt",
+                    # 2026-10-22: 米国の日足の取り込みと過去の日足の取得枠(数だけ)。
+                    "dailyKlineStatus", "dailyKlineCheckedAt", "dailyKlineRequested",
+                    "dailyKlineSent", "dailyKlineSkippedQuota", "dailyKlineFailed",
+                    "dailyKlineQuotaUsed", "dailyKlineQuotaRemain")
 
 
 @app.route("/api/argus/bridge/heartbeat", methods=["POST"])
@@ -16257,6 +16585,11 @@ def _bridge_status_doc():
                                    if hb else not (jp_ages and min(jp_ages) <= 600))
     doc["bridgeMode"] = (hb or {}).get("bridgeMode") or "unknown"
     doc["diskUsagePct"] = (hb or {}).get("diskUsagePct")
+    # 2026-10-22: moomoo の米国の日足の受け取り状況(数だけ・銘柄名なし)。
+    try:
+        doc["usDailyBars"] = _moomoo_daily_status()
+    except Exception:
+        doc["usDailyBars"] = None
     doc["noteJa"] = ("ブリッジは正常ですが、moomooの日本株リアルタイムは利用できません"
                      "(日本株は代替データで判定)。" if doc["jpFallbackActive"]
                      and doc["bridgeProcess"] in ("ok", "ok_legacy") else
@@ -16293,6 +16626,9 @@ def api_argus_admin_bridge_diagnostic():
                    "argus-bridge再起動でfullモードに復帰。")
     if isinstance(doc.get("diskUsagePct"), (int, float)) and doc["diskUsagePct"] >= 90:
         rec.append("EC2ディスク使用率が高い。bridge/README.mdのディスク拡張チェックリストを実施。")
+    if hb.get("dailyKlineStatus") in ("quota_reserve_reached", "quota_unknown"):
+        rec.append("moomooの過去の日足の取得枠が残り少ないか確認できない。足りない銘柄は"
+                   f"Twelve Dataの日足で補う(残り {hb.get('dailyKlineQuotaRemain')})。")
     if hb.get("usExtendedStatus") == "no_price_in_session":
         session_ja = {"PRE": "プレ", "POST": "アフター", "OVERNIGHT": "夜間"}.get(
             hb.get("usExtendedSession"), "時間外")
@@ -38218,9 +38554,10 @@ def _chart_history(symbol, market):
     history = _td_price_history(symbol)
     cache = _TD_HISTORY_CACHE.get(symbol)
     known_at = _history_cache_known_at(cache, _TD_HISTORY_TTL)
+    provider = (cache or {}).get("provider") or "twelvedata"
     return _chart_rows_from_history(
-        history, market="US", provider="twelvedata", known_at=known_at,
-        dataset_id=f"twelvedata:{symbol}:{known_at or 'unknown'}")
+        history, market="US", provider=provider, known_at=known_at,
+        dataset_id=f"{provider}:{symbol}:{known_at or 'unknown'}")
 
 
 def _chart_history_cached(symbol, market):
@@ -38231,7 +38568,7 @@ def _chart_history_cached(symbol, market):
     if not isinstance(cache, dict) or now >= float(cache.get("expires") or 0):
         return []
     ttl = _JQ_HISTORY_TTL if market == "JP" else _TD_HISTORY_TTL
-    provider = "jquants" if market == "JP" else "twelvedata"
+    provider = "jquants" if market == "JP" else (cache.get("provider") or "twelvedata")
     known_at = _history_cache_known_at(cache, ttl)
     return _chart_rows_from_history(
         cache.get("data"), market=market, provider=provider,
@@ -38586,7 +38923,22 @@ def _asset_chart_provider_history(symbol, market):
                     "adjusted": item.get("AdjC") is not None,
                     "sourceId": f"price:{market}:{symbol}:{date}",
                 })
+        elif _moomoo_daily_history(symbol, limit=600, now_epoch=now) is not None:
+            # 2026-10-22: moomoo の確定日足を先に使う(Twelve Data は最後の手段)。
+            history, _entry = _moomoo_daily_history(symbol, limit=600, now_epoch=now)
+            us_source = "moomoo"
+            rows = []
+            for i, date in enumerate(history["dates"]):
+                rows.append({
+                    "date": date, "availableFrom": date,
+                    "open": history["opens"][i], "high": history["highs"][i],
+                    "low": history["lows"][i], "close": history["closes"][i],
+                    "volume": history["volumes"][i], "adjusted": True,
+                    "sourceId": f"price:{market}:{symbol}:{date}",
+                })
         else:
+            _note_moomoo_daily_interest([symbol], now)
+            us_source = "twelvedata"
             if not _TWELVEDATA_API_KEY:
                 raise RuntimeError("twelvedata_not_configured")
             response = _td_get("time_series",
@@ -38632,7 +38984,7 @@ def _asset_chart_provider_history(symbol, market):
                     "sourceId": f"price:{market}:{symbol}:{date}",
                 })
         acquired_at = _ai_now_iso()
-        provider = "jquants" if market == "JP" else "twelvedata"
+        provider = "jquants" if market == "JP" else us_source
         revision = _canonical_truth_revision(acquired_at)
         dataset_id = f"{provider}:{symbol}:{acquired_at}"
         for row in rows:
@@ -50414,7 +50766,7 @@ def _canonical_history_observations(symbols, decision_at):
             continue
         history = cache["data"]
         dates = list(history.get("dates") or [])[:_CANONICAL_OUTCOME_BARS_PER_SYMBOL]
-        provider = "jquants" if market == "JP" else "twelvedata"
+        provider = "jquants" if market == "JP" else (cache.get("provider") or "twelvedata")
         for index, day in enumerate(dates):
             observed = _canonical_truth_iso(day, market, date_means_close=True)
             if not observed or observed > received:

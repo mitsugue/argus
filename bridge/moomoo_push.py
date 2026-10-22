@@ -227,6 +227,15 @@ def build_heartbeat(state=None, disable_jp=None, now_iso=None):
         "usExtendedUnpriced": state.get("usExtendedUnpriced"),
         "usExtendedStatus": state.get("usExtendedStatus"),
         "usExtendedCheckedAt": state.get("usExtendedCheckedAt"),
+        # 2026-10-22: 日足の取り込みと過去の日足の取得枠(数だけ)。
+        "dailyKlineStatus": state.get("dailyKlineStatus"),
+        "dailyKlineCheckedAt": state.get("dailyKlineCheckedAt"),
+        "dailyKlineRequested": state.get("dailyKlineRequested"),
+        "dailyKlineSent": state.get("dailyKlineSent"),
+        "dailyKlineSkippedQuota": state.get("dailyKlineSkippedQuota"),
+        "dailyKlineFailed": state.get("dailyKlineFailed"),
+        "dailyKlineQuotaUsed": state.get("dailyKlineQuotaUsed"),
+        "dailyKlineQuotaRemain": state.get("dailyKlineQuotaRemain"),
     }
 
 
@@ -591,6 +600,149 @@ def fetch_us_extended_quotes(qc, codes, session, state=None, now=None, ret_ok=No
     # 1銘柄も価格が付かない時は、時間帯の権利(特に夜間)が無い可能性を示す。
     state["usExtendedStatus"] = "ok" if rows else "no_price_in_session"
     return rows
+
+
+# ── 2026-10-22: 米国の日足(確定足)を moomoo から取り込む ─────────────────────
+# サーバーからブリッジへは届かないので、サーバーが「欲しい日足の一覧」を
+# us-universe?scope=reference で出し、ブリッジが取引時間外に読みに行く。
+# 過去の日足の取得枠(get_history_kl_quota)を毎回確かめ、残りを心拍に出し、
+# 予備を残して枠を超えないようにする。注文・口座の機能には触れない。
+REFERENCE_CHECK_SEC = max(300, int(os.environ.get("ARGUS_REFERENCE_CHECK_SEC", "1800")))
+KLINE_QUOTA_RESERVE = max(0, int(os.environ.get("ARGUS_KLINE_QUOTA_RESERVE", "5")))
+KLINE_MAX_NEW_PER_RUN = max(0, int(os.environ.get("ARGUS_KLINE_MAX_NEW_PER_RUN", "20")))
+KLINE_PAUSE_SEC = 0.6          # 公式の上限 60回/30秒 を下回る間隔
+KLINE_MAX_PAGES = 4            # 1000本 × 4 = 約15年分まで
+_US_CODE_RE = None
+
+
+def _valid_us_code(code):
+    global _US_CODE_RE
+    if _US_CODE_RE is None:
+        import re
+        _US_CODE_RE = re.compile(r"US\.[A-Z][A-Z0-9.\-]{0,9}")
+    return isinstance(code, str) and bool(_US_CODE_RE.fullmatch(code))
+
+
+def fetch_reference_plan():
+    """サーバーの依頼一覧。読めない時は None(古い一覧で取りに行かない)。"""
+    try:
+        response = requests.get(f"{BACKEND}/api/argus/us-universe",
+                                params={"scope": "reference"},
+                                headers={"X-ARGUS-ADMIN-TOKEN": TOKEN}, timeout=20)
+        if not response.ok:
+            return None
+        body = response.json()
+        return body if isinstance(body, dict) and body.get("scope") == "reference" else None
+    except Exception:
+        return None
+
+
+def read_kline_quota(qc, ret_ok=None):
+    """(使った数, 残り, 期間内に取得済みのコードの集合) または None。"""
+    ret_ok = RET_OK if ret_ok is None else ret_ok
+    try:
+        ret, data = qc.get_history_kl_quota(get_detail=True)
+    except Exception:
+        return None
+    if ret != ret_ok or not isinstance(data, (list, tuple)) or len(data) < 2:
+        return None
+    try:
+        used, remain = int(data[0]), int(data[1])
+    except (TypeError, ValueError):
+        return None
+    rest = list(data[2:])
+    details = rest[0] if len(rest) == 1 and isinstance(rest[0], (list, tuple)) else rest
+    codes = {str(item.get("code")) for item in details
+             if isinstance(item, dict) and item.get("code")}
+    return used, remain, codes
+
+
+def fetch_daily_rows(qc, code, start, end, ret_ok=None, sleep=None):
+    """確定日足 [[日付, 始値, 高値, 安値, 終値, 出来高], ...] と、失敗時の理由の記号。"""
+    ret_ok = RET_OK if ret_ok is None else ret_ok
+    sleep = time.sleep if sleep is None else sleep
+    try:
+        from moomoo import KLType, AuType
+        ktype, autype = KLType.K_DAY, AuType.QFQ
+    except Exception:
+        ktype, autype = "K_DAY", "qfq"
+    rows, page = [], None
+    for page_number in range(KLINE_MAX_PAGES):
+        try:
+            ret, df, page = qc.request_history_kline(
+                code, start=start, end=end, ktype=ktype, autype=autype,
+                max_count=1000, page_req_key=page)
+        except Exception:
+            return None, "api_exception"
+        if ret != ret_ok:
+            text = str(df).lower()
+            return None, ("permission" if "permission" in text
+                          else "quota" if "quota" in text
+                          else "api_error")
+        for _, r in df.iterrows():
+            day = str(r.get("time_key") or "")[:10]
+            rows.append([day, _finite_number(r.get("open")), _finite_number(r.get("high")),
+                         _finite_number(r.get("low")), _finite_number(r.get("close")),
+                         _finite_number(r.get("volume"))])
+        if not page:
+            break
+        sleep(KLINE_PAUSE_SEC)
+    return rows, None
+
+
+def _post_reference(payload):
+    response = _post_signed("/api/argus/us-reference-push", payload, timeout=60)
+    return response.ok
+
+
+def run_daily_reference_job(qc, plan, state=None, sleep=None):
+    """依頼された日足を取得枠の範囲で取り、1銘柄ずつ送る。送った数を返す。"""
+    import datetime as _dt
+    state = STATE if state is None else state
+    sleep = time.sleep if sleep is None else sleep
+    items = [item for item in (plan or {}).get("daily") or []
+             if isinstance(item, dict) and _valid_us_code(item.get("code"))]
+    state["dailyKlineCheckedAt"] = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    state["dailyKlineRequested"] = len(items)
+    if not items:
+        state["dailyKlineStatus"] = "up_to_date"
+        return 0
+    quota = read_kline_quota(qc)
+    if quota is None:
+        # 残りが分からない時は取りに行かない(枠を超えない側に倒す)。
+        state["dailyKlineStatus"] = "quota_unknown"
+        return 0
+    used, remain, pulled = quota
+    sent = new = skipped = failed = 0
+    for item in items:
+        code = item["code"]
+        is_new = code not in pulled
+        if is_new and (remain - KLINE_QUOTA_RESERVE <= 0 or new >= KLINE_MAX_NEW_PER_RUN):
+            skipped += 1
+            continue
+        rows, error = fetch_daily_rows(qc, code, str(item.get("start")), str(item.get("end")),
+                                       sleep=sleep)
+        if is_new and error != "permission":
+            remain, used, new = remain - 1, used + 1, new + 1
+            pulled.add(code)
+        symbol = code.split(".", 1)[1]
+        try:
+            if rows is None:
+                failed += 1
+                _post_reference({"kind": "dailyBars", "symbol": symbol, "error": error})
+            elif _post_reference({"kind": "dailyBars", "symbol": symbol,
+                                  "full": item.get("full") is True, "rows": rows}):
+                sent += 1
+        except Exception as exc:
+            failed += 1
+            print(time.strftime("%H:%M:%S"), "daily bars post error:", type(exc).__name__)
+        sleep(KLINE_PAUSE_SEC)
+    state.update({"dailyKlineQuotaUsed": used, "dailyKlineQuotaRemain": remain,
+                  "dailyKlineSent": sent, "dailyKlineSkippedQuota": skipped,
+                  "dailyKlineFailed": failed,
+                  "dailyKlineStatus": ("quota_reserve_reached" if skipped else
+                                       "partial" if failed else "ok")})
+    return sent
 
 
 # ── Capital distribution (大口/中口/小口の売買フロー) — v10.2 ──
@@ -987,6 +1139,11 @@ def shared_quote_cycle(qc, now=None):
     return accepted or 0
 
 
+def reference_job_due(clock, last_at):
+    """参照データ(日足など)の依頼を読みに行くか。取引中は読まない。"""
+    return clock - last_at >= REFERENCE_CHECK_SEC and us_quote_session() != "REGULAR"
+
+
 def main():
     if OpenQuoteContext is None:
         print("moomoo-api is not installed: pip3 install moomoo-api", file=sys.stderr)
@@ -998,7 +1155,8 @@ def main():
     # OpenD initialization can wait indefinitely in the SDK. Only one bounded-
     # cadence worker may own that wait; health reporting never waits for it.
     worker = None
-    last_quote_at = last_hb_at = float('-inf')
+    reference_worker = None
+    last_quote_at = last_hb_at = last_reference_at = float('-inf')
     while True:
         clock = time.monotonic()
         if clock - last_hb_at >= HEARTBEAT_INTERVAL:
@@ -1012,7 +1170,31 @@ def main():
             worker = Thread(target=_shared_quote_worker, daemon=True,
                             name='shared-market-quotes')
             worker.start()
+        if (reference_job_due(clock, last_reference_at)
+                and (reference_worker is None or not reference_worker.is_alive())):
+            last_reference_at = clock
+            reference_worker = Thread(target=_reference_worker, daemon=True,
+                                      name='us-reference-data')
+            reference_worker.start()
         time.sleep(min(30, HEARTBEAT_INTERVAL))
+
+
+def _reference_worker():
+    """依頼が無ければ OpenD に接続しない。"""
+    qc = None
+    try:
+        plan = fetch_reference_plan()
+        if not plan or not plan.get("daily"):
+            if plan is not None:
+                STATE["dailyKlineStatus"] = "up_to_date"
+            return
+        qc = OpenQuoteContext(host=HOST, port=PORT)
+        run_daily_reference_job(qc, plan)
+    except Exception as exc:
+        print('us reference data unavailable:', type(exc).__name__, flush=True)
+    finally:
+        if qc is not None:
+            qc.close()
 
 
 def _shared_quote_worker():

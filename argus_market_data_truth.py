@@ -165,7 +165,8 @@ REPOSITORY_PROVIDER_PRIORITY: Dict[Tuple[str, str], Tuple[str, ...]] = {
     ("JP", "INDEX_PROXY"): ("moomoo", "jquants"),
     ("JP", "NAV"): ("toushin_library",),
     ("US", "QUOTE"): ("moomoo", "twelvedata", "finnhub"),
-    ("US", "OHLCV_BAR"): ("twelvedata", "finnhub"),
+    # 2026-10-22: moomoo の確定日足(前方調整)が主。Twelve Data は最後の手段。
+    ("US", "OHLCV_BAR"): ("moomoo", "twelvedata", "finnhub"),
     ("US", "INDEX_PROXY"): ("moomoo", "twelvedata", "finnhub"),
     ("FX", "QUOTE"): ("yahoo", "fred"),
     ("FX", "RATE"): ("yahoo", "fred"),
