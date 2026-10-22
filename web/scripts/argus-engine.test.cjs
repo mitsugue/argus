@@ -549,6 +549,15 @@ console.log('argus-engine.test: all checks passed');
     quoteFreshnessJa({ delayClass: 'EOD', provider: 'jquants', sourceTimestamp: '2026-09-07' }) === '終値 09/07（jquants）'
     && quoteFreshnessJa({ delayClass: 'LIVE', provider: 'TACHIBANA', sourceTimestamp: '2026-09-07T01:00:00Z' }).startsWith('リアルタイム')
     && quoteFreshnessJa({ delayClass: 'UNKNOWN', provider: 'CoinGecko', sourceTimestamp: null }) === '取得時刻不明（CoinGecko）');
+  const { normalizeLiveQuote } = require(path.join(root, 'src/domain/liveQuote.ts'));
+  const overnight = normalizeLiveQuote({ price: 101, provider: 'moomoo-rt', session: 'OVERNIGHT', extendedHours: true,
+    delayClass: 'UNKNOWN', sourceTimestamp: '2026-10-22T05:00:00Z' }, { symbol: 'NVDA', instrumentType: 'STOCK' });
+  const regularAfter = normalizeLiveQuote({ price: 100, provider: 'moomoo-rt', session: 'AFTER',
+    delayClass: 'UNKNOWN', sourceTimestamp: '2026-10-21T20:00:00Z' }, { symbol: 'NVDA', instrumentType: 'STOCK' });
+  check('an extended-hours price says which session it is from; a regular price does not',
+    overnight.session === 'OVERNIGHT' && overnight.extendedHours === true
+    && quoteFreshnessJa(overnight).startsWith('時間外(夜間) ')
+    && !quoteFreshnessJa(regularAfter).includes('時間外'));
 }
 
 if (failed) process.exit(1);

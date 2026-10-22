@@ -17,7 +17,7 @@ def load(monkeypatch):
 
 def test_shared_cycle_ignores_old_individual_settings_and_keeps_flow_retired(monkeypatch):
     m=load(monkeypatch);calls=[];posted=[]
-    monkeypatch.setattr(m,'shared_session_open',lambda:True)
+    monkeypatch.setattr(m,'us_quote_session',lambda now=None:'REGULAR')
     monkeypatch.setattr(m,'registered_us_codes',lambda:list(m._REGIME_ETF_CODES))
     monkeypatch.setattr(m,'fetch_market_quotes',lambda qc,codes,**kw:(calls.append(codes) or [
         {'market':'US','symbol':'SPY','exchangeTs':'2026-09-18T15:00:00Z'},
@@ -32,7 +32,7 @@ def test_shared_cycle_ignores_old_individual_settings_and_keeps_flow_retired(mon
     assert m.shared_quote_cycle(object())==1
     assert calls==[{'JP':[],'US':m._REGIME_ETF_CODES}]
     assert posted==[{'market':'US','symbol':'SPY','exchangeTs':'2026-09-18T15:00:00Z'}]
-    monkeypatch.setattr(m,'shared_session_open',lambda:False)
+    monkeypatch.setattr(m,'us_quote_session',lambda now=None:None)
     assert m.shared_quote_cycle(object())==0 and len(calls)==1
 
 
@@ -56,7 +56,7 @@ def test_health_continues_when_opend_worker_is_stuck(monkeypatch):
         def is_alive(self): return True
     monkeypatch.setattr(m,'TOKEN','test-only')
     monkeypatch.setattr(m,'OpenQuoteContext',object)
-    monkeypatch.setattr(m,'shared_session_open',lambda:True)
+    monkeypatch.setattr(m,'quote_session_active',lambda now=None:True)
     monkeypatch.setattr(m,'Thread',StuckWorker)
     monkeypatch.setattr(m.time,'monotonic',lambda:next(ticks))
     monkeypatch.setattr(m,'send_heartbeat',lambda **kw:events.append('health') or 200)
@@ -72,7 +72,7 @@ def test_closed_session_never_initializes_opend(monkeypatch):
     m=load(monkeypatch);events=[]
     monkeypatch.setattr(m,'TOKEN','test-only')
     monkeypatch.setattr(m,'OpenQuoteContext',lambda **kw:events.append('unexpected'))
-    monkeypatch.setattr(m,'shared_session_open',lambda:False)
+    monkeypatch.setattr(m,'quote_session_active',lambda now=None:False)
     monkeypatch.setattr(m,'send_heartbeat',lambda **kw:events.append('health') or 200)
     monkeypatch.setattr(m.time,'sleep',lambda _:(_ for _ in ()).throw(KeyboardInterrupt()))
     with pytest.raises(KeyboardInterrupt):m.main()

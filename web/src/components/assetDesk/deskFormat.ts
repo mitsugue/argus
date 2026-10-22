@@ -2,6 +2,7 @@
 import type { AssetStrategy } from '../../lib/assetStrategy';
 import type { QuoteLite } from '../../lib/assetStrategy';
 import type { DeskEventTag } from './types';
+import { extendedSessionJa } from '../../domain/liveQuote';
 
 // LINKED EVENT tag — Japanese (event code + proximity + impact, 読める日本語).
 const EVENT_CODE_JA: Record<string, string> = {
@@ -53,10 +54,12 @@ export function freshnessOf(strat: AssetStrategy, quote?: QuoteLite): { text: st
     // v13.5.63 (GPT review item 3): one vocabulary for price kind everywhere
     // (リアルタイム / n分遅延 / 終値 / 取得時刻不明), the same words the
     // freshness line uses.
-    const text = delay === 'LIVE' ? 'リアルタイム'
+    const base = delay === 'LIVE' ? 'リアルタイム'
       : delay === '15m' || delay === '20m' ? `${delay.replace('m', '分')}遅延`
         : delay === 'EOD' ? '終値'
           : delay === 'OFFLINE' ? 'オフライン' : '取得時刻不明';
+    const extended = extendedSessionJa(quote.quoteTruth);
+    const text = extended ? `${extended} ${base}` : base;
     return { text, color };
   }
   if (strat.status === 'manual') return { text: 'manual', color: STATUS_COLOR.manual };

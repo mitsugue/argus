@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """ARGUS moomoo bridge — runs NEXT TO OpenD (same machine, e.g. your AWS box).
 
-Collects shared US ETFs and confirmed registered US prices during regular sessions.
+Collects shared US ETFs and confirmed registered US prices during regular and
+extended (pre-market, after-hours, overnight) sessions, each with its own time.
 Money-flow calls and broad universe sweeps remain retired.
 Existing tokens, HMAC signing and provider observation timestamps are retained.
 OpenD remains local; never expose port 11111 to the internet.
@@ -36,7 +37,7 @@ except ImportError:
     OpenQuoteContext = None
     RET_OK = 0
 
-BRIDGE_VERSION = "13.8.72"
+BRIDGE_VERSION = "13.8.160"
 
 BACKEND  = os.environ.get("ARGUS_BACKEND", "https://argus-backend-3j2m.onrender.com").rstrip("/")
 TOKEN    = os.environ.get("ARGUS_ADMIN_TOKEN", "")
@@ -220,6 +221,12 @@ def build_heartbeat(state=None, disable_jp=None, now_iso=None):
         "usSnapshotErrors": int(state.get("usSnapshotErrors") or 0),
         "diskUsagePct": disk_usage_pct(),
         "intervalSec": INTERVAL,
+        # 2026-10-22: 時間外の価格の数(銘柄名は出さない)。
+        "usExtendedSession": state.get("usExtendedSession"),
+        "usExtendedPriced": state.get("usExtendedPriced"),
+        "usExtendedUnpriced": state.get("usExtendedUnpriced"),
+        "usExtendedStatus": state.get("usExtendedStatus"),
+        "usExtendedCheckedAt": state.get("usExtendedCheckedAt"),
     }
 
 
@@ -334,47 +341,68 @@ def record_push_result(stocks, accepted, state=None, now_iso=None):
     return state
 
 
+def _quote_right(row):
+    raw = (row.get("quote_right") or row.get("quote_right_status")
+           or row.get("entitlement") or "unknown")
+    value = str(raw).strip().lower()
+    return value[:40] if value and all(c.isalnum() or c in "_- /" for c in value) else "unknown"
+
+
+def _exchange_timestamp(value, market):
+    """OpenD update_time is market-local. Normalize it before transport so
+    the backend never mistakes New York/Tokyo wall time for UTC."""
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw or raw.lower() in ("nan", "nat", "none", "n/a"):
+        return None
+    try:
+        import datetime as _dt
+        numeric = float(raw)
+        if numeric > 0:
+            return _dt.datetime.fromtimestamp(
+                numeric, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError, OverflowError):
+        pass
+    try:
+        import datetime as _dt
+        from zoneinfo import ZoneInfo
+        parsed = _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            zone = ZoneInfo("Asia/Tokyo" if market == "JP" else "America/New_York")
+            parsed = parsed.replace(tzinfo=zone)
+        return parsed.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return None
+
+
+def _first_present(*values):
+    for value in values:
+        raw = str(value).strip()
+        if raw and raw.lower() not in ("nan", "nat", "none", "n/a"):
+            return value
+    return None
+
+
+def _finite_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _snapshot_update_ts(r, market):
+    return _exchange_timestamp(_first_present(
+        r.get("update_timestamp"), r.get("updateTimestamp"),
+        r.get("update_time"), r.get("updateTime")), market)
+
+
 def rows_from_snapshot(df):
     """moomoo market-snapshot dataframe → quote-push payload rows."""
-    def quote_right(row):
-        raw = (row.get("quote_right") or row.get("quote_right_status")
-               or row.get("entitlement") or "unknown")
-        value = str(raw).strip().lower()
-        return value[:40] if value and all(c.isalnum() or c in "_- /" for c in value) else "unknown"
-
-    def exchange_timestamp(value, market):
-        """OpenD update_time is market-local. Normalize it before transport so
-        the backend never mistakes New York/Tokyo wall time for UTC."""
-        if value is None:
-            return None
-        raw = str(value).strip()
-        if not raw or raw.lower() in ("nan", "nat", "none", "n/a"):
-            return None
-        try:
-            import datetime as _dt
-            numeric = float(raw)
-            if numeric > 0:
-                return _dt.datetime.fromtimestamp(
-                    numeric, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        except (TypeError, ValueError, OverflowError):
-            pass
-        try:
-            import datetime as _dt
-            from zoneinfo import ZoneInfo
-            parsed = _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-            if parsed.tzinfo is None:
-                zone = ZoneInfo("Asia/Tokyo" if market == "JP" else "America/New_York")
-                parsed = parsed.replace(tzinfo=zone)
-            return parsed.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        except Exception:
-            return None
-
-    def first_present(*values):
-        for value in values:
-            raw = str(value).strip()
-            if raw and raw.lower() not in ("nan", "nat", "none", "n/a"):
-                return value
-        return None
+    quote_right = _quote_right
+    exchange_timestamp = _exchange_timestamp
+    first_present = _first_present
 
     stocks = []
     for _, r in df.iterrows():
@@ -427,6 +455,142 @@ def rows_from_snapshot(df):
                 pass
         stocks.append(row)
     return stocks
+
+
+# ── 2026-10-22: 米国の取引時間外の価格(moomoo が主役・Twelve Data を使わない) ──
+# 取引所の暦(argus_market_clock)の時間帯を、行の印に使う短い名前へ写す。
+# OVERNIGHT_CLOSED は取引日の 20:00〜翌4:00(米国東部)で、夜間取引の時間帯。
+_US_PRICE_SESSIONS = {
+    "PRE_MARKET": "PRE", "REGULAR": "REGULAR",
+    "AFTER_HOURS": "POST", "OVERNIGHT_CLOSED": "OVERNIGHT",
+}
+# snapshot の欄の頭(公式 get_market_snapshot: pre_* / after_* / overnight_*)
+_EXTENDED_FIELD_PREFIX = {"PRE": "pre", "POST": "after", "OVERNIGHT": "overnight"}
+
+
+def _market_clock():
+    from pathlib import Path
+    root = str(Path(__file__).resolve().parents[1])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    import argus_market_clock
+    return argus_market_clock
+
+
+def us_quote_session(now=None):
+    """REGULAR / PRE / POST / OVERNIGHT, or None when no US price session runs.
+
+    週末・休場日は None(夜間取引の有無は推測しない)。"""
+    clock = _market_clock()
+    state = clock.market_session(clock.US_EQUITY, now)
+    if not state.get("isTradingDay"):
+        return None
+    return _US_PRICE_SESSIONS.get(state.get("session"))
+
+
+def quote_session_active(now=None):
+    return us_quote_session(now) is not None
+
+
+def _iso_to_datetime(value):
+    import datetime as _dt
+    try:
+        parsed = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def extended_rows_from_snapshot(df, session, now=None):
+    """時間外(PRE/POST/OVERNIGHT)の価格の行と、価格が付いていない銘柄の一覧。
+
+    moomoo の snapshot には時間外の価格ごとの時刻が無いため、行の更新時刻
+    (update_time)を時間外の価格の時刻として使う。ただしその時刻が今と同じ
+    時間外の時間帯の中にある時だけ。外なら(まだ時間外の約定が無い等)
+    その銘柄は価格なしとして数え、受信時刻で代用しない。"""
+    import datetime as _dt
+    prefix = _EXTENDED_FIELD_PREFIX[session]
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    rows, unpriced = [], []
+    for _, r in df.iterrows():
+        code = str(r.get("code", ""))
+        market, _, sym = code.partition(".")
+        if market.upper() != "US" or not sym:
+            continue
+        sym = sym.upper()
+        price = _finite_number(r.get(f"{prefix}_price"))
+        stamp = _snapshot_update_ts(r, "US")
+        stamp_at = _iso_to_datetime(stamp) if stamp else None
+        # 境界ちょうど(例: 16:00:00 の引けの約定)は時間外の価格の時刻と認めない。
+        in_session = (stamp_at is not None
+                      and stamp_at <= now + _dt.timedelta(seconds=5)
+                      and us_quote_session(stamp_at) == session
+                      and us_quote_session(stamp_at - _dt.timedelta(seconds=1)) == session)
+        if price is None or price <= 0 or not in_session:
+            unpriced.append(sym)
+            continue
+        right = _quote_right(r)
+        row = {
+            "market": "US", "symbol": sym,
+            "name": str(_first_present(r.get("name")) or "")[:100],
+            "price": price,
+            "session": session,
+            "exchangeTs": stamp,
+            "extendedTs": stamp,
+            "quoteRight": right, "entitlement": right,
+        }
+        change = _finite_number(r.get(f"{prefix}_change_val"))
+        rate = _finite_number(r.get(f"{prefix}_change_rate"))
+        if change is not None and rate is not None:
+            # 公式の欄の値(rate は 20 = 20%)をそのまま運ぶ。比べる基準は moomoo の定義。
+            row["changeAbs"] = round(change, 4)
+            row["changePct"] = round(rate, 4)
+        for source_key, target_key in ((f"{prefix}_high_price", "high"),
+                                       (f"{prefix}_low_price", "low"),
+                                       (f"{prefix}_turnover", "turnover")):
+            value = _finite_number(r.get(source_key))
+            if value is not None:
+                row[target_key] = value
+        volume = _finite_number(r.get(f"{prefix}_volume"))
+        if volume is not None and volume >= 0:
+            row["volume"] = int(volume)
+        regular = _finite_number(r.get("last_price"))
+        if regular is not None and regular > 0:
+            row["regularClose"] = regular
+        rows.append(row)
+    return rows, unpriced
+
+
+def fetch_us_extended_quotes(qc, codes, session, state=None, now=None, ret_ok=None):
+    """時間外の snapshot を1回だけ取る。数は心拍に出す(夜間の権利が無い等の確認用)。"""
+    import datetime as _dt
+    state = STATE if state is None else state
+    ret_ok = RET_OK if ret_ok is None else ret_ok
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    state["usExtendedSession"] = session
+    state["usExtendedCheckedAt"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        ret, df = qc.get_market_snapshot(list(codes))
+    except Exception as exc:
+        state["usExtendedStatus"] = "snapshot_error"
+        state["usSnapshotErrors"] = int(state.get("usSnapshotErrors") or 0) + 1
+        print(time.strftime("%H:%M:%S"), "US extended snapshot exception:", type(exc).__name__)
+        return []
+    if ret != ret_ok:
+        state["usExtendedStatus"] = "snapshot_error"
+        state["usSnapshotErrors"] = int(state.get("usSnapshotErrors") or 0) + 1
+        state["usLastErrorClass"] = classify_opend_error(df)
+        print(time.strftime("%H:%M:%S"), "US extended snapshot error:", str(df)[:160])
+        return []
+    state["lastSnapshotOkAt"] = time.time()
+    state["consecutiveSnapshotErrors"] = 0
+    state["openDErrorClass"] = None
+    rows, unpriced = extended_rows_from_snapshot(df, session, now=now)
+    state["usExtendedPriced"] = len(rows)
+    state["usExtendedUnpriced"] = len(unpriced)
+    # 1銘柄も価格が付かない時は、時間帯の権利(特に夜間)が無い可能性を示す。
+    state["usExtendedStatus"] = "ok" if rows else "no_price_in_session"
+    return rows
 
 
 # ── Capital distribution (大口/中口/小口の売買フロー) — v10.2 ──
@@ -798,12 +962,18 @@ def registered_us_codes():
         return list(_REGIME_ETF_CODES)
 
 
-def shared_quote_cycle(qc):
-    """Prices only: shared ETFs plus confirmed registered US names."""
-    if not shared_session_open():
+def shared_quote_cycle(qc, now=None):
+    """Prices only: shared ETFs plus confirmed registered US names.
+
+    取引中は通常の価格、時間外(PRE/POST/OVERNIGHT)は時間外の価格を送る。"""
+    session = us_quote_session(now)
+    if session is None:
         return 0
     codes = registered_us_codes()
-    stocks, _ = fetch_market_quotes(qc, {'JP': [], 'US': codes}, disable_jp=True)
+    if session == "REGULAR":
+        stocks, _ = fetch_market_quotes(qc, {'JP': [], 'US': codes}, disable_jp=True)
+    else:
+        stocks = fetch_us_extended_quotes(qc, codes, session, now=now)
     allowed = set(codes)
     stocks = [s for s in stocks if s.get('market', '') + '.' + s.get('symbol', '') in allowed]
     if not stocks:
@@ -824,7 +994,7 @@ def main():
     if not TOKEN:
         print("ARGUS_ADMIN_TOKEN is not set", file=sys.stderr)
         sys.exit(1)
-    print(f"argus-bridge v{BRIDGE_VERSION}: 共有ETFと登録米国株の価格; interval={INTERVAL}s")
+    print(f"argus-bridge v{BRIDGE_VERSION}: 共有ETFと登録米国株の価格(取引中と時間外); interval={INTERVAL}s")
     # OpenD initialization can wait indefinitely in the SDK. Only one bounded-
     # cadence worker may own that wait; health reporting never waits for it.
     worker = None
@@ -836,7 +1006,7 @@ def main():
             status = send_heartbeat(disable_jp=True)
             if status != 200:
                 print('bridge heartbeat unavailable:', status, flush=True)
-        if (clock - last_quote_at >= INTERVAL and shared_session_open()
+        if (clock - last_quote_at >= INTERVAL and quote_session_active()
                 and (worker is None or not worker.is_alive())):
             last_quote_at = clock
             worker = Thread(target=_shared_quote_worker, daemon=True,

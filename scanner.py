@@ -4210,12 +4210,16 @@ def _td_warm_fetch(batch):
 # seconds, with source-time realtime evidence, is served from that row and is
 # not bought again from Twelve Data (about two thirds of the daily quote
 # credits were the same symbols the bridge already pushed every 30 s).
+# The same applies to the extended sessions (PRE/POST/OVERNIGHT): the bridge's
+# extended-hours row for the CURRENT extended session, verified with the same
+# source-time strictness, replaces the Twelve Data extended-hours value.
 _TD_BRIDGE_COVER_SEC = 120
 
 
 def _td_bridge_covered_rows(symbols, now, session):
-    """{symbol: verified bridge row} for the regular session; {} otherwise."""
-    if session != "REGULAR":
+    """{symbol: verified bridge row} for the current US price session; {} otherwise."""
+    label = "REGULAR" if session == "REGULAR" else _US_EXTENDED_LABELS.get(session)
+    if label not in ("REGULAR", "PRE", "POST", "OVERNIGHT"):
         return {}
     pushed = _PUSHED_QUOTES.get("US") or {}
     covered = {}
@@ -4223,7 +4227,13 @@ def _td_bridge_covered_rows(symbols, now, session):
         entry = pushed.get(sym)
         if not entry or not 0 <= now - float(entry.get("ts") or 0) <= _TD_BRIDGE_COVER_SEC:
             continue
-        row = _decision_usable_quote_row(entry.get("row"), now_epoch=now)
+        raw = entry.get("row") or {}
+        if label == "REGULAR":
+            if raw.get("extendedHours") is True:
+                continue
+        elif raw.get("extendedHours") is not True or raw.get("priceSession") != label:
+            continue
+        row = _decision_usable_quote_row(raw, now_epoch=now)
         if row is not None and row.get("price") is not None:
             covered[sym] = {**row, "receivedAt": row.get("receivedAt") or datetime.fromtimestamp(
                 float(entry["ts"]), pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
@@ -4244,7 +4254,10 @@ def _td_warm_tick(now_utc=None):
     with _TD_WARM_LOCK:
         if covered:
             # Readers of the warm rows get the bridge row unchanged in shape.
-            _td_warm_store(list(covered.values()), now, session)
+            # An overnight row keeps the extended-session lifetime, not the
+            # closed-market 24 h one.
+            _td_warm_store(list(covered.values()), now,
+                           "AFTER_HOURS" if session == "OVERNIGHT_CLOSED" else session)
         _TD_WARM_STATE["bridgeCovered"] = len(covered)
         fit = universe.get("cadenceFit") or {}
         decision = argus_td_warm.plan_tick(
@@ -4585,7 +4598,11 @@ def _overlay_pushed(
             str((p.get("row") or {}).get("entitlement", "unknown")).lower()
             for p in fresh.values()
         }
-        if session == "CLOSED":
+        # A fresh extended-hours (overnight) row carries its own in-session
+        # source time; it is never relabelled as the day's close.
+        all_extended = all((p.get("row") or {}).get("extendedHours") is True
+                           for p in fresh.values())
+        if session == "CLOSED" and not all_extended:
             delay_class = "EOD"
         elif any("delay" in item for item in entitlements):
             delay_class = "15m"
@@ -4620,7 +4637,8 @@ def _overlay_pushed(
                 "timestampInversion": source_truth["timestampInversion"],
                 "sourceTimeStatus": source_truth["sourceTimeStatus"],
                 "delayClass": "LIVE" if row_live else delay_class,
-                "session": session,
+                "session": (_US_EXTENDED_DISPLAY_SESSION.get(row.get("priceSession"), session)
+                            if row.get("extendedHours") is True else session),
                 "quoteRight": row.get("quoteRight") or row.get("entitlement", "unknown"),
                 "entitlement": row.get("entitlement", "unknown"),
                 "realtimeEvidence": row_live,
@@ -4729,6 +4747,52 @@ def _overlay_pushed(
     except Exception:
         return snapshot
 
+# 2026-10-22: 米国の時間外の価格(ブリッジの PRE/POST/OVERNIGHT の行)。
+# 取引所の暦の時間帯 → 行の印。OVERNIGHT_CLOSED は取引日の夜間取引の時間帯。
+_US_EXTENDED_LABELS = {"PRE_MARKET": "PRE", "AFTER_HOURS": "POST",
+                       "OVERNIGHT_CLOSED": "OVERNIGHT"}
+_US_EXTENDED_LABELS.update({label: label for label in list(_US_EXTENDED_LABELS.values())})
+# 画面の時間帯の語彙(PRE/AFTER/OVERNIGHT)へ写す。
+_US_EXTENDED_DISPLAY_SESSION = {"PRE": "PRE", "POST": "AFTER", "OVERNIGHT": "OVERNIGHT"}
+
+
+def _finite_or_none(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _us_price_session_label(when_utc):
+    """REGULAR / PRE / POST / OVERNIGHT for one instant, or None (closed day)."""
+    try:
+        state = argus_market_clock.market_session(argus_market_clock.US_EQUITY, when_utc)
+    except Exception:
+        return None
+    if not state.get("isTradingDay"):
+        return None
+    raw = state.get("session")
+    if raw == "REGULAR":
+        return "REGULAR"
+    label = _US_EXTENDED_LABELS.get(raw)
+    return label if label in ("PRE", "POST", "OVERNIGHT") else None
+
+
+def _us_extended_stamp_ok(stamp, label, now_epoch):
+    """時間外の行の時刻が、今と同じ時間外の時間帯の中(境界を除く)にあるか。"""
+    epoch = _coerce_epoch(stamp)
+    if epoch is None or epoch > float(now_epoch) + 5:
+        return False
+    at = datetime.fromtimestamp(epoch, pytz.utc)
+    current = _us_price_session_label(datetime.fromtimestamp(float(now_epoch), pytz.utc))
+    return (current == label
+            and _us_price_session_label(at) == label
+            and _us_price_session_label(at - timedelta(seconds=1)) == label)
+
+
 def _push_last_age_sec():
     """Seconds since the most recent pushed quote (None if never)."""
     ts = [p["ts"] for m in _PUSHED_QUOTES.values() for p in m.values()]
@@ -4771,16 +4835,37 @@ def api_argus_quote_push():
                 ent = "unknown"
             source_truth = _canonical_moomoo_quote_truth(
                 s.get("exchangeTs"), ent, now_epoch=now)
+            # 2026-10-22: 時間外(PRE/POST/OVERNIGHT)の行は、その価格自身の時刻が
+            # 今と同じ時間外の時間帯の中にある時だけ受け取る。変化の欄が無ければ
+            # 0 で埋めず、欠測のままにする。
+            price_session = None
+            if s.get("session") is not None:
+                price_session = str(s.get("session")).upper()
+                if market != "US" or price_session not in _US_EXTENDED_LABELS or \
+                        not _us_extended_stamp_ok(s.get("exchangeTs"), price_session, now):
+                    continue
+            if price_session:
+                change_abs, change_pct = (_finite_or_none(s.get("changeAbs")),
+                                          _finite_or_none(s.get("changePct")))
+            else:
+                change_abs = round(float(s.get("changeAbs") or 0.0), 4)
+                change_pct = round(float(s.get("changePct") or 0.0), 4)
             row = {"symbol": sym,
                    "price": round(price, 4),
-                   "changeAbs": round(float(s.get("changeAbs") or 0.0), 4),
-                   "changePct": round(float(s.get("changePct") or 0.0), 4),
+                   "changeAbs": (round(change_abs, 4) if change_abs is not None else None),
+                   "changePct": (round(change_pct, 4) if change_pct is not None else None),
                    "volume": int(float(s.get("volume") or 0)),
                    "date": datetime.now(TZ_JST).strftime("%Y-%m-%d"),
                    "source": "moomoo-rt", "entitlement": ent,
                    "exchangeTs": s.get("exchangeTs"),
                    "sourceTimestamp": s.get("exchangeTs"),
                    **source_truth}
+            if price_session:
+                row.update({"priceSession": price_session, "extendedHours": True,
+                            "extendedTs": s.get("exchangeTs")})
+                regular_close = _finite_or_none(s.get("regularClose"))
+                if regular_close is not None and regular_close > 0:
+                    row["regularClose"] = regular_close
             name = str(s.get("name") or "").strip()
             if name:
                 row["name"] = name[:100]
@@ -4818,8 +4903,9 @@ def api_argus_quote_push():
             # Display/diagnostic cache retains delayed rows, but only canonical
             # source-time LIVE evidence may enter acceleration history or the
             # event-authority path.  Receipt time and a large changePct alone
-            # can never manufacture a current anomaly.
-            if row.get("realtimeEvidence") is True:
+            # can never manufacture a current anomaly.  Extended-hours rows are
+            # display/price evidence only and never feed event detection.
+            if row.get("realtimeEvidence") is True and not price_session:
                 hist = _PUSH_HISTORY[market].get(sym)
                 if hist is None:
                     hist = _PUSH_HISTORY[market][sym] = deque(
@@ -16098,7 +16184,11 @@ _HB_ALLOWED_KEYS = ("at", "bridgeVersion", "bridgeMode", "openDStatus",
                     "jpFallbackActive", "jpLastErrorClass", "usLastErrorClass",
                     "jpSnapshotErrors", "usSnapshotErrors", "diskUsagePct", "intervalSec",
                     # v12.0.3 reboot-safety自己申告(enabled/存在フラグのみ・秘密なし)
-                    "opendAutostart", "bridgeAutostart", "systemRestartRequired")
+                    "opendAutostart", "bridgeAutostart", "systemRestartRequired",
+                    # 2026-10-22: 米国の時間外の価格の数(銘柄名なし)。
+                    # no_price_in_session = その時間帯の価格が1つも無い(夜間の権利なし等)。
+                    "usExtendedSession", "usExtendedPriced", "usExtendedUnpriced",
+                    "usExtendedStatus", "usExtendedCheckedAt")
 
 
 @app.route("/api/argus/bridge/heartbeat", methods=["POST"])
@@ -16203,6 +16293,11 @@ def api_argus_admin_bridge_diagnostic():
                    "argus-bridge再起動でfullモードに復帰。")
     if isinstance(doc.get("diskUsagePct"), (int, float)) and doc["diskUsagePct"] >= 90:
         rec.append("EC2ディスク使用率が高い。bridge/README.mdのディスク拡張チェックリストを実施。")
+    if hb.get("usExtendedStatus") == "no_price_in_session":
+        session_ja = {"PRE": "プレ", "POST": "アフター", "OVERNIGHT": "夜間"}.get(
+            hb.get("usExtendedSession"), "時間外")
+        rec.append(f"米国の{session_ja}の価格が1銘柄も付いていない。その時間帯の約定がまだ無いか、"
+                   "moomooの時間外(特に夜間)の価格の権利が無い可能性。欠測のまま表示する。")
     if not rec:
         rec.append("正常。対応不要。")
     return jsonify({"schemaVersion": "bridge-diagnostic-v1", "asOf": doc["asOf"],
