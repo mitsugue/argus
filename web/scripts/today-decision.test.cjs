@@ -134,3 +134,57 @@ for (const html of [normalStrip, unavailableStrip]) {
 assert.ok(normalStrip.indexOf('today-strip__close') < normalStrip.indexOf('today-strip__verdict'));
 assert.ok(normalStrip.indexOf('data-market-position') < normalStrip.indexOf('today-strip__rows'));
 console.log('タイル4つの下に市場の現在位置 PASS');
+
+// Owner request 2026-10-22: the three close-based tiles say which close they used,
+// and the momentum headline names its own yardstick apart from the 5-session change.
+{
+  const w = path.slice(-20).map(p => p.value), mean = w.reduce((a, b) => a + b, 0) / 20;
+  const sd = Math.sqrt(w.reduce((a, b) => a + (b - mean) ** 2, 0) / 19);
+  assert(Math.abs(s.momentumZ - (104 - mean) / sd) < 1e-9 && s.momentumZ >= d.MOMENTUM_Z, 'the headline reads this z');
+  assert.equal(s.closeDate, null, 'no date is guessed when the comparison carries none');
+  const dated = path.map((p, i) => ({ ...p, date: `2026-10-${String(i + 1).padStart(2, '0')}` }));
+  assert.equal(d.decisionStrip(path, features, null, '2026-10-21').closeDate, '2026-10-21');
+  assert.equal(d.decisionStrip(dated, features).closeDate, '2026-10-21', 'the latest point date stands in for a missing anchor');
+  assert.equal(d.decisionStrip(dated, features, null, '2026-10-20').closeDate, null, 'disagreeing dates show nothing');
+  assert.equal(d.decisionStrip(null, [], null, '2026-10-21').closeDate, null, 'no close, no date');
+  assert.equal(d.closeBasisLabel('2026-10-21'), '10/21終値時点');
+  assert.equal(d.closeBasisLabel('2026/10/21'), null); assert.equal(d.closeBasisLabel(null), null);
+  const anchored = d.decisionStrip(path, features, 2.2, '2026-10-21');
+  assert.deepEqual([anchored.alert, anchored.momentum, anchored.band], [night.alert, night.momentum, night.band], 'the date never changes a number');
+  const trend = s.rows.find(r => r.id === 'trend');
+  assert.equal(trend.title, '日経平均の5日騰落率 +4.0%');
+  assert(trend.soWhat.includes('20日平均からの離れ具合') && trend.soWhat.includes('物差しが違います'));
+  assert.equal(trend.lean, 'tail', 'the 5-session reading itself is unchanged');
+}
+const tileOf = (html, cls) => html.split(`today-strip__tile ${cls}`)[1].split('</button>')[0];
+assert.equal(normalStrip.split('data-close-basis="2026-10-02"').length - 1, 3, 'alert, momentum and band each name the close');
+for (const cls of ['alert-', 'momentum-', 'tile-range']) assert(tileOf(normalStrip, cls).includes('10/2終値時点'), cls);
+assert(!tileOf(normalStrip, 'tile-event').includes('終値時点'), 'the news/event tile has no close basis');
+const momentumTile = tileOf(normalStrip, 'momentum-');
+assert(momentumTile.includes('日経の勢い(20日平均からの離れ具合)') && /20日平均から\+\d\.\dσ\(±1\.8σ以上で注意\)/.test(momentumTile), momentumTile);
+assert(momentumTile.includes('別の物差し:5日騰落率 +4.0%'));
+assert(!unavailableStrip.includes('終値時点') && !unavailableStrip.includes('σ以上で注意'), 'no date or yardstick without numbers');
+assert(unavailableStrip.includes('直近20営業日の価格を取得待ち'));
+// Stored inputs: the close date travels with them and agrees with the "shown as of" notice.
+const stripWith = (storage, hook) => {
+  const ctx = { ...stripContext, exports: {}, localStorage: { getItem: () => storage, setItem() {} }, require(name) {
+    if (name.includes('/hooks/')) return { useNikkeiLive: hook }; return stripContext.require(name); } };
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/today/TodayDecisionStrip.tsx', 'utf8'),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText, ctx);
+  return ctx.exports.TodayDecisionStrip;
+};
+const noLive = () => ({ quote: null, futures: null });
+const storedHtml = renderToStaticMarkup(React.createElement(stripWith(JSON.stringify({ actual: path, anchorDate: '2026-10-01',
+  features: brief.calculationSnapshots['5'].marketFeatureSnapshot.features, savedAt: '2026-10-01T07:00:00Z' }), noLive),
+  { brief: { chips: { nextEvent: '' } } }));
+assert(storedHtml.includes('時点の数字を表示しています') && storedHtml.split('10/1終値時点').length - 1 === 3, storedHtml);
+const storedNoDate = renderToStaticMarkup(React.createElement(stripWith(JSON.stringify({ actual: path,
+  features: [], savedAt: '2026-10-01T07:00:00Z' }), noLive), { brief: { chips: { nextEvent: '' } } }));
+assert(!storedNoDate.includes('終値時点'), 'an older saved copy without a date shows none');
+// During the session the yen line uses the delayed price; the band tile says so.
+const liveHook = () => ({ quote: { price: 105, changePct: 1, tradedAt: '2026-10-05T01:00:00Z', receivedAt: '2026-10-05T01:00:05Z',
+  realtime: false, delaySeconds: 1200, sessionOpen: true }, futures: null });
+const liveHtml = renderToStaticMarkup(React.createElement(stripWith(null, liveHook), { brief }));
+assert(tileOf(liveHtml, 'tile-range').includes('10/2終値時点の幅を現在値で円に換算'));
+assert(tileOf(liveHtml, 'alert-').includes('>10/2終値時点<') && tileOf(liveHtml, 'momentum-').includes('>10/2終値時点<'));
+console.log('タイルの終値の日付と勢いの物差し PASS');
