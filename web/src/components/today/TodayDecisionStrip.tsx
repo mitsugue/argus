@@ -1,7 +1,7 @@
 import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
 import type { ComparisonPoint } from '../../types/japanMarketComparison';
-import { ALERT_HISTORY, MOMENTUM_Z, OVERNIGHT_HISTORY, TONE_HISTORY, closeBasisLabel, decisionStrip, friendlyEventText, overnightGap, overnightRecord, type FeatureRow, type Lean } from '../../lib/todayDecision';
+import { ALERT_HISTORY, ALERT_RAISED_HISTORY, MOMENTUM_Z, OVERNIGHT_HISTORY, TONE_HISTORY, closeBasisLabel, decisionStrip, friendlyEventText, overnightGap, overnightRecord, type FeatureRow, type Lean } from '../../lib/todayDecision';
 import { nikkeiLiveCurrent, useNikkeiLive } from '../../hooks/useJapanMarketComparison';
 import { marketHeadline } from '../../lib/marketWording';
 import { MarketPositionCard } from './MarketPositionCard';
@@ -23,6 +23,9 @@ function jumpTo(id: string, openRow?: string) {
   }
   target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+// Owner decision 2026-10-22: a raised alert carries its own record and count; too few past days are said as such.
+const raisedRecord = (r: { pct: number; hits: number; days: number }) => r.days < 20
+  ? `直近の下げで一段上げ・過去の例は${r.days}日のみ` : `直近の下げで一段上げ・過去${r.pct}%(${r.days}日中${r.hits}日)`;
 const signed = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`;
 // One decimal, or two when rounding would carry the value across the headline's cut point.
 const sigmaText = (v: number) => {
@@ -114,7 +117,9 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
     <div className="today-strip__tiles">
       <button type="button" className={`today-strip__tile alert-${strip.alert ?? 'pending'}`} onClick={() => jumpTo('today-nikkei-chart')}>
         <small>この先5日の急落(-5%以上)</small><b>{strip.alert ? alertLabel[strip.alert] : '確認中'}</b>
-        <span>{strip.alert ? `過去の同じ状態で${ALERT_HISTORY[strip.alert]}%` : '値動きの大きさを取得待ち'}</span></button>
+        <span>{!strip.alert ? '値動きの大きさを取得待ち' : strip.alertRaised && strip.alert !== 'low'
+          ? raisedRecord(ALERT_RAISED_HISTORY[strip.alert])
+          : `過去の同じ状態で${ALERT_HISTORY[strip.alert]}%`}</span></button>
       <button type="button" className={`today-strip__tile momentum-${strip.momentum ?? 'pending'}`} onClick={() => jumpTo('today-nikkei-chart', 'trend')}>
         <small>日経の勢い</small><b>{strip.momentum ? momentumLabel[strip.momentum] : '確認中'}</b>
         {/* Owner check 2026-10-22: the headline is the distance from the 20-day mean, not the 5-session change. */}

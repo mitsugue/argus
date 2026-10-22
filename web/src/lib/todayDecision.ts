@@ -17,6 +17,8 @@ export interface MaterialRow { id: string; lean: Lean; title: string; meaning: s
 export interface DecisionStrip {
   close: number | null; dayChangePct: number | null; fiveDayChangePct: number | null;
   sigma: number | null; alert: 'low' | 'normal' | 'high' | null;
+  /** True when a recent fall moved the alert up one step from the volatility level (owner decision 2026-10-22). */
+  alertRaised: boolean;
   band: { lower: number; upper: number } | null;
   momentum: 'strong' | 'normal' | 'weak' | null;
   /** The yardstick behind `momentum`: the latest close against the last 20 closes, in standard deviations. */
@@ -27,12 +29,26 @@ export interface DecisionStrip {
   overnightGapPct: number | null;
 }
 
-/** Drop-alert cut points and the 80% band multipliers fitted on 2003-2014 only.
- *  2015-2026 out of sample: a fall of 5% or more within 5 sessions happened on
- *  2.9% / 9.1% / 16.7% of low / normal / high days; 81% of outcomes fell inside the band. */
+/** Drop-alert cut points and the 80% band multipliers fitted on 2003-2014 only;
+ *  81% of 2015-2026 outcomes fell inside the band. */
 export const ALERT_LOW_BELOW = 0.1473;
 export const ALERT_HIGH_FROM = 0.2608;
-export const ALERT_HISTORY = { low: 2.9, normal: 9.1, high: 16.7 } as const;
+/**
+ * Owner decision 2026-10-22: a close at -2% or lower on the day, or -5% or lower
+ * over 5 sessions, moves the volatility level up one step (low→normal, normal→high).
+ * The rule was fixed once before measuring and not tuned. Out of sample 2015-01 to
+ * 2026-10-15 (n=2878, 56 separate falls), the share of days followed by a low at
+ * -5% or more within the next 5 sessions, for the resulting level: 24/818 2.9%,
+ * 136/1592 8.5%, 81/468 17.3% (volatility level alone: 2.9 / 9.4 / 16.7%). Better in
+ * both halves, but the block-bootstrap interval of the gain touches zero
+ * (research/alert_measure, 2026-10-22). The raised days are shown with their own record.
+ */
+export const ALERT_RAISE = { dayPct: -2, fiveDayPct: -5 } as const;
+export const ALERT_HISTORY = { low: 2.9, normal: 8.5, high: 17.3 } as const;
+export const ALERT_RAISED_HISTORY = {
+  normal: { pct: 0, hits: 0, days: 3, falls: 0 },
+  high: { pct: 18.6, hits: 27, days: 145, falls: 13 },
+} as const;
 /**
  * Measured record of the tone rule itself, 2012-2026 (n=2597 sessions,
  * point-in-time inputs, 1570 ratio taken as above 1): the share of 5-session
@@ -81,6 +97,15 @@ export function realisedVol20(actual: ComparisonPoint[]): number | null {
 
 export function alertLevel(sigma: number): 'low' | 'normal' | 'high' {
   return sigma < ALERT_LOW_BELOW ? 'low' : sigma >= ALERT_HIGH_FROM ? 'high' : 'normal';
+}
+
+/** The volatility level, one step higher after a recent fall; `raised` says whether the fall moved it. */
+export function raisedAlert(sigma: number, dayChangePct: number | null, fiveDayChangePct: number | null) {
+  const base = alertLevel(sigma);
+  const fell = (dayChangePct !== null && dayChangePct <= ALERT_RAISE.dayPct)
+    || (fiveDayChangePct !== null && fiveDayChangePct <= ALERT_RAISE.fiveDayPct);
+  const level = fell && base === 'low' ? 'normal' : fell && base === 'normal' ? 'high' : base;
+  return { level, raised: level !== base };
 }
 
 /** Central 80% band of the 5-session return, in percent. */
@@ -202,9 +227,10 @@ export function decisionStrip(actual: ComparisonPoint[] | null, features: Featur
   const score = rows.reduce((s, r) => s + (r.id === 'futures' ? 2 : 1)
     * (r.lean === 'tail' ? 1 : r.lean === 'head' ? -1 : r.lean === 'soft-head' ? -0.5 : 0), 0);
   const base = sigma === null ? null : fiveDayBand(sigma);
+  const drop = sigma === null ? null : raisedAlert(sigma, dayChangePct, fiveDayChangePct);
   return { close: last ?? null, dayChangePct, fiveDayChangePct, sigma, momentumZ,
     closeDate: closeDate(sorted, anchorDate),
-    alert: sigma === null ? null : alertLevel(sigma),
+    alert: drop?.level ?? null, alertRaised: drop?.raised ?? false,
     band: base && gap !== null ? { lower: base.lower + gap, upper: base.upper + gap } : base, momentum,
     rows, tone: score >= 1.5 ? 'tail' : score <= -1.5 ? 'head' : 'wait', overnightGapPct: gap };
 }
