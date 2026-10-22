@@ -71,3 +71,15 @@ def test_a_repeated_import_of_the_same_observation_reaches_the_inputs_once():
     assert kept == [row, revised]
     flows = rec.reconcile_series('foreign_flow', [row, dict(row)], open_days=['2026-10-09'])
     assert flows['duplicatedDates']['count'] == 1      # the check still names a duplicate when it is given one
+
+
+def test_the_1570_rows_drop_an_exact_duplicate_in_the_feature_inputs():
+    # 2026-10-22: the expected-date check reported margin_1570 GAPS_FOUND for
+    # one exact duplicate row; the feature warm now passes one copy.
+    import pathlib
+    text = pathlib.Path('scanner.py').read_text(encoding='utf-8')
+    warm = text[text.index('def _jp_market_feature_history_warm'):]
+    warm = warm[:warm.index('\ndef ', 10)]
+    assert 'margin = jp_market_series_reconciliation.drop_exact_duplicates(margin)' in warm
+    row = {'seriesId': 'margin.long_balance', 'periodEnd': '2026-10-09', 'knownAt': '2026-10-16T00:00:00Z', 'value': 1.0}
+    assert rec.drop_exact_duplicates([row, dict(row)]) == [row]

@@ -43346,6 +43346,10 @@ def _jp_market_feature_history_warm():
         margin = jp_market_acquisition.enforce_session_publication(
             margin, sessions=sessions, sessions_after=4, utc_time="00:00:00",
             source_label="jpx-weekly-margin-fourth-session-open")
+        # 2026-10-22: the same 1570 row (series, week, receipt and value) came
+        # twice; the expected-date check reported a gap. One copy is kept,
+        # as for the ledger rows above.
+        margin = jp_market_series_reconciliation.drop_exact_duplicates(margin)
         credit = jp_market_acquisition.enforce_session_publication(
             credit, sessions=sessions, sessions_after=3, utc_time="06:00:00",
             source_label="jpx-two-market-third-session")
