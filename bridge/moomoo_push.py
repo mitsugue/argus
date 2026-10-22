@@ -236,6 +236,9 @@ def build_heartbeat(state=None, disable_jp=None, now_iso=None):
         "dailyKlineFailed": state.get("dailyKlineFailed"),
         "dailyKlineQuotaUsed": state.get("dailyKlineQuotaUsed"),
         "dailyKlineQuotaRemain": state.get("dailyKlineQuotaRemain"),
+        "symbolListStatus": state.get("symbolListStatus"),
+        "symbolListCount": state.get("symbolListCount"),
+        "symbolListCheckedAt": state.get("symbolListCheckedAt"),
     }
 
 
@@ -688,6 +691,70 @@ def fetch_daily_rows(qc, code, start, end, ret_ok=None, sleep=None):
             break
         sleep(KLINE_PAUSE_SEC)
     return rows, None
+
+
+SYMBOL_LIST_PART_ROWS = 5000
+
+
+def fetch_us_symbol_rows(qc, ret_ok=None):
+    """米国の株式・ETFの一覧 [[記号, 名前, 種類, 取引所], ...]。上場廃止は除く。
+    片方でも取れなければ None(半端な一覧で差し替えない)。"""
+    ret_ok = RET_OK if ret_ok is None else ret_ok
+    try:
+        from moomoo import Market, SecurityType
+        market, kinds = Market.US, ((SecurityType.STOCK, "stock"), (SecurityType.ETF, "etf"))
+    except Exception:
+        market, kinds = "US", (("STOCK", "stock"), ("ETF", "etf"))
+    rows = []
+    for security_type, kind in kinds:
+        try:
+            ret, df = qc.get_stock_basicinfo(market, security_type)
+        except Exception:
+            return None
+        if ret != ret_ok:
+            return None
+        for _, r in df.iterrows():
+            code = str(r.get("code") or "")
+            prefix, _, symbol = code.partition(".")
+            if prefix.upper() != "US" or not symbol:
+                continue
+            if str(r.get("delisting")).strip().lower() in ("true", "1"):
+                continue
+            exchange = str(_first_present(r.get("exchange_type")) or "").upper()[:24]
+            rows.append([symbol.upper(), str(_first_present(r.get("name")) or "")[:120],
+                         kind, exchange])
+    return rows
+
+
+def send_us_symbol_list(rows, post=None):
+    """分けて送る。全部送れた時だけ True。"""
+    post = _post_reference if post is None else post
+    run_id = secrets.token_hex(8)
+    parts = max(1, (len(rows) + SYMBOL_LIST_PART_ROWS - 1) // SYMBOL_LIST_PART_ROWS)
+    for part in range(parts):
+        chunk = rows[part * SYMBOL_LIST_PART_ROWS:(part + 1) * SYMBOL_LIST_PART_ROWS]
+        if not post({"kind": "symbolList", "runId": run_id, "part": part,
+                     "parts": parts, "rows": chunk}):
+            return False
+    return True
+
+
+def run_symbol_list_job(qc, state=None):
+    import datetime as _dt
+    state = STATE if state is None else state
+    state["symbolListCheckedAt"] = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = fetch_us_symbol_rows(qc)
+    if rows is None:
+        state["symbolListStatus"] = "provider_error"
+        return 0
+    try:
+        sent = send_us_symbol_list(rows)
+    except Exception as exc:
+        print(time.strftime("%H:%M:%S"), "symbol list post error:", type(exc).__name__)
+        sent = False
+    state["symbolListStatus"] = "ok" if sent else "post_error"
+    state["symbolListCount"] = len(rows)
+    return len(rows) if sent else 0
 
 
 def _post_reference(payload):
@@ -1184,12 +1251,17 @@ def _reference_worker():
     qc = None
     try:
         plan = fetch_reference_plan()
-        if not plan or not plan.get("daily"):
+        if not plan or not (plan.get("daily") or plan.get("symbolListNeeded") is True):
             if plan is not None:
                 STATE["dailyKlineStatus"] = "up_to_date"
             return
         qc = OpenQuoteContext(host=HOST, port=PORT)
-        run_daily_reference_job(qc, plan)
+        if plan.get("daily"):
+            run_daily_reference_job(qc, plan)
+        else:
+            STATE["dailyKlineStatus"] = "up_to_date"
+        if plan.get("symbolListNeeded") is True:
+            run_symbol_list_job(qc)
     except Exception as exc:
         print('us reference data unavailable:', type(exc).__name__, flush=True)
     finally:

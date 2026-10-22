@@ -4035,7 +4035,7 @@ def _td_other_daily_credits(universe_size):
 
 
 _TD_OTHER_DIAGNOSTICS_PER_DAY = 24   # 2 credits × ≤12 admin diagnostic runs
-_TD_OTHER_SEARCH_PER_DAY = 20        # symbol_search, rate-bucketed
+_TD_OTHER_SEARCH_PER_DAY = 0         # 2026-10-22: 米国株の検索は moomoo の一覧(Twelve Data を使わない)
 _TD_OTHER_CURATED_COLD_REFRESHES = 4  # curated batch outside warm coverage
 
 
@@ -6449,7 +6449,9 @@ def api_argus_us_universe():
         # (日足の確定足)。そろっている銘柄は載せない。管理者専用。
         plan, end = _moomoo_daily_plan()
         return jsonify({"scope": "reference", "daily": plan[:60],
-                        "dailyEnd": end.isoformat(), "asOf": _ai_now_iso()})
+                        "dailyEnd": end.isoformat(),
+                        "symbolListNeeded": _us_symbol_list_needed(),
+                        "asOf": _ai_now_iso()})
     syms = {s.strip().upper() for s in _US_MOVER_UNIVERSE if s.strip()}
     syms |= {s["symbol"].upper() for s in _US_WATCHLIST}
     syms |= {e.upper() for e in _REGIME_ETFS}
@@ -6490,6 +6492,16 @@ def api_argus_us_reference_push():
             return jsonify({"error": "bad_payload", "message": "rows"}), 400
         result = _moomoo_daily_receive(sym, rows, full=body.get("full") is True)
         return jsonify({"ok": True, **result})
+    if kind == "symbolList":
+        run_id, part, parts, rows = (body.get("runId"), body.get("part"),
+                                     body.get("parts"), body.get("rows"))
+        if not isinstance(run_id, str) or not re.fullmatch(r"[0-9A-Za-z\-]{6,40}", run_id) \
+                or isinstance(part, bool) or isinstance(parts, bool) \
+                or not isinstance(part, int) or not isinstance(parts, int) \
+                or not 1 <= parts <= _US_SYMBOLS_PARTS_MAX or not 0 <= part < parts \
+                or not isinstance(rows, list) or len(rows) > _US_SYMBOLS_PART_MAX:
+            return jsonify({"error": "bad_payload", "message": "symbolList"}), 400
+        return jsonify({"ok": True, **_us_symbols_receive(run_id, part, parts, rows)})
     return jsonify({"error": "bad_payload", "message": "kind"}), 400
 
 
@@ -16516,7 +16528,8 @@ _HB_ALLOWED_KEYS = ("at", "bridgeVersion", "bridgeMode", "openDStatus",
                     # 2026-10-22: 米国の日足の取り込みと過去の日足の取得枠(数だけ)。
                     "dailyKlineStatus", "dailyKlineCheckedAt", "dailyKlineRequested",
                     "dailyKlineSent", "dailyKlineSkippedQuota", "dailyKlineFailed",
-                    "dailyKlineQuotaUsed", "dailyKlineQuotaRemain")
+                    "dailyKlineQuotaUsed", "dailyKlineQuotaRemain",
+                    "symbolListStatus", "symbolListCount", "symbolListCheckedAt")
 
 
 @app.route("/api/argus/bridge/heartbeat", methods=["POST"])
@@ -16585,11 +16598,14 @@ def _bridge_status_doc():
                                    if hb else not (jp_ages and min(jp_ages) <= 600))
     doc["bridgeMode"] = (hb or {}).get("bridgeMode") or "unknown"
     doc["diskUsagePct"] = (hb or {}).get("diskUsagePct")
-    # 2026-10-22: moomoo の米国の日足の受け取り状況(数だけ・銘柄名なし)。
+    # 2026-10-22: moomoo の米国の日足・銘柄一覧の受け取り状況(数だけ・銘柄名なし)。
     try:
         doc["usDailyBars"] = _moomoo_daily_status()
     except Exception:
         doc["usDailyBars"] = None
+    doc["usSymbolList"] = {"count": _US_SYMBOLS.get("count"),
+                           "receivedAt": _US_SYMBOLS.get("receivedAt"),
+                           "lastSaveError": _US_SYMBOLS.get("lastSaveError")}
     doc["noteJa"] = ("ブリッジは正常ですが、moomooの日本株リアルタイムは利用できません"
                      "(日本株は代替データで判定)。" if doc["jpFallbackActive"]
                      and doc["bridgeProcess"] in ("ok", "ok_legacy") else
@@ -52324,7 +52340,7 @@ def api_argus_catalysts():
 # ━━━ Symbol search (Add Asset candidates) ━━━
 # Backend proxy so the Add-Asset UI can search by name/code instead of requiring
 # an exact symbol. Keys stay server-side. JP = J-Quants listed-issue master
-# (cached 24h), US = Twelve Data symbol_search, Crypto = CoinGecko search (no
+# (cached 24h), US = moomoo の銘柄一覧(ブリッジが1日1回送る), Crypto = CoinGecko search (no
 # key). Read-only, frontend-safe; degrades to empty results on failure.
 _JQ_MASTER_CACHE = {"data": None, "expires": 0.0}   # full JP master, 24h
 _SEARCH_Q_CACHE = {}                                # (market,q) -> {data, expires}, 10m
@@ -52403,30 +52419,89 @@ def _search_jp(q):
     out = [x[3] for x in scored[:_SEARCH_MAX]]
     return out, ("live" if _jq_master() else "unavailable")
 
+# 2026-10-22 (owner: moomoo が主役): 米国株の検索は、ブリッジが1日1回
+# get_stock_basicinfo(米国の株式・ETF)で取って送る一覧を手元で引く。
+# Twelve Data の symbol_search は使わない。一覧が無い間は「取得待ち」を返す。
+_US_SYMBOLS = {"rows": None, "receivedAt": None, "count": 0, "loaded": False,
+               "lastSaveError": None}
+_US_SYMBOLS_PENDING = {"runId": None, "parts": 0, "received": {}, "startedAt": 0.0}
+_US_SYMBOLS_LOCK = threading.Lock()
+_US_SYMBOLS_REFRESH_SEC = 20 * 3600
+_US_SYMBOLS_FILE_MAX = 8 * 1024 * 1024
+_US_SYMBOLS_PART_MAX = 6000
+_US_SYMBOLS_PARTS_MAX = 12
+_US_SYMBOLS_PENDING_TTL = 3600
+
+
+def _us_symbols_path():
+    return (os.path.join(_DURABILITY_PATHS["root"], "moomoo_us_symbols.json")
+            if _cost_policy_durable_enabled() else None)
+
+
+def _us_symbols_load():
+    """保存済みの一覧を最初に使う時だけ読む(起動時には読まない)。"""
+    with _US_SYMBOLS_LOCK:
+        if _US_SYMBOLS["loaded"]:
+            return
+        _US_SYMBOLS["loaded"] = True
+        doc = _moomoo_daily_read_json(_us_symbols_path(), _US_SYMBOLS_FILE_MAX)
+        if not doc or doc.get("schemaVersion") != argus_moomoo_us.SYMBOL_LIST_SCHEMA:
+            return
+        rows, _ = argus_moomoo_us.normalize_symbol_rows(doc.get("rows") or [])
+        if len(rows) >= argus_moomoo_us.MIN_COMPLETE_SYMBOLS:
+            _US_SYMBOLS.update(rows=rows, receivedAt=doc.get("receivedAt"), count=len(rows))
+
+
+def _us_symbol_list_needed(now=None):
+    _us_symbols_load()
+    now = time.time() if now is None else now
+    received = _coerce_epoch(_US_SYMBOLS.get("receivedAt"))
+    return not _US_SYMBOLS.get("rows") or received is None or now - received >= _US_SYMBOLS_REFRESH_SEC
+
+
+def _us_symbols_receive(run_id, part, parts, rows, now=None):
+    """分けて送られた一覧を集め、全部そろって十分な数の時だけ差し替える。"""
+    now = time.time() if now is None else now
+    with _US_SYMBOLS_LOCK:
+        pending = _US_SYMBOLS_PENDING
+        if pending["runId"] != run_id or now - pending["startedAt"] > _US_SYMBOLS_PENDING_TTL \
+                or pending["parts"] != parts:
+            pending.update(runId=run_id, parts=parts, received={}, startedAt=now)
+        pending["received"][part] = rows
+        if len(pending["received"]) < parts:
+            return {"status": "partial", "received": len(pending["received"]), "parts": parts}
+        combined = [row for index in range(parts) for row in pending["received"].get(index) or []]
+        pending.update(runId=None, parts=0, received={}, startedAt=0.0)
+    normalized, rejected = argus_moomoo_us.normalize_symbol_rows(combined)
+    if len(normalized) < argus_moomoo_us.MIN_COMPLETE_SYMBOLS:
+        return {"status": "too_few", "count": len(normalized), "rejected": rejected}
+    received_at = datetime.fromtimestamp(now, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with _US_SYMBOLS_LOCK:
+        _US_SYMBOLS.update(rows=normalized, receivedAt=received_at, count=len(normalized),
+                           loaded=True)
+        path = _us_symbols_path()
+        if path:
+            try:
+                argus_persistent_storage.atomic_write_json(
+                    path, {"schemaVersion": argus_moomoo_us.SYMBOL_LIST_SCHEMA,
+                           "receivedAt": received_at,
+                           "rows": [list(row) for row in normalized]},
+                    maximum_bytes=_US_SYMBOLS_FILE_MAX)
+                _US_SYMBOLS["lastSaveError"] = None
+            except Exception as exc:
+                _US_SYMBOLS["lastSaveError"] = type(exc).__name__
+    _SEARCH_Q_CACHE.clear()
+    return {"status": "replaced", "count": len(normalized), "rejected": rejected}
+
+
 def _search_us(q):
-    if not _TWELVEDATA_API_KEY:
+    _us_symbols_load()
+    rows = _US_SYMBOLS.get("rows")
+    if not rows:
         return [], "unavailable"
-    try:
-        r = _td_get("symbol_search", "https://api.twelvedata.com/symbol_search",
-                         params={"symbol": q, "outputsize": 20, "apikey": _TWELVEDATA_API_KEY}, timeout=10)
-        r.raise_for_status()
-        data = r.json().get("data", []) if isinstance(r.json(), dict) else []
-        out, seen = [], set()
-        for x in data:
-            t = (x.get("instrument_type") or "").lower()
-            if "stock" not in t and "etf" not in t and t:   # prefer equities/ETFs
-                continue
-            sym = x.get("symbol", "")
-            if not sym or sym in seen:                       # dedupe cross-exchange listings
-                continue
-            seen.add(sym)
-            out.append({"symbol": sym, "name": x.get("instrument_name", ""),
-                        "nameJa": "", "exchange": x.get("exchange", ""), "type": "us_equity"})
-            if len(out) >= _SEARCH_MAX:
-                break
-        return out, "live"
-    except Exception:
-        return [], "error"
+    return argus_moomoo_us.search_symbols(
+        rows, q, limit=_SEARCH_MAX, symbol_ok=lambda sym: bool(_US_SYM_RE.match(sym))), "live"
+
 
 def _search_crypto(q):
     try:

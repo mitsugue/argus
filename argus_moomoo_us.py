@@ -165,3 +165,71 @@ def history_newest_first(bars: Sequence[Sequence[Any]], limit: Optional[int] = N
         "dates": [row[0] for row in rows],
         "adjusted": [True for _ in rows],
     }
+
+
+# ── 米国株の銘柄一覧(銘柄検索用) ──────────────────────────────────────────
+SYMBOL_LIST_SCHEMA = "moomoo-us-symbols-v1"
+MAX_SYMBOLS = 40000
+MIN_COMPLETE_SYMBOLS = 500          # これより少ない一覧は壊れた受け取りとみなし差し替えない
+_KINDS = ("stock", "etf")
+_EXCHANGE_RE = re.compile(r"^[A-Z0-9_]{0,24}$")
+
+
+def normalize_symbol_rows(rows: Iterable[Any]) -> Tuple[List[Tuple[str, str, str, str]], int]:
+    """[[記号, 名前, 種類(stock/etf), 取引所], ...] を検証する。同じ記号は最初の行だけ。"""
+    out: List[Tuple[str, str, str, str]] = []
+    seen = set()
+    rejected = 0
+    for raw in rows or []:
+        if not isinstance(raw, (list, tuple)) or len(raw) < 3:
+            rejected += 1
+            continue
+        sym = str(raw[0] or "").strip().upper()
+        name = " ".join(str(raw[1] or "").split())[:120]
+        kind = str(raw[2] or "").strip().lower()
+        exchange = str(raw[3] or "").strip().upper() if len(raw) > 3 else ""
+        if not SYMBOL_RE.match(sym) or kind not in _KINDS or not _EXCHANGE_RE.match(exchange):
+            rejected += 1
+            continue
+        if sym in seen:
+            continue
+        seen.add(sym)
+        out.append((sym, name, kind, exchange))
+        if len(out) >= MAX_SYMBOLS:
+            break
+    return out, rejected
+
+
+def _is_otc(exchange: str) -> bool:
+    return "OTC" in exchange or "PINK" in exchange
+
+
+def search_symbols(rows: Sequence[Sequence[str]], query: str, *, limit: int = 12,
+                   symbol_ok=None) -> List[Dict[str, str]]:
+    """記号の完全一致 → 記号の前方一致 → 名前の前方一致 → 名前の部分一致の順。
+    同じ順位では、店頭(OTC)より取引所上場、ETF より個別株、短い記号を先にする。"""
+    q = str(query or "").strip()
+    if not q:
+        return []
+    qu, ql = q.upper(), q.lower()
+    scored = []
+    for sym, name, kind, exchange in rows:
+        if symbol_ok is not None and not symbol_ok(sym):
+            continue
+        lowered = name.lower()
+        if sym == qu:
+            rank = 0
+        elif sym.startswith(qu):
+            rank = 1
+        elif lowered.startswith(ql):
+            rank = 2
+        elif ql in lowered:
+            rank = 3
+        else:
+            continue
+        scored.append((rank, 1 if _is_otc(exchange) else 0, 1 if kind == "etf" else 0,
+                       len(sym), sym, name, kind, exchange))
+    scored.sort(key=lambda item: item[:5])
+    return [{"symbol": item[4], "name": item[5], "nameJa": "", "exchange": item[7],
+             "type": "us_equity", "instrumentKind": item[6]}
+            for item in scored[:max(0, int(limit))]]
