@@ -151,6 +151,19 @@ def _cgroup_peak_bytes() -> Optional[int]:
                       "/sys/fs/cgroup/memory/memory.max_usage_in_bytes"))
 
 
+# 2026-10-21: one handle to the process's own C library, made once. The
+# release ran ctypes.CDLL(None) on every call, and each call left a handle
+# and its function prototypes behind; the 32-cycle allocator proof counted
+# those among the few hundred bytes a cycle that pin a freed 1 MiB arena.
+_ALLOCATOR_LIBRARY: list = []
+
+
+def _allocator_library():
+    if not _ALLOCATOR_LIBRARY:
+        _ALLOCATOR_LIBRARY.append(ctypes.CDLL(None))
+    return _ALLOCATOR_LIBRARY[0]
+
+
 def _release_unused_allocator_memory(source_bytes: int) -> Dict[str, Any]:
     """Return freed checkpoint arenas only after their last owner is gone.
 
@@ -174,7 +187,7 @@ def _release_unused_allocator_memory(source_bytes: int) -> Dict[str, Any]:
         return report
     report["attempted"] = True
     try:
-        allocator = ctypes.CDLL(None)
+        allocator = _allocator_library()
         system = os.uname().sysname
         if system == "Linux" and hasattr(allocator, "malloc_trim"):
             trim = allocator.malloc_trim
