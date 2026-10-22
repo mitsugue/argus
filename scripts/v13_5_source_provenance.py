@@ -77,7 +77,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # the acceptance evidence churn diagnostic
     # the second store-residency slice
     'conftest.py': 'b949010de734e551892ab2db08a31dcbf58e5af8',
-    'test_argus_v13_4_3_rss_retention.py': '2337362f896c95c70a4e515f074643c9970c8a3d',
+    'test_argus_v13_4_3_rss_retention.py': '384a21253e6632bdcdcdde246724a2fc659ab869',
     # the Settings identity card (v13.7.57)
     # the Settings identity card (v13.7.59)
     'web/src/components/settings/OwnerIdentityPanel.tsx': '2289fa6d7fbdae74e8599cda85d3a1751f1928b2',
