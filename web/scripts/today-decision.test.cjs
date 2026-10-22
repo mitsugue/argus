@@ -168,7 +168,7 @@ assert(unavailableStrip.includes('直近20営業日の価格を取得待ち'));
 // Stored inputs: the close date travels with them and agrees with the "shown as of" notice.
 const stripWith = (storage, hook) => {
   const ctx = { ...stripContext, exports: {}, localStorage: { getItem: () => storage, setItem() {} }, require(name) {
-    if (name.includes('/hooks/')) return { useNikkeiLive: hook }; return stripContext.require(name); } };
+    if (name.includes('/hooks/')) return { useNikkeiLive: hook, nikkeiLiveCurrent: (q) => !q.realtime }; return stripContext.require(name); } };
   vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/today/TodayDecisionStrip.tsx', 'utf8'),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText, ctx);
   return ctx.exports.TodayDecisionStrip;
