@@ -124,6 +124,7 @@ import jp_index_contribution  # 2026-10-17: Nikkei 225 contributions by member
 import jp_index_price_factors  # 2026-10-20: official price adjustment factors (owner file)
 import argus_us_price_quality  # 2026-10-20: US price lamp by coverage/source time (pure)
 import argus_level_map_backfill  # 2026-10-21: EPS backfill position and set-aside dates (pure)
+import argus_route_usage
 import jp_market_positioning
 import argus_analysis_history
 import argus_index_live
@@ -936,6 +937,56 @@ def _compress_large_json(response):
         vary = [v.strip() for v in (response.headers.get("Vary") or "").split(",") if v.strip()]
         if "Accept-Encoding" not in vary:
             response.headers["Vary"] = ", ".join(vary + ["Accept-Encoding"])
+    except Exception:
+        pass
+    return response
+
+
+# 2026-10-22 (owner): calls per route per UTC day (argus_route_usage), so
+# retiring a route rests on what arrives, not only on callers in the
+# repository. In memory per request; written at most every ten minutes.
+_ROUTE_USAGE = {"state": None, "lastSavedMonotonic": 0.0, "lastSaveError": None}
+_ROUTE_USAGE_LOCK = threading.Lock()
+_ROUTE_USAGE_SAVE_SECONDS = 600
+
+
+def _route_usage_path():
+    return (os.path.join(_DURABILITY_PATHS["root"], argus_route_usage.FILENAME)
+            if _cost_policy_durable_enabled() else None)
+
+
+def _route_usage_state():
+    if _ROUTE_USAGE["state"] is None:
+        state = argus_route_usage.empty()
+        path = _route_usage_path()
+        if path and os.path.isfile(path) and not os.path.islink(path):
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    state = argus_route_usage.parse(json.loads(handle.read(4 * 1024 * 1024)))
+            except (OSError, ValueError):
+                state = argus_route_usage.empty()
+        _ROUTE_USAGE["state"] = state
+    return _ROUTE_USAGE["state"]
+
+
+@app.after_request
+def _route_usage_note(response):
+    try:
+        rule = request.url_rule.rule if request.url_rule is not None else None
+        with _ROUTE_USAGE_LOCK:
+            state = _route_usage_state()
+            argus_route_usage.note(state, day=datetime.now(pytz.utc).strftime("%Y-%m-%d"), rule=rule,
+                                   method=request.method, status=int(response.status_code),
+                                   caller=argus_route_usage.caller_kind(request.headers.get("User-Agent")))
+            now = time.monotonic()
+            path = _route_usage_path()
+            if path and now - _ROUTE_USAGE["lastSavedMonotonic"] >= _ROUTE_USAGE_SAVE_SECONDS:
+                _ROUTE_USAGE["lastSavedMonotonic"] = now
+                try:
+                    argus_persistent_storage.atomic_write_json(path, state, maximum_bytes=4 * 1024 * 1024)
+                    _ROUTE_USAGE["lastSaveError"] = None
+                except Exception as exc:
+                    _ROUTE_USAGE["lastSaveError"] = type(exc).__name__
     except Exception:
         pass
     return response
@@ -34521,6 +34572,13 @@ def api_argus_admin_memory_attribution():
         payload["storageAttribution"] = argus_storage_attribution.attribute(
             _DURABILITY_PATHS["root"], checkpoint=_DURABILITY_PATHS.get("checkpoint") or "",
             wal=_DURABILITY_PATHS.get("wal") or "")
+    if str(request.args.get("route-usage") or "") == "1":
+        # 2026-10-22 (owner): calls per route rule (no raw path or query).
+        import argus_route_catalog
+        with _ROUTE_USAGE_LOCK:
+            usage = copy.deepcopy(_route_usage_state())
+        payload["routeUsage"] = {**argus_route_usage.summary(usage, catalog=argus_route_catalog.ROUTE_CATALOG),
+                                 "lastSaveError": _ROUTE_USAGE.get("lastSaveError")}
     if str(request.args.get("level-map-inputs") or "") == "1":
         import argus_level_map_acquisition
         payload["levelMapInputs"] = argus_level_map_acquisition.projection(
