@@ -4205,6 +4205,31 @@ def _td_warm_fetch(batch):
         return [], False, False, type(e).__name__
 
 
+# 2026-10-22 (owner: moomoo is the primary US price source): during the
+# regular session a symbol whose moomoo bridge row arrived within this many
+# seconds, with source-time realtime evidence, is served from that row and is
+# not bought again from Twelve Data (about two thirds of the daily quote
+# credits were the same symbols the bridge already pushed every 30 s).
+_TD_BRIDGE_COVER_SEC = 120
+
+
+def _td_bridge_covered_rows(symbols, now, session):
+    """{symbol: verified bridge row} for the regular session; {} otherwise."""
+    if session != "REGULAR":
+        return {}
+    pushed = _PUSHED_QUOTES.get("US") or {}
+    covered = {}
+    for sym in symbols:
+        entry = pushed.get(sym)
+        if not entry or not 0 <= now - float(entry.get("ts") or 0) <= _TD_BRIDGE_COVER_SEC:
+            continue
+        row = _decision_usable_quote_row(entry.get("row"), now_epoch=now)
+        if row is not None and row.get("price") is not None:
+            covered[sym] = {**row, "receivedAt": row.get("receivedAt") or datetime.fromtimestamp(
+                float(entry["ts"]), pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    return covered
+
+
 def _td_warm_tick(now_utc=None):
     """One scheduler tick (called every ~30 s from run_scheduler). Bounded by
     argus_td_warm.plan_tick: batch cap, daily cap, cadence, backoff."""
@@ -4215,11 +4240,16 @@ def _td_warm_tick(now_utc=None):
     session = _td_us_session(now_utc)
     _TD_WARM_LAST_SESSION["value"] = session
     universe = _td_warm_universe(now)
+    covered = _td_bridge_covered_rows(universe["symbols"], now, session)
     with _TD_WARM_LOCK:
+        if covered:
+            # Readers of the warm rows get the bridge row unchanged in shape.
+            _td_warm_store(list(covered.values()), now, session)
+        _TD_WARM_STATE["bridgeCovered"] = len(covered)
         fit = universe.get("cadenceFit") or {}
         decision = argus_td_warm.plan_tick(
             _TD_WARM_STATE, now_utc=now_utc, session=session,
-            universe=universe["symbols"], batch_cap=_US_DYN_MAX,
+            universe=[sym for sym in universe["symbols"] if sym not in covered], batch_cap=_US_DYN_MAX,
             warm_daily_cap=_TD_WARM_DAILY_CAP,
             regular_sec=fit.get("regularSec") or _TD_WARM_REGULAR_SEC,
             extended_sec=fit.get("extendedSec") or _TD_WARM_EXTENDED_SEC,
@@ -4357,6 +4387,8 @@ def api_argus_twelvedata_budget():
     body["measuredDaily"] = {"basis": "every_call_one_credit_per_symbol_utc_day",
                              "days": dict(sorted(days.items())[-14:]),
                              "lastSaveError": _TD_USAGE.get("lastSaveError")}
+    # 2026-10-22: how many symbols the last warm tick served from the moomoo bridge.
+    body["bridgeCoveredLastTick"] = _TD_WARM_STATE.get("bridgeCovered")
     return jsonify(body)
 
 
