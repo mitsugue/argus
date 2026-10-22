@@ -142,3 +142,54 @@ def test_policy_rate_future_is_read_with_the_overnight_future_and_bounded(monkey
     assert live.refresh_policy_rate_once(lambda url, **k: Response(5.0), now_epoch=1790972900) is None
     assert live.current_quote_safe()["policyRateFuturesError"] == "ValueError"
     assert live.current_quote_safe()["policyRateFutures"]["impliedRatePct"] == 3.93
+
+
+# ── 2026-10-22: Tachibana Nikkei (101) uses the same minute-aware rule ──────
+from datetime import timedelta  # noqa: E402
+
+import argus_tachibana_live  # noqa: E402
+
+_START = datetime(2026, 10, 22, 6, 0, tzinfo=timezone.utc)  # 15:00 JST
+
+
+def _nikkei(monkeypatch, *, age, receipt_age=1.0, precision="MINUTE", status="OPEN",
+            freshness="FRESH", approved=True):
+    now = _START + timedelta(seconds=age)
+
+    class Fixed(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    row = {"provider": "TACHIBANA", "price": 49123.4, "previousClose": 48900.0, "changePct": 0.46,
+           "sourceTimestamp": _START.isoformat(), "sourceTimestampPrecision": precision,
+           "receivedAt": (now - timedelta(seconds=receipt_age)).isoformat(),
+           "freshness": freshness, "marketStatus": status}
+    monkeypatch.setattr(live, "datetime", Fixed)
+    monkeypatch.setattr(live, "_state", {"quote": None, "error": None, "thread": None})
+    monkeypatch.setattr(argus_tachibana_live, "current_evidence_safe",
+                        lambda *a, **k: {"displayApproved": approved, "symbols": {"101": row}})
+    return live.current_quote_safe()
+
+
+def test_tachibana_nikkei_minute_time_26_seconds_old_is_shown_with_its_own_minute(monkeypatch):
+    state = _nikkei(monkeypatch, age=26)
+    assert state["status"] == "AVAILABLE"
+    quote = state["quote"]
+    assert quote["source"] == "立花証券" and quote["realtime"] is True
+    assert quote["tradedAt"] == _START.isoformat()  # never the receipt time
+    assert quote["tradedAtPrecision"] == "MINUTE" and quote["delaySeconds"] == 26
+
+
+def test_tachibana_nikkei_falls_back_when_old_unproven_future_or_closed(monkeypatch):
+    for kwargs in ({"age": 80}, {"age": 16, "precision": "SECOND"}, {"age": 30, "receipt_age": 20},
+                   {"age": -30}, {"age": 26, "status": "CLOSED"}, {"age": 26, "freshness": "DELAYED"},
+                   {"age": 26, "approved": False}, {"age": 26, "precision": "UNAVAILABLE"}):
+        state = _nikkei(monkeypatch, **kwargs)
+        assert state["status"] == "UNAVAILABLE", kwargs
+        assert state["quote"] is None
+
+
+def test_tachibana_nikkei_second_precision_keeps_fifteen_seconds(monkeypatch):
+    state = _nikkei(monkeypatch, age=15, precision="SECOND")
+    assert state["status"] == "AVAILABLE" and state["quote"]["tradedAtPrecision"] == "SECOND"

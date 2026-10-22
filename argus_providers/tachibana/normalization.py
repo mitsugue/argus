@@ -23,6 +23,24 @@ from .models import (
 
 NORMALIZATION_VERSION = "tachibana-v4r10-normalization-v1"
 TOKYO = ZoneInfo("Asia/Tokyo")
+# Owner decision 2026-10-22: a time-only "HH:MM" trade time (MINUTE
+# precision) states the minute, not the second. The trade happened somewhere
+# in [minute start, minute start + 60 s); the latest possible instant is the
+# minute end. The 15 s rule is applied to that instant, so a MINUTE time may
+# be FRESH while it is the current or the immediately preceding minute
+# (age from the minute start <= 60 + 15 s). SECOND precision keeps 15 s.
+# Receipt time never replaces the trade time; transport freshness (receipt
+# within 15 s) is enforced separately through fresh_until.
+MINUTE_PRECISION_SPAN_SECONDS = 60
+
+
+def fresh_age_limit_seconds(precision: Any, fresh_for_seconds: int = 15) -> int:
+    """Largest age from the stated trade time that can still be FRESH."""
+    return fresh_for_seconds + (
+        MINUTE_PRECISION_SPAN_SECONDS if precision == "MINUTE" else 0
+    )
+
+
 _FIELD_MAP: Mapping[str, str] = MappingProxyType({
     "current_price": "pDPP",
     "previous_close": "pPRP",
@@ -223,12 +241,18 @@ def normalize_market_price(
     if data_time is not None and data_time > received + timedelta(seconds=5):
         raise TachibanaError(ErrorClass.NORMALIZATION)
     age = (received - data_time).total_seconds() if data_time is not None else None
+    # Only a PRICE trade time that is itself the data time can be minute
+    # precise; an EVENT packet time (market_data_timestamp) is exact.
+    data_precision = (
+        source_precision if market_data_timestamp is None else "SECOND"
+    )
+    fresh_age_limit = fresh_age_limit_seconds(data_precision, fresh_for_seconds)
     freshness = (
         Freshness.FRESH
         if (
             data_date_verified
             and age is not None
-            and age <= fresh_for_seconds
+            and age <= fresh_age_limit
         )
         else Freshness.DELAYED
         if (
@@ -242,6 +266,14 @@ def normalize_market_price(
     )
     fresh_until = (
         data_time + timedelta(seconds=fresh_for_seconds)
+        if data_time is not None and freshness == Freshness.FRESH
+        and data_precision != "MINUTE"
+        # MINUTE: FRESH ends at the earlier of the minute window and the
+        # 15 s transport window of this receipt (a later poll must renew it).
+        else min(
+            data_time + timedelta(seconds=fresh_age_limit),
+            received + timedelta(seconds=fresh_for_seconds),
+        )
         if data_time is not None and freshness == Freshness.FRESH
         else data_time + timedelta(minutes=20)
         if data_time is not None and freshness == Freshness.DELAYED

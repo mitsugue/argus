@@ -147,13 +147,23 @@ export function useForecastTrackRecord(): ForecastTrackRecord | null {
 
 // Delayed intraday Nikkei quote (owner request 2026-10-02). Display only.
 export interface NikkeiLiveQuote { price: number; previousClose: number | null; changePct: number | null;
-  tradedAt: string; receivedAt?: string; delaySeconds: number; sessionOpen: boolean; realtime: boolean }
+  tradedAt: string; tradedAtPrecision?: string; receivedAt?: string; delaySeconds: number; sessionOpen: boolean; realtime: boolean }
+// Same rule as the server (owner decision 2026-10-22): receipt <= 15 s; the trade time <= 15 s,
+// or a minute-precision time within its minute + 15 s (<= 75 s from the minute start).
+export function nikkeiLiveCurrent(q: NikkeiLiveQuote, nowMs = Date.now()): boolean {
+  if (!q.realtime) return true;
+  const traded = Date.parse(q.tradedAt), received = Date.parse(q.receivedAt ?? '');
+  const minute = q.tradedAtPrecision === 'MINUTE';
+  if (minute && traded % 60_000 !== 0) return false;
+  const tradeAge = nowMs - traded, receiptAge = nowMs - received;
+  return tradeAge >= 0 && tradeAge <= (minute ? 75_000 : 15_000) && receiptAge >= 0 && receiptAge <= 15_000;
+}
 const liveValid = (q: unknown): q is NikkeiLiveQuote => {
   const v = q as NikkeiLiveQuote;
   return !!v && typeof v.price === 'number' && Number.isFinite(v.price) && v.price > 0
     && typeof v.tradedAt === 'string' && Number.isFinite(Date.parse(v.tradedAt))
     && typeof v.delaySeconds === 'number' && v.delaySeconds >= 0 && typeof v.sessionOpen === 'boolean'
-    && (v.realtime === false || v.realtime === true && (q as { source?: unknown }).source === '立花証券' && v.delaySeconds <= 15 && typeof v.receivedAt === 'string' && Number.isFinite(Date.parse(v.receivedAt))) && (v.changePct === null || Number.isFinite(v.changePct));
+    && (v.realtime === false || v.realtime === true && (q as { source?: unknown }).source === '立花証券' && v.delaySeconds <= (v.tradedAtPrecision === 'MINUTE' ? 75 : 15) && typeof v.receivedAt === 'string' && Number.isFinite(Date.parse(v.receivedAt))) && (v.changePct === null || Number.isFinite(v.changePct));
 };
 export interface NikkeiLive { quote: NikkeiLiveQuote | null; futures: NikkeiLiveQuote | null }
 // The CME future read outside the Tokyo session (owner check 2026-10-03).
@@ -164,9 +174,7 @@ export function useNikkeiLive(): NikkeiLive {
   const restored = sessionViewCheckpoint.restoredValue('nikkei-live') as { quote?: unknown; futures?: unknown; lastRead?: number } | undefined;
   const freshRestored = (value: unknown): value is NikkeiLiveQuote => {
     if (!liveValid(value)) return false;
-    if (!value.realtime) return true;
-    const tradeAge = Date.now() - Date.parse(value.tradedAt), receiptAge = Date.now() - Date.parse(value.receivedAt ?? '');
-    return tradeAge >= 0 && tradeAge <= 15_000 && receiptAge >= 0 && receiptAge <= 15_000;
+    return nikkeiLiveCurrent(value);
   };
   const [quote, setQuote] = useState<NikkeiLiveQuote | null>(() => freshRestored(restored?.quote) ? restored.quote : null);
   const [futures, setFutures] = useState<NikkeiLiveQuote | null>(() => freshRestored(restored?.futures)
@@ -199,9 +207,7 @@ export function useNikkeiLive(): NikkeiLive {
     const ageQuote = () => {
       setQuote(current => {
         if (!current?.realtime) return current;
-        const tradeAge = Date.now() - Date.parse(current.tradedAt);
-        const receiptAge = Date.now() - Date.parse(current.receivedAt ?? '');
-        return tradeAge >= 0 && tradeAge <= 15_000 && receiptAge >= 0 && receiptAge <= 15_000 ? current : null;
+        return nikkeiLiveCurrent(current) ? current : null;
       });
     };
     const timer = scheduleVisibleInterval(() => {

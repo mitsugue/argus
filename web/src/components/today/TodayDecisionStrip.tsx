@@ -2,7 +2,7 @@ import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
 import type { ComparisonPoint } from '../../types/japanMarketComparison';
 import { ALERT_HISTORY, MOMENTUM_Z, OVERNIGHT_HISTORY, TONE_HISTORY, closeBasisLabel, decisionStrip, friendlyEventText, overnightGap, overnightRecord, type FeatureRow, type Lean } from '../../lib/todayDecision';
-import { useNikkeiLive } from '../../hooks/useJapanMarketComparison';
+import { nikkeiLiveCurrent, useNikkeiLive } from '../../hooks/useJapanMarketComparison';
 import { marketHeadline } from '../../lib/marketWording';
 import { MarketPositionCard } from './MarketPositionCard';
 import './TodayDecisionStrip.css';
@@ -72,10 +72,8 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
   const { quote: live, futures } = useNikkeiLive();
   // The delayed intraday value replaces the last close once it is from a later session.
   const lastActual = typeof comparison?.anchorDate === 'string' ? Date.parse(comparison.anchorDate) : NaN;
-  const liveTradeAge = live ? Date.now() - Date.parse(live.tradedAt) : NaN;
-  const liveReceiptAge = live ? Date.now() - Date.parse(live.receivedAt ?? '') : NaN;
-  const liveCurrent = live && (!live.realtime || liveTradeAge >= 0 && liveTradeAge <= 15_000
-    && liveReceiptAge >= 0 && liveReceiptAge <= 15_000) && (!Number.isFinite(lastActual) || Date.parse(live.tradedAt) > lastActual + 9 * 3600_000);
+  const liveCurrent = live && nikkeiLiveCurrent(live)
+    && (!Number.isFinite(lastActual) || Date.parse(live.tradedAt) > lastActual + 9 * 3600_000);
   // Owner check 2026-10-03: the overnight future against the close it followed.
   const gap = overnightGap(futures, liveCurrent && !live!.sessionOpen ? live!.price : closeStrip.close,
     liveCurrent ? Date.parse(live!.tradedAt) : lastActual + 6.5 * 3600_000, !!live?.sessionOpen);
@@ -89,7 +87,7 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
   const bandBasis = basis && liveCurrent && shownPrice !== strip.close ? `${basis}の幅を現在値で円に換算` : basis;
   const shownChange = liveCurrent ? live!.changePct : strip.dayChangePct;
   const liveLabel = liveCurrent ? (live!.sessionOpen
-    ? `${new Date(live!.tradedAt).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}時点・${live!.realtime ? '立花証券 リアルタイム' : `約${Math.max(1, Math.round(live!.delaySeconds / 60))}分遅れ`}`
+    ? `${new Date(live!.tradedAt).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}時点${live!.realtime && live!.tradedAtPrecision === 'MINUTE' ? '（分精度）' : ''}・${live!.realtime ? '立花証券 リアルタイム' : `約${Math.max(1, Math.round(live!.delaySeconds / 60))}分遅れ`}`
     : `${new Date(live!.tradedAt).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })} 大引け`) : '前日終値';
   const preparing = !fresh;
   return <section className="today-strip" aria-label="今日の結論と数字" data-argus-contract="today-decision-strip-v1">

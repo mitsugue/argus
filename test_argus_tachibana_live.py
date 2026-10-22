@@ -576,3 +576,117 @@ def test_direct_entry_without_owner_store_still_fails_closed(monkeypatch):
         __file__=str(Path(live.__file__).with_name("scanner.py"))))
     with pytest.raises(ValueError, match="registered_symbols_unavailable"):
         live.TachibanaLiveService()._symbols({})
+
+
+# ── 2026-10-22 owner decision: minute-precision trade times ─────────────────
+# The PRICE trade time is "HH:MM". FRESH needs the receipt within 15 s and the
+# stated minute to be the current or the immediately preceding minute (age
+# from the minute start <= 60 + 15 s). SECOND precision keeps 15 s. The trade
+# time is never replaced by the receipt time.
+from datetime import date as _date  # noqa: E402
+
+from argus_providers.tachibana.normalization import (  # noqa: E402
+    fresh_age_limit_seconds, normalize_market_price,
+)
+
+_MINUTE_START = datetime(2026, 10, 22, 15, 0, tzinfo=TOKYO)
+
+
+def _normalize_at(trade_time, received, **kwargs):
+    options = dict(market_date=_date(2026, 10, 22), market_status=MarketStatus.OPEN,
+                   market_date_verified=True)
+    options.update(kwargs)
+    return normalize_market_price(
+        {"sIssueCode": "8058", "pDPP": "3500", "tDPP:T": trade_time},
+        received_at=received, **options)
+
+
+def test_age_limit_is_minute_end_plus_fifteen_seconds_only_for_minute_precision():
+    assert fresh_age_limit_seconds("MINUTE") == 75
+    assert fresh_age_limit_seconds("SECOND") == 15
+    assert fresh_age_limit_seconds("UNAVAILABLE") == 15
+    assert fresh_age_limit_seconds(None) == 15
+
+
+def test_minute_trade_time_26_seconds_after_the_minute_start_is_fresh():
+    received = _MINUTE_START + timedelta(seconds=26)  # 2026-10-22 15:00:26 case
+    obs = _normalize_at("15:00", received)
+    assert obs.source_timestamp_precision == "MINUTE"
+    assert obs.source_timestamp == _MINUTE_START.astimezone(timezone.utc)  # not the receipt
+    assert obs.freshness == Freshness.FRESH
+    # FRESH lasts at most 15 s after this receipt; a later poll must renew it.
+    assert obs.fresh_until == received.astimezone(timezone.utc) + timedelta(seconds=15)
+    row = live.observation_evidence(obs, now=received)
+    assert row["freshness"] == "FRESH" and row["sourceTimestampPrecision"] == "MINUTE"
+    assert row["sourceTimestamp"].endswith("06:00:00+00:00")
+    later = live.observation_evidence(obs, now=received + timedelta(seconds=16))
+    assert later["freshness"] == "STALE"
+
+
+def test_minute_window_never_extends_past_the_minute_end_plus_fifteen_seconds():
+    edge = _normalize_at("15:00", _MINUTE_START + timedelta(seconds=70))
+    assert edge.freshness == Freshness.FRESH
+    assert edge.fresh_until == (_MINUTE_START + timedelta(seconds=75)).astimezone(timezone.utc)
+    assert _normalize_at("15:00", _MINUTE_START + timedelta(seconds=75)).freshness == Freshness.FRESH
+    assert _normalize_at("15:00", _MINUTE_START + timedelta(seconds=76)).freshness == Freshness.DELAYED
+    delayed = _normalize_at("15:00", _MINUTE_START + timedelta(seconds=80))
+    assert delayed.freshness == Freshness.DELAYED
+    assert _normalize_at("14:58", _MINUTE_START + timedelta(seconds=5)).freshness == Freshness.DELAYED
+
+
+def test_second_precision_trade_time_keeps_the_fifteen_second_rule():
+    assert _normalize_at("15:00:00", _MINUTE_START + timedelta(seconds=15)).freshness == Freshness.FRESH
+    obs = _normalize_at("15:00:00", _MINUTE_START + timedelta(seconds=16))
+    assert obs.source_timestamp_precision == "SECOND"
+    assert obs.freshness == Freshness.DELAYED
+
+
+def test_future_unknown_date_and_closed_minute_times_are_not_fresh():
+    with pytest.raises(TachibanaError):  # strict path: a future trade time is corrupt
+        _normalize_at("15:02", _MINUTE_START + timedelta(seconds=30))
+    degraded = _normalize_at("15:02", _MINUTE_START + timedelta(seconds=30),
+                             degrade_noncritical=True)
+    assert degraded.source_timestamp is None and degraded.freshness == Freshness.UNAVAILABLE
+    # No verified session date (e.g. pre-open / closed phase): no trade time.
+    undated = _normalize_at("15:00", _MINUTE_START + timedelta(seconds=26),
+                            market_date_verified=False)
+    assert undated.source_timestamp is None and undated.freshness == Freshness.UNAVAILABLE
+    closed = _normalize_at("15:00", _MINUTE_START + timedelta(seconds=26),
+                           market_status=MarketStatus.CLOSED)
+    from argus_providers.tachibana.evidence import to_canonical_observations
+    assert to_canonical_observations(closed)[0]["freshness"] != "FRESH"
+
+
+def _row_at(age, *, receipt_age=2.0, precision="MINUTE", now=None):
+    now = now or (_MINUTE_START + timedelta(seconds=40)).astimezone(timezone.utc)
+    return {"sourceTimestamp": (now - timedelta(seconds=age)).isoformat(),
+            "sourceTimestampPrecision": precision,
+            "receivedAt": (now - timedelta(seconds=receipt_age)).isoformat()}, now
+
+
+def test_shared_admission_rule_for_display_consumers():
+    now = (_MINUTE_START + timedelta(seconds=26)).astimezone(timezone.utc)
+    minute = {"sourceTimestamp": _MINUTE_START.astimezone(timezone.utc).isoformat(),
+              "sourceTimestampPrecision": "MINUTE",
+              "receivedAt": (now - timedelta(seconds=1)).isoformat()}
+    assert live.row_trade_current(minute, now) is True                       # 26 s → FRESH
+    assert live.row_trade_current(minute, _MINUTE_START + timedelta(seconds=80)) is False
+    assert live.row_trade_current({**minute, "receivedAt": (now - timedelta(seconds=20)).isoformat()},
+                                  now) is False                              # receipt 20 s
+    late = _MINUTE_START + timedelta(seconds=75)
+    assert live.row_trade_current({**minute, "receivedAt": late.isoformat()}, late) is True
+    assert live.row_trade_current({**minute, "receivedAt": late.isoformat()},
+                                  late + timedelta(milliseconds=1)) is False
+    second, at = _row_at(16, precision="SECOND")
+    assert live.row_trade_current(second, at) is False                       # SECOND 16 s
+    second, at = _row_at(15, precision="SECOND")
+    assert live.row_trade_current(second, at) is True
+    legacy, at = _row_at(16, precision=None)                                 # unstated → 15 s
+    assert live.row_trade_current(legacy, at) is False
+    future = {**minute, "sourceTimestamp": (_MINUTE_START + timedelta(minutes=1)).isoformat()}
+    assert live.row_trade_current(future, now) is False
+    unaligned = {**minute, "sourceTimestamp": (_MINUTE_START + timedelta(seconds=10)).isoformat()}
+    assert live.row_trade_current(unaligned, now) is False
+    assert live.row_trade_current({**minute, "sourceTimestamp": None,
+                                   "sourceTimestampPrecision": "UNAVAILABLE"}, now) is False
+    assert live.row_trade_current({**minute, "sourceTimestamp": "2026-10-22T15:00:00"}, now) is False

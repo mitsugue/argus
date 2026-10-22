@@ -241,6 +241,27 @@ export interface OverlayableJpSnapshot {
   [key: string]: unknown;
 }
 
+/**
+ * Same admission as the server's row_trade_current (owner decision 2026-10-22):
+ * receipt within 15 s, and the stated trade time within 15 s — or, for a
+ * minute-precision time ("HH:MM"), within its minute + 15 s (75 s from the
+ * minute start). The trade time is never replaced by the receipt time.
+ */
+export function tachibanaTradeTimeCurrent(
+  sourceTimestamp: string | null | undefined, precision: string | null | undefined,
+  receivedAt: string | null | undefined, nowMs: number,
+): boolean {
+  if (precision === 'UNAVAILABLE' || !sourceTimestamp || !receivedAt) return false;
+  const source = Date.parse(sourceTimestamp);
+  const received = Date.parse(receivedAt);
+  if (!Number.isFinite(source) || !Number.isFinite(received) || !Number.isFinite(nowMs)) return false;
+  const minute = precision === 'MINUTE';
+  if (minute && source % 60_000 !== 0) return false;
+  const age = nowMs - source;
+  const receiptAge = nowMs - received;
+  return receiptAge >= 0 && receiptAge <= 15_000 && age >= 0 && age <= (minute ? 75_000 : 15_000);
+}
+
 /** Symbols for which the document carries a current, FRESH, priced row. */
 export function tachibanaCurrentRows(
   doc: TachibanaLiveDocument | null | undefined, nowMs = Date.now(),
@@ -251,10 +272,8 @@ export function tachibanaCurrentRows(
   if (view.status !== 'LIVE' && view.status !== 'DEGRADED') return out;
   for (const row of view.rows) {
     if (row.price === null || row.freshness !== 'FRESH' || !row.sourceTimestamp) continue;
-    const age = (nowMs - Date.parse(row.sourceTimestamp)) / 1000;
-    if (!Number.isFinite(age) || age < 0 || age > 15) continue;
-    const receivedAge = row.receivedAt ? (nowMs - Date.parse(row.receivedAt)) / 1000 : NaN;
-    if (!Number.isFinite(receivedAge) || receivedAge < 0 || receivedAge > 15 || row.marketStatus !== 'OPEN') continue;
+    if (!tachibanaTradeTimeCurrent(row.sourceTimestamp, row.sourceTimestampPrecision, row.receivedAt, nowMs)
+        || row.marketStatus !== 'OPEN') continue;
     out.set(row.symbol.toUpperCase(), row);
   }
   return out;

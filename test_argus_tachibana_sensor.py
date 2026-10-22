@@ -1249,8 +1249,10 @@ def test_minute_precision_alpha_symbol_and_top_of_book_semantics_are_preserved()
         2026, 9, 1, 6, 0, tzinfo=timezone.utc
     )
     assert observation.source_timestamp_precision == "MINUTE"
+    # 2026-10-22: a MINUTE time stays FRESH within its minute + 15 s, but
+    # never beyond 15 s after this receipt (transport freshness).
     assert observation.fresh_until == datetime(
-        2026, 9, 1, 6, 0, 15, tzinfo=timezone.utc
+        2026, 9, 1, 6, 0, 25, tzinfo=timezone.utc
     )
     assert observation.freshness == Freshness.FRESH
     assert observation.endpoint_category == "PRICE"
@@ -1377,7 +1379,7 @@ def test_live_pressure_uses_fresh_open_same_symbol_top_quote_only():
         )], now=NOW
     )["classification"] == "UNAVAILABLE"
     assert build_live_pressure_evidence(
-        [observation], now=NOW + timedelta(seconds=6)
+        [observation], now=NOW + timedelta(seconds=16)
     )["classification"] == "UNAVAILABLE"
     other = normalize_market_price(
         _row(sIssueCode="7203"), received_at=NOW,

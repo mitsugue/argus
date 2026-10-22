@@ -190,15 +190,18 @@ def current_quote_safe() -> Dict[str, Any]:
         row = evidence.get("symbols", {}).get("101", {})
         now = datetime.now(timezone.utc)
         source = datetime.fromisoformat(row.get("sourceTimestamp", ""))
-        received = datetime.fromisoformat(row.get("receivedAt", ""))
         age = (now - source).total_seconds()
-        transport_age = (now - received).total_seconds()
+        # Same precision-aware rule as the stock rows (owner decision
+        # 2026-10-22): receipt <= 15 s, SECOND trade time <= 15 s, MINUTE
+        # trade time within its minute + 15 s. tradedAt stays the stated time.
+        precision = "MINUTE" if row.get("sourceTimestampPrecision") == "MINUTE" else "SECOND"
         if (evidence.get("displayApproved") is True and row.get("provider") == "TACHIBANA"
                 and row.get("freshness") == "FRESH" and row.get("marketStatus") == "OPEN"
-                and 0 <= age <= 15 and 0 <= transport_age <= 15 and _finite(row.get("price"))):
+                and argus_tachibana_live.row_trade_current(row, now) and _finite(row.get("price"))):
             quote = {"schemaVersion": SCHEMA, "instrumentId": "NIKKEI_225_INDEX", "symbol": SYMBOL,
                      "price": row["price"], "previousClose": row.get("previousClose"),
                      "changePct": row.get("changePct"), "tradedAt": row["sourceTimestamp"],
+                     "tradedAtPrecision": precision,
                      "receivedAt": row["receivedAt"], "delaySeconds": int(age), "sessionOpen": True,
                      "source": "立花証券", "realtime": True, "actionAuthority": False}
             error = None
