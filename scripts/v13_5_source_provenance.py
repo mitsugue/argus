@@ -690,7 +690,6 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_moomoo_us_symbol_search.py",
     "test_moomoo_us_daily_bars.py",
     "argus_moomoo_us.py",
-    "argus_market_data_truth.py",
     "test_moomoo_us_extended_hours.py",
     "test_td_bridge_cover.py",
     "test_argus_route_usage.py",

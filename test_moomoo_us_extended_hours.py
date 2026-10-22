@@ -201,6 +201,12 @@ def test_server_accepts_an_in_session_extended_row_without_inventing_a_change(mo
     assert row["extendedTs"] == "2026-10-22T08:55:10Z" and row["regularClose"] == 100.0
     assert row["changeAbs"] is None and row["changePct"] is None
     assert row["realtimeEvidence"] is True            # 5 minutes old, own source time
+    # ...but an extended-hours price never becomes a decision consumer's current quote.
+    assert scanner._decision_usable_quote_row(row, now_epoch=PRE_NOW.timestamp()) is None
+    assert scanner._decision_usable_quote_row(
+        row, now_epoch=PRE_NOW.timestamp(), allow_extended=True) is not None
+    cached = scanner._quote_cached_only("NVDA", "US")
+    assert cached["extendedHours"] is True and cached["decisionUsable"] is False
     assert "AAPL" not in scanner._PUSHED_QUOTES["US"] and "MU" not in scanner._PUSHED_QUOTES["US"]
     # Extended rows never feed acceleration history / event detection.
     assert scanner._PUSH_HISTORY["US"] == {}

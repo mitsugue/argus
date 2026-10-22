@@ -3530,8 +3530,13 @@ def _canonical_moomoo_quote_truth(
     return truth
 
 
-def _decision_usable_quote_row(row, *, now_epoch=None):
+def _decision_usable_quote_row(row, *, now_epoch=None, allow_extended=False):
     """Re-verify one normalized quote before any numeric decision consumer.
+
+    2026-10-22: an extended-hours (pre/after/overnight) bridge row is price and
+    coverage evidence only; it never becomes a decision consumer's current
+    quote (``allow_extended`` is for the Twelve Data cover check alone), so the
+    decision inputs stay exactly what they were before extended rows existed.
 
     ``status``/``realtimeEvidence`` are asserted adapter claims.  They remain
     necessary, but are never sufficient: the provider/venue timestamp is
@@ -3540,6 +3545,8 @@ def _decision_usable_quote_row(row, *, now_epoch=None):
     either a verified copy or ``None``.
     """
     if not isinstance(row, dict):
+        return None
+    if row.get("extendedHours") is True and not allow_extended:
         return None
     source_timestamp = row.get("sourceTimestamp") or row.get("exchangeTs")
     truth = _canonical_moomoo_quote_truth(
@@ -4267,7 +4274,7 @@ def _td_bridge_covered_rows(symbols, now, session):
                 continue
         elif raw.get("extendedHours") is not True or raw.get("priceSession") != label:
             continue
-        row = _decision_usable_quote_row(raw, now_epoch=now)
+        row = _decision_usable_quote_row(raw, now_epoch=now, allow_extended=label != "REGULAR")
         if row is not None and row.get("price") is not None:
             covered[sym] = {**row, "receivedAt": row.get("receivedAt") or datetime.fromtimestamp(
                 float(entry["ts"]), pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}

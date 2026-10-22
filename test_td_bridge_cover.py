@@ -24,7 +24,7 @@ def _setup(monkeypatch, pushed):
                         lambda now=None: {"symbols": ["AAPL", "NVDA", "SPY"], "cadenceFit": {}})
     monkeypatch.setattr(scanner, "_PUSHED_QUOTES", {"US": {sym: {"row": row, "ts": now - ago}
                                                            for sym, (row, ago) in pushed.items()}, "JP": {}})
-    monkeypatch.setattr(scanner, "_decision_usable_quote_row", lambda row, now_epoch=None:
+    monkeypatch.setattr(scanner, "_decision_usable_quote_row", lambda row, now_epoch=None, **kw:
                         row if row.get("realtimeEvidence") is True and row.get("status") == "live" else None)
     monkeypatch.setattr(scanner, "_US_WARM_ROWS", {})
     monkeypatch.setattr(scanner, "_TD_WARM_STATE", {})
