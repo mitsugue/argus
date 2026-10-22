@@ -238,9 +238,7 @@ def test_warm_tick_in_after_hours_does_not_fetch_bridge_covered_symbols(monkeypa
     monkeypatch.setattr(scanner, "_TD_WARM_STATE", argus_td_warm.new_state())
     asked = []
     monkeypatch.setattr(scanner, "_us_fallback_fetch",
-                        lambda batch: (asked.append(list(batch)) or ([], True, False, None)), raising=False)
-    monkeypatch.setattr(scanner, "_td_warm_fetch",
-                        lambda batch: (asked.append(list(batch)) or ([], True, False, None)), raising=False)
+                        lambda batch: (asked.append(list(batch)) or ([], True, False, None)))
     scanner._td_warm_tick(POST_NOW)
     assert all("NVDA" not in batch for batch in asked)
     assert scanner._US_WARM_ROWS["NVDA"]["row"]["priceSession"] == "POST"

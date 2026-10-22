@@ -2648,11 +2648,16 @@ _YF_RT_MAP = {"usdJpy": ("JPY=X", "USD/JPY"),
               "vix":    ("%5EVIX", "VIX")}
 
 
-def _yf_quote(sym):
-    """One quote plus provider timestamp from Yahoo's chart metadata."""
+def _yf_quote(sym, status=None):
+    """One quote plus provider timestamp from Yahoo's chart metadata.
+
+    ``status`` (optional dict) receives the HTTP status so a caller can back
+    off on 429 without a second request path."""
     try:
         r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=2d",
                          headers={"User-Agent": "Mozilla/5.0 (compatible; argus-research/1.0)"}, timeout=8)
+        if isinstance(status, dict):
+            status["httpStatus"] = r.status_code
         if r.status_code != 200:
             return None
         res = (r.json().get("chart") or {}).get("result") or []
@@ -3870,31 +3875,31 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
         hit = _US_DYN_CACHE.get(syms)
         if hit and now < hit["expires"]:
             return _canonical_quote_snapshot_age(hit["data"], "stocks")
-        if not _TWELVEDATA_API_KEY:
-            return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
         try:
-            r = _td_get("quote", _TWELVEDATA_QUOTE,
-                             params={"symbol": ",".join(syms), "apikey": _TWELVEDATA_API_KEY},
-                             timeout=10)
-            r.raise_for_status()
-            body = r.json()
-            if isinstance(body, dict) and str(body.get("status", "")).lower() == "error":
-                return {"status": "mock", "asOf": None, "provider": "twelvedata", "stocks": []}
-            rows = []
+            # 2026-10-22: 温め置き(ブリッジの行か遅延値)がある銘柄はそれを使い、
+            # 無い銘柄だけ Yahoo の遅延値で取る。Twelve Data は呼ばない。
+            by_symbol = {}
+            need = []
             for sym in syms:
-                q = body.get(sym) if (isinstance(body, dict) and sym in body) else (body if len(syms) == 1 else None)
-                # Dynamic rows take the name from the quote itself.
-                meta = {"symbol": sym, "name": (q or {}).get("name") or sym}
-                row = _td_parse_row(meta, q)
-                if row is not None:
-                    rows.append(row)
+                warm = _td_warm_row(sym, now)
+                if warm is not None and warm.get("price") is not None:
+                    by_symbol[sym] = _canonical_cached_quote_row_age(
+                        {**warm, "name": warm.get("name") or sym}, now_epoch=now)
+                else:
+                    need.append(sym)
+            if need:
+                fetched, _ok, _limited, _err = _us_fallback_fetch(need)
+                for row in fetched:
+                    by_symbol[row["symbol"]] = row
+            rows = [by_symbol[sym] for sym in syms if sym in by_symbol]
             overall = ("live" if len(rows) == len(syms) and all(
                 row.get("status") == "live" for row in rows)
                 else "delayed" if len(rows) == len(syms) and rows and all(
                     row.get("status") == "delayed" for row in rows)
                 else "partial" if rows else "mock")
             as_of = max((row["date"] for row in rows if row.get("date")), default=None)
-            snapshot = {"status": overall, "asOf": as_of, "provider": "twelvedata", "stocks": rows}
+            snapshot = {"status": overall, "asOf": as_of, "provider": _US_FALLBACK_SOURCE,
+                        "stocks": rows}
             if rows:
                 if len(_US_DYN_CACHE) >= _DYN_CACHE_MAX:
                     # Evict the oldest snapshot only; clearing everything hid every other name.
@@ -3915,10 +3920,9 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
     if not allow_provider_fetch:
         return (_cached_quote_snapshot(_US_CACHE["data"]) if _US_CACHE["data"]
                 else _us_mock_snapshot())
-    if not _TWELVEDATA_API_KEY:
-        return _us_mock_snapshot()
-    # v13.5.54: the curated refresh is Twelve Data traffic too. Charge the same
+    # v13.5.54: the curated refresh is provider traffic too. Charge the same
     # ledger the scheduler uses and refuse to exceed the daily warm cap.
+    # 2026-10-22: the provider is the delayed Yahoo fallback, not Twelve Data.
     with _TD_WARM_LOCK:
         argus_td_warm.roll_ledger(_TD_WARM_STATE, datetime.now(pytz.utc))
         if int(_TD_WARM_STATE.get("usedToday") or 0) + len(_US_WATCHLIST) > _TD_WARM_DAILY_CAP:
@@ -3927,20 +3931,11 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
         _TD_WARM_STATE["usedToday"] = int(_TD_WARM_STATE.get("usedToday") or 0) + len(_US_WATCHLIST)
         _TD_WARM_STATE["requestsToday"] = int(_TD_WARM_STATE.get("requestsToday") or 0) + 1
     try:
-        symbols_q = ",".join(s["symbol"] for s in _US_WATCHLIST)
-        r = _td_get("quote", _TWELVEDATA_QUOTE,
-                         params={"symbol": symbols_q, "apikey": _TWELVEDATA_API_KEY},
-                         timeout=10)
-        r.raise_for_status()
-        body = r.json()
-        # A top-level error (bad key / quota) is a flat dict with status=error.
-        if isinstance(body, dict) and str(body.get("status", "")).lower() == "error":
-            return _us_mock_snapshot()
+        fetched, _ok, _limited, _err = _us_fallback_fetch([s["symbol"] for s in _US_WATCHLIST])
+        by_symbol = {row["symbol"]: row for row in fetched}
         rows = []
         for s in _US_WATCHLIST:
-            # Multi-symbol responses are keyed by symbol; single is flat.
-            q = body.get(s["symbol"]) if (isinstance(body, dict) and s["symbol"] in body) else body
-            row = _td_parse_row(s, q)
+            row = by_symbol.get(s["symbol"])
             if row is None:
                 return _us_mock_snapshot()  # any miss → full mock, never partial fake-live
             rows.append(row)
@@ -3950,7 +3945,7 @@ def _get_us_watchlist_core(symbols=None, allow_provider_fetch=True):
                        row.get("status") == "delayed" for row in rows)
                    else "partial")
         snapshot = {"status": overall, "asOf": as_of,
-                    "provider": "twelvedata", "stocks": rows}
+                    "provider": _US_FALLBACK_SOURCE, "stocks": rows}
         _US_CACHE["data"]    = snapshot
         _US_CACHE["expires"] = now + _US_CACHE_TTL
         return snapshot
@@ -4034,7 +4029,7 @@ def _td_other_daily_credits(universe_size):
             + len(_US_WATCHLIST) * _TD_OTHER_CURATED_COLD_REFRESHES)
 
 
-_TD_OTHER_DIAGNOSTICS_PER_DAY = 24   # 2 credits × ≤12 admin diagnostic runs
+_TD_OTHER_DIAGNOSTICS_PER_DAY = 0    # 2026-10-22: 管理用の Twelve Data 接続試験は削除済み
 _TD_OTHER_SEARCH_PER_DAY = 0         # 2026-10-22: 米国株の検索は moomoo の一覧(Twelve Data を使わない)
 _TD_OTHER_CURATED_COLD_REFRESHES = 4  # curated batch outside warm coverage
 
@@ -4178,32 +4173,70 @@ def _us_curated_from_warm(now):
     return _canonical_quote_snapshot_age(snapshot, "stocks")
 
 
-def _td_warm_fetch(batch):
-    """ONE /quote request for a batch (one credit per symbol). Returns
-    (rows, ok, rate_limited, error_class). Never raises."""
+# 2026-10-22 (owner: moomoo が主役・Twelve Data は解約予定): ブリッジの行が無い・
+# 古い米国株の価格の代わりは、既存の Yahoo の経路(_yf_quote)の遅延値。
+# 画面には遅延と分かる印(取引中は 20分遅延、時間外は終値の日付)を付け、
+# 変化(前日比)は Yahoo の基準が前日と限らないため欠測のままにする。
+# Twelve Data の価格(quote)はもう呼ばない。
+_US_FALLBACK_SOURCE = "yahoo-delayed"
+
+
+def _us_yahoo_delayed_row(sym, name=None, *, now=None, status=None):
+    now = time.time() if now is None else float(now)
+    quote = _yf_quote(str(sym).replace(".", "-"), status=status)
+    if not quote:
+        return None
+    price, _previous, provider_time = quote
+    if not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0:
+        return None
+    epoch = _coerce_epoch(provider_time)
+    if epoch is None or epoch > now + 60:
+        return None                      # 時刻の無い・未来の値は使わない
+    provider_iso = datetime.fromtimestamp(epoch, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    at = datetime.fromtimestamp(epoch, pytz.utc)
+    session_date = at.astimezone(TZ_ET).date()
+    bounds = argus_market_clock.market_session_bounds(argus_market_clock.US_EQUITY, session_date)
+    close_epoch = _coerce_epoch(bounds.get("regularCloseUtc"))
+    in_session = _td_us_session(datetime.fromtimestamp(now, pytz.utc)) == "REGULAR"
+    if not in_session and close_epoch is not None and epoch >= close_epoch - 60:
+        # 引け後の値はその日の終値として扱う(日付だけの終値の約束に合わせる)。
+        source_timestamp, delay_class = session_date.isoformat(), "EOD"
+    else:
+        source_timestamp = provider_iso
+        age = now - epoch
+        delay_class = "20m" if in_session and 0 <= age <= 40 * 60 else "UNKNOWN"
+    truth = _canonical_quote_source_age(source_timestamp, now_epoch=now)
+    return {"symbol": sym, "name": name or sym, "price": round(float(price), 4),
+            "close": round(float(price), 4), "changeAbs": None, "changePct": None,
+            "volume": 0, "date": session_date.isoformat(),
+            "sourceTimestamp": source_timestamp, "providerTimestamp": provider_iso,
+            "receivedAt": _ai_now_iso(), "source": _US_FALLBACK_SOURCE,
+            **truth, "status": "delayed", "freshness": "delayed",
+            # 終値(日付だけ)は時刻の約束どおり EOD、取引中は 20分遅延の表示。
+            "delayClass": (truth.get("delayClass") if source_timestamp != provider_iso
+                           else delay_class),
+            "realtimeEvidence": False}
+
+
+def _us_fallback_fetch(batch):
+    """ブリッジで賄えない米国株を Yahoo の遅延値で1銘柄ずつ。
+    (rows, ok, rate_limited, error_class) を返し、例外を出さない。429 で打ち切る。"""
+    names = {s["symbol"]: s["name"] for s in _US_WATCHLIST}
+    rows, rate_limited = [], False
     try:
-        r = _td_get("quote", _TWELVEDATA_QUOTE,
-                         params={"symbol": ",".join(batch), "apikey": _TWELVEDATA_API_KEY},
-                         timeout=10)
-        if r.status_code == 429:
-            return [], False, True, "http_429"
-        r.raise_for_status()
-        body = r.json()
-        if isinstance(body, dict) and str(body.get("status", "")).lower() == "error":
-            code = body.get("code")
-            return [], False, str(code) == "429", f"provider_error_{code}"
-        names = {s["symbol"]: s["name"] for s in _US_WATCHLIST}
-        rows = []
         for sym in batch:
-            q = (body.get(sym) if (isinstance(body, dict) and sym in body)
-                 else (body if len(batch) == 1 else None))
-            meta = {"symbol": sym, "name": names.get(sym) or (q or {}).get("name") or sym}
-            row = _td_parse_row(meta, q)
+            status = {}
+            row = _us_yahoo_delayed_row(sym, names.get(sym), status=status)
+            if status.get("httpStatus") == 429:
+                rate_limited = True
+                break
             if row is not None:
                 rows.append(row)
-        return rows, True, False, None
-    except Exception as e:
-        return [], False, False, type(e).__name__
+    except Exception as exc:
+        return rows, bool(rows), rate_limited, type(exc).__name__
+    if rate_limited:
+        return rows, False, True, "http_429"
+    return rows, bool(rows), False, (None if rows else "no_rows")
 
 
 # 2026-10-22 (owner: moomoo is the primary US price source): during the
@@ -4243,9 +4276,10 @@ def _td_bridge_covered_rows(symbols, now, session):
 
 def _td_warm_tick(now_utc=None):
     """One scheduler tick (called every ~30 s from run_scheduler). Bounded by
-    argus_td_warm.plan_tick: batch cap, daily cap, cadence, backoff."""
-    if not _TWELVEDATA_API_KEY:
-        return {"action": "skip", "reason": "no_api_key"}
+    argus_td_warm.plan_tick: batch cap, daily cap, cadence, backoff.
+
+    2026-10-22: symbols the moomoo bridge covers are served from the bridge; the
+    rest use the delayed Yahoo fallback. Twelve Data is no longer called here."""
     now_utc = now_utc or datetime.now(pytz.utc)
     now = now_utc.timestamp()
     session = _td_us_session(now_utc)
@@ -4275,7 +4309,7 @@ def _td_warm_tick(now_utc=None):
             cold_fill_when_closed=True)
         if decision["action"] != "fetch":
             return decision
-    rows, ok, rate_limited, err = _td_warm_fetch(decision["batch"])
+    rows, ok, rate_limited, err = _us_fallback_fetch(decision["batch"])
     # The cache-only card cannot invoke the legacy Finnhub fallback itself.
     # Reuse that bounded adapter in the already admitted background batch.
     have = {row.get("symbol") for row in rows}
@@ -4403,6 +4437,9 @@ def api_argus_twelvedata_budget():
                              "lastSaveError": _TD_USAGE.get("lastSaveError")}
     # 2026-10-22: how many symbols the last warm tick served from the moomoo bridge.
     body["bridgeCoveredLastTick"] = _TD_WARM_STATE.get("bridgeCovered")
+    # 2026-10-22: ブリッジで賄えない銘柄の代わりは Yahoo の遅延値(Twelve Data の価格は呼ばない)。
+    # 上の usedToday 等の見込みは、この代わりの取得数の上限管理に使っている。
+    body["warmFallbackProvider"] = _US_FALLBACK_SOURCE
     return jsonify(body)
 
 
@@ -16465,9 +16502,8 @@ def _system_health(*, allow_provider_fetch=True):
         us_quality = argus_us_price_quality.assess(us_targets, us_rows, session_open=us_open)
     except Exception:
         us_quality = {"status": "warning", "detailJa": "未確認 — 価格の保存を読めない"}
-    if not conf("twelvedata"):
-        us_quality = {**us_quality, "status": "warning",
-                      "detailJa": us_quality["detailJa"] + " · Twelve Data 要設定"}
+    # 2026-10-22: 米国株の価格は moomoo が主役。Twelve Data の鍵の有無では警告しない
+    # (解約後に誤って橙にしない)。価格そのものの品質判定はそのまま。
     L("prices_us", "米国株価格", us_quality["status"], us_quality["detailJa"])
     # 2026-10-20 (owner: 恒久性): the persistent disk's free space against what the
     # start's storage check requires, measured now (file sizes only). On 10/20
@@ -48383,19 +48419,6 @@ def _provider_diagnostics():
                                  "Subscription-Key": _EDINET_API_KEY}, timeout=_DIAG_TIMEOUT)
         return r.status_code, len((r.json() or {}).get("results", []) if r.status_code == 200 else [])
 
-    def _td_quote():
-        r = _td_get("quote", _TWELVEDATA_QUOTE, params={"symbol": "AAPL", "apikey": _TWELVEDATA_API_KEY},
-                         timeout=_DIAG_TIMEOUT)
-        j = r.json() if r.status_code == 200 else {}
-        return r.status_code, (1 if isinstance(j, dict) and j.get("symbol") else 0)
-
-    def _td_ts():
-        r = _td_get("time_series", "https://api.twelvedata.com/time_series",
-                         params={"symbol": "SPY", "interval": "5min", "outputsize": 1,
-                                 "apikey": _TWELVEDATA_API_KEY}, timeout=_DIAG_TIMEOUT)
-        j = r.json() if r.status_code == 200 else {}
-        return r.status_code, len((j or {}).get("values", []) if isinstance(j, dict) else [])
-
     def _fred():
         r = requests.get("https://api.stlouisfed.org/fred/series/observations",
                          params={"series_id": "DGS10", "api_key": _FRED_API_KEY, "file_type": "json",
@@ -48408,19 +48431,8 @@ def _provider_diagnostics():
         j = r.json() if r.status_code == 200 else {}
         return r.status_code, (1 if isinstance(j, dict) and j.get("c") else 0)
 
-    # 2026-10-04: whether the existing contracts carry analyst target prices
-    # (Twelve Data answers 200 with an error body when a plan lacks an
-    # endpoint, so only a body with the field counts).
-    def _td_analysis(endpoint, field, params):
-        def probe():
-            r = _td_get(endpoint, f"https://api.twelvedata.com/{endpoint}",
-                             params={**params, "apikey": _TWELVEDATA_API_KEY}, timeout=_DIAG_TIMEOUT)
-            j = r.json() if r.status_code == 200 else {}
-            if isinstance(j, dict) and j.get("status") == "error":
-                return int(j.get("code") or 403), 0
-            return r.status_code, (1 if isinstance(j, dict) and j.get(field) else 0)
-        return probe
-
+    # 2026-10-22: Twelve Data の接続試験(価格・日足・目標株価・評価)は削除した。
+    # 米国株のデータは moomoo が主役で、Twelve Data は解約に向けて使用を0にする。
     def _fh_analysis(path, params):
         def probe():
             r = requests.get(f"https://finnhub.io/api/v1/{path}", params={**params, "token": FINNHUB_API_KEY},
@@ -48483,21 +48495,8 @@ def _provider_diagnostics():
                     limitations="投資部門別売買。判断には未接続（状態可視化のみ・文脈データ）。Light以上。"),
         _diag_probe("edinet", bool(_EDINET_API_KEY), _edinet, caps=["official_filings"],
                     limitations="EDINET v2 公式開示。"),
-        _diag_probe("twelvedata-quote", bool(_TWELVEDATA_API_KEY), _td_quote, caps=["quote"],
-                    limitations="Twelve Data。Growはquota拡張であってL2/tape/options/borrowの代替ではない。"),
-        _diag_probe("twelvedata-timeseries", bool(_TWELVEDATA_API_KEY), _td_ts, caps=["time_series", "vwap_bars"],
-                    limitations="時間外liveは実証時のみ。"),
         _diag_probe("fred", bool(_FRED_API_KEY), _fred, caps=["macro"], limitations="金利/VIX/HY OAS。"),
         _diag_probe("finnhub", bool(FINNHUB_API_KEY), _finnhub, caps=["quote", "news"], limitations="二次媒体/相場。"),
-        _diag_probe("twelvedata-price-target", bool(_TWELVEDATA_API_KEY),
-                    _td_analysis("price_target", "price_target", {"symbol": "AAPL"}), caps=["price_target"],
-                    limitations="目標株価(米国)。契約で使えるかの確認用。"),
-        _diag_probe("twelvedata-price-target-jp", bool(_TWELVEDATA_API_KEY),
-                    _td_analysis("price_target", "price_target", {"symbol": "7203", "exchange": "JPX"}),
-                    caps=["price_target_jp"], limitations="目標株価(日本株)。契約で使えるかの確認用。"),
-        _diag_probe("twelvedata-recommendations", bool(_TWELVEDATA_API_KEY),
-                    _td_analysis("recommendations", "trends", {"symbol": "AAPL"}), caps=["recommendations"],
-                    limitations="アナリストの評価の内訳。契約で使えるかの確認用。"),
         _diag_probe("finnhub-price-target", bool(FINNHUB_API_KEY),
                     _fh_analysis("stock/price-target", {"symbol": "AAPL"}), caps=["price_target"],
                     limitations="Finnhubの目標株価(公式にはPremium)。確認用。"),
@@ -48568,8 +48567,6 @@ def _provider_diagnostics_cached_only():
         ("jquants-short-ratio", bool(_JQUANTS_API_KEY)),
         ("jquants-investor-types", bool(_JQUANTS_API_KEY)),
         ("edinet", bool(_EDINET_API_KEY)),
-        ("twelvedata-quote", bool(_TWELVEDATA_API_KEY)),
-        ("twelvedata-timeseries", bool(_TWELVEDATA_API_KEY)),
         ("fred", bool(_FRED_API_KEY)),
         ("finnhub", bool(FINNHUB_API_KEY)),
         ("alphavantage", bool(_ALPHAVANTAGE_KEY)),

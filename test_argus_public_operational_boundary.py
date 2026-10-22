@@ -1640,12 +1640,13 @@ def _td_fresh_state(monkeypatch, *, session="REGULAR", owner=("SPCX", "IONQ", "S
 
 
 def _td_fake_provider(monkeypatch, calls, *, status=200, body_status=None):
+    """2026-10-22: the warm fallback is the existing delayed Yahoo chart route,
+    one symbol per request. Twelve Data must never be called for prices."""
     import datetime as _dt
 
     class _Resp:
-        def __init__(self, syms):
+        def __init__(self):
             self.status_code = status
-            self._syms = syms
 
         def raise_for_status(self):
             if self.status_code >= 400:
@@ -1654,16 +1655,15 @@ def _td_fake_provider(monkeypatch, calls, *, status=200, body_status=None):
         def json(self):
             if body_status:
                 return body_status
-            stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-            rows = {s: {"symbol": s, "name": s, "close": "100.5", "change": "1.0",
-                        "percent_change": "1.0", "volume": "1000", "datetime": stamp}
-                    for s in self._syms}
-            return rows if len(self._syms) > 1 else rows[self._syms[0]]
+            stamp = int(_dt.datetime.now(_dt.timezone.utc).timestamp())
+            return {"chart": {"result": [{"meta": {
+                "regularMarketPrice": 100.5, "chartPreviousClose": 99.5,
+                "regularMarketTime": stamp}}]}}
 
     def _get(url, params=None, **k):
-        syms = [x for x in str((params or {}).get("symbol") or "").split(",") if x]
-        calls.append(syms)
-        return _Resp(syms)
+        assert "twelvedata" not in str(url), url
+        calls.append(str(url).split("/chart/", 1)[1].split("?", 1)[0])
+        return _Resp()
 
     monkeypatch.setattr(scanner.requests, "get", _get)
 
@@ -1689,12 +1689,12 @@ def test_warm_tick_rotates_nine_symbols_across_two_eligible_minutes(monkeypatch)
     t0 = _dt.datetime.now(_dt.timezone.utc)
     first = scanner._td_warm_tick(now_utc=t0)
     assert first["action"] == "fetch" and first["ok"] is True
-    assert calls == [_TD_NINE[:8]]                    # one request, 8 credits
+    assert calls == _TD_NINE[:8]                      # one bounded batch, one request per symbol
     assert first["rowsStored"] == 8
     again = scanner._td_warm_tick(now_utc=t0 + _dt.timedelta(seconds=30))
     assert again["action"] == "skip" and again["reason"] == "minute_gap"
     second = scanner._td_warm_tick(now_utc=t0 + _dt.timedelta(seconds=61))
-    assert second["action"] == "fetch" and calls[-1] == ["MU"]
+    assert second["action"] == "fetch" and calls[8:] == ["MU"]
     assert scanner._TD_WARM_STATE["usedToday"] == 9
     assert scanner._TD_WARM_STATE["warmSymbolCount"] == 9
 
@@ -1704,7 +1704,8 @@ def test_warm_tick_rotates_nine_symbols_across_two_eligible_minutes(monkeypatch)
     assert "droppedSymbols" not in body
     assert all(r.get("sourceTimestamp") for r in body["stocks"])
     assert body["coverage"]["total"] == 9 and body["coverage"]["mock"] == 0
-    assert len(calls) == 2                            # the GET fetched nothing
+    assert all(r["source"] == "yahoo-delayed" and r["status"] == "delayed" for r in body["stocks"])
+    assert len(calls) == 9                            # the GET fetched nothing
 
 
 def test_curated_snapshot_is_served_from_warm_rows_without_a_second_credit(monkeypatch):
@@ -1715,11 +1716,11 @@ def test_curated_snapshot_is_served_from_warm_rows_without_a_second_credit(monke
     # The scheduler and its cache consumer must use the same test clock.
     t0 = _dt.datetime.now(_dt.timezone.utc)
     assert scanner._td_warm_tick(now_utc=t0)["ok"] is True
-    assert calls == [["NVDA", "AAPL", "TSLA", "META"]]
+    assert calls == ["NVDA", "AAPL", "TSLA", "META"]
     snap = scanner._get_us_watchlist_core(None, allow_provider_fetch=True)
     assert snap.get("cacheState") == "warm_scheduler"
     assert [r["symbol"] for r in snap["stocks"]] == ["NVDA", "AAPL", "TSLA", "META"]
-    assert len(calls) == 1                            # no duplicate provider call
+    assert len(calls) == 4                            # no duplicate provider call
     assert scanner._quote_cached_only("META", "US")["price"] == 100.5
 
 
@@ -1762,12 +1763,20 @@ def test_rate_limit_backs_off_and_charges_the_attempt(monkeypatch):
     assert len(calls) == 1
 
 
-def test_warm_tick_without_an_api_key_never_calls_the_provider(monkeypatch):
+def test_warm_tick_without_a_twelve_data_key_uses_only_the_delayed_fallback(monkeypatch):
+    """2026-10-22: Twelve Data is being cancelled; the warm tick no longer needs
+    its key and never calls it. The fallback rows are delayed, never live, and
+    the change is left missing rather than computed against an unknown base."""
     _td_fresh_state(monkeypatch)
     monkeypatch.setattr(scanner, "_TWELVEDATA_API_KEY", None)
     calls = []
     _td_fake_provider(monkeypatch, calls)
-    assert scanner._td_warm_tick()["reason"] == "no_api_key" and calls == []
+    result = scanner._td_warm_tick()
+    assert result["action"] == "fetch" and calls == _TD_NINE[:8]
+    row = scanner._US_WARM_ROWS["NVDA"]["row"]
+    assert row["source"] == "yahoo-delayed" and row["status"] == "delayed"
+    assert row["realtimeEvidence"] is False and row["changePct"] is None
+    assert row["delayClass"] in ("20m", "UNKNOWN")
 
 
 def test_decision_evidence_falls_back_to_the_published_verified_snapshot(monkeypatch):
@@ -2385,7 +2394,7 @@ def test_closed_market_cold_fill_runs_one_bounded_rotation_after_a_redeploy(monk
     t0 = _dt.datetime(2026, 9, 7, 12, 0, tzinfo=_dt.timezone.utc)   # Labor Day
     first = scanner._td_warm_tick(now_utc=t0)
     assert first["action"] == "fetch" and first.get("coldFill") is True
-    assert len(calls) == 1 and len(first["batch"]) == 8
+    assert len(calls) == 8 and len(first["batch"]) == 8
     second = scanner._td_warm_tick(now_utc=t0 + _dt.timedelta(seconds=61))
     assert second["action"] == "fetch" and second["cycleComplete"] is True     # the ninth symbol
     third = scanner._td_warm_tick(now_utc=t0 + _dt.timedelta(seconds=122))
@@ -3489,7 +3498,7 @@ def test_us_background_fallback_fills_only_missing_admitted_rows(monkeypatch):
     stamp = now.isoformat()
     def row(sym, source):
         return {'symbol': sym, 'price': 120, 'source': source, 'sourceTimestamp': stamp}
-    monkeypatch.setattr(scanner, '_td_warm_fetch', lambda batch: ([row(batch[0], 'twelvedata')], True, False, None))
+    monkeypatch.setattr(scanner, '_us_fallback_fetch', lambda batch: ([row(batch[0], 'yahoo-delayed')], True, False, None))
     monkeypatch.setattr(scanner, '_finnhub_quote_row', lambda sym: calls.append(sym) or row(sym, 'finnhub'))
     result = scanner._td_warm_tick(now_utc=now)
     assert calls == result['batch'][1:]

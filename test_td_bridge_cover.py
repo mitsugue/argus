@@ -29,7 +29,7 @@ def _setup(monkeypatch, pushed):
     monkeypatch.setattr(scanner, "_US_WARM_ROWS", {})
     monkeypatch.setattr(scanner, "_TD_WARM_STATE", {})
     asked = []
-    monkeypatch.setattr(scanner, "_td_warm_fetch", lambda batch: (asked.append(list(batch)) or ([], True, False, None)))
+    monkeypatch.setattr(scanner, "_us_fallback_fetch", lambda batch: (asked.append(list(batch)) or ([], True, False, None)))
     return asked
 
 
@@ -41,7 +41,7 @@ def test_bridge_live_symbols_are_served_from_the_bridge_and_not_bought(monkeypat
     assert scanner._TD_WARM_STATE["bridgeCovered"] == 2
 
 
-def test_stale_or_delayed_bridge_rows_still_use_twelve_data(monkeypatch):
+def test_stale_or_delayed_bridge_rows_still_use_the_delayed_fallback(monkeypatch):
     delayed = {**_live_row("NVDA"), "status": "delayed", "realtimeEvidence": False}
     asked = _setup(monkeypatch, {"AAPL": (_live_row("AAPL"), 600), "NVDA": (delayed, 10)})
     scanner._td_warm_tick(NOW)
