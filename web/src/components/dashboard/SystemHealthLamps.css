@@ -28,7 +28,10 @@
 }
 .shl-row { display: flex; align-items: center; gap: 8px; }
 .shl-label { min-width: 92px; color: var(--text-main); font-weight: 500; }
-.shl-detail { color: var(--text-faint, #5f6b78); }
+.shl-detail {
+  color: var(--text-faint, #5f6b78);
+  flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .shl-note { margin-top: 3px; font-size: 10px; color: var(--text-faint, #5f6b78); line-height: 1.5; }
 
 /* Brand popover (opened by tapping the A.R.G.U.S. logo) — tap overlay to close. */
