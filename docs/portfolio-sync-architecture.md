@@ -19,7 +19,8 @@
   encryptionStatus = `client_encrypted`。サーバーは平文を一度も見ない。
 - サーバー側に**平文**の保有を置く方式(Supabase/私的DB等)はモデル定義のみで
   **無効**(`scanner._PORTFOLIO_SERVER_SYNC_ENABLED = False`・環境変数では
-  有効化できない設計)。エンドポイントはadmin認証後でも `403 disabled` を返す。
+  有効化できない設計)。停止中の同期経路(pull/push/snapshots)は2026-10-23に
+  撤去し、admin認証後でも404になる。
 
 ### C. スナップショット/監査層(v11.9.0で新設)
 - `argus.portfolio.snapshots.v1` — 1日1件の追記スナップショット(上限60件):

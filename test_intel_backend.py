@@ -18,18 +18,11 @@ def test_rss_parse_strips_markup_and_is_data():
     assert "<b>" not in rows[0]["title"]
 
 
-def test_capture_is_owner_only():
+def test_capture_route_is_retired():
     with scanner.app.test_client() as c:
-        # no admin token → gated (401/403/503), never an open 200 write
+        # retired 2026-10-23: no browser or operator write path remains
         r = c.post("/api/argus/institutional-intelligence/capture", json={"title": "x", "cookies": "secret"})
-        assert r.status_code != 200 and r.status_code >= 400
-
-
-def test_capture_forbidden_fields_guarded():
-    import inspect
-    src = inspect.getsource(scanner.api_argus_intel_capture)
-    for f in ("credentials", "cookies", "token", "session", "password"):
-        assert f in src           # credential-rejection guard present (defense in depth)
+        assert r.status_code == 404
 
 
 def test_licensed_feeds_disabled():

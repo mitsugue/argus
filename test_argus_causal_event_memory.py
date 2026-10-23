@@ -427,12 +427,12 @@ def test_replay_backfill_and_forward_live_remain_separate(tmp_path):
                    received=f"2026-07-{10 + idx:02d}T02:33:00Z")
         payloads.append(build_event(raw, known=at, origin=origin))
     _, state = ledger_state(tmp_path, *payloads)
-    view = cem.compact_public_view(state, as_of=T2)
-    assert view["maturity"]["forwardLiveIndependentEpisodes"] == 1
-    assert view["calibrationMode"] == "SHADOW"
-    assert view["automaticCalibrationEnabled"] is False
-    assert view["maturity"]["minimumTradingDaySpan"] == 120
-    assert "minimumCalendarSpanDays" not in view["maturity"]
+    current = cem.maturity(state, as_of=T2)
+    assert current["forwardLiveIndependentEpisodes"] == 1
+    assert cem.CALIBRATION_MODE == "SHADOW"
+    assert {row["origin"] for row in cem.all_event_views(state)} == set(cem.ORIGINS)
+    assert current["minimumTradingDaySpan"] == 120
+    assert "minimumCalendarSpanDays" not in current
 
 
 def test_maturity_span_counts_weekdays_not_calendar_days(tmp_path):

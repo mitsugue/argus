@@ -1524,26 +1524,6 @@ def api_argus_decision_value_shadow_run():
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}), 500
 
-@app.route("/api/argus/decision-value/shadow-summary", methods=["GET", "POST"])
-def api_argus_decision_value_shadow_summary():
-    """Owner-gated FULL shadow summary from the private store (includes netR). The
-    public /decision-value/summary carries only n + sampleStage."""
-    body = request.get_json(silent=True) or {}
-    token = body.get("ownerToken") if isinstance(body, dict) else None
-    ok, err, code = _require_owner_sync(body_token=token)
-    if not ok:
-        return jsonify(err), code
-    if not _layer2b_store_configured():
-        return jsonify({"status": "disabled_pending_private_store"})
-    import json as _json
-    content, _ = _gh_private_get("decision_value/summary.json")
-    if not content:
-        return jsonify({"status": "no_data_yet"})
-    try:
-        return jsonify({"status": "ok", "summary": _json.loads(content)})
-    except Exception:
-        return jsonify({"status": "parse_error"})
-
 
 _DV_STATUS_CACHE = {"data": None, "expires": 0.0}
 
@@ -8426,23 +8406,6 @@ def _watchlist_theme_items():
 _PORTFOLIO_SERVER_SYNC_ENABLED = False
 
 
-@app.route("/api/argus/portfolio-sync/pull", methods=["GET"])
-@app.route("/api/argus/portfolio-sync/push", methods=["POST"])
-@app.route("/api/argus/portfolio-sync/snapshots", methods=["GET", "POST"])
-def api_argus_portfolio_sync_disabled():
-    """Server-side plaintext sync stubs — admin-gated AND disabled. Even a
-    valid admin token gets 'disabled' until an authenticated private store
-    exists; the client-encrypted vault remains the sync path."""
-    ok, err, code = _require_admin()
-    if not ok:
-        return jsonify(err), code
-    return jsonify({"status": "disabled",
-                    "reasonJa": "サーバー側に平文の保有データを置く同期は、認証基盤が"
-                                "整うまで無効です。端末間同期は既存のパスフレーズ暗号化"
-                                "バックアップ(vault)をご利用ください。",
-                    "syncSchemaVersion": argus_portfolio_sync.SYNC_SCHEMA_VERSION}), 403
-
-
 # ── V11.11.0 US daily-bars cache (Finnhub candles; warmed by the collect cron
 # only — public GETs read cache). Feeds US supply/demand volume metrics, flow
 # volumeRatio, and the Decision Quality outcome updater. ──────────────────────
@@ -10070,27 +10033,6 @@ def api_argus_event_intel(symbol):
                                         if omitted_old else None)})
 
 
-@app.route("/api/argus/institutional-intelligence/capture", methods=["POST"])
-def api_argus_intel_capture():
-    """Owner Share/Capture (§3B) — title/link/excerpt/institution only. NEVER
-    credentials/cookies/tokens/authenticated content."""
-    ok, err, code = _require_admin()
-    if not ok:
-        return jsonify(err), code
-    b = request.get_json(silent=True) or {}
-    for forbidden in ("credentials", "cookies", "token", "session", "password"):
-        if forbidden in b:
-            return jsonify({"error": "forbidden_field", "field": forbidden}), 400
-    raw = {"sourceId": "owner_capture", "title": (b.get("title") or "")[:300],
-           "canonicalUrl": (b.get("url") or "")[:600], "author": b.get("analyst"),
-           "publicSnippet": (b.get("excerpt") or "")[:500],
-           "linkedAssets": b.get("relatedAssets") or [], "firstDetectedAt": _ai_now_iso(), "fetchedAt": _ai_now_iso()}
-    item = argus_research_mesh.normalize_item(raw)
-    _INTEL_STORE.insert(0, item)
-    del _INTEL_STORE[_INTEL_STORE_MAX:]
-    return jsonify({"ok": True, "intelligenceId": item["intelligenceId"], "accessClass": item["accessClass"]})
-
-
 _MISSED_INTEL = []
 _INST_ALIAS_OVERLAY = []   # §22 owner-approved alias additions (persisted; re-applied at load)
 
@@ -10101,53 +10043,6 @@ def _symbol_name_map():
         out[str(x["symbol"]).upper()] = x.get("name") or ""
     return out
 
-@app.route("/api/argus/institutional-intelligence/missed", methods=["POST"])
-def api_argus_intel_missed():
-    """Owner 'missed important info' feedback (§22) — replays the detection rules to
-    report WHY it was missed, links it to the nearest root event, and records it.
-    Never auto-retrains (a fix is suggested; applying it is a separate manual step)."""
-    ok, err, code = _require_admin()
-    if not ok:
-        return jsonify(err), code
-    b = request.get_json(silent=True) or {}
-    sym = (b.get("symbol") or "").upper()
-    diag = argus_research_mesh.diagnose_miss(
-        url=b.get("url"), title=b.get("title") or b.get("why"), institution=b.get("institution"),
-        symbol=sym, known_symbol_names=_symbol_name_map())
-    # nearest root event = an active downside incident on the same symbol, if any
-    root = None
-    try:
-        for inc in (get_downside_incidents().get("incidents") or []):
-            if str(inc.get("symbol")).upper() == sym:
-                root = {"eventId": sym, "incidentId": inc.get("incidentId"), "severity": inc.get("severity")}
-                break
-    except Exception:
-        pass
-    rec = {"url": (b.get("url") or "")[:600], "institution": b.get("institution"),
-           "symbol": sym, "title": (b.get("title") or "")[:300], "whyJa": (b.get("why") or "")[:400],
-           "at": _ai_now_iso(), "diagnosis": diag, "rootEvent": root, "status": "recorded"}
-    _MISSED_INTEL.insert(0, rec)
-    del _MISSED_INTEL[200:]
-    _intel_persist()
-    return jsonify({"ok": True, "recorded": rec})
-
-@app.route("/api/argus/institutional-intelligence/missed/apply", methods=["POST"])
-def api_argus_intel_missed_apply():
-    """Admin: apply a suggested fix from a missed-intel diagnosis (§22 — MANUAL).
-    Currently supports adding an institution alias. Persisted as an OVERLAY over the
-    seed; re-applied at load. Never edits the seed, never auto-retrains."""
-    ok, err, code = _require_admin()
-    if not ok:
-        return jsonify(err), code
-    b = request.get_json(silent=True) or {}
-    iid, alias = b.get("institutionId"), b.get("alias")
-    if not argus_research_mesh.register_institution_alias(iid, alias):
-        return jsonify({"ok": False, "reason": "invalid_or_too_short_alias"}), 200
-    entry = {"institutionId": str(iid).lower(), "alias": str(alias).lower(), "at": _ai_now_iso()}
-    if entry not in _INST_ALIAS_OVERLAY:
-        _INST_ALIAS_OVERLAY.append(entry)
-        _intel_persist()
-    return jsonify({"ok": True, "applied": entry, "overlaySize": len(_INST_ALIAS_OVERLAY)})
 
 _intel_restore()        # §27 reload any persisted intel at startup (avoids WARMING)
 
@@ -16232,10 +16127,6 @@ def _require_admin():
 _AUTH_OPERATIONAL_MUTATION_ROUTES = frozenset({
     "/api/argus/caos/investigate-now",
     "/api/argus/news/translation-request",
-    "/api/argus/osint/deep-dive",
-    "/api/argus/osint/terms",
-    "/api/argus/osint/verify-gaps",
-    "/api/argus/osint/url-verify",
     "/api/argus/mover-causes/explain-request",
     "/api/argus/vault-push",
 })
@@ -21224,67 +21115,6 @@ def api_argus_admin_news_quarantine_review():
                         "error": f"{type(e).__name__}: {str(e)[:120]}"}), 500
 
 
-@app.route("/api/argus/event-memory")
-def api_argus_event_memory():
-    """Compact public evidence view.  Never sends the archive to the browser."""
-    try:
-        state = _causal_memory_ensure_loaded()
-        return jsonify(argus_causal_event_memory.compact_public_view(
-            state, as_of=_ai_now_iso(), event_limit=20))
-    except Exception as exc:
-        return jsonify({
-            "schemaVersion": "argus-causal-event-memory-view-v1",
-            "generatedAt": _ai_now_iso(), "eventCount": 0, "events": [],
-            "openEvents": 0, "flagRecoveryCount": 0,
-            "calibrationMode": "SHADOW", "automaticCalibrationEnabled": False,
-            "status": "DATA_GATED", "reason": type(exc).__name__,
-            "authority": "EVENT_MEMORY_EVIDENCE", "sdaAuthority": False,
-        })
-
-
-@app.route("/api/argus/event-memory/<event_id>")
-def api_argus_event_memory_detail(event_id):
-    """Contextual event timeline; no new navigation/decision authority."""
-    try:
-        state = _causal_memory_ensure_loaded()
-        raw = (state.get("events") or {}).get(str(event_id))
-        if not raw:
-            return jsonify({"error": "event_not_found"}), 404
-        view = argus_causal_event_memory.event_view(raw)
-        analog = argus_causal_event_memory.retrieve_analogs(
-            state, event_id=str(event_id), as_of=view["eventDecisionCutoff"])
-        timeline = []
-        for revision in raw.get("revisions") or []:
-            timeline.append({"kind": "EVENT_REVISION", "at": revision["knownAt"],
-                             "eventVersion": revision["eventVersion"],
-                             "severity": revision["currentSeverity"],
-                             "sourceRefs": revision["sourceRefs"]})
-        for assessment in raw.get("assessments") or []:
-            timeline.append({"kind": "HYPOTHESIS_ASSESSMENT",
-                             "at": assessment["evaluatedAt"],
-                             "hypothesisId": assessment["hypothesisId"],
-                             "status": assessment["status"],
-                             "eventStatus": assessment["eventStatus"],
-                             "flagRecovery": assessment["flagRecovery"],
-                             "attributionMode": assessment["attributionMode"],
-                             "causalLanguage": assessment["causalLanguage"]})
-        for outcome in raw.get("outcomes") or []:
-            timeline.append({"kind": "OUTCOME_WINDOW", "at": outcome["knownAt"],
-                             "horizon": outcome["horizon"],
-                             "status": outcome["status"],
-                             "metrics": outcome["metrics"]})
-        timeline.sort(key=lambda row: (row["at"], row["kind"]))
-        return jsonify({
-            "schemaVersion": "argus-causal-event-detail-v1",
-            "generatedAt": _ai_now_iso(), "event": view,
-            "timeline": timeline, "analogs": analog,
-            "calibrationMode": "SHADOW",
-            "authority": "EVENT_MEMORY_EVIDENCE", "sdaAuthority": False,
-        })
-    except Exception as exc:
-        return jsonify({"error": type(exc).__name__}), 500
-
-
 @app.route("/api/argus/event-memory/health")
 def api_argus_event_memory_health():
     state = _causal_memory_ensure_loaded()
@@ -21315,97 +21145,6 @@ def api_argus_event_memory_health():
             "sdaAuthority": False,
         })
 
-
-@app.route("/api/argus/admin/event-memory/assess", methods=["POST"])
-def api_argus_admin_event_memory_assess():
-    """Owner-gated explicit evidence append.  No historical mutation."""
-    ok, err, code = _require_admin()
-    if not ok:
-        return jsonify(err), code
-    body = request.get_json(silent=True) or {}
-    try:
-        event = _causal_memory_internal_event(str(body.get("eventId") or ""))
-        if not event:
-            return jsonify({"ok": False, "error": "event_not_found"}), 404
-        assessment = argus_causal_event_memory.build_assessment(
-            event=event, hypothesis_id=str(body.get("hypothesisId") or ""),
-            # The server clock owns append knowledge time; callers cannot
-            # backdate later confirmation into the original event history.
-            evaluated_at=_ai_now_iso(),
-            evidence=body.get("evidence") or [],
-            attribution_mode=str(body.get("attributionMode") or
-                                 "ATTRIBUTION_UNCERTAIN"),
-            competing_event_refs=body.get("competingEventRefs") or [],
-            code_identity=_causal_memory_code_identity())
-        record = _causal_memory_append(assessment)
-        return jsonify({"ok": True, "recordId": record["recordId"],
-                        "status": assessment["status"],
-                        "eventStatus": assessment["eventStatus"],
-                        "flagRecovery": assessment["flagRecovery"]})
-    except Exception as exc:
-        return jsonify({"ok": False, "error": type(exc).__name__}), 400
-
-
-@app.route("/api/argus/admin/event-memory/review", methods=["POST"])
-def api_argus_admin_event_memory_review():
-    """Append MISSED_MATERIAL_EVENT or FALSE_ALERT_REVIEW evidence."""
-    ok, err, code = _require_admin()
-    if not ok:
-        return jsonify(err), code
-    body = request.get_json(silent=True) or {}
-    try:
-        event = _causal_memory_internal_event(str(body.get("eventId") or ""))
-        if not event:
-            return jsonify({"ok": False, "error": "event_not_found"}), 404
-        review = argus_causal_event_memory.build_review(
-            event=event, review_type=str(body.get("reviewType") or ""),
-            finding_at=_ai_now_iso(),
-            reason_codes=body.get("reasonCodes") or [],
-            policy_change_warranted=bool(body.get("policyChangeWarranted")),
-            regression_fixture_ref=body.get("regressionFixtureRef"),
-            evidence_refs=body.get("evidenceRefs") or [],
-            code_identity=_causal_memory_code_identity())
-        record = _causal_memory_append(review)
-        return jsonify({"ok": True, "recordId": record["recordId"],
-                        "reviewType": review["reviewType"],
-                        "historyMutated": False})
-    except Exception as exc:
-        return jsonify({"ok": False, "error": type(exc).__name__}), 400
-
-
-@app.route("/api/argus/admin/event-memory/outcome", methods=["POST"])
-def api_argus_admin_event_memory_outcome():
-    """Append a point-in-time outcome observation without re-scoring decisions.
-
-    Prediction Ledger remains outcome/scoring authority.  This route only links
-    Market Data Truth observations (or an explicit missing-data result) to the
-    immutable event timeline.
-    """
-    ok, err, code = _require_admin()
-    if not ok:
-        return jsonify(err), code
-    body = request.get_json(silent=True) or {}
-    try:
-        event = _causal_memory_internal_event(str(body.get("eventId") or ""))
-        if not event:
-            return jsonify({"ok": False, "error": "event_not_found"}), 404
-        outcome = argus_causal_event_memory.build_outcome_window(
-            event=event, hypothesis_id=str(body.get("hypothesisId") or ""),
-            horizon=str(body.get("horizon") or ""),
-            target_at=str(body.get("targetAt") or ""),
-            observed_at=str(body.get("observedAt") or ""),
-            known_at=_ai_now_iso(),
-            metrics=body.get("metrics"), truth_refs=body.get("truthRefs"),
-            missing_reasons=body.get("missingReasons"),
-            code_identity=_causal_memory_code_identity())
-        record = _causal_memory_append(outcome)
-        return jsonify({"ok": True, "recordId": record["recordId"],
-                        "status": outcome["status"],
-                        "horizon": outcome["horizon"],
-                        "policyInfluence": False,
-                        "predictionLedgerScoringReused": True})
-    except Exception as exc:
-        return jsonify({"ok": False, "error": type(exc).__name__}), 400
 
 def get_news_radar():
     now = time.time()
@@ -23845,7 +23584,6 @@ _LEDGER_COMPARE_RESPONSE_MAX_BYTES = \
     argus_remote_recovery.MAX_SIDECAR_BYTES
 _OSINT_LOOP_BUDGET = {"fast": 0, "balanced": 1, "deep": 2, "war_room": 3}
 _OSINT_PARSER_HEALTH = {"lastWarnings": [], "at": None}
-_OSINT_URL_QUEUE = []                  # オーナー依頼のURL検証待ち(有界12・worker消化)
 _OSINT_CAP_REACHED = {"count": 0}      # 検証上限到達の累計(DQ表示用)
 _OSINT_RPS_HISTORY = []                # Research Powerスコア履歴(公開安全・有界40)
 _OSINT_BLOCKED_RECOVERY = {"attempted": 0, "recovered": 0}   # v12.1.4 代替回収の実績
@@ -32494,51 +32232,6 @@ def _osint_next_cron_eta_min():
         return None
 
 
-@app.route("/api/argus/osint/deep-dive", methods=["POST"])
-def api_argus_osint_deep_dive():
-    """公開POST: 決定論OSINT(計画+cached収集+検証+採点)のみ実行し、
-    Gemini/GPTスカウトはキューに積むだけ(外部AIはここから絶対に呼ばれない)。"""
-    body = request.get_json(silent=True) or {}
-    sym = str(body.get("symbol") or "").strip().upper()
-    if not sym:
-        return jsonify({"error": "symbol_required"}), 400
-    mkt = str(body.get("market") or ("JP" if sym[:1].isdigit() else "US")).upper()
-    mode = body.get("mode") if body.get("mode") in argus_osint_engine.MODES else "deep"
-    priv = body.get("privacyMode") if body.get("privacyMode") in argus_osint_engine.PRIVACY_MODES else "redacted"
-    now_iso = _ai_now_iso()
-    queued = [{"provider": "gpt", "status": "queued"}]
-    agent_runs = [_osint_agent_run("deterministic", "ok", None, now_iso, priv)]
-    for qr in queued:
-        agent_runs.append({**_osint_agent_run(qr["provider"], "disabled", None, now_iso, priv),
-                           "status": ("queued" if (_OPENAI_API_KEY if qr["provider"] == "gpt"
-                                                   else (google_genai and GEMINI_API_KEY))
-                                      else "disabled")})
-    # v12.1.1 Part E: 二重実行防止 — 既にキュー済み/実行中なら新規jobを作らない
-    pr = _OSINT_PROGRESS.get(sym) or {}
-    if sym in _OSINT_AGENT_QUEUE or pr.get("stage") in (
-            "planning", "gemini_scout", "gpt_scout", "verification", "research_loop"):
-        pos = (list(_OSINT_AGENT_QUEUE.keys()).index(sym) + 1
-               if sym in _OSINT_AGENT_QUEUE else 0)
-        return jsonify({"ok": True, "investigation": _OSINT_STORE.get(sym),
-                        "duplicate": True, "progress": pr,
-                        "queuePosition": pos, "nextCronEtaMin": _osint_next_cron_eta_min(),
-                        "agentNoteJa": "すでに調査ジョブが進行中です(二重実行はしません)。"})
-    inv = _osint_build(sym, mkt, mode, priv, "owner_request", agent_runs, now_iso)
-    if len(_OSINT_AGENT_QUEUE) < _OSINT_QUEUE_MAX:
-        _OSINT_AGENT_QUEUE[sym] = {"market": mkt, "mode": mode,
-                                   "privacyMode": priv, "queuedAt": now_iso}
-    _osint_set_progress(sym, "queued_for_agents", 0,
-                        _OSINT_LOOP_BUDGET.get(mode, 2),
-                        "決定論調査は完了。GPTの追加調査は管理側の定期処理で実行されます。")
-    _OSINT_LAST["deepAt"] = now_iso
-    return jsonify({"ok": True, "investigation": inv,
-                    "progress": _OSINT_PROGRESS.get(sym),
-                    "queuePosition": list(_OSINT_AGENT_QUEUE.keys()).index(sym) + 1,
-                    "nextCronEtaMin": _osint_next_cron_eta_min(),
-                    "agentNoteJa": "GPTの追加調査はキュー済み(管理側の定期実行で反映・"
-                                   "公開画面から外部AIは起動しません)。"})
-
-
 def _public_scalar_fields(source, names):
     """Copy only named JSON scalars for a public product DTO."""
     row = source if isinstance(source, dict) else {}
@@ -32765,27 +32458,6 @@ def api_argus_osint_investigation():
                     "noteJa": None if inv else "深掘りOSINTは未実行です。"})
 
 
-@app.route("/api/argus/osint/terms", methods=["POST"])
-def api_argus_osint_terms():
-    """公開POST(enqueueのみ): オーナー貼り戻しから抽出した探索語の追加。
-    本文は受け取らない — 語(≤8個・各≤40字)だけ。私的情報はここに来ない設計。"""
-    body = request.get_json(silent=True) or {}
-    sym = str(body.get("symbol") or "").strip().upper()
-    if not sym or not _JP_SYM_RE.match(sym) and not _US_SYM_RE.match(sym):
-        return jsonify({"error": "symbol_invalid"}), 400
-    terms = []
-    for t in (body.get("terms") or [])[:8]:
-        w = str(t).strip()[:40]
-        if w and not w.lower().startswith("http") and len(w) >= 2:
-            terms.append(w)
-    cur = _OSINT_TERM_OVERLAY.get(sym) or []
-    _OSINT_TERM_OVERLAY[sym] = (cur + [t for t in terms if t not in cur])[:12]
-    while len(_OSINT_TERM_OVERLAY) > 16:
-        _OSINT_TERM_OVERLAY.pop(next(iter(_OSINT_TERM_OVERLAY)), None)
-    return jsonify({"ok": True, "storedTerms": _OSINT_TERM_OVERLAY[sym],
-                    "noteJa": "今後の探索語に追加しました(貼り戻し本文はサーバーに保存しません)。"})
-
-
 def _osint_set_progress(sym, stage, loop=0, max_loops=0, note=None):
     pr = _OSINT_PROGRESS.setdefault(sym, {"notesJa": []})
     pr.update({"stage": stage, "loop": loop, "maxLoops": max_loops, "at": _ai_now_iso()})
@@ -32884,11 +32556,6 @@ def _osint_agents_worker(syms):
                     _OSINT_CAP_REACHED["count"] += len(with_url) - max_urls
                     _osint_set_progress(sym, "research_loop", loop_i, max_loops,
                                         f"検証上限到達: 残り{len(with_url) - max_urls}件(予算 maxUrls={max_urls})")
-                # ①b オーナー依頼のURL検証キューも同予算内で消化
-                while _OSINT_URL_QUEUE and max_urls > 0:
-                    qurl = _OSINT_URL_QUEUE.pop(0)
-                    _osint_fetch_url_meta(qurl)
-                    max_urls -= 1
                 # ②追撃語で決定論再探索(学習語にも積む)
                 follow = argus_osint_engine.followup_queries(unresolved)
                 if follow:
@@ -36285,53 +35952,6 @@ def _api_argus_admin_missions_tick_impl():
     return (jsonify(response), 500) if terminal == "failed" else jsonify(response)
 
 
-@app.route("/api/argus/admin/decision-ledger/snapshot", methods=["POST"])
-def api_argus_admin_dl_snapshot():
-    """Admin/cron: 当日判断の不変スナップショット(成果を知る前に発行)。
-    冪等キーで重複発行を防止。公開ルートからは発行不可。"""
-    ok, err, code = _require_admin()
-    if not ok:
-        return jsonify(err), code
-    body = request.get_json(silent=True) or {}
-    now_iso = _ai_now_iso()
-    idem = f"dl-{now_iso[:10]}-{str(body.get('session') or 'daily')}"
-    if argus_decision_ledger.is_duplicate_job(_DL_JOBS, idem):
-        return jsonify({"ok": True, "duplicate": True,
-                        "noteJa": "本日分は発行済み(冪等)。"})
-    _DL_JOBS.append(argus_decision_ledger.job_record(
-        job_id=idem, mission_type="forecast_snapshot", scheduled_at=now_iso,
-        idempotency_key=idem, status="complete"))
-    made = 0
-    for sym, inv in list(_OSINT_STORE.items())[:12]:
-        rp = inv.get("researchPower") or {}
-        rec = argus_decision_ledger.forecast_record(
-            symbol=sym, market=("JP" if sym[:1].isdigit() else "US"),
-            issued_at=now_iso, horizon="next_session",
-            target_type="catalyst_verdict",
-            forecast_value=(inv.get("catalystVerdict") or {}).get("verdict", "unknown"),
-            primary_stance=(inv.get("ownerConclusion") or {}).get("statusJa", ""),
-            research_mission_id=inv.get("id") or "",
-            model_epoch=argus_ai_gate.model_epoch_id(
-                provider="gemini", model=GEMINI_MODEL_ID,
-                prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
-                tool_mode="grounding"),
-            prompt_version=argus_osint_engine.SCOUT_PROMPT_VERSION,
-            data_quality_status=(inv.get("storeWarmth") or {}).get("storeWarmth",
-                                                                   "unknown"),
-            confidence=rp.get("statusJa") or "",
-            mock_data=False, now_iso=now_iso)
-        if rec:
-            _FORECAST_LEDGER.append(rec)
-            made += 1
-    while len(_FORECAST_LEDGER) > 200:
-        _FORECAST_LEDGER.pop(0)
-    while len(_DL_JOBS) > 60:
-        _DL_JOBS.pop(0)
-    return jsonify({"ok": True, "issued": made,
-                    "ledgerSize": len(_FORECAST_LEDGER),
-                    "noteJa": "予測は発行後に編集不可(成果は別レコードで解決)。"})
-
-
 def _osint_benchmark_worker(case_ids):
     """v12.1.7: ベンチケースのGemini基準run実行(admin/cron専用・redacted固定)。
     外部AI不在はskipped/insufficient_data — 偽passを作らない。"""
@@ -38055,47 +37675,6 @@ def api_argus_admin_osint_canary_run():
         return jsonify({"ok": True, **res})
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}), 200
-
-
-@app.route("/api/argus/osint/verify-gaps", methods=["POST"])
-def api_argus_osint_verify_gaps():
-    """公開POST(決定論のみ): 保存済み調査のギャップ台帳を今すぐ再判定 —
-    重複クラスタ/stale/無関係は即時解決できる(外部AI・URL fetchはしない)。
-    URLライブ検証が必要な分はworker予算で消化される。"""
-    body = request.get_json(silent=True) or {}
-    sym = str(body.get("symbol") or "").strip().upper()
-    inv = _OSINT_STORE.get(sym)
-    if not inv:
-        return jsonify({"ok": False, "error": "no_investigation",
-                        "noteJa": "先に深掘りOSINTを実行してください。"}), 200
-    meta = {"market": "JP" if sym[:1].isdigit() else "US",
-            "mode": inv.get("mode") or "deep", "privacyMode": inv.get("privacyMode") or "redacted"}
-    runs = inv.get("agentRuns") or []
-    inv2 = _osint_build(sym, meta["market"], meta["mode"], meta["privacyMode"],
-                        "owner_verify_gaps", runs, _ai_now_iso())
-    # 標的クエリを学習語へ(次回の決定論探索が拾えるように)
-    for g in (inv2.get("gapLedger") or []):
-        if g["resolutionStatus"] == "still_unresolved_important":
-            cur = _OSINT_TERM_OVERLAY.get(sym) or []
-            _OSINT_TERM_OVERLAY[sym] = (cur + [t for t in g.get("followUpQueries") or []
-                                               if t not in cur])[:12]
-    return jsonify({"ok": True, "investigation": inv2,
-                    "noteJa": "重複/古い/無関係の即時解決を実行。URL検証が必要な分は次のスカウト実行(worker予算)で消化されます。"})
-
-
-@app.route("/api/argus/osint/url-verify", methods=["POST"])
-def api_argus_osint_url_verify():
-    """公開POST(enqueueのみ): オーナー指定URLの検証依頼。fetchはworker(admin経路)
-    だけが行う — 公開経路からサーバーに任意URLを踏ませない(SSRF防止)。"""
-    body = request.get_json(silent=True) or {}
-    url = str(body.get("url") or "").strip()[:200]
-    if not re.match(r"^https?://[\w.\-]+/", url + "/"):
-        return jsonify({"error": "url_invalid"}), 400
-    if url not in _OSINT_URL_QUEUE:
-        _OSINT_URL_QUEUE.append(url)
-        del _OSINT_URL_QUEUE[:-12]
-    return jsonify({"ok": True, "queued": len(_OSINT_URL_QUEUE),
-                    "noteJa": "検証キューに追加しました(次のスカウト実行で取得・公開経路からは取得しません)。"})
 
 
 @app.route("/api/argus/osint/memory-snapshot")
@@ -43363,11 +42942,6 @@ def _jp_fiscal_environment_document():
     return document
 
 
-@app.route("/api/argus/jp-fiscal-environment", methods=["GET"])
-def api_argus_jp_fiscal_environment():
-    return jsonify(_jp_fiscal_environment_document())
-
-
 def _jp_fiscal_environment_warm():
     """Join the existing collect lane without blocking its other data feeds.
 
@@ -47388,90 +46962,6 @@ def _mover_causes_today():
     today = _ai_now_iso()[:10].replace("-", "")
     return [r for r in list(_MOVER_CAUSES.values())
             if str(r.get("moverCauseId", "")).endswith(today)]
-
-
-@app.route("/api/argus/admin/mover-causes/refresh-queue/run", methods=["POST"])
-def api_argus_admin_mover_causes_queue_run():
-    """Admin/cron: execute the queue — evidence refresh for queued movers
-    (providers allowed) + cached AI explanations for the budgeted top unresolved.
-    Prompts/search traces are never stored or returned."""
-    ok, err, code = _require_admin()
-    if not ok:
-        return jsonify(err), code
-    _mover_causes_restore_once()
-    ref = _refresh_mover_causes()                      # discover NEW movers from live feeds
-    now_iso = _ai_now_iso()
-    # transient owner boost — admin path only, never stored/served (privacy)
-    owner_map = {}
-    try:
-        owner_map = {s: (v.get("ownerState") in ("held", "protected") or v.get("priority") == "high")
-                     for s, v in _owner_symbols_cached().items()}
-    except Exception:
-        pass
-    queue = argus_mover_cause_refresh.build_queue(
-        _mover_causes_today(), now_iso,
-        max_ai_explain=_MC_AI_MAX_PER_RUN, ai_cooldown_min=_MC_AI_COOLDOWN_MIN,
-        ai_min_abs_move=_MC_AI_MIN_ABS_MOVE, ai_enabled=_MC_AI_ENABLED,
-        owner_map=owner_map)
-    # execute the REFRESH half of the queue: stored movers that faded out of the
-    # live feeds (e.g. a morning -8% spike) would otherwise never clear their
-    # SLA breach — _refresh_mover_causes only sweeps currently-visible movers.
-    swept = {(m["market"], m["symbol"]) for m in _collect_active_movers()}
-    requeued = 0
-    for q in queue["queue"]:
-        if not q.get("refreshNeeded") or (q["market"], q["symbol"]) in swept:
-            continue
-        if requeued >= queue["budget"]["maxProviderRefreshPerRun"]:
-            break
-        try:
-            raw_quote = _quote_cached_only(q["symbol"], q["market"]) or {}
-            quote = _decision_usable_quote_row(raw_quote) or {}
-            chg = quote.get("changePct", q.get("changePct"))
-            rec = _mover_cause_for(q["symbol"], q["market"], chg,
-                                   name=raw_quote.get("nameJa") or raw_quote.get("name"),
-                                   direction=q.get("direction"), cached_only=False)
-            merged = argus_mover_cause_store.merge_record(
-                _MOVER_CAUSES.get(rec["moverCauseId"]), rec, now_iso=now_iso)
-            if merged:
-                _MOVER_CAUSES[merged["moverCauseId"]] = merged
-                requeued += 1
-        except Exception:
-            continue
-    explained, skipped = [], []
-    for q in queue["queue"]:
-        if not q.get("aiExplainNeeded"):
-            continue
-        try:
-            done = _mover_ai_explain(q["symbol"], q["market"], now_iso)
-            (explained if done else skipped).append(q["symbol"])
-        except Exception:
-            skipped.append(q["symbol"])
-    _mover_causes_persist()
-    _MOVER_REFRESH_QUEUE["data"] = None                # queue changed — recompute
-    return jsonify({"ok": True, "refreshed": ref.get("refreshed"),
-                    "requeuedRefreshed": requeued,
-                    "aiExplained": explained, "aiSkipped": skipped,
-                    "budget": queue["budget"], "asOf": now_iso})
-
-
-@app.route("/api/argus/admin/market-confirmation/refresh", methods=["POST"])
-def api_argus_admin_market_confirmation_refresh():
-    """Admin: warm the JP daily-bar cache for requested symbols then recompute
-    (the only fetching step in the market-confirmation layer)."""
-    ok, err, code = _require_admin()
-    if not ok:
-        return jsonify(err), code
-    body = request.get_json(silent=True) or {}
-    syms = [str(s).upper() for s in (body.get("symbols") or [])][:10]
-    warmed = []
-    for s in syms:
-        try:
-            if s[:1].isdigit():
-                _jq_price_history(s[:4])       # cached fetch (6h TTL)
-            warmed.append(s)
-        except Exception:
-            continue
-    return jsonify({"ok": True, "warmed": warmed, "asOf": _ai_now_iso()})
 
 
 @app.route("/api/argus/mover-causes/snapshot")

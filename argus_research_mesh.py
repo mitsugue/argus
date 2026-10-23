@@ -513,47 +513,6 @@ def normalize_primary_asset(item: Dict[str, Any]) -> Optional[str]:
     return s if (s and s != "_") else None
 
 
-def diagnose_miss(*, url: Optional[str] = None, title: Optional[str] = None,
-                  institution: Optional[str] = None, symbol: Optional[str] = None,
-                  known_symbol_names: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """Replay the detection pipeline on an item the owner says we MISSED, and report
-    the FIRST stage that would have dropped it (§22). Pure; suggests a fix but never
-    auto-applies it. known_symbol_names maps SYMBOL→display name so we can tell whether
-    the headline actually names the asset."""
-    text = f"{title or ''} {institution or ''}"
-    inst = resolve_institution(text)
-    ct = classify_content_type(title or "", "")
-    cat = map_category(ct, inst)
-    sym = (symbol or "").upper()
-    names = known_symbol_names or {}
-    tl = (title or "").lower()
-    asset_named = bool(sym) and (sym.lower() in tl or (names.get(sym, "").lower() in tl if names.get(sym) else False))
-
-    stages: List[Dict[str, str]] = []
-    if institution and not inst:
-        stages.append({"stage": "institution_alias",
-                       "detailJa": f"『{institution}』を機関として解決できません(エイリアス未登録)。"})
-    if sym and not asset_named:
-        stages.append({"stage": "asset_link",
-                       "detailJa": "見出しに対象銘柄の名称/コードが無く、銘柄に紐付けできません。"})
-    if not (title or "").strip():
-        stages.append({"stage": "no_title", "detailJa": "見出しテキストがありません。"})
-
-    likely = stages[0]["stage"] if stages else "passed_gates"
-    fix = None
-    if likely == "institution_alias":
-        fix = {"type": "add_institution_alias", "institution": institution,
-               "suggestedAlias": (institution or "").lower()}
-    elif likely == "asset_link":
-        fix = {"type": "add_symbol_alias", "symbol": sym}
-    return {
-        "institutionResolved": inst, "contentType": ct, "category": cat,
-        "assetNamed": asset_named, "stages": stages, "likelyCause": likely,
-        "suggestedFix": fix,
-        "noteJa": "検出ルールの再現結果です。修正は所有者承認のうえ手動で反映(自動再学習はしません)。",
-    }
-
-
 def event_bucket(title: str) -> Optional[str]:
     """First-match-wins polarity-aware event bucket, or None (generic = merge-ineligible)."""
     t = (title or "").lower()

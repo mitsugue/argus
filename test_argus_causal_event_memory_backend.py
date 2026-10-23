@@ -42,32 +42,33 @@ def normalized(event_id="nie-live-1", *, headline="ホルムズ海峡の緊張�
     }
 
 
-def test_live_normalized_event_appends_and_public_routes_are_compact(memory_runtime):
+def test_live_normalized_event_appends_and_health_route_is_compact(memory_runtime):
     row = scanner._causal_memory_process_normalized_event(normalized())
     assert row["eventId"] == "nie-live-1"
+    state = scanner._causal_memory_ensure_loaded()
+    event = cem.event_view(state["events"]["nie-live-1"])
+    assert event["origin"] == "FORWARD_LIVE"
+    assert event["calibrationMode"] == "SHADOW"
+    assert event["initialSeverity"] == "WATCH"
+    assert event["sdaAuthority"] is False
     client = scanner.app.test_client()
-    view = client.get("/api/argus/event-memory").get_json()
-    assert view["eventCount"] == 1
-    assert view["events"][0]["origin"] == "FORWARD_LIVE"
-    assert view["events"][0]["calibrationMode"] == "SHADOW"
-    assert "causalHypotheses" not in view["events"][0]  # compact browser DTO
-    detail = client.get("/api/argus/event-memory/nie-live-1").get_json()
-    assert detail["event"]["initialSeverity"] == "WATCH"
-    assert detail["event"]["sdaAuthority"] is False
-    assert detail["analogs"]["insufficientEvidence"] is True
     health = client.get("/api/argus/event-memory/health").get_json()
     assert health["status"] == "HEALTHY"
+    assert health["eventCount"] == 1
     assert health["rawArticleBodiesStored"] is False
     assert health["ownerPortfolioFieldsStored"] is False
     assert health["automaticCalibrationEnabled"] is False
-    assert "excerpt" not in json.dumps(detail, ensure_ascii=False)
+    assert "excerpt" not in json.dumps(health, ensure_ascii=False)
+    # The unused browser list/detail views were retired on 2026-10-23.
+    assert client.get("/api/argus/event-memory").status_code == 404
+    assert client.get("/api/argus/event-memory/nie-live-1").status_code == 404
 
 
 def test_backfill_is_retained_but_excluded_from_forward_maturity(memory_runtime):
     scanner._causal_memory_process_normalized_event(normalized(backfill=True))
-    body = scanner.app.test_client().get("/api/argus/event-memory").get_json()
-    assert body["events"][0]["origin"] == "BACKFILL"
-    assert body["maturity"]["forwardLiveIndependentEpisodes"] == 0
+    state = scanner._causal_memory_ensure_loaded()
+    assert cem.event_view(state["events"]["nie-live-1"])["origin"] == "BACKFILL"
+    assert cem.maturity(state, as_of=NOW)["forwardLiveIndependentEpisodes"] == 0
 
 
 def test_market_shock_creates_real_structured_rates_event(memory_runtime):
@@ -85,51 +86,6 @@ def test_market_shock_creates_real_structured_rates_event(memory_runtime):
     assert event["eventType"] == "RATES"
     assert event["initialSeverity"] == "HIGH"
     assert event["marketContextRef"].startswith("cmc-")
-
-
-def test_admin_review_is_append_only_and_auth_gated(memory_runtime, monkeypatch):
-    scanner._causal_memory_process_normalized_event(normalized())
-    client = scanner.app.test_client()
-    denied = client.post("/api/argus/admin/event-memory/review", json={})
-    assert denied.status_code in (401, 403, 503)
-    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "event-memory-test")
-    allowed = client.post(
-        "/api/argus/admin/event-memory/review",
-        headers={"X-ARGUS-ADMIN-TOKEN": "event-memory-test"},
-        json={"eventId": "nie-live-1", "reviewType": "FALSE_ALERT_REVIEW",
-              "reasonCodes": ["NO_INTERMEDIATE_CONFIRMATION"],
-              "policyChangeWarranted": False, "findingAt": NOW})
-    assert allowed.status_code == 200
-    assert allowed.get_json()["historyMutated"] is False
-    raw = scanner._causal_memory_ensure_loaded()["events"]["nie-live-1"]
-    assert len(raw["revisions"]) == 1
-    assert len(raw["reviews"]) == 1
-
-
-def test_admin_outcome_appends_unscorable_window_without_decision_rescore(
-        memory_runtime, monkeypatch):
-    created = scanner._causal_memory_process_normalized_event(normalized())
-    hypothesis_id = created["causalHypotheses"][0]["hypothesisId"]
-    client = scanner.app.test_client()
-    assert client.post("/api/argus/admin/event-memory/outcome", json={}).status_code \
-        in (401, 403, 503)
-    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "event-memory-test")
-    response = client.post(
-        "/api/argus/admin/event-memory/outcome",
-        headers={"X-ARGUS-ADMIN-TOKEN": "event-memory-test"},
-        json={"eventId": "nie-live-1", "hypothesisId": hypothesis_id,
-              "horizon": "1H", "targetAt": NOW, "observedAt": NOW,
-              "knownAt": NOW, "missingReasons": ["official_close_unavailable"]})
-    assert response.status_code == 200
-    body = response.get_json()
-    assert body["ok"] is True and body["status"] == "UNSCORABLE"
-    assert body["horizon"] == "1H" and body["policyInfluence"] is False
-    assert body["predictionLedgerScoringReused"] is True
-    assert body["recordId"].startswith("cemr-")
-    raw = scanner._causal_memory_ensure_loaded()["events"]["nie-live-1"]
-    assert len(raw["revisions"]) == 1
-    assert len(raw["outcomes"]) == 1
-    assert raw["outcomes"][0]["metrics"] == []
 
 
 def test_low_value_setup_mail_is_counted_as_skip_not_event(memory_runtime):

@@ -232,39 +232,6 @@ def test_targeted_queries_shapes():
     assert any("6965" in q or "浜松ホトニクス" in q for q in qs)
 
 
-# ── ルート: verify-gaps / url-verify ────────────────────────────────────────
-
-def test_verify_gaps_route_deterministic_only(monkeypatch):
-    monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
-    monkeypatch.setitem(scanner._OSINT_PERSIST_STATE, "restored", True)
-    scanner._OSINT_AGENT_QUEUE.clear()
-    scanner._OSINT_PROGRESS.clear()
-
-    def die(*a, **k):
-        raise AssertionError("external call from verify-gaps")
-    monkeypatch.setattr(scanner, "_gemini_osint", die)
-    monkeypatch.setattr(scanner, "_gpt_osint", die)
-    monkeypatch.setattr(scanner, "_osint_fetch_url_meta", die)   # URL fetchも公開経路から不可
-    with scanner.app.test_client() as c:
-        c.post("/api/argus/osint/deep-dive", json={"symbol": "6965", "market": "JP"})
-        r = c.post("/api/argus/osint/verify-gaps", json={"symbol": "6965"})
-        d = r.get_json()
-    assert d["ok"] is True
-    assert "gapLedger" in d["investigation"]
-
-
-def test_url_verify_is_enqueue_only(monkeypatch):
-    def die(*a, **k):
-        raise AssertionError("fetch from public route")
-    monkeypatch.setattr(scanner, "_osint_fetch_url_meta", die)
-    with scanner.app.test_client() as c:
-        r = c.post("/api/argus/osint/url-verify", json={"url": "https://news.example.com/x"})
-        d = r.get_json()
-        assert d["ok"] is True and d["queued"] >= 1
-        bad = c.post("/api/argus/osint/url-verify", json={"url": "javascript:alert(1)"})
-        assert bad.status_code == 400
-
-
 # ── DQ/FE ───────────────────────────────────────────────────────────────────
 
 def test_dq_benchmark_verdict_below(monkeypatch):

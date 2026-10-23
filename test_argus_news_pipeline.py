@@ -167,7 +167,7 @@ def test_material_mail_reaches_major_news_and_alert(monkeypatch, news_env):
     assert health["emailsSeen"] == 2
     assert health["alertsEligible"] == 1
     assert health["observedSenderDomains"]["nikkei.com"]["count"] == 2
-    memory = client.get("/api/argus/event-memory").get_json()
+    memory = client.get("/api/argus/event-memory/health").get_json()
     assert memory["eventCount"] == 1  # INFO editorial mail never pollutes memory
     assert memory["automaticCalibrationEnabled"] is False
 

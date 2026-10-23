@@ -59,17 +59,17 @@ an exception string.
 
 ## State-changing routes
 
-The following eight formerly unauthenticated POSTs now require the existing
-admin token:
+The following formerly unauthenticated POSTs now require the existing admin
+token:
 
 - `/api/argus/caos/investigate-now`
 - `/api/argus/news/translation-request`
-- `/api/argus/osint/deep-dive`
-- `/api/argus/osint/terms`
-- `/api/argus/osint/verify-gaps`
-- `/api/argus/osint/url-verify`
 - `/api/argus/mover-causes/explain-request`
 - `/api/argus/vault-push`
+
+The four OSINT POSTs that were moved behind the same token (deep-dive, terms,
+verify-gaps and url-verify) had no remaining caller and were removed on
+2026-10-23.
 
 The static frontend does not receive or embed that token. The affected browser
 actions intentionally degrade to local no-ops until the later Security Gate
@@ -95,9 +95,13 @@ dynamic JP realtime membership remains the authenticated OWNER_SYNC → private
 Layer-2B → admin-gated bridge-code path.
 
 The exact obsolete GET set is pinned by
-`test_round1_retired_public_get_contracts_are_exactly_absent`. The similarly
-named authenticated POST at `/institutional-intelligence/missed` is retained;
-only its GET sibling was removed.
+`test_round1_retired_public_get_contracts_are_exactly_absent`.
+
+Routes that no current screen, bridge, schedule, acceptance check or operating
+tool called, and that production route usage did not record from 2026-10-22,
+were removed on 2026-10-23. The exact set is pinned by
+`test_retired_unused_routes_are_absent_for_every_caller`; every caller,
+including an authenticated operator, now receives 404.
 
 ## Non-authority guarantee
 
