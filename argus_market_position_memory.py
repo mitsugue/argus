@@ -47,7 +47,7 @@ FIXED_THEMES: Dict[str, Dict[str, Any]] = {
 # Named per family; unclassified news (OTHER) is not named here, because
 # naming it would need a model call on the article summaries.
 EMERGING_FAMILY_LABELS: Dict[str, str] = {
-    "CYBER_SECURITY": "サイバー攻撃",
+    "CYBER_SECURITY": "サイバー・システム障害",
     "COMMODITIES": "資源・商品市況",
     "EARNINGS": "企業決算",
     "CORPORATE_ACTION": "買収・再編",
@@ -64,6 +64,12 @@ EMERGING_WINDOW_DAYS = 7
 EMERGING_MIN_HIGH = 2
 EMERGING_MIN_TOTAL = 4
 EMERGING_LIMIT = 2
+# Owner 2026-10-23: a trusted mail's breaking report (【速報】/【特報】) judged
+# CRITICAL is a theme on its own — one article is enough. With no follow-up
+# article for BREAKING_HOLD_HOURS it leaves; each follow-up extends the hold.
+# A breaking report judged HIGH or lower waits for the running-theme bar.
+BREAKING_MARKERS = ("【速報】", "【特報】")
+BREAKING_HOLD_HOURS = 72
 EMERGING_THEMES: Dict[str, Dict[str, Any]] = {
     EMERGING_PREFIX + family: {"labelJa": label, "families": (), "eventCodes": (),
                                "emerging": True, "emergingFamily": family}
@@ -181,6 +187,9 @@ def ingest_news(memory: Dict[str, Any], events: Iterable[Mapping[str, Any]]) -> 
             text += "（" + " / ".join(points) + "）"
         ref = {"eventId": event_id, "source": "trusted_mail",
                "confirmationState": event.get("confirmationState")}
+        title = str(event.get("titleOriginal") or "") + str(event.get("headlineJa") or "")
+        if any(marker in title for marker in BREAKING_MARKERS):
+            ref["breaking"] = True
         if event_id in remembered:
             ref["reclassifiedFrom"] = prior
         entry = _entry(theme_id, "NEWS", _instant(at).astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -448,12 +457,21 @@ def snapshot(memory: Mapping[str, Any], *, now_iso: str,
             "entryCount": len(memory.get("entries") or []), "actionAuthority": False, "automaticAiCalls": 0}
 
 
+def _breaking_critical(row: Mapping[str, Any]) -> bool:
+    ref = row.get("ref") or {}
+    return (row.get("kind") == "NEWS" and row.get("severity") == "CRITICAL"
+            and ref.get("source") == "trusted_mail"
+            and (ref.get("breaking") is True
+                 or any(marker in str(row.get("textJa") or "") for marker in BREAKING_MARKERS)))
+
+
 def _emerging_state(rows: List[Dict[str, Any]], now: datetime) -> Optional[Dict[str, Any]]:
     """Whether a family is a running theme now, from its own article times.
 
     Stateless and deterministic: the theme is shown when some 7-day window
     met the entry bar and, from that point to now, no 14-day silence has
-    occurred. Future-dated rows are ignored.
+    occurred — or when a CRITICAL breaking report arrived and, from it to
+    now, no 72-hour silence has occurred. Future-dated rows are ignored.
     """
     news = sorted(((at, row) for row in rows if row.get("kind") == "NEWS"
                    for at in [_instant(row.get("at"))] if at is not None and at <= now),
@@ -470,20 +488,35 @@ def _emerging_state(rows: List[Dict[str, Any]], now: datetime) -> Optional[Dict[
             start += 1
         if high >= EMERGING_MIN_HIGH or index - start + 1 >= EMERGING_MIN_TOTAL:
             qualified_at = index
-    if qualified_at is None:
-        return None
-    quiet = timedelta(days=ACTIVE_DAYS)
-    times = [at for at, _ in news[qualified_at:]] + [now]
-    if any(later - earlier > quiet for earlier, later in zip(times, times[1:])):
+    def unbroken(start_index: int, gap: timedelta) -> bool:
+        times = [at for at, _ in news[start_index:]] + [now]
+        return not any(later - earlier > gap for earlier, later in zip(times, times[1:]))
+
+    running = qualified_at is not None and unbroken(qualified_at, timedelta(days=ACTIVE_DAYS))
+    hold = timedelta(hours=BREAKING_HOLD_HOURS)
+    breaking_at = None
+    for index, (at, row) in enumerate(news):
+        if _breaking_critical(row) and unbroken(index, hold):
+            breaking_at = at
+    if not running and breaking_at is None:
         return None
     recent = [row for at, row in news if now - at < window]
     return {"high": sum(1 for row in recent if row.get("severity") in ("HIGH", "CRITICAL")),
-            "total": len(recent), "lastAt": news[-1][0]}
+            "total": len(recent), "lastAt": news[-1][0],
+            "basis": "RUNNING" if running else "BREAKING",
+            # A breaking report still inside its hold leads the order below.
+            "breakingAt": breaking_at if breaking_at is not None and now - breaking_at <= hold else None}
 
 
 def emerging_themes(memory: Mapping[str, Any], *, now: datetime,
                     placement: Optional[Mapping[str, Optional[str]]] = None) -> List[Dict[str, Any]]:
-    """Up to EMERGING_LIMIT running themes beyond the fixed seven, busiest first."""
+    """Up to EMERGING_LIMIT themes beyond the fixed seven.
+
+    Order: a CRITICAL breaking report inside its 72-hour hold first (newest
+    first) — a running theme keeps its place for 14 days and returns once
+    the hold ends, while a breaking report shown later than its hold is not
+    news any more — then the running themes, busiest first.
+    """
     placement = _news_themes(memory) if placement is None else placement
     chosen = []
     for theme_id, spec in EMERGING_THEMES.items():
@@ -497,9 +530,12 @@ def emerging_themes(memory: Mapping[str, Any], *, now: datetime,
         last = external[-1]
         recent = [{k: r.get(k) for k in ("entryId", "kind", "at", "textJa", "severity", "ref")}
                   for r in external[-RECENT_ENTRIES:]][::-1]
-        chosen.append(((state["high"], state["total"], state["lastAt"]), {
+        breaking_at = state["breakingAt"]
+        chosen.append(((breaking_at is not None, breaking_at or _EPOCH,
+                        state["high"], state["total"], state["lastAt"]), {
             "themeId": theme_id, "labelJa": spec["labelJa"], "status": "ACTIVE",
-            "emerging": True, "entryCount": len(rows), "excludedUnverifiedReleaseEntries": 0,
+            "emerging": True, "emergingBasis": state["basis"],
+            "entryCount": len(rows), "excludedUnverifiedReleaseEntries": 0,
             "lastUpdatedAt": last["at"], "recent": recent, "pricing": None, "lastReaction": None,
             "nextEvent": None,
             "view": ({**((ai_view.get("measured") or {}).get("view") or {}), "at": ai_view["at"],
@@ -554,6 +590,48 @@ def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
     return facts
 
 
+NEWS_AI_CONTEXT_LIMIT = 300
+_VIEW_SNIPPET = 60
+
+
+def news_ai_context(view: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """A short summary of the market's current position for the news analysis.
+
+    Built from the saved memory's snapshot only (no model, no new store):
+    the active themes with their state, the emerging ones, and the latest
+    expectation and fear the integrated AI recorded. None when nothing is
+    active, so the analysis falls back to the old single-guess rule.
+    """
+    if not isinstance(view, Mapping):
+        return None
+    themes = [t for t in view.get("themes") or [] if isinstance(t, Mapping)]
+    active = [t for t in themes if t.get("status") == "ACTIVE" and not t.get("emerging")]
+    emerging = [t for t in themes if t.get("emerging")]
+    if not active and not emerging:
+        return None
+    active.sort(key=lambda t: str(t.get("lastUpdatedAt") or ""), reverse=True)
+    parts = []
+    if active:
+        parts.append("動きのある主題: " + "、".join(str(t.get("labelJa")) for t in active[:5]))
+    quiet = [t for t in themes if t.get("status") == "QUIET" and not t.get("emerging")]
+    if quiet:
+        parts.append("静かな主題: " + "、".join(str(t.get("labelJa")) for t in quiet[:3]))
+    if emerging:
+        parts.append("新しい話題: " + "、".join(str(t.get("labelJa")) for t in emerging))
+    viewed = sorted((t for t in active + emerging if isinstance(t.get("view"), Mapping)),
+                    key=lambda t: str((t.get("view") or {}).get("at") or ""), reverse=True)
+    for theme in viewed[:2]:
+        body = theme["view"]
+        bits = []
+        if body.get("expectationJa"):
+            bits.append("期待 " + str(body["expectationJa"])[:_VIEW_SNIPPET])
+        if body.get("fearJa"):
+            bits.append("恐れ " + str(body["fearJa"])[:_VIEW_SNIPPET])
+        if bits:
+            parts.append(f"{theme.get('labelJa')}: " + " / ".join(bits))
+    return "。".join(parts)[:NEWS_AI_CONTEXT_LIMIT] or None
+
+
 def generation_inputs(view: Mapping[str, Any]) -> Dict[str, Any]:
     """Project the display snapshot onto external materials for paid reuse.
 
@@ -591,11 +669,11 @@ def public_snapshot(view):
     if view.get('schemaVersion') != SCHEMA or view.get('actionAuthority') is not False:
         raise ValueError('market_position_snapshot_invalid')
     top=('schemaVersion','asOf','entryCount','actionAuthority','automaticAiCalls')
-    theme_keys=('themeId','labelJa','status','emerging','entryCount','excludedUnverifiedReleaseEntries',
+    theme_keys=('themeId','labelJa','status','emerging','emergingBasis','entryCount','excludedUnverifiedReleaseEntries',
         'lastUpdatedAt','pricing','lastReaction','nextEvent','view')
     ref_keys=('eventId','source','scope','confirmationState','basis','sourceTimeValidation',
         'hasComparableMoves','sourceRowSha256','url','symbol','day','sourceId','eventType','key','bucket',
-        'contextId','kind','evidenceIds','reclassifiedFrom')
+        'contextId','kind','evidenceIds','reclassifiedFrom','breaking')
     result={k:view[k] for k in top if k in view};themes=[]
     for theme in view.get('themes') or []:
         if theme.get('themeId') not in THEMES:

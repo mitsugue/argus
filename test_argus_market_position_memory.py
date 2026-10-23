@@ -243,13 +243,13 @@ def test_emerging_theme_appears_with_repeated_important_news_and_leaves_when_qui
     shown, view = _emerging(memory, "2026-10-25T02:00:00Z")
     assert [t["themeId"] for t in shown] == ["EMERGING_CYBER_SECURITY"]
     theme = shown[0]
-    assert theme["labelJa"] == "サイバー攻撃" and theme["status"] == "ACTIVE"
+    assert theme["labelJa"] == "サイバー・システム障害" and theme["status"] == "ACTIVE"
     assert theme["recent"][0]["ref"]["eventId"] == "c2"
     # The fixed seven keep their order; the new theme follows them.
     assert [t["themeId"] for t in view["themes"]][:7] == list(mpm.FIXED_THEMES)
     fact = next(f for f in mpm.explanation_facts(view)
                 if f["provenance"]["eventId"] == "market-position-EMERGING_CYBER_SECURITY")
-    assert fact["text"].startswith("現在位置・サイバー攻撃(新しい話題)")
+    assert fact["text"].startswith("現在位置・サイバー・システム障害(新しい話題)")
     # Still shown within 14 days of the last article, gone after.
     assert _emerging(memory, "2026-11-07T01:00:00Z")[0]
     assert _emerging(memory, "2026-11-08T01:30:00Z")[0] == []
@@ -333,3 +333,81 @@ def test_ai_views_may_cover_a_shown_emerging_theme():
     shown = next(t for t in mpm.snapshot(memory, now_iso="2026-10-23T01:10:00Z")["themes"]
                  if t["themeId"] == "EMERGING_CYBER_SECURITY")
     assert shown["view"]["fearJa"] == "被害企業の事業停止が広がること"
+
+
+# ── Owner 2026-10-23: a short market summary for the news analysis ─────────
+def test_news_ai_context_names_active_themes_and_the_latest_fear():
+    assert mpm.news_ai_context(mpm.snapshot(mpm.empty(), now_iso="2026-10-23T00:00:00Z")) is None
+    assert mpm.news_ai_context(None) is None
+    memory = mpm.empty()
+    mpm.ingest_news(memory, [
+        _cyber("s1", "2026-10-22T10:00:00Z", family="SEMICONDUCTORS"),
+        _cyber("f1", "2026-10-22T11:00:00Z", family="FED"),
+        _cyber("c1", "2026-10-22T12:00:00Z"), _cyber("c2", "2026-10-22T13:00:00Z")])
+    mpm.ingest_views(memory, [{"themeId": "AI_SEMIS", "expectationJa": "AI投資の継続",
+                               "fearJa": "AI投資の回収不安で半導体株が崩れること" * 3,
+                               "triggerJa": "大手の設備投資計画", "evidenceIds": [], "kind": "INFERENCE"}],
+                     context_id="ctx", generated_at="2026-10-22T14:00:00Z")
+    text = mpm.news_ai_context(mpm.snapshot(memory, now_iso="2026-10-23T00:00:00Z"))
+    assert text.startswith("動きのある主題: ")
+    assert "AI・半導体相場" in text and "米国の利上げ・利下げ観測" in text
+    assert "新しい話題: サイバー・システム障害" in text
+    assert "恐れ AI投資の回収不安" in text and "期待 AI投資の継続" in text
+    assert len(text) <= mpm.NEWS_AI_CONTEXT_LIMIT == 300
+    assert "s1" not in text                                   # no ids, no article text
+
+
+# ── Owner 2026-10-23: one critical breaking report is a new topic for 72 hours ──
+def _breaking(eid, at, severity="CRITICAL", family="CYBER_SECURITY", marker="【速報】"):
+    row = _cyber(eid, at, severity=severity, family=family)
+    row["titleOriginal"] = marker + "大手クラウドで大規模障害 " + eid
+    row["headlineJa"] = row["titleOriginal"]
+    return row
+
+
+def test_one_critical_breaking_report_is_shown_for_72_hours_without_follow_up():
+    memory = mpm.empty()
+    mpm.ingest_news(memory, [_breaking("b1", "2026-10-23T00:00:00Z")])
+    assert memory["entries"][0]["ref"]["breaking"] is True
+    shown, _ = _emerging(memory, "2026-10-23T01:00:00Z")
+    assert [t["themeId"] for t in shown] == ["EMERGING_CYBER_SECURITY"]
+    assert shown[0]["emergingBasis"] == "BREAKING"
+    assert _emerging(memory, "2026-10-25T23:59:00Z")[0]                  # within 72h
+    assert _emerging(memory, "2026-10-26T00:01:00Z")[0] == []            # gone after 72h
+    # A follow-up article extends the hold by another 72 hours.
+    mpm.ingest_news(memory, [_cyber("f1", "2026-10-25T00:00:00Z", severity="WATCH")])
+    assert _emerging(memory, "2026-10-27T23:00:00Z")[0][0]["emergingBasis"] == "BREAKING"
+    assert _emerging(memory, "2026-10-28T00:01:00Z")[0] == []
+    public = mpm.public_snapshot(mpm.snapshot(memory, now_iso="2026-10-25T01:00:00Z"))
+    assert public["themes"][-1]["emergingBasis"] == "BREAKING"
+
+
+def test_breaking_reports_below_critical_or_without_a_marker_wait_for_the_running_bar():
+    for row in (_breaking("h1", "2026-10-23T00:00:00Z", severity="HIGH"),
+                _breaking("h2", "2026-10-23T00:00:00Z", marker="")):
+        memory = mpm.empty()
+        mpm.ingest_news(memory, [row])
+        assert _emerging(memory, "2026-10-23T01:00:00Z")[0] == []
+    # 【特報】 counts as a breaking report too.
+    memory = mpm.empty()
+    mpm.ingest_news(memory, [_breaking("t1", "2026-10-23T00:00:00Z", marker="【特報】")])
+    assert _emerging(memory, "2026-10-23T01:00:00Z")[0]
+    # A running theme that also had a breaking report keeps the 14-day rule.
+    memory = mpm.empty()
+    mpm.ingest_news(memory, [_breaking("b1", "2026-10-23T00:00:00Z"), _cyber("c2", "2026-10-23T02:00:00Z")])
+    shown, _ = _emerging(memory, "2026-11-01T00:00:00Z")
+    assert shown and shown[0]["emergingBasis"] == "RUNNING"
+
+
+def test_a_new_critical_breaking_report_is_not_buried_by_busier_themes():
+    memory = mpm.empty()
+    for family, count in (("EARNINGS", 4), ("REGULATION", 4)):
+        mpm.ingest_news(memory, [_cyber(f"{family}-{i}", f"2026-10-2{i}T00:00:00Z", family=family)
+                                 for i in range(count)])
+    mpm.ingest_news(memory, [_breaking("b1", "2026-10-23T12:00:00Z")])
+    shown, _ = _emerging(memory, "2026-10-24T00:00:00Z")
+    assert [t["themeId"] for t in shown] == ["EMERGING_CYBER_SECURITY", "EMERGING_EARNINGS"]
+    assert len(shown) == mpm.EMERGING_LIMIT == 2
+    # Once its hold ends, the busier running themes return.
+    shown, _ = _emerging(memory, "2026-10-26T13:00:00Z")
+    assert [t["themeId"] for t in shown] == ["EMERGING_EARNINGS", "EMERGING_REGULATION"]

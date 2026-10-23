@@ -851,6 +851,32 @@ def test_cyber_cues_ignore_company_names_and_market_vocabulary():
     assert ni.classify_event("顧客の情報流出、不正アクセスか")["eventType"] == "CYBER_SECURITY"
 
 
+PHP_OUTAGE = "PHP欠陥、銀行や通信でもサービス停止広がる みずほ銀など一部復旧"
+
+
+def test_system_failures_join_the_cyber_family():
+    """Owner 2026-10-23: システム障害 is part of サイバー・システム障害."""
+    for subject in (PHP_OUTAGE, "全日空でシステム障害、欠航相次ぐ", "大規模通信障害で決済止まる",
+                    "クラウド障害で企業のサービス停止", "Windowsに脆弱性、修正版を配布",
+                    "銀行アプリに不具合、送金できず", "勘定系システムが停止",
+                    "デジタル庁、問い合わせフォーム入力情報1万件超が漏洩か",
+                    "Major cloud outage disrupts banks"):
+        assert ni.classify_event(subject)["eventType"] == "CYBER_SECURITY", subject
+    assert ni._JAPAN_TRANSMISSION_JA["CYBER_SECURITY"] == \
+        "サービス停止や情報流出で、被害企業の業務と信用に響くおそれ。"
+
+
+def test_non_it_fragility_outages_and_stoppages_are_not_cyber():
+    for subject in ("財政の脆弱性に懸念", "金融システムの脆弱性を指摘", "供給網の障害で生産遅れ",
+                    "工場の停止で減産", "部品不足で工場停止", "アプリのダウンロード数が急増",
+                    "郵便のサービス停止を検討", "資金流出が続く", "停電で鉄道運休",
+                    "The economy's vulnerability to rate shocks"):
+        assert "CYBER_SECURITY" not in ni.classify_event(subject)["families"], subject
+    # A physical attack that causes an outage stays an armed conflict.
+    mixed = ni.classify_event("ミサイル攻撃で通信障害")
+    assert mixed["eventType"] == "WAR_ESCALATION" and "CYBER_SECURITY" in mixed["families"]
+
+
 def _stored_v6_war_event(subject, severity="HIGH", reasons=("family_war_escalation", "extreme_language")):
     taxonomy = {"eventType": "WAR_ESCALATION", "families": ["WAR_ESCALATION"],
                 "themeTags": ["ENERGY"], "lowValueHints": False}
@@ -876,7 +902,7 @@ def test_stored_event_is_reclassified_once_by_rules_only():
     assert result["reviewed"] == 1 and result["audit"][0]["eventType"] == "CYBER_SECURITY"
     assert result["audit"][0]["aiCalled"] is False
     assert fixed["eventType"] == "CYBER_SECURITY" and fixed["themeTags"] == ["CYBER"]
-    assert fixed["policyVersion"] == ni.NEWS_POLICY_VERSION == "news-policy-v7"
+    assert fixed["policyVersion"] == ni.NEWS_POLICY_VERSION == "news-policy-v8"
     assert set(fixed["impactDirection"]["directionByTarget"].values()) == {"UNCLEAR"}
     # Only the family component leaves; no retroactive alert; history kept.
     assert fixed["severity"] == "WATCH" and fixed["alertEligible"] is False
@@ -887,23 +913,351 @@ def test_stored_event_is_reclassified_once_by_rules_only():
     assert fixed["whyJa"] == ni._JAPAN_TRANSMISSION_JA["CYBER_SECURITY"]
     assert fixed["eventId"] == event["eventId"]
     projected = ni.project_owner_event(fixed)
-    assert projected["generalTransmissionJa"].startswith("被害企業の事業停止")
+    assert projected["generalTransmissionJa"].startswith("サービス停止や情報流出")
     assert "classificationPreviousRevision" not in projected
+    assert fixed["policyReview"]["basis"] == "headline_rules"
+    assert fixed["classificationBasis"] == "headline"
     # Once per policy version.
     assert ni.reclassify_stored_events(events, at="2026-10-23T00:10:00Z")["reviewed"] == 0
 
 
 def test_reclassification_never_overturns_an_excerpt_derived_type():
-    # The excerpt (never stored) named the missile strike; the headline alone
-    # carries no newly introduced family, so the stored type stands.
-    event = _stored_v6_war_event("中東情勢で株が急落")
+    # The excerpt (never stored) named the chip family; the headline names no
+    # family now or under the old rules, so the stored type stands.
+    event = dict(_stored_v6_war_event("東エレク、受注が過去最高"), eventType="SEMICONDUCTORS",
+                 severityReasons=["family_semiconductors", "extreme_language"])
     events = {event["eventId"]: event}
     assert ni.reclassify_stored_events(events, at="2026-10-23T00:00:00Z") == {"reviewed": 1, "audit": []}
     kept = events[event["eventId"]]
-    assert kept["eventType"] == "WAR_ESCALATION" and kept["severity"] == "HIGH"
+    assert kept["eventType"] == "SEMICONDUCTORS" and kept["severity"] == "HIGH"
     assert kept["policyVersion"] == "news-policy-v6"
-    assert kept["policyReview"]["policyVersion"] == "news-policy-v7"
+    assert kept["policyReview"]["policyVersion"] == ni.NEWS_POLICY_VERSION
     assert kept["policyReview"]["changed"] is False
+    assert kept["policyReview"]["basis"] == "excerpt_or_unknown_kept"
     assert ni.reclassify_stored_events(events, at="2026-10-23T00:10:00Z")["reviewed"] == 0
+    # A conflict excerpt under a non-market headline is kept as well (a real
+    # war story whose headline names no cue must not be dropped).
+    war = _stored_v6_war_event("プーチン氏、総動員を発令")
+    assert ni.reclassify_stored_event(war, at="2026-10-23T00:00:00Z")["eventType"] == "WAR_ESCALATION"
     current = dict(_stored_v6_war_event(ARTEX), policyVersion=ni.NEWS_POLICY_VERSION)
     assert ni.reclassify_stored_event(current, at="2026-10-23T00:00:00Z") is None
+
+
+# ── v8 (owner 2026-10-23): the misclassifications found in the 10/23 store ──
+NASDAQ = "米ナスダック急落2.6%安 メタは一時8%安、AI巨額投資に警戒再燃"
+NASDAQ_EXCERPT = ("22日の米国株式市場でテクノロジー株が急落した。AI関連の巨額投資への警戒が再燃。"
+                  "中東情勢の緊迫を警戒したリスク回避が株安を増幅した。")
+F35 = "米軍、ロッキードからF35異例の10年調達 コスト削減で日本にも恩恵"
+OUTBOUND = "Treasury Issues Proposed Rule to Implement Comprehensive Outbound Investment National Security Act"
+OUTBOUND_EXCERPT = ("The rule covers technologies that may contribute to the military modernization "
+                    "of countries of concern.")
+HOUSING = "The Trump Administration is Making Homeownership More Affordable"
+HOUSING_EXCERPT = "Treasury published proposed regulations limiting purchases by large institutional investors."
+
+
+def test_the_six_headlines_of_2026_10_23_classify_as_expected():
+    expected = {
+        (ARTEX, ""): "CYBER_SECURITY",
+        (PHP_OUTAGE, ""): "CYBER_SECURITY",
+        (NASDAQ, ""): "OTHER_MARKET_RELEVANT",
+        (NASDAQ, NASDAQ_EXCERPT): "OTHER_MARKET_RELEVANT",   # 中東 is background
+        (F35, ""): "OTHER_MARKET_RELEVANT",                  # procurement, no security action
+        (OUTBOUND, ""): "REGULATION",
+        (OUTBOUND, OUTBOUND_EXCERPT): "REGULATION",          # the headline outranks the excerpt
+        (HOUSING, ""): "OTHER_MARKET_RELEVANT",              # a president's name alone
+        (HOUSING, HOUSING_EXCERPT): "REGULATION",
+    }
+    for (subject, excerpt), family in expected.items():
+        taxonomy = ni.classify_event(subject, excerpt)
+        assert taxonomy["eventType"] == family, subject
+        assert "GEOPOLITICS" != taxonomy["eventType"]
+    assert "JAPAN_POLICY" not in ni.classify_event(ARTEX)["families"]   # 中国政府系
+    assert ni.classify_event(NASDAQ, NASDAQ_EXCERPT)["basis"] == "none"
+    assert ni.classify_event(OUTBOUND, OUTBOUND_EXCERPT)["basis"] == "headline"
+    assert ni.classify_event(HOUSING, HOUSING_EXCERPT)["basis"] == "excerpt"
+
+
+def test_real_geopolitics_still_classifies_as_geopolitics():
+    for subject in ("米軍、中東へ数千人を追加派遣 緊張高まる", "Pentagon orders additional troops to the Middle East",
+                    "中国軍が台湾海峡で大規模演習", "北朝鮮が弾道ミサイル発射", "米軍、空母を派遣し威嚇",
+                    "トランプ大統領、軍事行動を警告", "国防総省、部隊の配備を拡大", "地政学リスクが再燃",
+                    "Trump threatens military strikes", "White House warns of war"):
+        families = ni.classify_event(subject)["families"]
+        assert families and families[0] in ("GEOPOLITICS", "WAR_ESCALATION", "IRAN"), subject
+        assert "GEOPOLITICS" in families or families[0] == "WAR_ESCALATION", subject
+    # Excerpt-only conflict cues still decide when the headline is not a market report.
+    tx = ni.classify_event("プーチン氏、総動員を発令", "ウクライナ侵攻の長期化に備える")
+    assert tx["eventType"] == "WAR_ESCALATION" and tx["basis"] == "excerpt"
+    # A container mail's excerpt is its content.
+    assert ni.classify_event("日経メールニュース配信のお知らせ", "米軍が中東に空母を派遣")["eventType"] == "GEOPOLITICS"
+
+
+def test_economic_wars_staffing_fines_and_foreign_governments_are_not_misread():
+    assert ni.classify_event("貿易戦争が激化")["eventType"] == "TRADE"
+    assert ni.classify_event("価格競争が激化")["eventType"] == "OTHER_MARKET_RELEVANT"
+    assert ni.classify_event("人材派遣大手が増益")["families"] == []
+    assert ni.classify_event("Trade war fears weigh on exporters")["eventType"] != "GEOPOLITICS"
+    assert ni.classify_event("トランプ大統領、中国に追加関税")["eventType"] == "TARIFFS"
+    fine = ni.classify_event("米裁判所、メタに制裁金4兆円の判決")
+    assert "SANCTIONS" not in fine["families"]
+    assert ni.classify_event("米、ロシアに追加制裁")["eventType"] == "SANCTIONS"
+    assert "JAPAN_POLICY" not in ni.classify_event("英首相が辞任表明")["families"]
+    assert ni.classify_event("政府、経済対策を決定")["eventType"] == "JAPAN_POLICY"
+    # Treasury securities stay a rates story; the department name alone does not.
+    for subject in ("Daily Treasury Yield Curve Rates", "Daily Treasury Bill Rates",
+                    "Daily Treasury Real Long-Term Rates Update", "Treasury announces a bond auction"):
+        assert ni.classify_event(subject)["eventType"] == "RATES", subject
+    for subject in ("READOUT: Secretary of the Treasury Meeting with President", "IRS Auctions"):
+        assert ni.classify_event(subject)["eventType"] != "RATES", subject
+
+
+def _stored_v6(subject, family, severity, reasons, eid):
+    event = _stored_v6_war_event(subject, severity=severity, reasons=reasons)
+    event.update(eventType=family, eventId=eid, themeTags=[])
+    return event
+
+
+def test_v8_corrects_the_retained_misclassifications_without_ai():
+    events = {
+        "nasdaq": _stored_v6(NASDAQ, "GEOPOLITICS", "CRITICAL",
+                             ["family_geopolitics", "extreme_language", "ai_materiality_high"], "nasdaq"),
+        "f35": _stored_v6(F35, "GEOPOLITICS", "HIGH", ["family_geopolitics", "ai_materiality_high"], "f35"),
+        "outbound": _stored_v6(OUTBOUND, "GEOPOLITICS", "HIGH",
+                               ["family_geopolitics", "ai_materiality_high"], "outbound"),
+        "housing": _stored_v6(HOUSING, "GEOPOLITICS", "HIGH",
+                              ["family_geopolitics", "ai_materiality_high"], "housing"),
+        "php": _stored_v6(PHP_OUTAGE, "OTHER_MARKET_RELEVANT", "HIGH",
+                          ["extreme_language", "ai_materiality_high"], "php"),
+    }
+    before = {eid: dict(row) for eid, row in events.items()}
+    result = ni.reclassify_stored_events(events, at="2026-10-23T03:00:00Z")
+    got = {eid: (row["eventType"], row["severity"]) for eid, row in events.items()}
+    assert got == {"nasdaq": ("OTHER_MARKET_RELEVANT", "HIGH"),
+                   "f35": ("OTHER_MARKET_RELEVANT", "WATCH"),
+                   "outbound": ("REGULATION", "WATCH"),
+                   "housing": ("OTHER_MARKET_RELEVANT", "WATCH"),
+                   "php": ("CYBER_SECURITY", "HIGH")}
+    bases = {row["eventId"]: row["basis"] for row in result["audit"]}
+    assert bases == {"nasdaq": "background_excluded", "f35": "retired_headline_cue",
+                     "outbound": "headline_rules", "housing": "retired_headline_cue",
+                     "php": "headline_rules"}
+    for eid, row in events.items():
+        assert row["eventId"] == eid and row["revision"] == before[eid]["revision"] + 1
+        assert row["classificationPreviousRevision"]["eventType"] == before[eid]["eventType"]
+        assert row["alertEligible"] is False and row["policyReview"]["aiCalled"] is False
+        assert "family_geopolitics" not in row["severityReasons"]
+    assert all(row["aiCalled"] is False for row in result["audit"])
+
+
+# ── v8 (owner 2026-10-23): judge against the current market ─────────────────
+def _ai(guess, relevance=None, provided=None):
+    return {"facts": ["x"], "eventTypeCandidate": None, "entities": [], "causalPathJa": None,
+            "uncertaintyJa": None, "secondOrderJa": None, "materialityGuess": guess,
+            "currentRelevance": relevance,
+            "marketContextProvided": relevance is not None if provided is None else provided}
+
+
+def test_ai_moves_severity_by_at_most_one_step_with_the_market_summary():
+    assert ni.ai_component(_ai(3, 3)) == (1, "ai_materiality_high")       # both 3: still +1
+    assert ni.ai_component(_ai(3, 0)) == (1, "ai_materiality_high")       # a new shock off today's themes
+    assert ni.ai_component(_ai(2, None)) == (1, "ai_materiality_high")    # no summary: the old rule
+    assert ni.ai_component(_ai(2, 1)) == (1, "ai_materiality_high")
+    assert ni.ai_component(_ai(2, 0)) == (0, "ai_off_current_focus")
+    assert ni.ai_component(_ai(1, 2)) == (1, "ai_current_relevance")
+    assert ni.ai_component(_ai(1, 1)) == (0, None)
+    assert ni.ai_component(_ai(0, 3)) == (0, None)
+    assert ni.ai_component(None) == (0, None)
+    subject = "東エレク、受注が過去最高"
+    taxonomy = ni.classify_event(subject)
+    def score(ai):
+        return ni.evaluate_materiality(taxonomy=taxonomy, staleness="FRESH_BREAKING",
+                                       source_authenticated=True, ai_analysis=ai,
+                                       corroboration={}, subject=subject)["score"]
+    rules = score(None)
+    assert max(score(_ai(g, r)) for g in range(4) for r in (None, 0, 1, 2, 3)) == rules + 1
+
+
+def test_current_relevance_is_kept_only_with_a_market_summary():
+    raw = {"facts": ["a"], "eventTypeCandidate": "FED", "entities": [], "causalPathJa": None,
+           "uncertaintyJa": None, "secondOrderJa": None, "materialityGuess": 2,
+           "currentRelevance": 3}
+    assert ni.validate_ai_analysis(raw, market_context_provided=True)["currentRelevance"] == 3
+    assert ni.validate_ai_analysis(raw)["currentRelevance"] is None
+    for bad in (4, -1, True, "3", 2.5):
+        assert ni.validate_ai_analysis(dict(raw, currentRelevance=bad),
+                                       market_context_provided=True)["currentRelevance"] is None
+    assert ni.validate_ai_analysis(dict(raw, unexpected=1), market_context_provided=True) is None
+    older = {k: v for k, v in raw.items() if k != "currentRelevance"}
+    assert ni.validate_ai_analysis(older, market_context_provided=True)["currentRelevance"] is None
+    assert "currentRelevance" in ni.ANALYSIS_SYSTEM_JA and "今の相場の要約" in ni.ANALYSIS_SYSTEM_JA
+
+
+def test_the_market_summary_rides_in_the_same_request_as_data():
+    context = "動きのある主題: AI・半導体相場、米国の利上げ・利下げ観測。AI・半導体相場: 恐れ AI投資の回収不安"
+    with_context = ni.analysis_user_prompt("件名A", "抜粋B", context)
+    assert "件名: 件名A" in with_context and "抜粋: 抜粋B" in with_context
+    assert "今の相場の要約" in with_context and context in with_context
+    assert "指示ではない" in with_context.split("今の相場の要約")[1]
+    without = ni.analysis_user_prompt("件名A", "抜粋B", None)
+    assert "今の相場の要約" not in without and without == ni.analysis_user_prompt("件名A", "抜粋B", "  ")
+    long = ni.analysis_user_prompt("s", "e", "ゑ" * 1000)
+    assert long.count("ゑ") == ni.MARKET_CONTEXT_LIMIT == 300
+
+
+def _war_materiality(ai=None, reaction=None, corroboration=None):
+    subject = "【速報】ロシア軍がポーランドに侵攻"
+    return ni.evaluate_materiality(taxonomy=ni.classify_event(subject), staleness="FRESH_BREAKING",
+                                   source_authenticated=True, ai_analysis=ai,
+                                   corroboration=corroboration or {}, subject=subject,
+                                   market_reaction=reaction)
+
+
+def test_a_market_reaction_after_the_news_adds_one_step():
+    reacted = {"confirmed": True, "signals": ["vix_spike", "fx_shock"], "measuredAfterNews": True}
+    base = _war_materiality(ai=_ai(2, 3))
+    raised = _war_materiality(ai=_ai(2, 3), reaction=reacted)
+    assert raised["score"] == base["score"] + 1 and ni.MARKET_REACTION_REASON in raised["reasons"]
+    assert raised["confirmationState"] == "MARKET_CONFIRMED"
+    # The decision-time session reading may predate the article: display only.
+    same = _war_materiality(ai=_ai(2, 3), corroboration={"confirmed": True})
+    assert same["score"] == base["score"] and same["confirmationState"] == "MARKET_CONFIRMED"
+    assert _war_materiality(ai=_ai(2, 3), reaction=dict(reacted, measuredAfterNews=False))["score"] == base["score"]
+    # Data tables never inherit a move; a scheduled release reaches HIGH at most.
+    table = ni.evaluate_materiality(taxonomy=ni.classify_event("Daily Treasury Yield Curve Rates"),
+                                    staleness="FRESH_BREAKING", source_authenticated=True,
+                                    ai_analysis=None, corroboration={}, source="US_TREASURY",
+                                    subject="Daily Treasury Yield Curve Rates", market_reaction=reacted)
+    assert table["severity"] == "INFO"
+    cpi = ni.evaluate_materiality(taxonomy=ni.classify_event("Consumer Price Index - September 2026"),
+                                  staleness="FRESH_BREAKING", source_authenticated=True,
+                                  ai_analysis=_ai(3), corroboration={}, source="BLS",
+                                  subject="Consumer Price Index - September 2026", market_reaction=reacted)
+    assert cpi["severity"] == "HIGH"
+
+
+def test_war_start_with_existing_rules():
+    """Owner 2026-10-23 example. No dedicated rule was added: the existing
+    rules give the invasion headline the conflict family; with the AI's
+    reading and the market's reaction it reaches CRITICAL."""
+    assert ni.classify_event("【速報】ロシア軍がポーランドに侵攻")["eventType"] == "WAR_ESCALATION"
+    assert _war_materiality()["severity"] == "WATCH"                       # rules alone
+    assert _war_materiality(ai=_ai(3, 0))["severity"] == "HIGH"
+    reacted = {"confirmed": True, "signals": ["vix_spike", "fx_shock"], "measuredAfterNews": True}
+    assert _war_materiality(ai=_ai(3, 3), reaction=reacted)["severity"] == "CRITICAL"
+    assert ni.classify_event("イスラエル軍がイランを空爆")["eventType"] in ("IRAN", "WAR_ESCALATION")
+    # Words that are not an armed conflict starting.
+    for subject in ("貿易戦争が激化", "価格競争が激化", "ウクライナで停戦合意", "戦争の終結に向け協議"):
+        assert ni.classify_event(subject)["eventType"] != "WAR_ESCALATION", subject
+    assert ni.classify_event("ウクライナで停戦合意")["eventType"] == "CEASEFIRE"
+
+
+def test_a_confirmation_that_raises_severity_takes_the_market_confirmation_path():
+    existing = {"severity": "HIGH", "confirmationState": "MARKET_CONFIRMATION_PENDING",
+                "revision": 2, "headlineJa": "x"}
+    plan = ni.merge_revision(existing, {"severity": "CRITICAL",
+                                        "confirmationState": "MARKET_CONFIRMED", "headlineJa": "x"})
+    assert plan == {"action": "update", "revision": 3, "alert": "market_confirmation"}
+    plan = ni.merge_revision(existing, {"severity": "CRITICAL",
+                                        "confirmationState": "MARKET_CONFIRMATION_PENDING", "headlineJa": "x"})
+    assert plan["alert"] == "severity_increase"
+
+
+T0 = "2026-10-23T00:00:00Z"
+
+
+def _at(hours):
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 10, 23, tzinfo=timezone.utc) + timedelta(hours=hours)
+    return base.isoformat().replace("+00:00", "Z")
+
+
+def _obs(hours, vix, usdjpy, us10y, nk):
+    return {"vix": {"value": vix, "at": _at(hours)}, "usdJpy": {"value": usdjpy, "at": _at(hours)},
+            "us10y": {"value": us10y, "at": _at(hours)}, "nikkeiFutures": {"value": nk, "at": _at(hours)}}
+
+
+def _judged_event(severity="HIGH", reasons=("family_war_escalation", "ai_materiality_high")):
+    event = _stored_v6_war_event("【速報】ロシア軍がポーランドに侵攻", severity=severity, reasons=reasons)
+    event["policyVersion"] = ni.NEWS_POLICY_VERSION
+    judgment = ni.start_judgment(
+        materiality={"severity": severity, "score": 2}, ai_analysis=_ai(3, 3),
+        family="WAR_ESCALATION", decided_at=T0, observation=_obs(0, 18.0, 150.0, 4.30, 40000),
+        expected_directions={"oil": 1, "vix": 1, "usdJpy": -1})
+    return event, judgment
+
+
+def test_market_observation_reads_the_existing_snapshots_and_skips_mock_rows():
+    rates = {"vix": {"latestValue": 21.5, "sourceTimestamp": "2026-10-23T01:00:00Z", "source": "yahoo-rt"},
+             "usdJpy": {"latestValue": 150.0, "latestDate": "2026-10-22", "source": "fred"},
+             "us10y": {"latestValue": 4.3, "sourceTimestamp": "2026-10-22", "source": "mock", "status": "mock"}}
+    futures = {"price": 40100.0, "tradedAt": "2026-10-23T01:00:00Z"}
+    obs = ni.market_observation(rates, futures)
+    assert set(obs) == {"vix", "usdJpy", "nikkeiFutures"}
+    assert obs["usdJpy"] == {"value": 150.0, "at": "2026-10-22"}
+    assert ni.market_observation(None, None) == {}
+
+
+def test_judgment_window_reaction_and_ledger():
+    event, judgment = _judged_event()
+    assert judgment["currentRelevance"] == 3 and judgment["expectedDirections"] == {"vix": 1, "usdJpy": -1}
+    # Inside the first hour nothing counts.
+    assert ni.update_judgment(judgment, _obs(0.5, 25.0, 145.0, 4.10, 38000), now_iso=_at(0.5))["changed"] is False
+    assert judgment["moves"] == {}
+    result = ni.update_judgment(judgment, _obs(2, 20.5, 148.2, 4.25, 39000), now_iso=_at(2))
+    assert result == {"changed": True, "closed": False}
+    assert judgment["moves"]["vix"]["move"] == 2.5 and judgment["moves"]["usdJpy"]["move"] == -1.8
+    assert judgment["moves"]["us10y"]["move"] == -5.0 and judgment["moves"]["nikkeiFutures"]["move"] == -2.5
+    # A smaller later move does not replace the largest one; a stale sample is ignored.
+    ni.update_judgment(judgment, _obs(5, 19.0, 149.5, 4.29, 39900), now_iso=_at(5))
+    assert judgment["moves"]["vix"]["move"] == 2.5
+    reaction = ni.late_market_reaction(judgment)
+    assert reaction["confirmed"] is True and set(reaction["signals"]) == {"vix_spike", "fx_shock"}
+    raised = ni.apply_market_reaction(event, reaction, at=_at(5))
+    assert raised["severity"] == "CRITICAL" and raised["revision"] == event["revision"] + 1
+    assert raised["alertEligible"] is True and raised["confirmationState"] == "MARKET_CONFIRMED"
+    assert raised["marketReaction"]["previousSeverity"] == "HIGH"
+    assert ni.MARKET_REACTION_REASON in raised["severityReasons"]
+    assert ni.apply_market_reaction(raised, reaction, at=_at(6)) is None        # once
+    closed = ni.update_judgment(judgment, _obs(25, 19.0, 149.0, 4.3, 40000), now_iso=_at(25))
+    assert closed["closed"] is True and judgment["closed"] is True
+    assert judgment["reaction"]["largeSeries"] == ["nikkeiFutures", "usdJpy", "vix"]
+    ledger = []
+    row = ni.judgment_ledger_row(judgment, event_id=event["eventId"], final_severity=raised["severity"])
+    assert ni.append_judgment_ledger(ledger, row) and not ni.append_judgment_ledger(ledger, row)
+    assert ledger[0]["severity"] == "HIGH" and ledger[0]["finalSeverity"] == "CRITICAL"
+    assert ledger[0]["currentRelevance"] == 3 and ledger[0]["maxRatio"] == 1.25
+    assert "headlineJa" not in ledger[0] and "titleOriginal" not in ledger[0]
+
+
+def test_reaction_against_the_hypothesis_or_without_one_never_raises():
+    event, judgment = _judged_event()
+    ni.update_judgment(judgment, _obs(2, 15.5, 152.0, 4.30, 40000), now_iso=_at(2))   # risk-on
+    assert ni.late_market_reaction(judgment)["confirmed"] is False
+    judgment["expectedDirections"] = {}
+    ni.update_judgment(judgment, _obs(3, 21.0, 148.0, 4.30, 40000), now_iso=_at(3))
+    assert ni.late_market_reaction(judgment)["confirmed"] is False
+    capped, _ = _judged_event(reasons=("family_war_escalation", "stale_capped"))
+    assert ni.apply_market_reaction(capped, {"confirmed": True, "signals": []}, at=_at(3)) is None
+
+
+def test_calibration_summary_counts_per_severity_and_relevance():
+    def row(i, severity, relevance, ratio):
+        return {"eventId": f"e{i}", "severity": severity, "currentRelevance": relevance,
+                "maxRatio": ratio, "largeSeries": ["vix"] if ratio >= 1 else [],
+                "measuredSeries": ["vix"]}
+    rows = ([row(i, "WATCH", 0, 0.2) for i in range(6)] + [row(10 + i, "HIGH", 2, 0.5 + i * 0.2) for i in range(5)]
+            + [row(20 + i, "CRITICAL", 3, 1.5) for i in range(5)]
+            + [{"eventId": "unmeasured", "severity": "CRITICAL", "measuredSeries": []}])
+    summary = ni.summarize_judgment_calibration(rows)
+    assert summary["closedMeasured"] == 16
+    assert summary["bySeverity"]["WATCH"] == {"n": 6, "large": 0, "largeShare": 0.0, "medianMaxRatio": 0.2}
+    assert summary["bySeverity"]["HIGH"]["n"] == 5 and summary["bySeverity"]["HIGH"]["large"] == 2
+    assert summary["bySeverity"]["CRITICAL"]["largeShare"] == 1.0
+    assert summary["bySeverity"]["INFO"]["n"] == 0 and summary["bySeverity"]["INFO"]["largeShare"] is None
+    assert summary["byCurrentRelevance"]["3"]["n"] == 5
+    assert summary["monotonic"] is True
+    assert summary["attribution"] == "SHARED_WINDOW_NOT_CAUSAL"
+    reversed_rows = [dict(r, severity={"WATCH": "CRITICAL", "CRITICAL": "WATCH"}.get(r.get("severity"), r.get("severity")))
+                     for r in rows]
+    assert ni.summarize_judgment_calibration(reversed_rows)["monotonic"] is False
+    assert ni.summarize_judgment_calibration([])["monotonic"] is None

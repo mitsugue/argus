@@ -12,6 +12,7 @@ const statusLabel: Record<string, string> = { ACTIVE: '更新あり', QUIET: '�
 const statusDescription: Record<string, string> = { ACTIVE: '14日以内に記録あり', QUIET: '14日間、新しい記録なし', EMPTY: 'このテーマの記録はまだありません' };
 // A theme the server added because related news kept arriving (not one of the fixed seven).
 const emergingDescription = '7日間で重要なニュースが続いた話題';
+const breakingDescription = '重大な速報の話題';
 const kindLabel: Record<string, string> = { NEWS: 'ニュース', RELEASE_REACTION: '発表の反応', PRICING: '織り込み', AI_VIEW: '見立て', RELEASE_RESULT: '公式結果', NEWS_CONTEXT: '関連報道' };
 const jst = (iso?: string | null) => iso && Number.isFinite(Date.parse(iso))
   ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
@@ -21,7 +22,9 @@ function ThemeRow({ theme }: { theme: MarketPositionTheme }) {
   const expectation = hasSubstantiveView(theme.view?.expectationJa) ? theme.view!.expectationJa : '';
   const fear = hasSubstantiveView(theme.view?.fearJa) ? theme.view!.fearJa : '';
   const chip = theme.emerging ? '新しい話題' : statusLabel[theme.status] ?? '確認中';
-  const description = theme.emerging ? emergingDescription : statusDescription[theme.status];
+  const description = theme.emerging
+    ? (theme.emergingBasis === 'BREAKING' ? breakingDescription : emergingDescription)
+    : statusDescription[theme.status];
   return <details className="mp-theme" data-theme={theme.themeId} data-status={theme.status}
     data-emerging={theme.emerging ? 'true' : undefined}>
     <summary>
