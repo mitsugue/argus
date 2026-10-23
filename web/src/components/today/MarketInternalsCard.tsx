@@ -30,14 +30,14 @@ const stamp=(v?:string)=>v&&Number.isFinite(Date.parse(v))?new Date(v).toLocaleS
 
 export function MarketInternalsCard({document,horizon,focusSymbol}:{document:unknown;horizon:number;focusSymbol?:string}) {
   if(!validMarketInternals(document)||!document.periods[String(horizon)])return <section className="card at-internals" aria-label="日本株の指数・業種比較">
-    <h3>{focusSymbol?`${focusSymbol}と市場の変化`:"上昇は市場全体に広がっているか"}</h3><p>指数・業種・銘柄を同じ期間で比較できるデータを確認中です。</p></section>;
+    <h3>{focusSymbol?`${focusSymbol}と市場の変化`:"BREADTH"}</h3><p>指数・業種・銘柄を同じ期間で比較できるデータを確認中です。</p></section>;
   const row=document.periods[String(horizon)],counts=row.sample.counts;
   const sectors=[...row.sectors].sort((a,b)=>(b.relativeToBenchmarkPct??-Infinity)-(a.relativeToBenchmarkPct??-Infinity));
   const top=sectors.find(s=>s.relativeToBenchmarkPct!==null);
   const breadth=document.breadth;
   const selectedAsset=focusSymbol?row.assets.find(asset=>asset.instrumentId===focusSymbol):null;
   return <section className="card at-internals" aria-label="日本株の指数・業種比較">
-    <h3>{focusSymbol?`${focusSymbol}と市場の変化`:"上昇は市場全体に広がっているか"}</h3>
+    <h3>{focusSymbol?`${focusSymbol}と市場の変化`:"BREADTH"}</h3>
     <p>{row.startDate} → {row.endDate} · 過去{horizon}営業日の比較</p>
     {document.comparisonAvailability?.latestSessionIncluded===false&&<p role="status">
       {document.comparisonAvailability.latestCompletedSessionDate}の終値が比較に必要な系列でそろっていないため、{document.comparisonAvailability.comparedThrough}までの確定値を表示しています。

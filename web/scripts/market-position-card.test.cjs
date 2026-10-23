@@ -29,7 +29,7 @@ assert.ok(render({...base,marketPosition:{status:'UNAVAILABLE',errorClass:'Value
 const position={schemaVersion:'argus-market-position-memory-v1',asOf:'2026-10-03T02:00:00Z',entryCount:3,actionAuthority:false,automaticAiCalls:0,
  themes:[theme({themeId:'JPY',labelJa:'円相場',status:'EMPTY',entryCount:0,recent:[],pricing:null,lastReaction:null,nextEvent:null}),theme()]};
 const html=render({...base,marketPosition:position});
-assert.ok(html.includes('市場の現在位置')&&html.includes('2テーマ中 1件に更新'));
+assert.ok(html.includes('<b>MARKET POSITION</b>')&&html.includes('2テーマ中 1件に更新'));
 assert.ok(html.includes('政策金利の予想(FF先物) 3.930%'));
 assert.ok(html.includes('次: 米消費者物価')&&html.includes('10/14'));
 assert.ok(html.includes('利上げ観測の後退を安心材料に株高')&&html.includes('発表の反応'));

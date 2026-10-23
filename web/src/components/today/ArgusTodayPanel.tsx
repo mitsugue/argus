@@ -838,7 +838,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         data-market-signals-active={topSignals?.activeCount ?? undefined}
         data-market-signals-total={topSignals?.total ?? undefined}>
         <summary aria-label={topSignals ? `成立している条件 ${topSignals.activeCount}件、全6サイン` : '6サインの成立状況を確認中'}>
-          <small>{topSignals?.kind === 'warning' ? '6サイン（日本株の警戒条件）' : '6サイン'}</small>
+          <small>6 SIGNS</small>
           {/* v13.5.63 (GPT review item 1): the seven conditions are Japanese
               market inputs (credit balances, 1570, foreign flow…). With the US
               market selected they are labelled as Japan's, and the US
@@ -943,7 +943,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 
 
     {view.holdingsReview.length > 0 && <section className="at-priorities card" aria-label="自分の銘柄への影響" data-section="OWNER PRIORITIES">
-      <div className="at-head"><b>自分の銘柄への影響</b>
+      <div className="at-head"><b>MY STOCKS</b>
         <span>{view.holdingsReview.some((item) => /最優先|今日の優先/.test(item.statusJa ?? ''))
           ? '優先して確認' : '確認したい銘柄'}</span></div>
       <AssetImpactCards items={view.holdingsReview} onNavigateToAsset={onNavigateToAsset} />
@@ -951,7 +951,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 
     <section id="today-material-news" className="at-event card at-news-top" aria-label="重大ニュース・市場リスク"
       data-argus-contract="today-material-news-v1" data-news-count={newsRows.length}>
-      <div className="at-head"><b>重大ニュース・市場リスク</b>
+      <div className="at-head"><b>RISK NEWS</b>
         <span>{newsRows.length > NEWS_ROWS_CAP ? `${NEWS_ROWS_CAP} / ${newsRows.length}件` : `${newsRows.length}件`}</span></div>
       <p className="at-news-freshness">{newsIntel.intakeHealth?.previousObservation ? '前回の監視状態: ' : ''}{newsIntakeHealthJa(newsIntel.intakeHealth)}{newsIntel.intakeHealth?.lastSyncAt ? ` · 新着確認 ${new Date(newsIntel.intakeHealth.lastSyncAt).toLocaleTimeString('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit'})}` : ''}{newsIntel.generatedAt ? ` · 一覧確認 ${new Date(newsIntel.generatedAt).toLocaleTimeString('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit'})}` : ''}</p>
       {(newsIntel.previousObservation || shock.previousObservation) && <p className="at-shock-clear" role="status">前回確認したニュース・市場状態を表示しています。現在の確認結果は次の更新で反映します。</p>}
@@ -977,12 +977,12 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     </section>
     <details id="today-news-details" className="at-event card" open={allNewsOpen}
       onToggle={(event) => setAllNewsOpen(event.currentTarget.open)}>
-      <summary>ニュース・続報の詳細と保存履歴</summary>
+      <summary>NEWS</summary>
       {allNewsOpen && <NewsAlertsPanel />}
     </details>
 
     <section id="today-events" className="at-event card" aria-label="重要イベント" data-argus-contract="unified-event-schedule-v1">
-      <div className="at-head"><b>相場を動かす予定と結果</b><span>45日先まで</span></div>
+      <div className="at-head"><b>EVENTS</b><span>45日先まで</span></div>
       <ImportantEventsCard embedded sectionId="today-event-details" />
       <details className="at-event-sq-details"><summary>SQの公式日程・出典</summary>
         <JapanSqCalendarCard />
@@ -995,7 +995,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 
     <details className="at-other-markets card" data-argus-contract="other-markets-actuals-v1"
       onToggle={(event) => setOtherMarketsOpen(event.currentTarget.open)}>
-      <summary>他の市場を見る</summary>
+      <summary>OTHER MARKETS</summary>
       <section className="at-lamps" aria-label="市場セッション">
         {view.sessionLamps.map((lamp) => <span key={lamp.key} className={`is-${lamp.tone}`}>
           <i aria-hidden />{lamp.label}
@@ -1014,7 +1014,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         together — JP with JP, US with US — instead of alternating. */}
     {/* v13.5.61 (owner): Japan first, then the US — each market's live line,
         market view, 需給 and (for the US) MACRO in its own block, never mixed. */}
-    <details className="at-event card at-context" aria-label="市場観・需給（参考）"><summary>市場データの一覧・従来の判定を見る</summary>
+    <details className="at-event card at-context" aria-label="市場観・需給（参考）"><summary>DATA</summary>
       <div className="at-context__block" data-market="JP">
         <small className="at-context__title">日本株</small>
         <MarketViewStrip />

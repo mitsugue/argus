@@ -81,7 +81,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
       impact: '自分への影響', next: '次に確認すること', invalidation: '見方を変える条件' } as const;
     const kinds = { FACT: '確認した事実', INFERENCE: '見立て・推論', UNKNOWN: '未確認' };
     return <div className={`at-brief at-unified-brief${editorial ? ' at-brief--current' : ''}`} data-layout={editorial ? 'current-four-cards' : 'reference'} aria-label="ARGUSの今日の見立て" data-argus-contract="unified-brief-v1">
-      <header className="at-brief__edition"><span>今日の見立て</span><time dateTime={brief.aiDiagnostics?.completedAt ?? brief.generatedAt}>
+      <header className="at-brief__edition"><span>MARKET VIEW</span><time dateTime={brief.aiDiagnostics?.completedAt ?? brief.generatedAt}>
         {new Date(brief.aiDiagnostics?.completedAt ?? brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 更新</time>{updateState}</header>
       {editorial ? <TodayDecisionStrip brief={brief} criticalNews={criticalNews} />
         : <p className="at-unified-brief__view">{unified.sections.view.textJa}</p>}
