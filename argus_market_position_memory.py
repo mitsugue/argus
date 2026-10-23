@@ -47,7 +47,7 @@ FIXED_THEMES: Dict[str, Dict[str, Any]] = {
 # Named per family; unclassified news (OTHER) is not named here, because
 # naming it would need a model call on the article summaries.
 EMERGING_FAMILY_LABELS: Dict[str, str] = {
-    "CYBER_SECURITY": "サイバー攻撃",
+    "CYBER_SECURITY": "サイバー・システム障害",
     "COMMODITIES": "資源・商品市況",
     "EARNINGS": "企業決算",
     "CORPORATE_ACTION": "買収・再編",

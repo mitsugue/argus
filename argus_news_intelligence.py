@@ -147,6 +147,25 @@ _CYBER_PHRASES = ("サイバー", "ハッカー", "ハッキング", "ランサ�
                   "ゼロデイ", "脆弱性を突", "脆弱性を悪用", "ddos", "cyber", "hacker",
                   "hacking", "ransomware", "malware", "data breach", "security breach")
 _CYBER_NAME_EXCLUSIONS = ("サイバーエージェント", "サイバーダイン", "cyberagent", "cyberdyne")
+# v8 (owner 2026-10-23): system failures belong to the same family. Named
+# outages count alone; a fault word counts only next to an IT term (PHP欠陥,
+# アプリの不具合), so 「財政の脆弱性」「供給網の障害」「工場の停止」 stay out.
+_IT_OUTAGE_PHRASES = ("システム障害", "通信障害", "大規模障害", "システムトラブル",
+                      "サーバー障害", "サーバ障害", "ネットワーク障害", "回線障害",
+                      "接続障害", "クラウド障害", "システム停止", "システムが停止", "システムダウン",
+                      "サーバーダウン", "it障害", "system outage", "service outage",
+                      "network outage", "cloud outage", "it outage", "internet outage")
+_IT_CONTEXT_EXCLUSIONS = ("金融システム", "経済システム", "政治システム", "社会システム",
+                          "通信簿")
+_IT_FAULT_RE = re.compile(
+    r"(?:システム|ソフトウェア|ソフト|サーバー|サーバ|アプリ|クラウド|ネットワーク|"
+    r"オンライン|ウェブ|サイト|通信|基幹系|勘定系|プログラム|"
+    r"(?<![a-z])(?:os|php|java|windows|linux|ios|android|aws|azure|api|software|"
+    r"server|cloud|app)(?![a-z]))"
+    r"[^。\n]{0,12}?"
+    r"(?:障害|不具合|欠陥|脆弱性|サービス停止|サービスが停止|誤作動|バグ|outage|bug|"
+    r"vulnerabilit|flaw|glitch)")
+_DATA_LEAK_RE = re.compile(r"(?:情報|データ)[^。\n]{0,12}?(?:漏洩|漏えい|流出)")
 # With a digital-attack cue present, only these establish an armed conflict;
 # "攻撃"/"報復"/"封鎖" alone then describe the digital attack.
 _KINETIC_MILITARY_PHRASES = ("空爆", "ミサイル", "侵攻", "戦闘", "airstrike",
@@ -237,8 +256,7 @@ _JAPAN_TRANSMISSION_JA = {
                       "日本株全体の下押し要因になり得ます。",
     "GEOPOLITICS": "軍の展開・威嚇・首脳の発言は、衝突前でも原油・VIX・円を通じて"
                    "日本株の地合いを変え得ます。実際の市場反応の確認が必要です。",
-    "CYBER_SECURITY": "被害企業の事業停止・情報流出のおそれ。国家が関わる場合は"
-                      "地政学の緊張にもつながります。",
+    "CYBER_SECURITY": "サービス停止や情報流出で、被害企業の業務と信用に響くおそれ。",
     "BOJ": "日銀の政策変更は円金利・為替を直接動かし、銀行・輸出・"
            "高配当株の相対評価を変えます。",
     "FED": "FRBの政策とガイダンスは米金利・ドル円経由で日本株の"
@@ -295,13 +313,21 @@ def classify_event(subject: str, excerpt: str = "") -> Dict[str, Any]:
     cyber_text = haystack
     for name in _CYBER_NAME_EXCLUSIONS:
         cyber_text = cyber_text.replace(name, "")
-    cyber = any(phrase in cyber_text for phrase in _CYBER_PHRASES)
+    cyber = any(phrase in cyber_text for phrase in _CYBER_PHRASES) or bool(
+        _DATA_LEAK_RE.search(cyber_text))
+    it_text = cyber_text
+    for phrase in _IT_CONTEXT_EXCLUSIONS:
+        it_text = it_text.replace(phrase, "")
+    # A system failure joins the family but, unlike a digital attack, does
+    # not reinterpret a physical "攻撃" in the same text.
+    outage = any(phrase in it_text for phrase in _IT_OUTAGE_PHRASES) or bool(
+        _IT_FAULT_RE.search(it_text))
     # Digital attacks alone do not establish an armed conflict. Independent
     # military cues in the same article still participate in classification.
     military_text = re.sub(r"(?:サイバー|サイバ|ハッキング|ddos|dos)[・\s-]*攻撃|cyber[\s-]*attack", "", haystack)
     war_phrases = _KINETIC_MILITARY_PHRASES if cyber else None
     matched = [family for family, phrases in _FAMILY_RULES
-               if (cyber if family == "CYBER_SECURITY" else any(
+               if ((cyber or outage) if family == "CYBER_SECURITY" else any(
                    phrase in (military_text if family == "WAR_ESCALATION" else haystack)
                    for phrase in (war_phrases if family == "WAR_ESCALATION" and war_phrases
                                   else phrases)))]
@@ -1140,8 +1166,8 @@ _DIR_TRANSMISSION_CHAINS = {
                                   "原油↓/株式リスクオン"],
     # No direction rule: a digital attack does not by itself move oil or the
     # whole market, so every target stays UNCLEAR (owner 2026-10-23).
-    ("CYBER_SECURITY", "escalate"): ["被害企業の事業停止・情報流出のおそれ",
-                                     "国家が関われば地政学の緊張"],
+    ("CYBER_SECURITY", "escalate"): ["サービス停止・情報流出",
+                                     "被害企業の業務と信用に響くおそれ"],
 }
 
 _UNCLEAR_ALL = {target: "UNCLEAR" for target in DIRECTION_TARGETS}

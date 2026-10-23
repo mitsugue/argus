@@ -243,13 +243,13 @@ def test_emerging_theme_appears_with_repeated_important_news_and_leaves_when_qui
     shown, view = _emerging(memory, "2026-10-25T02:00:00Z")
     assert [t["themeId"] for t in shown] == ["EMERGING_CYBER_SECURITY"]
     theme = shown[0]
-    assert theme["labelJa"] == "サイバー攻撃" and theme["status"] == "ACTIVE"
+    assert theme["labelJa"] == "サイバー・システム障害" and theme["status"] == "ACTIVE"
     assert theme["recent"][0]["ref"]["eventId"] == "c2"
     # The fixed seven keep their order; the new theme follows them.
     assert [t["themeId"] for t in view["themes"]][:7] == list(mpm.FIXED_THEMES)
     fact = next(f for f in mpm.explanation_facts(view)
                 if f["provenance"]["eventId"] == "market-position-EMERGING_CYBER_SECURITY")
-    assert fact["text"].startswith("現在位置・サイバー攻撃(新しい話題)")
+    assert fact["text"].startswith("現在位置・サイバー・システム障害(新しい話題)")
     # Still shown within 14 days of the last article, gone after.
     assert _emerging(memory, "2026-11-07T01:00:00Z")[0]
     assert _emerging(memory, "2026-11-08T01:30:00Z")[0] == []

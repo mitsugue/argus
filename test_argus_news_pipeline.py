@@ -1044,7 +1044,7 @@ def test_cyber_attack_mail_is_classified_as_cyber(monkeypatch, news_env):
     assert event["eventType"] == "CYBER_SECURITY" and event["themeTags"] == ["CYBER"]
     assert event["policyVersion"] == "news-policy-v7"
     assert event["impactDirection"]["directionByTarget"]["energy"] == "UNCLEAR"
-    assert event["generalTransmissionJa"].startswith("被害企業の事業停止")
+    assert event["generalTransmissionJa"].startswith("サービス停止や情報流出")
 
 
 def test_intake_cycle_reclassifies_retained_news_once_without_ai(monkeypatch, news_env):

@@ -851,6 +851,32 @@ def test_cyber_cues_ignore_company_names_and_market_vocabulary():
     assert ni.classify_event("顧客の情報流出、不正アクセスか")["eventType"] == "CYBER_SECURITY"
 
 
+PHP_OUTAGE = "PHP欠陥、銀行や通信でもサービス停止広がる みずほ銀など一部復旧"
+
+
+def test_system_failures_join_the_cyber_family():
+    """Owner 2026-10-23: システム障害 is part of サイバー・システム障害."""
+    for subject in (PHP_OUTAGE, "全日空でシステム障害、欠航相次ぐ", "大規模通信障害で決済止まる",
+                    "クラウド障害で企業のサービス停止", "Windowsに脆弱性、修正版を配布",
+                    "銀行アプリに不具合、送金できず", "勘定系システムが停止",
+                    "デジタル庁、問い合わせフォーム入力情報1万件超が漏洩か",
+                    "Major cloud outage disrupts banks"):
+        assert ni.classify_event(subject)["eventType"] == "CYBER_SECURITY", subject
+    assert ni._JAPAN_TRANSMISSION_JA["CYBER_SECURITY"] == \
+        "サービス停止や情報流出で、被害企業の業務と信用に響くおそれ。"
+
+
+def test_non_it_fragility_outages_and_stoppages_are_not_cyber():
+    for subject in ("財政の脆弱性に懸念", "金融システムの脆弱性を指摘", "供給網の障害で生産遅れ",
+                    "工場の停止で減産", "部品不足で工場停止", "アプリのダウンロード数が急増",
+                    "郵便のサービス停止を検討", "資金流出が続く", "停電で鉄道運休",
+                    "The economy's vulnerability to rate shocks"):
+        assert "CYBER_SECURITY" not in ni.classify_event(subject)["families"], subject
+    # A physical attack that causes an outage stays an armed conflict.
+    mixed = ni.classify_event("ミサイル攻撃で通信障害")
+    assert mixed["eventType"] == "WAR_ESCALATION" and "CYBER_SECURITY" in mixed["families"]
+
+
 def _stored_v6_war_event(subject, severity="HIGH", reasons=("family_war_escalation", "extreme_language")):
     taxonomy = {"eventType": "WAR_ESCALATION", "families": ["WAR_ESCALATION"],
                 "themeTags": ["ENERGY"], "lowValueHints": False}
@@ -887,7 +913,7 @@ def test_stored_event_is_reclassified_once_by_rules_only():
     assert fixed["whyJa"] == ni._JAPAN_TRANSMISSION_JA["CYBER_SECURITY"]
     assert fixed["eventId"] == event["eventId"]
     projected = ni.project_owner_event(fixed)
-    assert projected["generalTransmissionJa"].startswith("被害企業の事業停止")
+    assert projected["generalTransmissionJa"].startswith("サービス停止や情報流出")
     assert "classificationPreviousRevision" not in projected
     # Once per policy version.
     assert ni.reclassify_stored_events(events, at="2026-10-23T00:10:00Z")["reviewed"] == 0
