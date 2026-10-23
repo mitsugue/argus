@@ -18,15 +18,14 @@ export function TodayEventSchedule({dashboard,legacy,sectionId,renderDashboard,r
       <div className="te-when">{equityEventWhen(row.event)} · {equityEventDistance(row.event)}</div>
       <div className="te-title"><h4>{row.event.titleJa}</h4><EventImpactBadge impact={row.event.importance} /></div>
       <p>{row.event.soWhatJa}</p>
-      <details><summary>確認すること・出典</summary><p>{row.event.whatJa}</p><p>{row.event.watchJa}</p>
+      <details><summary>詳しく</summary><p>{row.event.whatJa}</p><p>{row.event.watchJa}</p>
         {row.event.pastTendencyJa&&<p>{row.event.pastTendencyJa}</p>}<small>出典：{row.event.source}</small></details>
     </article>;
   return <section id={sectionId} className="te-schedule" aria-label="日付順のイベント">
-    <p className="te-key">影響 大・中・小：相場が動く大きさの目安</p>
-    {!dashboard?.items.length&&!legacy.length&&<p role="status">米国の予定・発表結果は取得できていません。</p>}
-    {calendar.failed&&<p role="status">日本の予定の更新に失敗しました。取得済みの日程を表示しています。</p>}
-    {calendar.data?.gaps.length? <p role="status">公式日程を確認できていない予定があります。</p>:null}
-    {!rows.length&&<p>{calendar.loading?'予定を読み込んでいます':'予定・結果を取得できていません'}</p>}
+    {!dashboard?.items.length&&!legacy.length&&<p role="status">米国の予定: 取得できません</p>}
+    {calendar.failed&&<p role="status">日本の予定: 更新失敗・保存分</p>}
+    {calendar.data?.gaps.length? <p role="status">一部の予定は公式日程未確認</p>:null}
+    {!rows.length&&<p>{calendar.loading?'読み込み中':'取得できません'}</p>}
     {recent.length>0&&<div className="te-recent"><h4>直近の結果・発表後48時間</h4>
       {recent.map(row=><React.Fragment key={row.key}>{render(row)}</React.Fragment>)}</div>}
     <div>{upcoming.map(row=><React.Fragment key={row.key}>{render(row)}</React.Fragment>)}</div>

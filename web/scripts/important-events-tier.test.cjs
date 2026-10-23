@@ -121,10 +121,9 @@ const panel2 = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'today', 'ArgusTodayPanel.tsx'), 'utf8');
 assert.ok(panel2.includes('news-event-signal-v1'),
   'Today must render the independent news signal');
-assert.ok(panel2.includes('チャート観とは独立'),
-  'the strip must declare independence from the chart view');
-assert.ok(panel2.includes('ニュースは売買権限を持たない'),
-  'the strip must disclaim action authority');
+// Owner policy 2026-10-23: the boundary is enforced above (BLOCK_BUY only), not explained on screen.
+assert.ok(!panel2.includes('ニュースは売買権限を持たない'),
+  'no on-screen disclaimer under the news');
 
 console.log('important-events-tier.test: news directional impact contract ok');
 

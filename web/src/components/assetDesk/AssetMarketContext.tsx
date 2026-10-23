@@ -18,7 +18,6 @@ export function AssetMarketContext({symbol,market,asset}:{symbol:string;market:s
     {market==='JP'&&<details className="ad-market-context__brief" open={comparisonOpen} onToggle={event=>setComparisonOpen(event.currentTarget.open)}><summary>指数・業種とこの銘柄の比較</summary>
       {comparisonOpen&&<SharedMarketContext horizon={horizon} focusSymbol={symbol}/>}</details>}
     {<details className="ad-market-context__brief" open={briefOpen} onToggle={event=>setBriefOpen(event.currentTarget.open)}><summary>市場全体の見立て（Today）</summary>
-      <p>市場全体の背景を確認できます。</p>
       {briefOpen&&<MarketBriefCard market={market}/>}
     </details>}
   </section>;

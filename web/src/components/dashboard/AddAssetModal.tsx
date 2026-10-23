@@ -177,10 +177,10 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
         )}
 
         <div className="modal__hint">
-          {cfg.market === 'CRYPTO' && '候補は CoinGecko 検索。選ぶとライブUSD価格に自動接続されます。'}
-          {cfg.market === 'CORE' && '主要投信カタログからローカル検索(ライブ基準価額は未取得)。一覧にない投信は手動入力も可能。'}
-          {cfg.market === 'JP' && '候補は J-Quants 上場銘柄マスタから検索。社名やコードを入力してください。'}
-          {cfg.market === 'US' && '候補は Twelve Data から検索。社名やティッカーを入力してください。'}
+          {cfg.market === 'CRYPTO' && '名前で検索'}
+          {cfg.market === 'CORE' && '名前で検索（手動入力も可）'}
+          {cfg.market === 'JP' && '社名やコードで検索'}
+          {cfg.market === 'US' && '社名やティッカーで検索'}
         </div>
 
         {err && <div className="modal__err">{err}</div>}

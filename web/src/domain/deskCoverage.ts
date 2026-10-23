@@ -70,7 +70,7 @@ export function deskCoverageJa(coverage: DeskCoverage, stored?: { loading: boole
     const t = new Date(stored.generatedAt);
     const clock = Number.isFinite(t.getTime())
       ? t.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '時刻不明';
-    return `${base} · 保存分 ${clock} を表示中（更新取得中）`;
+    return `${base} · 保存分 ${clock}（更新中）`;
   }
   if (stored && stored.loading) return `${base} · 初回取得中`;
   return base;
@@ -79,13 +79,13 @@ export function deskCoverageJa(coverage: DeskCoverage, stored?: { loading: boole
 export function deskCoverageDetailJa(coverage: DeskCoverage): string[] {
   const rows: string[] = [];
   if (coverage.missingPrice.length) rows.push(`価格未取得: ${coverage.missingPrice.join('・')}`);
-  if (coverage.notRequested.length) rows.push(`判断根拠 未要求（取得キューの外）: ${coverage.notRequested.join('・')}`);
+  if (coverage.notRequested.length) rows.push(`判断根拠 未要求: ${coverage.notRequested.join('・')}`);
   const pending = coverage.missingEvidence.filter((symbol) => !coverage.notRequested.includes(symbol));
   if (pending.length) rows.push(`判断根拠 取得中/未着: ${pending.join('・')}`);
   if (coverage.notDisplayed.length) rows.push(`未表示: ${coverage.notDisplayed.join('・')}`);
   if (coverage.registered - coverage.evidenceApplicable > 0) {
-    rows.push(`判断根拠の対象外（仮想通貨・投信など）: ${coverage.registered - coverage.evidenceApplicable}件`);
+    rows.push(`判断根拠の対象外: ${coverage.registered - coverage.evidenceApplicable}件`);
   }
-  if (!rows.length) rows.push('登録銘柄すべてに価格と判断根拠が届いています');
+  if (!rows.length) rows.push('不足なし');
   return rows;
 }

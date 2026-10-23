@@ -25,7 +25,7 @@ assert.ok(render({target:undefined,targetStatus:'NO_TARGET'}).includes('取得�
 assert.ok(render({target:undefined,refreshFailed:true}).includes('取得未確認'));
 assert.ok(!render({currentPrice:null}).includes('現在値比'));
 assert.ok(render({supply:{...supply, directness:'stale_context', supplyDemandRank:'D'}}).includes('保存評価 D'));
-assert.ok(render({supply:{...supply, market:'US'}}).includes('判定保留'));
+assert.ok(render({supply:{...supply, market:'US'}}).includes('データ待ち'));
 assert.equal(render({market:'CRYPTO'}), '');
 const summary = fs.readFileSync('src/components/assetDesk/AssetDecisionSummary.tsx', 'utf8');
 assert.ok(summary.includes('<AssetOutlookSummary') && !summary.includes('gapPct.toFixed'));

@@ -294,7 +294,7 @@ const copyReference = JSON.stringify(referenceDoc);
 assert.equal(tl.tachibanaCurrentRows(referenceDoc,quoteNow).size,0);
 assert.equal(tl.tachibanaPriceReferenceRows(referenceDoc,quoteNow).get('8058').price,123.4);
 assert.equal(tl.tachibanaPriceReferenceRows(referenceDoc,quoteNow).get('8058').sourceTimestamp,'2026-10-14T01:47:00Z');
-assert.equal(tl.tachibanaPriceTime(tl.tachibanaPriceReferenceRows(referenceDoc,quoteNow).get('8058')),'10:47（分精度）');
+assert.equal(tl.tachibanaPriceTime(tl.tachibanaPriceReferenceRows(referenceDoc,quoteNow).get('8058')),'10:47');
 assert.equal(JSON.stringify(referenceDoc),copyReference);
 for (const changes of [{enabled:false},{displayApproved:false},{mode:'SHADOW'},{authoritative:true},
   {shadowOnly:false},{provider:'OTHER'}]) {
@@ -355,7 +355,7 @@ try {
     held:false,symbol:'8058',name:'合成検査銘柄',priceText:'100円',changePct:-1,dataStatus:'前日'}};
   const renderedQuote=quoteCardModule.exports.render(referenceDoc,cardData);
   assert.match(renderedQuote,/123\.4円/);assert.match(renderedQuote,/受信価格・参考/);
-  assert.match(renderedQuote,/10:47（分精度）/);assert.match(renderedQuote,/受信.*10:47:44/);
+  assert.match(renderedQuote,/価格 10:47/);assert.doesNotMatch(renderedQuote,/分精度|立花証券|受信 10:47:44/);
   assert.doesNotMatch(renderedQuote,/リアルタイム|100円/);
   const freshPoint=Date.parse('2026-10-14T01:47:10Z');
   const freshReference={...referenceDoc,status:'LIVE',readAt:new Date(freshPoint).toISOString(),symbols:{'8058':{
@@ -369,7 +369,7 @@ try {
   Date.now=()=>Date.parse('2026-10-14T01:47:24.001Z');   // receipt 15.001 s old
   const afterExpiry=quoteCardModule.exports.render(freshReference,cardData);
   assert.match(afterExpiry,/123\.4円/);assert.doesNotMatch(afterExpiry,/リアルタイム|100円/);
-  assert.match(afterExpiry,/10:47（分精度）/);
+  assert.match(afterExpiry,/10:47/);assert.doesNotMatch(afterExpiry,/分精度/);
   const lateReceipt={...freshReference,symbols:{'8058':{...freshReference.symbols['8058'],receivedAt:'2026-10-14T01:48:14Z'}}};
   Date.now=()=>Date.parse('2026-10-14T01:48:15Z');       // 75 s from the minute start
   assert.match(quoteCardModule.exports.render(lateReceipt,cardData),/リアルタイム/);

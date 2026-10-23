@@ -137,8 +137,8 @@ const evidenceAt = panel.indexOf('at-evidence card');
 check('Primary Action is rendered before collapsed evidence', heroAt >= 0 && evidenceAt > heroAt
   && panel.includes('<details className="at-evidence card">'));
 check('data-gated Seven Sign is not imputed to level four',
-  panel.includes("view.actionScore == null &&") && panel.includes("現在のレベルは未確定")
-  && !panel.includes('candidateLevel ?? 4'));
+  // Owner policy 2026-10-23: the retired level ladder is not shown at all.
+  !panel.includes('SEVEN_SIGN_MEANING') && !panel.includes('candidateLevel ?? 4'));
 check('Today contains no legacy market decision projection',
   !panel.includes('view.decisions') && !fs.existsSync(path.join(root, 'src/domain/argusEngine.ts'))
   && !fs.existsSync(path.join(root, 'src/domain/commandSummary.ts')));
@@ -156,7 +156,7 @@ check('an unread event feed is distinguishable from an empty calendar',
   unknownView.eventsAuthorityUnknown === true && knownView.eventsAuthorityUnknown === false
   && unknownView.nextEvent === null && knownView.nextEvent === null);
 check('Today never claims an empty calendar it could not read',
-  fs.readFileSync(path.join(root,'src/components/dashboard/TodayEventSchedule.tsx'),'utf8').includes('予定・結果を取得できていません')
+  fs.readFileSync(path.join(root,'src/components/dashboard/TodayEventSchedule.tsx'),'utf8').includes("calendar.loading?'読み込み中':'取得できません'")
   && panel.includes('<ImportantEventsCard embedded sectionId="today-event-details" />'));
 
 // v13.5.54 (owner 2026-09-04: 「イベントが出たばかりなので米雇用統計が出てない」).
@@ -324,11 +324,11 @@ check('Today never claims an empty calendar it could not read',
     && panel.includes("document.getElementById('today-news-details')")
     && panel.includes('notificationNewsIdFromHash') && panel.includes('notificationOnlyRow')
     && panel.includes('newsIntel.events.filter((event) => event.eventId === notificationNewsId)')
-    && panel.includes('通知から開いた重要ニュースを追加表示しています。'));
+    && panel.includes('[...visibleNewsRows, notificationOnlyRow]'));
   check('the old single-item risk and news cards are gone',
     !panel.includes('title="市場リスク"') && !panel.includes('title="重大ニュース"'));
   check('DATA reasons open on tap instead of occupying the decision area',
-    panel.includes('<details className="at-data-detail">'));
+    panel.includes('<details className="at-data-detail" data-argus-contract="other-analysis-data-status-v1">'));
   check('MACRO colour follows the value direction',
     panel.includes('className={macroTone(move)}') && panel.includes("move.value > move.previous ? 'is-positive' : 'is-negative'"));
   check('需給 sits with the market view of the same market',
@@ -374,7 +374,7 @@ check('Today never claims an empty calendar it could not read',
     noted.dataStatus.label === '正常' && noted.dataQualityReasonCodes.length === 0
     && noted.dataQualityNotes.join(',') === 'flow_previous_value_closed_session');
   check('the note has Japanese the owner can read',
-    panel.includes("flow_previous_value_closed_session: '資金フローは休場中のため前回値'")
+    panel.includes("flow_previous_value_closed_session: '資金フロー: 休場中・前回値'")
     && panel.includes("flow_no_records_now:"));
   check('a fresh but empty flow feed is a note, not 「鮮度切れ」',
     intel.includes("const flowEmptyFresh = flowState.authority === 'unavailable' && !flowState.error")
@@ -392,7 +392,7 @@ console.log('argus-engine.test: all checks passed');
 {
   check('the decision subject is named in words, never by code',
     panel.includes("subjectDisplayName(view.canonicalDecision.subject?.instrumentId")
-    && panel.includes('連動ETFの実績を比較しています')
+    && panel.includes('{meta.product} · {sessions}営業日')
     && !panel.includes('<small className="at-index-type">{instrument.symbol}</small>'));
   check('owner priorities show the company name',
     fs.readFileSync(path.join(root, 'src/components/today/AssetImpactCards.tsx'), 'utf8').includes("<b>{item.name?.trim() || item.symbol}</b>"));
@@ -401,8 +401,9 @@ console.log('argus-engine.test: all checks passed');
   const macroInUs = panel.indexOf('className="at-rows at-macro-rows"');
   check('Japan block precedes the US block and MACRO lives in the US block',
     jpBlock > 0 && usBlock > jpBlock && macroInUs > usBlock && !panel.includes('<Compact title="MACRO">'));
-  check('the BUY gate is spelled out for the owner',
-    panel.includes('BUYが出る条件') && panel.includes('検証済み買い成立レジストリ'));
+  // Owner policy 2026-10-23: the gate is not explained on screen; it stays enforced by the decision authority.
+  check('the BUY gate explanation is not shown on Today',
+    !panel.includes('BUYが出る条件') && !panel.includes('at-buy-note'));
   const viewSrc2 = fs.readFileSync(path.join(root, 'src/domain/argusTodayView.ts'), 'utf8');
   check('the view carries both markets\' positioning and the subject names',
     viewSrc2.includes('positioningByMarket') && viewSrc2.includes("'1321': '日経225 ETF'"));
@@ -452,7 +453,9 @@ console.log('argus-engine.test: all checks passed');
   ]) check('internal rule score is not displayed as a probability', !/[0-9]+[%％]/.test(confidenceBasisJa(decision)));
 
   check('the three WAITs are named',
-    waitKindJa({ status: 'DATA_GATED', primaryAction: 'WAIT' }).includes('データ不足')
+    waitKindJa({ status: 'DATA_GATED', primaryAction: 'WAIT' }) === 'データ待ち'
+    && waitKindJa({ status: 'DATA_GATED', primaryAction: 'WAIT', missingReasonCodes: ['market_truth_missing', 'jp_market_engine_stale', 'quality_missing'] }) === 'データ待ち（市場データ・チャートの根拠）'
+    && waitKindJa({ status: 'DATA_GATED', primaryAction: 'WAIT', missingReasonCodes: ['freshness_unknown', 'jp_market_engine_missing', 'market_truth_missing', 'prediction_ledger_missing', 'risk_evidence_missing'] }) === 'データ待ち（市場データ・予測記録・チャートの根拠 ほか2）'
     && waitKindJa({ status: 'EVALUATED', primaryAction: 'WAIT', guidance: { riskConstraint: 'BLOCK_BUY' } }).includes('リスク制約')
     && waitKindJa({ status: 'EVALUATED', primaryAction: 'WAIT', guidance: { riskConstraint: 'NONE' } }).includes('買い条件が未成立')
     && waitKindJa({ status: 'EVALUATED', primaryAction: 'HOLD' }) === null);
@@ -510,7 +513,7 @@ console.log('argus-engine.test: all checks passed');
   check('no personal method name in the owner-visible Today strings', noJpMarketEngine);
   check('MARKET SIGNALS names the Japanese inputs and the US conditioning when US is selected',
     panel.includes("const usSelected = view.selectedMarket === 'US'") && panel.includes('日本市場の値')
-    && panel.includes('米国の条件付けはVIX水準・VIX10日変化・対SPY相対力') && panel.includes("市場状態で条件付け".length ? '' : '')
+    && !panel.includes('米国の条件付けはVIX水準・VIX10日変化・対SPY相対力')
     && viewSrc3.includes("vixLevel: 'VIX水準', vixChange10: 'VIX10日変化', rs20: '対SPY相対力'"));
   check('the brief chart chip does not borrow the Japanese count for the US market',
     fs.readFileSync(path.join(root, 'src/components/today/MarketBriefCard.tsx'), 'utf8').includes("market === 'US' ? '米国: 6サインは適用外") && panel.includes('signals={topSignals && !usSelected ?'));
@@ -521,7 +524,7 @@ console.log('argus-engine.test: all checks passed');
     displayedSymbols: new Set(['5803', '1321', 'NVDA', 'BTC']), requestedEvidence: ['1321', '5803'] });
   check('registered / priced / evidenced / shown are reconciled per symbol',
     deskCoverageJa(cov) === '登録 4 · 価格 3/4 · 判断根拠 2/3 · 表示 4/4' && cov.complete === false
-    && deskCoverageDetailJa(cov).join('|').includes('価格未取得: NVDA') && deskCoverageDetailJa(cov).join('|').includes('未要求（取得キューの外）: NVDA'));
+    && deskCoverageDetailJa(cov).join('|').includes('価格未取得: NVDA') && deskCoverageDetailJa(cov).join('|').includes('未要求: NVDA'));
   const hookSrc = fs.readFileSync(path.join(root, 'src/hooks/useDecisionEvidence.ts'), 'utf8');
   check('no device-side cap on the evidence queue', !hookSrc.includes('MAX_SYMBOLS_TOTAL') && hookSrc.includes('requested: [...desiredSymbols]'));
   const wl = fs.readFileSync(path.join(root, 'src/routes/Watchlist.tsx'), 'utf8');
@@ -539,7 +542,7 @@ console.log('argus-engine.test: all checks passed');
   const { deskCoverageJa: coverageJa2 } = require(path.join(root, 'src/domain/deskCoverage.ts'));
   const cov2 = { registered: 3, priced: 3, evidence: 2, evidenceApplicable: 2, displayed: 3, missingPrice: [], missingEvidence: [], notRequested: [], notDisplayed: [], complete: true };
   check('the desk header says when the stored evidence is on screen during the first fetch',
-    coverageJa2(cov2, { loading: true, generatedAt: '2026-09-07T22:00:00Z' }).includes('保存分 9/8 07:00 を表示中（更新取得中）')
+    coverageJa2(cov2, { loading: true, generatedAt: '2026-09-07T22:00:00Z' }).includes('保存分 9/8 07:00（更新中）')
     && coverageJa2(cov2, { loading: true, generatedAt: null }).endsWith('初回取得中')
     && coverageJa2(cov2, { loading: false, generatedAt: '2026-09-07T22:00:00Z' }) === '登録 3 · 価格 3/3 · 判断根拠 2/2 · 表示 3/3');
   check('Today shows the stored evidence time while the first fetch runs',

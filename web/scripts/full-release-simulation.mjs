@@ -85,7 +85,7 @@ try {
   // beginning a stateful release action, so the action cannot race a reload.
   await page.waitForTimeout(1_000);
   await page.locator('details.at-evidence').waitFor({ state: 'visible', timeout: 30_000 });
-  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.8.162');
+  assert.equal(await page.evaluate(() => globalThis.__ARGUS_PRODUCT_VERSION__), 'v13.8.163');
   evidence.identitiesConverged = true;
 
   const producerTriggerId = `full-release-simulation-${runNumber}-${candidateSha.slice(0, 12)}`;
@@ -153,7 +153,7 @@ try {
 
   const brand = await page.locator('.shell__brand').innerText();
   assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro/);
-  assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13.8.162/);
+  assert.match(brand, /A\.R\.G\.U\.S\.\s+Pro\s+v13.8.163/);
   for (const label of ['Today', 'Watchlist', '13M', 'Settings']) {
     assert.ok(await page.getByText(label, { exact: true }).count() > 0, label);
   }
@@ -165,7 +165,7 @@ try {
   assert.ok(await topSignals.isVisible(), 'signals remain visible while decision details are collapsed');
   assert.equal(await page.locator('.at-urgent-news').count(), 0, 'news has one list rather than a detached leading article');
   const topSignalsText = (await topSignals.innerText()).trim();
-  assert.match(topSignalsText, /^(成立している条件 [0-7]件|成立状況を確認中)$/, `top MARKET SIGNALS count: ${topSignalsText}`);
+  assert.match(topSignalsText, /^(成立 [0-7] \/ [1-7]|確認中)$/, `top MARKET SIGNALS count: ${topSignalsText}`);
   // 2026-10-23 オーナー指示: 見出しは短い英語名(6 SIGNS)。
   assert.ok((await page.locator('.at-seven summary small').first().innerText()).includes('6 SIGNS'),
     'top block carries the owner-facing name');

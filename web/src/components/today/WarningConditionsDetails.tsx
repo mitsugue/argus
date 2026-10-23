@@ -1,17 +1,18 @@
 import type { MarketSignalsView } from '../../domain/marketSignals';
-import { warningDistanceJa } from '../../domain/sevenSignReading';
 
-export function warningPerformanceJa(row: MarketSignalsView['signals'][number]) {
+type WarningRow = MarketSignalsView['signals'][number];
+
+/** Owner policy 2026-10-23: the record as counts only; no verdict sentence. */
+export function warningPerformanceJa(row: WarningRow): string | null {
   const p = row.performance, five = p?.horizons?.['5'];
-  if (row.ruleStatus === 'RULE_NOT_DEFINED') return '成績：測定規則の確定後に検査します';
+  if (row.ruleStatus === 'RULE_NOT_DEFINED') return null;
   if (!p || p.ruleId !== row.ruleId || !five || !Number.isInteger(five.evaluated)
-    || five.evaluated < 0 || !Number.isInteger(five.falls) || five.falls < 0 || five.falls > five.evaluated)
-    return '成績：まだ採点できる記録がありません';
-  const grade = p.status === 'NOT_ABOVE_BASELINE' ? '通常時より予測が優れるとは確認できません'
-    : p.status === 'INSUFFICIENT_SAMPLE' ? '件数不足' : '';
-  const source = p.availabilityBasis === 'RECONSTRUCTED_PUBLICATION_18JST_NOT_ARCHIVED_VINTAGE'
-    ? '過去データを復元した検査' : '過去の成立後5営業日';
-  return `${source}：${five.evaluated}件中${five.falls}件下落${grade ? `・${grade}` : ''}`;
+    || five.evaluated < 0 || !Number.isInteger(five.falls) || five.falls < 0 || five.falls > five.evaluated
+    || five.evaluated === 0) return null;
+  const base = typeof five.baselineFallShare === 'number' && Number.isFinite(five.baselineFallShare)
+    ? `（普段${Math.round(five.baselineFallShare * 100)}%）` : '';
+  const source = p.availabilityBasis === 'RECONSTRUCTED_PUBLICATION_18JST_NOT_ARCHIVED_VINTAGE' ? '（復元データ）' : '';
+  return `成立後5日${source}：${five.evaluated}件中${five.falls}件下落${base}${p.status === 'INSUFFICIENT_SAMPLE' ? '・件数不足' : ''}`;
 }
 
 export function warningCoverageJa(view: MarketSignalsView) {
@@ -23,32 +24,38 @@ export function warningCoverageJa(view: MarketSignalsView) {
     missing: missing.map(row => `${Number(row.family.slice(-2))} · ${row.nameJa}：${row.gateNoteJa || row.stateJa}`) };
 }
 
+/** The measured value only: the first sentence, without notes in brackets or when it became usable. */
+export function warningFactJa(text?: string | null): string | null {
+  if (!text) return null;
+  const first = text.split('。')[0].replace(/（[^）]*）/g, '');
+  const value = first.split('・').filter(part => !/(から利用|に入手|利用可能)$/.test(part.trim())).join('・').trim();
+  return value || null;
+}
+
+export function warningStateJa(row: WarningRow): string {
+  if (row.state === 'ACTIVE') return '成立';
+  if (row.state === 'CLEAR') return '未成立';
+  if (row.ruleStatus === 'RULE_NOT_DEFINED') return '基準未確定';
+  return row.state === 'DATA_GATED' ? 'データ待ち' : row.stateJa;
+}
+
+/** One row per sign: name and state, the value (or the missing data), the condition, the record. */
 export function WarningConditionsDetails({ view }: { view: MarketSignalsView }) {
-  const coverage = warningCoverageJa(view);
   return <div className="at-seven-signals" data-argus-contract="warning-conditions-v2">
-    <div role="status" data-argus-contract="warning-coverage-v1">
-      <p>6サインの判定状況：{coverage.measured}件を測定できています。</p>
-      {coverage.undefinedLabel && <p>{coverage.undefinedLabel}番は判定基準の確定待ちです。データを取得し直すだけでは判定できません。</p>}
-      {coverage.missing.length > 0 && <ul aria-label="6サインで確認が必要な入力">
-        {coverage.missing.map(line => <li key={line}>{line}</li>)}
-      </ul>}
-    </div>
-    {view.signals.map(row => <div className="at-seven-row" key={row.ruleId ?? row.id}>
-      <i data-signal-id={row.id} data-signal-state={row.state}>
-        <span className="at-seven-condition">{Number(row.id.slice(-2))} · {row.nameJa}</span>
-        <b>{row.state === 'ACTIVE' ? '成立' : row.state === 'CLEAR' ? '未成立' : row.ruleStatus === 'RULE_NOT_DEFINED' ? '基準未確定' : row.stateJa}</b>
-        <span className="at-seven-direction" data-direction="warning">{row.ruleStatus === 'RULE_NOT_DEFINED'
-          ? '警戒の判定基準は未定義' : row.lineage === 'ARGUS_VALIDATION_RULE' ? 'ARGUSの検証用規則'
-            : row.lineage === 'ARGUS_CANDIDATE' ? '警戒条件・ARGUSの計算候補' : '警戒条件'}</span>
-        {row.conditionRuleJa && <small className="at-seven-rule">{row.conditionRuleJa}</small>}
-        {row.factNoteJa && <small className="at-seven-fact">{row.factNoteJa}</small>}
-        {warningDistanceJa(row) && <strong className="at-seven-distance">{warningDistanceJa(row)}</strong>}
-        {row.gateNoteJa && row.gateNoteJa !== row.conditionRuleJa && <small className="at-seven-gate-note">{row.gateNoteJa}</small>}
-        {row.knowledgeTime && <small>{row.sourcePeriodEnd ? `${row.sourcePeriodEnd}の値・` : ''}記録された利用可能日時：{new Date(row.knowledgeTime).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</small>}
-        <small className="at-seven-performance">{warningPerformanceJa(row)}</small>
-      </i>
-    </div>)}
-    <small>測定できる条件 {coverage.measured}件／全{view.total}サイン。成立件数から暴落の確率は出しません。</small>
-    <small className="at-seven-closed">7番目の条件（好決算でも株価下落）は、10年分の過去を当時受け取ったデータで判定できず、2026年10月21日に外しました（計算と記録は続けています）。</small>
+    {view.signals.map(row => {
+      const measured = row.state === 'ACTIVE' || row.state === 'CLEAR';
+      const undefinedRule = row.ruleStatus === 'RULE_NOT_DEFINED';
+      const fact = measured ? warningFactJa(row.factNoteJa) : undefinedRule ? null : row.gateNoteJa;
+      const performance = warningPerformanceJa(row);
+      return <div className="at-seven-row" key={row.ruleId ?? row.id}>
+        <i data-signal-id={row.id} data-signal-state={row.state}>
+          <span className="at-seven-condition">{Number(row.id.slice(-2))} · {row.nameJa}</span>
+          <b>{warningStateJa(row)}</b>
+          {fact && <small className="at-seven-fact">{fact}</small>}
+          {!undefinedRule && row.conditionRuleJa && <small className="at-seven-rule">条件：{row.conditionRuleJa}</small>}
+          {performance && <small className="at-seven-performance">{performance}</small>}
+        </i>
+      </div>;
+    })}
   </div>;
 }

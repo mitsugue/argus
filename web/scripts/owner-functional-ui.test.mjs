@@ -34,7 +34,7 @@ assert.match(summary, /AssetOutlookSummary/);
 assert.match(details, /理由|次に確認すること|判断が変わる条件/);
 assert.doesNotMatch(details, /検証済み目標なし|検証済み無効化条件なし/);
 assert.match(today, /NEXT_REVIEW_REASON_JA/);
-assert.match(today, /正本データの更新時刻を確認/);
+assert.match(today, /'resolve.freshness_unknown': 'データの更新時刻'/);
 assert.doesNotMatch(today, /<span>\{view\.canonicalDecision\.nextReviewConditionCodes\[0\]/);
 assert.match(editorial, /showArchivedComparison = archived && chartReady/);
 assert.match(editorial, /archived-nikkei-comparison-v1/);

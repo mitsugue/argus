@@ -55,7 +55,7 @@ const fixture=await build({stdin:{contents:`
  createRoot(document.getElementById('root')).render(<React.StrictMode><OwnerAccess>{__FULL_APP_FIXTURE__?<AssetsProvider><WatchlistSyncLifecycle/><App/><Screen/></AssetsProvider>:<Screen/>}</OwnerAccess></React.StrictMode>);
 `,loader:'tsx',resolveDir:web},bundle:true,write:false,format:'iife',platform:'browser',
  loader:{'.css':'empty'},define:{'import.meta.env':JSON.stringify({VITE_ARGUS_OWNER_AUTH_REQUIRED:'1',VITE_ARGUS_BACKEND_URL:backendOrigin}),
- '__PRODUCT_VERSION__':JSON.stringify('13.8.162'),'__FRONTEND_BUILD_SHA__':JSON.stringify('fixture-build'),'__APP_VERSION__':JSON.stringify('fixture-version'),
+ '__PRODUCT_VERSION__':JSON.stringify('13.8.163'),'__FRONTEND_BUILD_SHA__':JSON.stringify('fixture-build'),'__APP_VERSION__':JSON.stringify('fixture-version'),
  '__FULL_APP_FIXTURE__':JSON.stringify(process.env.ARGUS_FULL_APP_FIXTURE==='1'),
  'process.env.NODE_ENV':JSON.stringify('development')},logLevel:'silent'});
 if(process.env.ARGUS_FULL_APP_FIXTURE==='1')fs.writeFileSync('/private/tmp/argus-owner-resume-repair-20261013/full-fixture-compiled.js',fixture.outputFiles[0].text);
@@ -180,8 +180,8 @@ try{
  console.log(JSON.stringify({documentRecoveryReadersBefore:dataBeforeRecovery,documentRecoveryReadersAfter:dataAfterRecovery}));
  assert.deepEqual(dataAfterRecovery,dataBeforeRecovery,'storage-lost document recovery must not restart all market readers');
  if(process.env.ARGUS_FULL_APP_FIXTURE==='1'){
-  await page.getByText('前回確認したニュース・市場状態を表示しています。現在の確認結果は次の更新で反映します。',{exact:true}).waitFor();
-  assert.equal(await page.getByText(/突発の市場ショック: 現在なし/).count(),0,
+  await page.getByText('前回分',{exact:true}).waitFor();
+  assert.equal(await page.getByText(/突発の市場ショック: なし/).count(),0,
    'restoring an empty previous news/shock view cannot certify that no shock currently exists');
   console.log('fixture stage: prior news/shock observation displayed without current-absence claim');
  }

@@ -14,7 +14,7 @@ const render=(C,patch={})=>renderToStaticMarkup(React.createElement(C,{d:{...d,.
 const overview=render(AssetDecisionDetails);
 assert.equal((overview.match(/次の公表を確認します/g)||[]).length,1);
 assert.ok(!overview.includes('WAIT')&&!overview.includes('いまの判断'));
-assert.ok(overview.includes('記録・データ')&&overview.includes('前回値'));
+assert.ok(!overview.includes('記録・データ」で確認')&&overview.includes('前回値'),'the data state stays, the pointer sentence goes (owner 2026-10-23)');
 assert.deepEqual(uniqueDetailText([' a 。','a。','b。','',null],['a。']),['b。']);
 assert.equal(detailTime('2026-10-06T06:30:00Z'),'10/6 15:30');
 assert.equal(detailTime('2026/10/02'),'2026/10/02');
@@ -27,10 +27,10 @@ assert.ok(!targets.includes('1,200円'),'mean already appears on the initial car
 assert.ok(targets.includes('1,100')&&targets.includes('900'));
 state.items={'JP:1001':{...target,low:Infinity,high:NaN,median:Infinity}};
 assert.ok(!/Infinity|NaN/.test(render(AssetTargetDetails)));
-state.refreshFailed=true;assert.ok(render(AssetTargetDetails).includes('保存した目標株価'));
+state.refreshFailed=true;assert.ok(render(AssetTargetDetails).includes('更新未確認・保存値'));
 assert.ok(!render(AssetTargetDetails,{genre:'us'}).includes('1,250円'),'market identity must match');
 state={items:{},availability:{'JP:1001':{status:'NO_TARGET'}},loading:false,refreshFailed:false};
-assert.ok(render(AssetTargetDetails).includes('集計がありません'));
+assert.ok(render(AssetTargetDetails).includes('取得元に目標値なし'));
 const flow=render(AssetFlowPanel);
 for(const v of ['信用倍率 6.00倍','日証金の貸借倍率 0.70倍','信用残 10/2週','日証金 10/6','売未取得','逆日歩 未取得'])assert.ok(flow.includes(v),v);
 assert.ok(!flow.includes('需給ランク C'),'rank belongs to the initial card');
@@ -65,4 +65,4 @@ const usFlow=render(AssetFlowPanel,{asset:{symbol:'MU',market:'US'},genre:'us',s
 for(const text of ['信用倍率 6.00倍','日証金の貸借倍率','信用残 10/2週','日証金 10/6','信用買い残','前週差'])assert.ok(!usFlow.includes(text),text);
 assert.ok(usFlow.includes('出来高 120,000'));
 const wrongMarket=render(AssetFlowPanel,{asset:{symbol:'MU',market:'US'},genre:'us',sdg:{...d.sdg,market:'JP'}});
-assert.ok(wrongMarket.includes('実測フローは未取得')&&!wrongMarket.includes('信用残高を参照しています'));
+assert.ok(wrongMarket.includes('実測フロー未取得')&&!wrongMarket.includes('信用残高を参照しています'));

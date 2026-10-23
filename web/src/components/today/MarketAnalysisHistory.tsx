@@ -1,4 +1,5 @@
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
+import { withoutScreenNotes } from '../../lib/screenNotes';
 import React, { useRef, useState, useEffect } from 'react';
 import { validMarketBrief, type MarketBrief } from '../../lib/marketBrief';
 import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
@@ -54,41 +55,34 @@ export function MarketAnalysisHistory() {
   const savedFiveDayChart=savedEditorial&&savedEdition?.presentationPlan?.elements.some(row=>row.id==='nikkei-comparison');
   return <details className="at-analysis-history" onToggle={event=>{if(event.currentTarget.open&&!loaded&&!busy)void load();}}>
     <summary>前回の見立て・保存した予測を見る</summary>
-    <p>発表した時点の根拠と計算結果です。後の入力で過去の線を書き換えません。</p>
-    {remoteBackup&&<p>{remoteBackup.status==='VERIFIED'
-      ? `遠隔保存先との内容照合済み${remoteBackup.lastVerifiedAt?` · ${stamp(remoteBackup.lastVerifiedAt)}`:''}。本番のコールド復旧受入は別途確認します。`
-      : `遠隔保存は${remoteBackup.status==='RUNNING'?'処理中':'未確認'}です。最後の照合成功 ${remoteBackup.lastVerifiedAt?stamp(remoteBackup.lastVerifiedAt):'未確認'}。サーバー内の履歴は引き続き参照できます。`}</p>}
-    {busy&&<p><TriangleStepLoader label="履歴を読み込んでいます" /></p>}
-    {error&&<p role="status">履歴を取得できませんでした。<button type="button" onClick={()=>void load()}>再取得</button></p>}
-    {loaded&&!rows.length&&<p>保存済みの見立てはまだありません。</p>}
+    {remoteBackup&&remoteBackup.status!=='VERIFIED'&&<p role="status">遠隔保存: {remoteBackup.status==='RUNNING'?'処理中':'未確認'}</p>}
+    {busy&&<p><TriangleStepLoader label="読み込み中" /></p>}
+    {error&&<p role="status">取得できません <button type="button" onClick={()=>void load()}>再取得</button></p>}
+    {loaded&&!rows.length&&<p>保存なし</p>}
     {!saved&&rows.map(row=><p key={row.recordId}><button type="button" disabled={busy} onClick={()=>void load(row.recordId)}>
       {stamp(row.recordedAt)} · {row.sections.view.textJa}</button></p>)}
     {!saved&&next&&<button type="button" disabled={busy} onClick={()=>void load(undefined,true)}>さらに前を見る</button>}
-    {saved&&<button type="button" onClick={()=>setSaved(null)}>保存した説明を選び直す</button>}
+    {saved&&<button type="button" onClick={()=>setSaved(null)}>一覧に戻る</button>}
     {saved&&<section aria-label="保存した見立て">
       <h4>{stamp(saved.recordedAt)}の見立て</h4>
       {savedEditorial&&savedEdition?<ArgusEditorialSurface brief={savedEdition} archived/>:<>
-      <p>当時の日経平均・5営業日の説明</p>
       <p>{saved.brief.unifiedSummary?.sections.view.textJa}</p>
       <p>変更理由：{saved.brief.unifiedSummary?.sections.changes.textJa}</p>
       <p>見方を変える条件：{saved.brief.unifiedSummary?.sections.invalidation.textJa}</p></>}
       <label>保存した予測の期間 <select value={horizon} onChange={e=>setHorizon(Number(e.target.value))}>
         {[1,5,10,20].map(value=><option key={value} value={value}>{value}営業日</option>)}</select></label>
-      {horizon!==5&&<p>以下は同じ保存時点の{horizon}営業日の計算です。上の5営業日の説明を、この期間の見通しへ読み替えません。</p>}
-      {horizon===5&&savedFiveDayChart?<p>5営業日の計算は、当時の説明に含まれるチャートをご覧ください。</p>
+      {horizon===5&&savedFiveDayChart?null
         :validJapanMarketComparison(comparison,horizon)?<JapanMarketComparisonChart document={comparison}/>
-          :<p>この時点・期間の計算結果は未取得です。</p>}
-      <details><summary>当時の根拠とモデル</summary>
-        {saved.brief.facts.map((fact,index)=><p key={index}>{fact.text}</p>)}
-        <p>要求 {saved.brief.aiDiagnostics?.requestedModel??'未確認'} ／ 応答 {saved.brief.aiDiagnostics?.returnedModel??'未確認'}</p>
+          :<p>計算結果なし</p>}
+      <details><summary>当時の根拠</summary>
+        {saved.brief.facts.map((fact,index)=><p key={index}>{withoutScreenNotes(fact.text)}</p>)}
       </details>
       <h4>その後の結果</h4>
-      {!outcomes.length&&<p>対象営業日の終値との照合待ちです。取得できていない結果は補完しません。</p>}
+      {!outcomes.length&&<p>照合待ち</p>}
       {outcomes.map(row=><p key={row.resultId}>{row.horizonSessions}営業日 · {row.targetDate}終値 {row.actualClose.toLocaleString('ja-JP')}円
         ／ 当時の計算 {row.forecastValue.toLocaleString('ja-JP',{maximumFractionDigits:2})}{row.comparisonUnit==='ANCHOR_100'?'（基準100）':'円'}
         ／ 同じ尺度の実績 {row.actualComparisonValue.toLocaleString('ja-JP',{maximumFractionDigits:2})}
-        ／ 誤差 {row.absoluteErrorPct.toFixed(2)}%<br/>取得 {stamp(row.receivedAt)}</p>)}
-      <p>訂正後の結果も追記します。単発の結果で計算ルールは変えません。これは予測確率の検証ではありません。</p>
+        ／ 誤差 {row.absoluteErrorPct.toFixed(2)}%</p>)}
     </section>}
   </details>;
 }

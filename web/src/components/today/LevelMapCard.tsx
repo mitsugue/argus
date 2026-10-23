@@ -3,6 +3,7 @@ import { useJapanMarketComparison } from '../../hooks/useJapanMarketComparison';
 import { currentLevelMap, evidenceJa, nearestPerRows, rowLabelJa, validValuationHistory, type LevelMapRow, type LevelMapScore, type LevelMapState } from '../../lib/levelMap';
 import './LevelMapCard.css';
 import { WeightedPerInput } from './WeightedPerInput';
+import { withoutScreenNotes } from '../../lib/screenNotes';
 
 // Nikkei morning level map (2026-10-04). The map is fixed before the open and
 // scored afterwards by fixed rules. Past frequencies, not probabilities; the
@@ -33,7 +34,7 @@ function Tally({ score, title }: { score: LevelMapScore; title: string }) {
   </div>;
 }
 
-function Calculations({ map, current, suppliedDays }: { map: NonNullable<LevelMapState['latest']>; current: boolean; suppliedDays: number }) {
+function Calculations({ map, current, suppliedDays, notes = true }: { map: NonNullable<LevelMapState['latest']>; current: boolean; suppliedDays: number; notes?: boolean }) {
   const cov = map.epsCoverage;
   const supplied = cov?.suppliedEarnings ?? 0;
   return <>
@@ -42,9 +43,9 @@ function Calculations({ map, current, suppliedDays }: { map: NonNullable<LevelMa
       EPS {map.eps.toFixed(1)}（{map.epsDate}）· PER {map.per.toFixed(2)}倍</p>
     <p className="lm-note lm-eps">{map.epsLabelJa}{cov ? `。予想が無く実績で補った社 ${cov.filledFromTrailing ?? 0}・赤字予想 ${cov.negativeForecast ?? 0}` : ''}
       {map.constituentsAsOf ? `。構成銘柄は ${map.constituentsAsOf} 時点` : ''}</p>
-    {supplied > 0 && <p className="lm-note lm-supplied" data-supplied={supplied}>この日の推計は補った推計です（評価値が空だった{supplied}社を、日足の時価総額と前日までの決算短信の予想純利益で補いました）。</p>}
-    {suppliedDays > 0 && <p className="lm-small lm-supplied-days" data-supplied-days={suppliedDays}>過去の推計のうち{suppliedDays}日は、評価値が空だった社を日足と決算短信で補った推計です（そろった日とは別に数えています）。</p>}
-    {map.epsJumped && <p className="lm-note lm-jump">EPSが前の推計から3%以上動きました（線が飛んでいます）。</p>}
+    {supplied > 0 && <p className="lm-note lm-supplied" data-supplied={supplied}>この日は補った推計（{supplied}社）</p>}
+    {suppliedDays > 0 && <p className="lm-small lm-supplied-days" data-supplied-days={suppliedDays}>過去の推計のうち{suppliedDays}日は補った推計</p>}
+    {map.epsJumped && <p className="lm-note lm-jump">EPSが前の推計から3%以上変化</p>}
     <div className="lm-scroll"><table className="lm-table">
       <thead><tr><th>価格（円）</th><th>{current ? '最新終値との差' : '前日終値との差'}</th><th>この価格の意味</th><th>山・谷ができた頻度</th><th>10営業日以内に届いた</th><th>到達までの日数</th></tr></thead>
       <tbody>
@@ -53,10 +54,8 @@ function Calculations({ map, current, suppliedDays }: { map: NonNullable<LevelMa
         {map.rows.filter(r => r.side === 'DOWN').sort((a,b) => b.price-a.price).map((row, i) => <Row key={`d${i}`} row={row} />)}
       </tbody>
     </table></div>
-    {map.rows.some(row => row.kinds.length > 1) && <p className="lm-small">近い水準は詳細表でまとめています。上のPER価格はEPS×整数倍率の値です。</p>}
     <p className="lm-guides">距離の目安 上 +1/+2/+3ATR: {map.atrGuides.UP.map(yen).join(' / ')}　下 −1/−2/−3ATR: {map.atrGuides.DOWN.map(yen).join(' / ')}</p>
-    <p className="lm-small">「過去の頻度」は、その距離にある水準について、次の4%の転換点がその±1%に来た過去の頻度の帯です（2割前後・1〜2割・1割未満）。</p>
-    <ul className="lm-fixed">{map.fixedNotesJa.map((note, i) => <li key={i}>{note}</li>)}</ul>
+    {notes && <ul className="lm-fixed">{map.fixedNotesJa.map(note => withoutScreenNotes(note)).filter(Boolean).map((note, i) => <li key={i}>{note}</li>)}</ul>}
   </>;
 }
 
@@ -69,55 +68,41 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
   const perRows = nearestPerRows(map, state.chart?.nearest);
   const above = perRows.filter(r => r.side === 'UP').sort((a, b) => a.price - b.price)[0];
   const below = perRows.filter(r => r.side === 'DOWN').sort((a, b) => b.price - a.price)[0];
-  const examples = [above && `${yen(above.price)}円まで上がると${above.multiple}倍`,
-    below && `${yen(below.price)}円まで下がると${below.multiple}倍`].filter(Boolean);
-  const distances = [above && `上の目印までは${signed(above.distancePct)}%`,
-    below && `下の目印までは${signed(below.distancePct)}%`].filter(Boolean);
   return <section id="today-price-scale" className="lm-card card" aria-label="日経平均の価格の目盛り" data-argus-contract="level-map-v1"
     data-morning={map.morningOf}>
     <header className="lm-heading"><b>PRICE LEVELS</b><span>PER · {current ? `${map.previousSession.slice(5).replace('-', '/')}終値` : `${map.morningOf.slice(5).replace('-', '/')}朝の保存値`}</span></header>
-    <div className="lm-reading">
-      <p>日経平均が<strong>利益の何倍か</strong>（PER）の目盛り</p>
-    </div>
     {state.chart?.closePending === true && /^\d{4}-\d{2}-\d{2}$/.test(state.chart.today ?? '') && state.chart.today! > map.previousSession && <p role="status" className="lm-note">{state.chart.today!.slice(5).replace('-', '/')}の終値は取得待ち。{map.previousSession.slice(5).replace('-', '/')}の終値を表示しています。</p>}
     <div className="lm-price-ladder" aria-label="価格と利益の倍率">
       {above && <article data-side="UP"><span>{above.multiple}倍まで上がると</span><b>{yen(above.price)}<small>円</small></b><strong>{signed(above.distancePct)}%</strong></article>}
       <article data-side="NOW"><span>{current ? '最新終値' : '前日終値'} · {map.per.toFixed(2)}倍</span><b>{yen(map.previousClose)}<small>円</small></b><small>{map.previousSession.slice(5).replace('-', '/')}の終値</small></article>
       {below && <article data-side="DOWN"><span>{below.multiple}倍まで下がると</span><b>{yen(below.price)}<small>円</small></b><strong>{signed(below.distancePct)}%</strong></article>}
     </div>
-    {current && <p className="lm-note">EPSは{map.epsDate.slice(5).replace('-', '/')}の推計です。{state.chart?.displayMap?.valuationPending ? '当日分の入力待ち。終値を先に更新しています。' : '当日分のPER・価格の目盛りを再計算済みです。'}朝の事前記録は答え合わせに残しています。</p>}
+    {current && <p className="lm-note">EPS {map.epsDate.slice(5).replace('-', '/')}推計{state.chart?.displayMap?.valuationPending ? '・当日分の入力待ち' : ''}</p>}
     <div className="lm-use">
       <b>過去と比べて、利益に対する株価は高いか</b>
       {history?.sufficient && above?.multiple === history.upperMultiple ? <>
         <p><strong>{history.upperMultiple}倍は、この期間の中央値{history.median.toFixed(1)}倍{history.upperMultiple > history.median ? 'より上' : history.upperMultiple < history.median ? 'より下' : 'と同じ位置'}です。</strong></p>
         <p>{history.upperMultiple}倍以上の日は <strong>{history.atOrAboveUpper} / {history.count}営業日</strong>。最高は{history.maximum.toFixed(1)}倍でした。</p>
         <small>{history.firstDate.replaceAll('-', '/')}〜{history.lastDate.replaceAll('-', '/')} · 同じ方式で再計算{history.missingSessions ? ` · 未集計${history.missingSessions}日` : ''}</small>
-      </> : <p>同じ計算方式の過去データを集計中です。</p>}
-      <p>利益に対して高いかを比べる目盛りです。{above?.multiple ?? '整数の'}倍が天井という意味ではありません。</p>
+      </> : <p>集計中</p>}
     </div>
     <div className="lm-reach" aria-label="同じ距離の過去の到達割合">
       {[above, below].filter((r): r is LevelMapRow => !!r).map(row => <article key={row.side} data-side={row.side}>
         <b>{row.side === 'UP' ? '上の価格まで' : '下の価格まで'}</b>
         <strong>{Number.isFinite(row.reachedWithin10SessionsPct) ? `${row.reachedWithin10SessionsPct}%` : '未集計'}</strong>
-        <span>同じくらいの距離で、10営業日以内に届いた過去の割合</span>
+        <span>10営業日以内に届いた割合（過去・同じ距離）</span>
       </article>)}
-      <small>同じ距離帯の集計です。今後の確率や、反発した割合ではありません。</small>
     </div>
-    <details className="lm-explanation"><summary>倍率と価格の読み方</summary>
-      <p>たとえば、{current ? '最新終値は' : 'この朝は'}約{map.per.toFixed(2)}倍。{examples.length > 0 && `日経平均が${examples.join('、')}になります。`}</p>
-      {distances.length > 0 && <p>{current ? '最新終値' : '前日終値'} {yen(map.previousClose)}円から、{distances.join('、')}です。</p>}
-      <small>株価が動いた時の位置を確かめる表です。ここで反転するかは未確認のため、売買時期の判断には使えません。</small>
-    </details>
     <details className="lm-all-levels"><summary>価格一覧・計算の根拠</summary>
     <Calculations map={map} current={current} suppliedDays={Number.isInteger(state.estimateSuppliedCount) ? state.estimateSuppliedCount! : 0} />
     </details>
     <details className="lm-records"><summary>PER線の答え合わせ・過去の記録</summary>
-    {current && <details className="lm-morning"><summary>朝の固定記録を見る</summary><Calculations map={state.latest} current={false} suppliedDays={0} /></details>}
-    {state.missedMornings.length > 0 && <p className="lm-small">寄付前に作れなかった朝: {state.missedMornings.join('、')}（後から作り直していません）</p>}
+    {current && <details className="lm-morning"><summary>朝の固定記録を見る</summary><Calculations map={state.latest} current={false} suppliedDays={0} notes={false} /></details>}
+    {state.missedMornings.length > 0 && <p className="lm-small">寄付前に作れなかった朝: {state.missedMornings.join('、')}</p>}
     {state.score && <Tally score={state.score} title={`答え合わせ（${state.score.firstMorning ?? ''}からの事前記録）`} />}
-    {state.score && state.score.mornings < 60 && <p className="lm-small">件数が少ないうちは、成績として判断に使いません。精度の評価は数か月単位です。</p>}
+    {state.score && state.score.mornings < 60 && <p className="lm-small">件数不足（{state.score.mornings}/60朝）</p>}
     {state.retrospective && state.retrospective.mornings > 0 && <details className="lm-retro">
-      <summary>後から数えた分（{state.retrospective.firstMorning}〜・判定には使いません）</summary>
+      <summary>後から数えた分（{state.retrospective.firstMorning}〜）</summary>
       <Tally score={state.retrospective} title="後から数えた分" />
     </details>}
     </details>
@@ -129,8 +114,8 @@ export function LevelMapCard() {
   const state = useJapanMarketComparison(5);
   if (!state.levelMap?.latest) return <><section className="lm-card card" aria-label="日経平均の価格の目盛り">
     <header className="lm-heading"><b>PRICE LEVELS</b></header>
-    <p role="status">{state.loading ? '朝の保存データを読み込んでいます' : state.levelMapError ? '朝の保存データを読み込めませんでした' : '朝の価格と利益のデータを準備しています'}</p>
+    <p role="status">{state.loading ? '読み込み中' : state.levelMapError ? '取得できません' : '準備中'}</p>
     {state.levelMapError && <button type="button" onClick={state.retry}>再取得</button>}
   </section><WeightedPerInput /></>;
-  return <><LevelMapView state={state.levelMap} /><WeightedPerInput />{state.levelMapError && <p role="status">更新できなかったため、保存済みの目盛りを表示しています。</p>}</>;
+  return <><LevelMapView state={state.levelMap} /><WeightedPerInput />{state.levelMapError && <p role="status">更新失敗・保存分</p>}</>;
 }

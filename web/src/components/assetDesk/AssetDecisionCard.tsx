@@ -115,9 +115,7 @@ export const AssetDecisionCard: React.FC<Props> = ({
                 <Section symbol={sym} id="scenarios" title="状況ごとの条件">
                   <AssetScenarioPanel d={d} />
                 </Section>
-                <p className="ad-chart-retired" data-asset-chart="retired">
-                  値動きのチャートは他のアプリで確認できます。
-                </p>
+                <p className="ad-chart-retired" data-asset-chart="retired" hidden />
               </Section>
             )}
             {tab === 'evidence' && (

@@ -115,10 +115,10 @@ const brief={calculationSnapshots:{'5':{comparison:{actual:path,anchorDate:'2026
   marketFeatureSnapshot:{features:[{seriesId:'vix.level',date:'2026-10-02',value:15.3}]}}},chips:{nextEvent:'SQ 10/9'}};
 const renderStrip=criticalNews=>renderToStaticMarkup(React.createElement(stripContext.exports.TodayDecisionStrip,{brief,criticalNews}));
 const normalStrip=renderStrip([]);
-assert.ok(normalStrip.includes('次の山場')&&normalStrip.includes('前後に株価が大きく上下することも'));
+assert.ok(normalStrip.includes('次の山場')&&!normalStrip.includes('前後に株価が大きく上下することも'),'no SQ explanation in the tile (owner 2026-10-23)');
 const urgent=renderStrip([{id:'test',title:'検査用：重要な政策発表',why:'価格への影響は未確認です。',meta:'10/5 01:30 · 確認待ち'}]);
 assert.equal((urgent.split('today-strip__tiles')[1].split('</div>')[0].match(/<button /g)||[]).length,4);
-assert.ok(urgent.includes('重大ニュース・市場変化 1件')&&urgent.includes('検査用：重要な政策発表'));
+assert.ok(urgent.includes('重大ニュース 1件')&&urgent.includes('検査用：重要な政策発表'));
 assert.ok(urgent.includes('価格への影響は未確認です。')&&urgent.includes('10/5 01:30 · 確認待ち'));
 assert.ok(!urgent.includes('次の山場'),'重大ニュースがある時は４枚目に優先表示');
 console.log('重大ニュースのトップカード PASS');
@@ -195,7 +195,7 @@ assert(momentumTile.includes('<small>日経の勢い</small>') && /20日平均�
 assert(!normalStrip.includes('別の物差し') && !normalStrip.includes('σ以上で注意'), 'one line per tile');
 for (const cls of ['alert-', 'momentum-', 'tile-range']) assert.equal((tileOf(normalStrip, cls).match(/<span/g) || []).length, 1, `${cls} has one line`);
 assert(!unavailableStrip.includes('today-strip__basis'), 'no date without numbers');
-assert(unavailableStrip.includes('直近20営業日の価格を取得待ち'));
+assert(unavailableStrip.includes('データ待ち'));
 // Stored inputs: the close date travels with them and agrees with the "shown as of" notice.
 const stripWith = (storage, hook) => {
   const ctx = { ...stripContext, exports: {}, localStorage: { getItem: () => storage, setItem() {} }, require(name) {
@@ -208,7 +208,7 @@ const noLive = () => ({ quote: null, futures: null });
 const storedHtml = renderToStaticMarkup(React.createElement(stripWith(JSON.stringify({ actual: path, anchorDate: '2026-10-01',
   features: brief.calculationSnapshots['5'].marketFeatureSnapshot.features, savedAt: '2026-10-01T07:00:00Z' }), noLive),
   { brief: { chips: { nextEvent: '' } } }));
-assert(storedHtml.includes('時点の数字を表示しています') && noteOf(storedHtml) === '上の3つは10/1終値で計算', storedHtml);
+assert(storedHtml.includes('時点の数字') && noteOf(storedHtml) === '上の3つは10/1終値で計算', storedHtml);
 const storedNoDate = renderToStaticMarkup(React.createElement(stripWith(JSON.stringify({ actual: path,
   features: [], savedAt: '2026-10-01T07:00:00Z' }), noLive), { brief: { chips: { nextEvent: '' } } }));
 assert(!storedNoDate.includes('today-strip__basis'), 'an older saved copy without a date shows none');

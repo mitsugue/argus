@@ -57,17 +57,16 @@ export const NotificationPanel: React.FC = () => {
       </div>
       {items.length === 0 && (
         <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: '8px 0' }}>
-          新しい重要通知はありません。結論または重要条件が変わった時だけお知らせします。
+          新しい通知なし
         </p>
       )}
-      {current.length > 0 ? renderItems(current) : items.length > 0 && <p style={{ fontSize: 13, color: 'var(--text-sub)' }}>今日の銘柄・判断の新しい通知はありません。</p>}
+      {current.length > 0 ? renderItems(current) : items.length > 0 && <p style={{ fontSize: 13, color: 'var(--text-sub)' }}>今日の新しい通知なし</p>}
       {history.length > 0 && <details>
         <summary style={{ minHeight: 44, padding: '12px 0', fontSize: 13, cursor: 'pointer' }}>通知履歴を見る · {history.length}件</summary>
-        <p style={{ fontSize: 12, color: 'var(--text-sub)', lineHeight: 1.7 }}>ニュースの通知記録と、以前の銘柄・判断の変化です。ニュースと現在の説明は上の一覧で確認できます。当時の通知を現在の判断として扱わないでください。</p>
         {renderItems(history)}
       </details>}
       <p style={{ margin: '12px 0 0', fontSize: 12, lineHeight: 1.7, color: 'var(--text-sub)' }}>
-        ここは、この端末に保存した通知の記録です。アプリを閉じた時の通知はSettingsの外部通知から設定できます。この履歴だけでは外部通知の受信を確認できません。
+        この端末に保存した通知の記録
       </p>
     </section>
   );

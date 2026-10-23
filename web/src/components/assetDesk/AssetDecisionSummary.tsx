@@ -59,12 +59,12 @@ export const AssetDecisionSummary: React.FC<{
         </span>
         {!crypto && <span className="ad-data">{reference ? '分析の価格基準は保存時点' : view.dataStatus}</span>}
       </span>
-      {live && <span className="ad-quote-meta"><mark data-delay="LIVE">リアルタイム</mark><span>立花証券 · {tachibanaPriceTime(live)}</span></span>}
+      {live && <span className="ad-quote-meta"><mark data-delay="LIVE">リアルタイム</mark><span>{tachibanaPriceTime(live)}</span></span>}
       {!live && reference && <span className="ad-quote-meta" data-price-reference="TACHIBANA">
         <mark data-delay="UNKNOWN">{receivedCurrent
           ? reference.marketStatus === 'CLOSED' ? '市場クローズ・受信価格' : '受信価格・参考'
           : liveDocument?.priceRecordsRetained ? '受信停止・保存価格' : '保存価格'}</mark>
-        <span>立花証券 · 価格 {tachibanaPriceTime(reference)} · 受信 {new Date(reference.receivedAt!).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo' })}</span>
+        <span>価格 {tachibanaPriceTime(reference)}</span>
       </span>}
       {crypto && <span className="ad-quote-meta" data-instrument-type="CRYPTO">
         <mark data-delay={crypto.delay}>{d.cryptoRefreshFailed ? '更新失敗・保存価格' : crypto.label}</mark>
@@ -77,7 +77,6 @@ export const AssetDecisionSummary: React.FC<{
             source stamp stays reachable on long-press. */}
         <span title={quoteAsOf(view.quoteTruth)}>{quoteFreshnessJa(view.quoteTruth)}</span>
       </span>}
-      {d.genre === 'us' && view.priceText === '—' && <span className="ad-quote-meta">米国株の価格をまだ受信していません</span>}
       <AssetEarningsDate market={d.asset.market} row={analyst.earnings?.[targetKey]} loading={analyst.loading} refreshFailed={analyst.refreshFailed} />
       <AssetOutlookSummary market={d.asset.market} target={analyst.items[targetKey]}
         targetStatus={analyst.availability[targetKey]?.status} loading={analyst.loading}

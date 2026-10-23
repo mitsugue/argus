@@ -65,10 +65,6 @@ export const BackupCard: React.FC = () => {
 
   return (
     <div className="card guide-card">
-      <p className="backup__lead">
-        保有、判断記録、通知、学習履歴はこの端末に保存されます。
-        「完全バックアップJSONを書き出す」で全対象データを安全な場所へ保存し、新しい端末では「インポート」で復元できます。
-      </p>
       <div className="backup__actions">
         <button className="asset-btn asset-btn--primary" disabled={busy} onClick={doExport}>
           完全バックアップJSONを書き出す
@@ -80,9 +76,9 @@ export const BackupCard: React.FC = () => {
                onChange={(e) => { const f = e.target.files?.[0]; if (f) doImport(f); e.target.value = ''; }} />
       </div>
       {msg && <p className="backup__msg">{msg}</p>}
-      {operation === 'file' && <p><TriangleStepLoader label="バックアップファイルを読み込み、保存内容を確認しています" /></p>}
+      {operation === 'file' && <p><TriangleStepLoader label="読み込み中" /></p>}
       <p className="backup__note">
-        ※復元はこの端末の現在のデータを上書きします。自動ダウンロードは行いません。
+        ※復元はこの端末の現在のデータを上書きします。
       </p>
 
       <div className="backup__cloud">
@@ -91,7 +87,6 @@ export const BackupCard: React.FC = () => {
         </p>
         <p className="backup__note" style={{ borderLeft: '3px solid var(--amber,#fbbf24)', paddingLeft: 8 }}>
           <b>この旧方式は読み取り専用で、送信と端末間ライブ同期は行いません。</b>
-          既に保存済みの暗号文を復元できます。新しい復旧点は「端末データを暗号化して保存」または完全バックアップJSONで作成してください。
         </p>
         <div className="backup__actions">
           <input className="modal__input backup__pass" type="password" value={pass}
@@ -100,19 +95,17 @@ export const BackupCard: React.FC = () => {
           <button className="asset-btn" disabled={busy} onClick={restoreCloud}>クラウドから復元</button>
         </div>
         <p className="backup__note">
-          状態: クラウド読取のみ。保存済みパスフレーズ: {enabled ? 'あり' : 'なし'}。
-          既存復旧点: {lastCloudBackupAt() ? new Date(lastCloudBackupAt()).toLocaleString('ja-JP') : '未確認'}。
+          保存済みパスフレーズ: {enabled ? 'あり' : 'なし'} ·
+          既存復旧点: {lastCloudBackupAt() ? new Date(lastCloudBackupAt()).toLocaleString('ja-JP') : '未確認'} ·
           最終取込: {lastSyncInfo()?.lastPullAppliedAt
-            ? new Date(lastSyncInfo()!.lastPullAppliedAt!).toLocaleString('ja-JP') : '未記録'}。
-          既存復旧点は端末上で復号され、サーバーとGitHubにあるのは保存済みの<b>暗号文だけ</b>です。
-          旧方式だけでは、その復旧点より新しい変更はこの端末内だけです。新方式の保存照合状況は上の欄で確認できます。
+            ? new Date(lastSyncInfo()!.lastPullAppliedAt!).toLocaleString('ja-JP') : '未記録'}<br />
+          復旧点より新しい変更はこの端末内だけです。
           パスフレーズを忘れると誰にも復元できません(本人含む)。
         </p>
         {lastSyncInfo()?.historyRestoreBlocked && <p className="backup__msg" role="status">
-          保存済みクラウド履歴を検証できないため取込みを保留しています。端末データは維持しています。
-          古いバックアップは製品外の移行ツールで変換してから取り込んでください。
+          取込み保留（履歴を検証できません・端末データは維持）
         </p>}
-        {operation === 'cloud' && <p><TriangleStepLoader label="暗号化バックアップを読み込み、保存内容を確認しています" /></p>}
+        {operation === 'cloud' && <p><TriangleStepLoader label="読み込み中" /></p>}
         {cloudMsg && <p className="backup__msg">{cloudMsg}</p>}
       </div>
     </div>

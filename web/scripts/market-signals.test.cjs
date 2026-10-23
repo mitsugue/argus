@@ -83,11 +83,11 @@ assert.ok(panel.includes('marketSignalsView(decisionEvidence.marketView?.project
 // Primary Action (tap to expand). The second copy in the market view is gone.
 assert.ok(!panel.includes('data-argus-contract="market-signals-v1"'), 'no duplicate MARKET SIGNALS block');
 assert.ok(!panel.includes('className="mv-fams"'), 'the seven family chips no longer repeat the signals');
-assert.ok(panel.includes('`成立している条件 ${topSignals.activeCount}件`'), 'count must come from the view');
+assert.ok(panel.includes('`成立 ${topSignals.activeCount} / ${topSignals.total}`'), 'count must come from the view');
 // v13.5.63 (GPT additional item 1): with the US market selected the seven signals
 // are labelled as Japan's and the US conditioning inputs are named instead.
 assert.ok(panel.includes('data-argus-contract="market-signals-market-v1"'), 'US selection labels the signals as Japanese');
-assert.ok(panel.includes('6サインは日本固有（米国は適用外）'), 'US selection says the 6 signs are not applicable');
+assert.ok(panel.includes('日本市場の値'), 'US selection labels the 6 signs as Japan\'s');
 assert.ok(!/["'`]\s*1 \/ 7\s*["'`]/.test(panel), 'no hard-coded 1 / 7 literal');
 assert.ok(panel.includes('data-signal-state={row.state}'), 'per-signal state rendered independently');
 
@@ -96,9 +96,9 @@ assert.ok(panel.includes('data-signal-state={row.state}'), 'per-signal state ren
 assert.ok(panel.includes('data-argus-contract="market-signals-top-v1"'), 'top block contract marker');
 assert.ok(panel.includes('const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null)'),
   'top block derives from the projection');
-assert.ok(panel.includes("{topSignals ? `成立している条件 ${topSignals.activeCount}件` : '成立状況を確認中'}"), 'top count from the view or truthful placeholder');
+assert.ok(panel.includes("{topSignals ? `成立 ${topSignals.activeCount} / ${topSignals.total}` : '確認中'}"), 'top count from the view or truthful placeholder');
 // Owner policy 2026-10-23: one short block title; the line under it still tells the warning view from the legacy one.
-assert.ok(panel.includes('<small>6 SIGNS</small>') && panel.includes("'各条件の成立状況を表示。' : '現行規則の向きと過去の成績を並べています。'"), 'short title, distinct readings (2026-10-23)');
+assert.ok(panel.includes('<small>6 SIGNS</small>') && !panel.includes('各条件の成立状況を表示。'), 'short title, no explanation line (2026-10-23)');
 assert.ok(panel.includes('data-argus-contract="market-signals-top-detail-v1"'), 'seven per-signal states expand at the top');
 assert.ok(!/<b>1 \/ 7<\/b>/.test(panel), 'no hard-coded 1 / 7');
 
@@ -129,7 +129,7 @@ assert.match(reading.signalPerformanceJa('D06',study), /上昇 0.0%/);
 
 
 // The current PER definition never borrows the old D04 performance.
-assert.match(reading.signalPerformanceJa('D04', study, 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD'), /最新PER.*未定義.*旧方式/);
+assert.match(reading.signalPerformanceJa('D04', study, 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD'), /過去の成績：基準未確定/);
 const currentPerSignal = ms.marketSignalsView({marketSignals:{signals:ms.MARKET_SIGNAL_DEFINITIONS.map(def => ({
   ...def, state:'DATA_GATED', status:'AVAILABLE', conditionMet:null,
   ...(def.family === 'D04' ? {ruleStatus:'RULE_NOT_DEFINED', valuationBasis:'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD',
@@ -204,8 +204,8 @@ const html=renderToStaticMarkup(React.createElement(WarningConditionsDetails,{vi
 assert.match(html,/基準未確定/);
 // Owner policy 2026-10-23: no 「未検証」 disclaimer or its explanation on screen; counts stay.
 assert.doesNotMatch(html,/未検証/);
-assert.match(html,/測定できる条件 4件/);
-assert.match(html,/成績：まだ採点できる記録がありません/);
-assert.match(html,/3・4番は判定基準の確定待ち/);
+assert.doesNotMatch(html,/測定できる条件/);
+assert.doesNotMatch(html,/まだ採点できる記録がありません/);
+assert.equal((html.match(/基準未確定/g)||[]).length,2,'3・4 show their state once each');
 
 assert.equal(reading.warningDistanceJa({...view.signals[0],family:'D07',id:'SIG-07',state:'CLEAR',distance:{signedFromBoundary:-1,unit:'CASES',operator:'>=',atBoundary:false,boundaryCounts:true}}),'最低件数まであと1件（5件以上で株価反応を判定）');

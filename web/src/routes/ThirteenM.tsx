@@ -36,11 +36,11 @@ export function ThirteenM({ onBack, onNavigateToAsset, onNavigate }: {
   return <section className="thirteenm-page" aria-label="13M">
     <div className="thirteenm-page__bar">
       <button type="button" onClick={onBack} aria-label="前のページへ戻る">←</button>
-      <span>13M ・機関投資家の動き</span>
+      <span>13M</span>
     </div>
     {!ready && <p className="thirteenm-page__status" role="status">{slow
-      ? '13Mを表示できていません。通信または13Mの配信状態を確認してください。'
-      : '13Mを読み込んでいます…'}</p>}
+      ? '13Mを表示できません'
+      : '読み込み中'}</p>}
     <iframe ref={frame} title="13Mの研究と実データ" src={embeddedUrl}
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-storage-access-by-user-activation"
       referrerPolicy="no-referrer" className="thirteenm-page__frame" />

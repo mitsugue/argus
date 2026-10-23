@@ -31,7 +31,7 @@ export function SystemHealthPopover({ health, onClose }: { health: SystemHealth 
           <span className="shl-pop-title">システム状態</span>
           <span className="shl-pop-overall">{health ? OVERALL_JA[health.overall] : '未取得'}</span>
         </div>
-        {loading && <p className="shl-note"><TriangleStepLoader label={health ? "前回の状態を表示しながら更新しています" : "接続状況を読み込んでいます"} /></p>}
+        {loading && <p className="shl-note"><TriangleStepLoader label={health ? "更新中" : "読み込み中"} /></p>}
         {health ? (
           <div className="shl-grid">
             {health.lamps.map((l) => (
@@ -44,7 +44,7 @@ export function SystemHealthPopover({ health, onClose }: { health: SystemHealth 
             {health.noteJa && <div className="shl-note">{health.noteJa}</div>}
           </div>
         ) : (
-          !loading && <div className="shl-note">{failed ? "接続状況を取得できませんでした。Settingsから再取得できます。" : "接続状況は未取得です。"}</div>
+          !loading && <div className="shl-note">{failed ? "取得できません" : "未取得"}</div>
         )}
       </div>
     </>

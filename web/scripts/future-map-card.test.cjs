@@ -29,7 +29,7 @@ assert.ok(html.includes('いまの位置') && html.includes('天井圏') && html
 assert.ok(html.includes('いまここ') && html.includes('●●') && html.includes('69,700〜72,000'));
 assert.ok(html.includes('AI投資の反動') && html.includes('別の見方: 選挙後は上がる') === false, 'only four rows at first');
 assert.ok(html.includes('すべて表示（残り3件・12/25前後 クリスマスが底まで）'));
-assert.ok(html.includes('答え合わせ: 0件（まだ成績なし）') && html.includes('●の数 = 同じことを言っている見立ての数'));
+assert.ok(html.includes('答え合わせ: 0件（まだ成績なし）') && html.includes('●＝同じ見立ての数'));
 for (const word of ['src_a', 'src_b', 'BUY', '確率']) assert.ok(!html.includes(word), word);
 assert.equal(renderToStaticMarkup(React.createElement(FutureMapView, { doc: null })), '');
 const scored = renderToStaticMarkup(React.createElement(FutureMapView, { doc: { ...doc, record: { scored: 3, reached: 2 } }, nowMs: NOW }));
@@ -44,7 +44,7 @@ assert.deepEqual(futureMapUpdateAge(doc.updatedAt, at('2026-10-06T12:00:00Z')),
 for (const stamp of ['', 'not-a-time', '2026-10-04T21:00:00', '2026-10-08T12:00:00Z',
   '2026-02-30T12:00:00Z', '2026-10-04T24:00:00Z', '2026-10-04T12:00:00+24:00']) {
   assert.deepEqual(futureMapUpdateAge(stamp, at('2026-10-07T12:00:00Z')),
-    { days: null, warning: true, label: '更新日時を確認できません' });
+    { days: null, warning: true, label: '更新日時不明' });
 }
 const stale = renderToStaticMarkup(React.createElement(FutureMapView,
   { doc, nowMs: at('2026-10-07T12:00:00Z') }));
@@ -52,7 +52,7 @@ assert.ok(stale.includes('データ未更新 ・ 最終更新 10/4') && stale.in
 assert.ok(stale.includes('69,700〜72,000') && stale.includes('いまここ'), 'stale warning preserves saved view');
 const fresh = renderToStaticMarkup(React.createElement(FutureMapView,
   { doc, nowMs: at('2026-10-04T12:01:00Z') }));
-assert.ok(fresh.includes('24時間以内の更新') && !fresh.includes('fm-age is-warning'));
+assert.ok(!fresh.includes('24時間以内の更新') && !fresh.includes('fm-age'), 'a fresh table says nothing about its age (owner 2026-10-23)');
 console.log('Future map card: exact age threshold, unknown clock, saved table preservation PASS');
 
 const utcMidnight = renderToStaticMarkup(React.createElement(FutureMapView,
@@ -60,7 +60,7 @@ const utcMidnight = renderToStaticMarkup(React.createElement(FutureMapView,
 assert.ok(utcMidnight.includes('10/5更新'), 'source update date uses Japan time');
 const malformed = renderToStaticMarkup(React.createElement(FutureMapView,
   { doc: { ...doc, updatedAt: '2026-02-30T12:00:00Z' }, nowMs: at('2026-10-05T00:00:00Z') }));
-assert.ok(malformed.includes('更新日時を確認できません') && !malformed.includes('NaN'),
+assert.ok(malformed.includes('更新日時不明') && !malformed.includes('NaN'),
   'invalid calendar date is unknown, while saved forecasts remain visible');
 
 // 2026-10-23: the server picks the first rows (not ended, from "いまここ") and

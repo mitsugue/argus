@@ -51,10 +51,10 @@ export const PublicDiagnosticsPanel: React.FC = () => {
   return (
     <section id="settings-status" aria-label="Data quality status">
       {brief && <CreditConditionsDetails brief={{ ...brief, creditConditions: brief.creditConditions && typeof brief.creditConditions === "object" ? { ...brief.creditConditions, showToday: false } : null }} />}
-      {loading && <p className="cmd-alloc__note"><TriangleStepLoader label="接続状況を読み込んでいます" /></p>}
+      {loading && <p className="cmd-alloc__note"><TriangleStepLoader label="読み込み中" /></p>}
       {failed && !loading && (
         <div className="card cmd-alloc">
-          <p className="cmd-alloc__note">公開診断を取得できません。再読込してください。</p>
+          <p className="cmd-alloc__note">取得できません</p>
           <button type="button" onClick={() => void refresh()}>再読込</button>
         </div>
       )}

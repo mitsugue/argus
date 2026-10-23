@@ -11,6 +11,7 @@ import type { MarketBrief } from '../../lib/marketBrief';
 import { ArgusEditorialSurface } from './ArgusEditorialSurface';
 import { TodayDecisionStrip, type CriticalTodayNews } from './TodayDecisionStrip';
 import { marketChanges, marketWording } from '../../lib/marketWording';
+import { withoutScreenNotes } from '../../lib/screenNotes';
 
 // v13.5.36 MARKET SITUATION BRIEF (owner 2026-08-26): NOW/WHY/NEXT — the
 // deterministic composer selects verified facts; AI only compresses them
@@ -31,12 +32,12 @@ export function gateNoteJa(brief: MarketBrief): string | null {
 
 /** Absence of a generated edition does not prove that its worker stopped. */
 export function briefWaitingTitle(brief: MarketBrief): string {
-  if (brief.generationWorker?.status === 'RUNNING') return '新しい見立てを作成しています';
+  if (brief.generationWorker?.status === 'RUNNING') return '見立てを作成中';
   if (['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief.generationWorker?.status ?? '')
     || ['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief.unifiedStatus ?? '')) {
-    return '新しい見立てを作成できませんでした。';
+    return '見立てを作成できませんでした';
   }
-  return '新しい見立てを待っています。';
+  return '見立て待ち';
 }
 
 export function retainedBriefNote(brief: MarketBrief | null, requestFailed: boolean): string {
@@ -56,15 +57,15 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   // SAME market-view document as the MARKET SIGNALS header, stamped with its
   // information cutoff, so the two never show different counts.
   const cutoffJa = cutoff ? new Date(cutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : null;
-  const chartChip = signals ? `成立している条件 ${signals.activeCount}件${cutoffJa ? `（${cutoffJa} 時点）` : ''}`
-    : market === 'US' ? '米国: 6サインは適用外（類似局面のみ）' : brief?.chips.chart;
+  const chartChip = signals ? `6サイン 成立 ${signals.activeCount} / ${signals.total}${cutoffJa ? `（${cutoffJa}）` : ''}`
+    : market === 'US' ? '米国: 6サインは適用外' : brief?.chips.chart;
   const updateState = brief ? (loading || error || retained ? <span role="status" className="at-brief__update">
     {loading ? (retained ? retainedBriefNote(responseBrief, false) : '確認中') : retainedBriefNote(responseBrief, Boolean(error))}
     {error && <button type="button" onClick={retry} disabled={loading} aria-label="見立てを再確認">↻</button>}
-  </span> : null) : loading ? <p className="at-brief__update"><TriangleStepLoader label="見立てを読み込んでいます" /></p>
-    : error ? <p role="status" className="at-brief__update">見立てを取得できません。<button type="button" onClick={retry}>再読込</button></p> : null;
+  </span> : null) : loading ? <p className="at-brief__update"><TriangleStepLoader label="読み込み中" /></p>
+    : error ? <p role="status" className="at-brief__update">取得できません <button type="button" onClick={retry}>再読込</button></p> : null;
   if (!brief) return <div className="at-brief" aria-label="ARGUSの今日の見立て">
-    {updateState ?? <p role="status">見立てはまだありません。</p>}<CreditConditionsDetails /><MarketAnalysisHistory key="saved-history" /></div>;
+    {updateState ?? <p role="status">見立てなし</p>}<CreditConditionsDetails /><MarketAnalysisHistory key="saved-history" /></div>;
   const edition = editorial ? editorialEdition(brief) : null;
   const gateNote = gateNoteJa(responseBrief ?? brief);
   if (edition) return <ArgusEditorialSurface brief={edition} updateState={updateState} retained={edition !== brief}
@@ -88,26 +89,19 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
       <div className="at-brief__rows">{(Object.keys(labels) as Array<keyof typeof labels>).filter(key => editorial ? ['reasons', 'changes', 'invalidation'].includes(key) : key !== 'view').map(key =>
         <div key={key} data-brief-section={key}><b>{labels[key]}</b><span>{editorial ? (key === 'changes' ? marketChanges(unified.sections[key].textJa) : marketWording(unified.sections[key].textJa)) : unified.sections[key].textJa}
           {!editorial && <small className="at-unified-brief__kind">{kinds[unified.sections[key].kind]}</small>}</span></div>)}</div>
-      <details><summary>根拠と説明の状態を見る</summary>
-        <p>見立ての作成日時 {new Date(brief.aiDiagnostics?.completedAt ?? brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-          {retained && '。新しい見立ての完成までは、保存した根拠と計算を一緒に表示します。'}</p>
-        <p>要求モデル {brief.aiDiagnostics?.requestedModel ?? '未確認'} · 応答モデル {brief.aiDiagnostics?.returnedModel ?? '未確認'}</p>
-        <p>{brief.analysisHistory?.status === 'LOCAL_DURABLE'
-          ? 'この見立てと当時の計算結果をサーバーの永続領域へ保存しました。遠隔バックアップからの復旧確認は未完了です。'
-          : 'この見立ての永続保存は未完了です。画面に表示できても保存成功とは限りません。'}</p>
+      <details><summary>根拠</summary>
+        <p>見立ての作成日時 {new Date(brief.aiDiagnostics?.completedAt ?? brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</p>
         {(Object.keys(labels) as Array<keyof typeof labels>).map(key => <div key={key}>
           <b>{labels[key]}の根拠</b>
           {editorial && <p>{unified.sections[key].textJa}<small className="at-unified-brief__kind">{kinds[unified.sections[key].kind]}</small></p>}
-          {unified.sections[key].evidenceIds.length === 0 ? <p>根拠未取得</p> : unified.sections[key].evidenceIds.map(id => {
+          {unified.sections[key].evidenceIds.length === 0 ? <p>根拠なし</p> : unified.sections[key].evidenceIds.map(id => {
             const current = Array.isArray(brief.unifiedContext?.facts) ? brief.unifiedContext.facts : [];
             const prior = Array.isArray(brief.unifiedContext?.previousFacts) ? brief.unifiedContext.previousFacts : [];
             const fact = current.find(row => row.evidenceId === id) ?? prior.find(row => row.evidenceId === id);
-            return <div key={id} className="at-brief-source"><p>{fact?.text ?? '参照元を確認できません'}</p>
-              <small>{fact?.provenance?.sourceLabel ?? fact?.source ?? '出典未確認'}
-                {fact?.provenance?.eventId ? ` · 記録 ${fact.provenance.eventId}` : ''}
-                {fact?.provenance?.revision != null ? ` · 改訂 ${fact.provenance.revision}` : ''}</small>
-              <small>公表 {fact?.provenance?.publishedAt ?? '未確認'} · 受信 {fact?.provenance?.receivedAt ?? '未確認'}
-                {fact?.provenance?.observedAt ? ` · 観測 ${fact.provenance.observedAt}` : ''}</small>
+            return <div key={id} className="at-brief-source"><p>{fact?.text ? withoutScreenNotes(fact.text) : '参照元なし'}</p>
+              <small>{fact?.provenance?.sourceLabel ?? fact?.source ?? '出典不明'}
+                {(fact?.provenance?.observedAt ?? fact?.provenance?.publishedAt ?? fact?.provenance?.receivedAt)
+                  ? ` · ${(fact?.provenance?.observedAt ?? fact?.provenance?.publishedAt ?? fact?.provenance?.receivedAt ?? '').slice(0, 10)}` : ''}</small>
               {fact?.provenance?.url && <a href={fact.provenance.url} target="_blank" rel="noopener noreferrer">出典を開く</a>}
             </div>;
           })}
@@ -122,13 +116,13 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   const next = brief.aiText?.nextJa ?? brief.next;
   const providerIssue = brief.aiDiagnostics?.errorCode;
   const providerMessage = providerIssue === 'credit_balance_exhausted'
-    ? '統合AIはAPIの前払い残高不足で停止しています。残高の補充が必要です。'
+    ? 'AI停止: 前払い残高不足'
     : ['organization_spend_limit_exceeded', 'project_spend_limit_exceeded'].includes(providerIssue ?? '')
-      ? '統合AIはAPI側の支出上限に達しています。APIの上限設定の変更が必要です。'
+      ? 'AI停止: 支出上限'
       : ['organization_usage_limit_exceeded', 'insufficient_quota'].includes(providerIssue ?? '')
-        ? '統合AIはAPI側の利用枠不足で停止しています。APIの請求・利用枠の確認が必要です。'
+        ? 'AI停止: 利用枠不足'
         : ['rate_limit_exceeded', 'slow_down'].includes(providerIssue ?? '')
-          ? '統合AIはAPI側の一時的な呼出し制限で更新を待っています。'
+          ? 'AI更新待ち: 呼出し制限'
           : null;
   return <div className="at-brief" data-argus-contract="market-brief-v1"
     aria-label="今の市場（売買権限なし）">
@@ -136,14 +130,12 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
     <p className="at-brief__unavailable-title">{brief.generationWorker?.status === 'RUNNING' ? <TriangleStepLoader label={briefWaitingTitle(brief)} /> : briefWaitingTitle(brief)}</p>
     {updateState}
     {brief.unifiedStatus && brief.unifiedStatus !== 'GENERATED' && <p role="status">
-      {providerMessage ?? gateNote ?? (brief.generationWorker?.status === 'RUNNING' ? '統合AIが見立てを更新しています。'
+      {providerMessage ?? gateNote ?? (brief.generationWorker?.status === 'RUNNING' ? '更新中'
         : ['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief.generationWorker?.status ?? '')
-          ? '統合AIの更新を完了できませんでした。次の定期処理で再試行します。'
-          : '統合AIの説明は更新待ちです。')}取得済み情報の要約を表示しています。
+          ? '更新失敗' : '更新待ち')}
       {brief.lastSuccessfulAiAt && <small> 最終成功 {new Date(brief.lastSuccessfulAiAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small>}
     </p>}
     <details className="at-brief__fallback"><summary>取得済みの情報を見る</summary>
-    <small>今の市場 — 取得済み情報の要約{brief.aiText ? '（AI圧縮・参考）' : ''}</small>
     <div className="at-brief__rows">
       <div><b>今</b><span>{now}</span></div>
       <div><b>理由</b><span>{why}</span></div>

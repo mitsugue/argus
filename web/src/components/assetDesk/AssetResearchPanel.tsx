@@ -28,7 +28,6 @@ export const AssetResearchPanel: React.FC<{
         {noteSaved && <span className="asset-detail__note-saved">✓ 保存</span>}
       </div>
 
-      <p className="ad-detail-note">メモは端末内の保存です。別端末へ移すときはSettingsの完全バックアップを使います。</p>
 
       {/* v12.1.0: マルチエージェントOSINT(計画→収集→Gemini/GPT→検証→統合) */}
       <OsintDeepDive symbol={d.asset.symbol} market={d.asset.market} held={!!d.pn?.held} />

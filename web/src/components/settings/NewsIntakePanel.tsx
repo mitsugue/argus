@@ -200,11 +200,10 @@ export const NewsIntakePanel: React.FC = () => {
       <div className="section-head">
         <span className="section-head__title">NIKKEI MAIL INTAKE</span>
       </div>
-      {!health && !error && <p className="cmd-alloc__note"><TriangleStepLoader label="ニュースの収集状況を読み込んでいます" /></p>}
-      {error && <p className="cmd-alloc__note">取込ヘルスを取得できません。</p>}
+      {!health && !error && <p className="cmd-alloc__note"><TriangleStepLoader label="読み込み中" /></p>}
+      {error && <p className="cmd-alloc__note">取得できません</p>}
       {health && !health.configured && <p className="cmd-alloc__note">
-        専用ニュースメールボックスは未設定です（MAILBOX_UNCONFIGURED）。
-        設定手順はオーナーチェックリストを参照してください。</p>}
+        メールボックス未設定</p>}
       {health && <div style={{ display: 'grid', gap: 4, fontSize: 11 }}
         data-argus-contract="news-intake-health-v1"
         data-intake-status={health.status}>
@@ -302,9 +301,7 @@ export const NewsIntakePanel: React.FC = () => {
           </div>}
       </div>}
 
-      <div className="section-head" style={{ marginTop: 12 }}>
-        <span className="section-head__title">DEVICE VIEWPORT（表示診断）</span>
-      </div>
+      <details style={{ marginTop: 12 }}><summary>DEVICE VIEWPORT</summary>
       <div style={{ display: 'grid', gap: 3, fontSize: 11 }}
         data-argus-contract="viewport-probe-v1">
         {([
@@ -324,10 +321,7 @@ export const NewsIntakePanel: React.FC = () => {
           <span style={{ color: 'var(--text-muted)' }}>{label}</span>
           <b>{String(value)}</b>
         </div>)}
-      </div>
-      <p className="cmd-alloc__note">
-        本文は保存されません。取込は読み取り専用の専用メールボックスに限定されます。
-      </p>
+      </div></details>
     </section>
   );
 };

@@ -95,40 +95,37 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
       {liveLabel && <small>{liveLabel}</small>}
     </p>}
     {preparing && <p className="today-strip__preparing" role="status">{stored
-      ? `サーバーが過去データを準備中のため、${new Date(stored.savedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}時点の数字を表示しています。数分〜20分ほどで最新に戻ります。`
-      : 'サーバーが過去データを準備中です。数分〜20分ほどで数字が表示されます。'}</p>}
+      ? `準備中・${new Date(stored.savedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}時点の数字`
+      : '準備中'}</p>}
     <div className={`today-strip__verdict is-${strip.tone}`} data-tone={strip.tone}>
       <span className="today-strip__badge">{toneLabel[strip.tone]}</span>
       {headline && <p>{headline}</p>}
       <small className="today-strip__record" data-tone-record={strip.tone}>
-        過去の成績({TONE_HISTORY.since}年〜):この判定の5日後に上がったのは{TONE_HISTORY.upAfter[strip.tone]}%。
-        どの日でも{TONE_HISTORY.baseUpPct}%なので、方向の予想には使えません。</small>
+        5日後に上昇 {TONE_HISTORY.upAfter[strip.tone]}%(普段{TONE_HISTORY.baseUpPct}%・{TONE_HISTORY.since}年〜)</small>
       {gapRecord && Math.abs(strip.overnightGapPct!) >= 1 && <p className="today-strip__overnight" data-overnight-gap={strip.overnightGapPct!.toFixed(2)}
         onClick={() => jumpTo('today-nikkei-chart', 'futures')}>
-        昨夜の日経先物は終値比<b>{signed(strip.overnightGapPct!)}</b>。{OVERNIGHT_HISTORY.since}年以降、同じ程度の夜のあと5日後に上がっていたのは
-        <b>{gapRecord.upPct}%</b>(普段{OVERNIGHT_HISTORY.baseUpPct}%)、5日間の値動きの中央値は{signed(gapRecord.medianPct)}({gapRecord.n}回)。</p>}
+        昨夜の日経先物 <b>{signed(strip.overnightGapPct!)}</b> · 5日後に上昇 <b>{gapRecord.upPct}%</b>(普段{OVERNIGHT_HISTORY.baseUpPct}%)・中央値{signed(gapRecord.medianPct)}({gapRecord.n}回)</p>}
     </div>
     <div className="today-strip__tiles">
       <button type="button" className={`today-strip__tile alert-${strip.alert ?? 'pending'}`} onClick={() => jumpTo('today-nikkei-chart')}>
         <small>この先5日の急落(-5%以上)</small><b>{strip.alert ? alertLabel[strip.alert] : '確認中'}</b>
-        <span>{!strip.alert ? '値動きの大きさを取得待ち' : strip.alertRaised && strip.alert !== 'low'
+        <span>{!strip.alert ? 'データ待ち' : strip.alertRaised && strip.alert !== 'low'
           ? raisedRecord(ALERT_RAISED_HISTORY[strip.alert])
           : `過去の同じ状態で${ALERT_HISTORY[strip.alert]}%`}</span></button>
       <button type="button" className={`today-strip__tile momentum-${strip.momentum ?? 'pending'}`} onClick={() => jumpTo('today-nikkei-chart', 'trend')}>
         <small>日経の勢い</small><b>{strip.momentum ? momentumLabel[strip.momentum] : '確認中'}</b>
         {/* Owner check 2026-10-22: the headline is the distance from the 20-day mean, not the 5-session change. */}
         <span className="today-strip__measure" data-momentum-z={strip.momentumZ !== null ? strip.momentumZ.toFixed(2) : undefined}>
-          {strip.momentumZ !== null ? `20日平均${strip.momentumZ < 0 ? 'より下' : strip.momentumZ > 0 ? 'より上' : 'ちょうど'}(${sigmaText(strip.momentumZ)})` : '直近20営業日の価格を取得待ち'}</span></button>
+          {strip.momentumZ !== null ? `20日平均${strip.momentumZ < 0 ? 'より下' : strip.momentumZ > 0 ? 'より上' : 'ちょうど'}(${sigmaText(strip.momentumZ)})` : 'データ待ち'}</span></button>
       <button type="button" className="today-strip__tile tile-range" onClick={() => jumpTo('today-nikkei-chart')}>
-        <small>5日間の予想値幅(8割{strip.overnightGapPct !== null ? '・昨夜の先物を反映' : ''})</small><b>{strip.band ? `${signed(strip.band.lower)}〜${signed(strip.band.upper)}` : '確認中'}</b>
-        <span>{strip.band && shownPrice !== null ? `${yen(shownPrice * (1 + strip.band.lower / 100))}〜${yen(shownPrice * (1 + strip.band.upper / 100))}円` : '値幅の計算に必要なデータを取得待ち'}</span></button>
+        <small>5日の値幅(8割{strip.overnightGapPct !== null ? '・先物込み' : ''})</small><b>{strip.band ? `${signed(strip.band.lower)}〜${signed(strip.band.upper)}` : '確認中'}</b>
+        <span>{strip.band && shownPrice !== null ? `${yen(shownPrice * (1 + strip.band.lower / 100))}〜${yen(shownPrice * (1 + strip.band.upper / 100))}円` : 'データ待ち'}</span></button>
       {criticalNews.length > 0 ? <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-material-news')}>
-        <small>重大ニュース・市場変化 {criticalNews.length}件</small><b className="today-strip__event">{criticalNews[0].title}</b>
+        <small>重大ニュース {criticalNews.length}件</small><b className="today-strip__event">{criticalNews[0].title}</b>
         <span className="today-strip__news-preview">{criticalNews[0].why}</span><span className="today-strip__news-meta">{criticalNews[0].meta}</span>
-        <span>詳しく確認する ↓</span>
+        <span>詳しく ↓</span>
       </button> : brief.chips?.nextEvent ? <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}>
-        <small>次の山場</small><b className="today-strip__event">{friendlyEventText(brief.chips.nextEvent)}</b>
-        {/SQ/i.test(brief.chips.nextEvent) && <span>SQ＝先物・オプションの清算<br />前後に株価が大きく上下することも</span>}</button> : <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}><small>次の山場</small><b>確認中</b><span>予定の更新待ち</span></button>}
+        <small>次の山場</small><b className="today-strip__event">{friendlyEventText(brief.chips.nextEvent)}</b></button> : <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}><small>次の山場</small><b>確認中</b></button>}
     </div>
     {basisNote && <p className="today-strip__basis" data-close-basis={strip.closeDate!}>{basisNote}</p>}
     {/* Owner order 2026-10-20 (docs/TODAY_CARD_ORDER.md 1-4): verdict, the four tiles, then the market position. */}
@@ -138,9 +135,7 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
       {strip.rows.map(row => <details key={row.id} className="today-strip__row" data-lean={row.lean} data-row={row.id}>
         <summary><span className={`today-strip__chip is-${row.lean}`}>{leanLabel[row.lean]}</span>
           <span><b>{row.title}</b><small>{row.meaning}</small></span></summary>
-        {row.id === 'trend' ? row.soWhat && <p className="today-strip__detail">{row.soWhat}</p> :
-          <dl><dt>これは何？</dt><dd>{row.what}</dd><dt>今の状態</dt><dd>{row.now}</dd>{row.soWhat && <><dt>見るポイント</dt><dd>{row.soWhat}</dd></>}</dl>}
-        {row.id === 'sq' && <a className="today-strip__source" href="https://www.jpx.co.jp/glossary/ta/326.html" target="_blank" rel="noopener noreferrer">SQの仕組みを読む（日本取引所グループ）</a>}
+        {row.soWhat && <p className="today-strip__detail">{row.soWhat}</p>}
       </details>)}
     </div>}
   </section>;

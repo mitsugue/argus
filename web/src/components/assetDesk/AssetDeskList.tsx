@@ -311,7 +311,7 @@ export const AssetDeskList: React.FC<Props> = ({
   }
 
   if (assets.length === 0) {
-    return <div className="card asset-list"><div className="asset-empty">登録銘柄がありません。「+ 銘柄を追加」で追加できます。</div></div>;
+    return <div className="card asset-list"><div className="asset-empty">登録銘柄なし</div></div>;
   }
 
   const connecting = intel.jpQuotes.phase === 'connecting' && intel.usQuotes.phase === 'connecting';
@@ -369,7 +369,7 @@ export const AssetDeskList: React.FC<Props> = ({
         }}
       />
       {toolbar}
-      {connecting && <div className="asset-empty asset-empty--card"><TriangleStepLoader label="銘柄の判断を読み込んでいます" /></div>}
+      {connecting && <div className="asset-empty asset-empty--card"><TriangleStepLoader label="読み込み中" /></div>}
       <div className="asset-filter">
         <button className={`asset-filter__chip${filter === 'all' ? ' is-active' : ''}`}
                 aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>{t('wl.filterAll')}</button>
@@ -377,7 +377,7 @@ export const AssetDeskList: React.FC<Props> = ({
                 aria-pressed={filter === 'risk'} onClick={() => setFilter('risk')}>
           {t('wl.filterDanger')}{riskCount > 0 ? ` (${riskCount})` : ''}
         </button>
-        {filter !== 'all' && <span className="asset-filter__note">全件表示で並べ替えできます</span>}
+        {filter !== 'all' && <span className="asset-filter__note">並べ替えは「全部」で</span>}
       </div>
 
       {manualGroups.map((g) => {

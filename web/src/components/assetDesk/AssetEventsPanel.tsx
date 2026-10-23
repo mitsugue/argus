@@ -12,8 +12,8 @@ export const AssetEventsPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
     // the important-events request had timed out (2026-09-04).
     return <p className="uac-next" style={{ margin: 0, color: 'var(--text-faint)' }}>{
       d.eventsAuthorityUnknown
-        ? 'イベント情報を取得できていないため、関連イベントを確認できません。'
-        : '取得した一覧には、この銘柄に関連づけられた直近のイベント・材料はありません。'
+        ? 'イベント: 取得できません'
+        : '関連イベントなし'
     }</p>;
   }
   return (

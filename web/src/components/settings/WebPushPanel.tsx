@@ -21,7 +21,7 @@ export function WebPushPanel(){
     if(sub){const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(sub.endpoint));
       const identity=Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('');
       show(await pushRequest(token,'receipts',{subscriptionId:identity,receipts:await pushReceipts()}));
-    }else{setStatus(null);setMessage('この端末では未登録です。通知する項目を選び「通知を有効にする」を押してください。');}
+    }else{setStatus(null);setMessage('この端末は未登録');}
   });
   const enable=()=>{
     // Start the OS permission request directly in the user gesture.
@@ -34,7 +34,7 @@ export function WebPushPanel(){
         if(actual.length!==expected.length||actual.some((b,i)=>b!==expected[i]))throw new Error('通知接続キーが変わっています。既存の通知を停止してから再登録してください。');}
       sub=sub||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:applicationKey(publicKey)});
       show(await pushRequest(token,'subscribe',{subscription:sub.toJSON(),sq,news,ownerChanges}));
-      setMessage('この端末の通知設定をサーバーへ保存しました。実受信はまだ確認していません。');
+      setMessage('通知設定を保存しました');
     });
   };
   const disable=()=>run(async()=>{
@@ -43,26 +43,23 @@ export function WebPushPanel(){
     setMessage('この端末への外部配信を停止しました。');
   });
   const test=()=>run(async()=>{if(!status)return;show(await pushRequest(token,'test',{subscriptionId:status.subscriptionId}));
-    setMessage('約1分後の確認通知を予約しました。アプリを閉じて確認し、戻って「接続・受信状況を更新」を押してください。');});
+    setMessage('約1分後に確認通知を送ります');});
   return <section className="card ai-usage web-push" aria-label="アプリを閉じたときの通知"><h3>アプリを閉じたときの通知</h3>
-    <p>SQの週・最終取引日・当日の案内、新しい重大ニュース・財政金利の警戒変化、登録銘柄の重要な変化を知らせます。売買の指示ではありません。</p>
-    <p>iPhoneはiOS 16.4以降のホーム画面版で、通知の許可が必要です。対応するSafari・Chrome・Firefoxでも利用できます。</p>
+    <p>iPhoneはホーム画面版（iOS 16.4以降）で通知の許可が必要</p>
     <details><summary>所有者の接続設定</summary><label>接続キー<input type="password" autoComplete="off" value={token} disabled={busy}
       onChange={e=>{setToken(e.target.value);setStatus(null);setPublicKey('');setMessage('');}}/></label>
-      <p>この欄の入力は端末へ保存しません。購読先と通知設定をサーバーに保存します。保有情報や記事本文は通知に送りません。</p></details>
+</details>
     <div className="ai-usage__controls"><button disabled={busy||!token} onClick={()=>void load()}>接続・受信状況を更新</button></div>
     <label className="web-push__preference"><input type="checkbox" checked={sq} disabled={busy} onChange={e=>setSq(e.target.checked)}/>SQの日程案内</label>
     <label className="web-push__preference"><input type="checkbox" checked={news} disabled={busy} onChange={e=>setNews(e.target.checked)}/>重大ニュース・財政金利の警戒変化</label>
     <label className="web-push__preference"><input type="checkbox" checked={ownerChanges} disabled={busy} onChange={e=>setOwnerChanges(e.target.checked)}/>監視銘柄の急騰・急落</label>
     <div className="ai-usage__controls"><button disabled={busy||!token||!publicKey} onClick={enable}>{status?.enabled?'通知項目を保存':'通知を有効にする'}</button>
       {status?.enabled&&<><button disabled={busy} onClick={()=>void test()}>1分後に確認通知</button><button disabled={busy} onClick={()=>void disable()}>この端末への通知を停止</button></>}</div>
-    {busy&&<p><TriangleStepLoader label="通知の接続を確認しています" /></p>}{message&&<p role="status">{message}</p>}
+    {busy&&<p><TriangleStepLoader label="確認中" /></p>}{message&&<p role="status">{message}</p>}
     {status&&<><p>サーバー設定：{status.enabled?'有効':'停止中'}</p>
       {status.deliveries.map(d=><article key={d.id} className="ai-usage__group"><strong>{labels[d.status]||'状態を確認中'}</strong>
-        <p>端末から報告された表示処理：{stamp(d.display_at)}<br/>通知を開いた記録：{stamp(d.opened_at)}</p></article>)}
-      {!status.deliveries.length&&<p>この端末の配信記録はまだありません。</p>}</>}
-    <details><summary>通知の確認範囲</summary><p>配信サービスの受付と、端末での実受信は別です。通知が実際に見えたかは、アプリを閉じた端末で確認します。集中モード等で表示が遅れる場合があります。</p>
-      <p>結果不明の配信は重複を避けて自動再送しません。再起動後の端末設定は保存しますが、遠隔バックアップからの復旧は未確認です。</p>
-      <p>上の端末内通知履歴とは別の配信設定です。登録銘柄の外部通知は、非公開保存先の保有・監視区分と、取得時刻を確認できる価格イベントだけを使います。数量・取得単価・銘柄名はロック画面へ送りません。</p></details>
+        <p>表示 {stamp(d.display_at)} · 開封 {stamp(d.opened_at)}</p></article>)}
+      {!status.deliveries.length&&<p>配信記録なし</p>}</>}
+
   </section>;
 }

@@ -24,7 +24,7 @@ const html=renderToStaticMarkup(React.createElement(MarketInternalsCard,{documen
 assert.match(html,/日経平均を動かした銘柄/);assert.match(html,/8035 東京エレクトロン/);assert.match(html,/\+120\.50円/);assert.match(html,/-80\.25円/);
 assert.match(html,/225銘柄の合計と一致/);assert.doesNotMatch(html,/入力/);
 const mismatch=renderToStaticMarkup(React.createElement(MarketInternalsCard,{document:doc({status:'SUM_MISMATCH',reason:'factor_or_divisor_changed'}),horizon:1}));
-assert.match(mismatch,/銘柄ごとの値は出していません/);assert.doesNotMatch(mismatch,/押し上げ/);
+assert.match(mismatch,/合計が日経平均と一致しないため非表示/);assert.doesNotMatch(mismatch,/押し上げ/);
 const focus=renderToStaticMarkup(React.createElement(MarketInternalsCard,{document:doc({status:'AVAILABLE',top:[],bottom:[]}),horizon:1,focusSymbol:'7203'}));
 assert.doesNotMatch(focus,/日経平均を動かした銘柄/);
 const estimate=renderToStaticMarkup(React.createElement(MarketInternalsCard,{document:doc({status:'AVAILABLE',members:225,indexDeltaPoints:300.5,

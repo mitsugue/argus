@@ -77,9 +77,7 @@ export const Watchlist: React.FC<Props> = ({
     <PageShell
       className="watchlist-page"
       title={assetDetail ? '銘柄の見通し' : '登録銘柄'}
-      subtitle={assetDetail
-        ? `${assetFocus?.symbol ?? '銘柄'} · 判断 / 見通し / 根拠`
-        : '価格と変化を確認し、銘柄をタップして見通しへ。'}
+      subtitle={assetDetail ? assetFocus?.symbol : undefined}
     >
       {assetDetail && <button type="button" className="asset-btn" onClick={onBackToHoldings}>
         ← 登録銘柄
@@ -104,7 +102,7 @@ export const Watchlist: React.FC<Props> = ({
               <summary>{deskCoverageJa(coverage, { loading: evidence.loading, generatedAt: evidence.generatedAt })}{coverage.complete ? '' : ' · 不足あり'}</summary>
               <ul>{deskCoverageDetailJa(coverage).map((row) => <li key={row}>{row}</li>)}</ul>
             </details>
-            <span className="asset-toolbar__age">画面の読み込み {ageLabel(updatedAt, nowMs)}</span>
+            <span className="asset-toolbar__age">読み込み {ageLabel(updatedAt, nowMs)}</span>
             <button className="asset-btn" onClick={rescan}
               aria-label="銘柄の価格とデータを再読み込み">再読み込み</button>
             <button className="asset-btn asset-btn--primary" onClick={() => setAddOpen(true)}
@@ -118,7 +116,7 @@ export const Watchlist: React.FC<Props> = ({
         <summary>銘柄の設定・連携</summary>
         {supportOpen && <div className="ad-support__body">
           {OWNER_AUTH_REQUIRED
-            ? <p className="muted">登録銘柄・並び順はログインした端末で自動共有します。通信できない間の変更は、この端末に保持して再接続後に保存します。</p>
+            ? <p className="muted">登録銘柄・並び順: 自動共有</p>
             : <Layer2BSyncCard assets={assets} />}
           <EntityProfileEditor assets={assets} />
         </div>}

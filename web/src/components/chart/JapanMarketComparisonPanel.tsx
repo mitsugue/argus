@@ -16,13 +16,13 @@ export function JapanMarketComparisonPanel({ horizon }: { horizon: number }) {
   const agreement = comparisonAgreement(brief?.calculationSnapshots?.[String(horizon)]?.comparison, state.document,
     horizon, brief ? brief.aiDiagnostics?.completedAt ?? brief.generatedAt : null);
   return <div className="jp-comparison-panel" data-argus-contract="jp-market-comparison-runtime-v1" aria-busy={state.loading}>
-    {state.loading && <p><TriangleStepLoader label={state.document ? "前回の比較を表示しながら更新しています" : "日経平均の過去比較を読み込んでいます"} /></p>}
+    {state.loading && <p><TriangleStepLoader label={state.document ? "更新中" : "読み込み中"} /></p>}
     {state.error && <p role="status">
-      {state.document ? '過去比較の更新を取得できないため、前回成功分を表示しています。' : '日経平均の過去比較に必要なデータを取得できていません。'}
+      {state.document ? '更新失敗・前回分' : '取得できません'}
       <button type="button" onClick={state.retry}>再取得</button>
     </p>}
-    {state.lastSuccessfulAcquisitionAt && <p className="jp-comparison__scale">指数データの最終取得：
-      {new Date(state.lastSuccessfulAcquisitionAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST</p>}
+    {state.lastSuccessfulAcquisitionAt && <p className="jp-comparison__scale">取得{' '}
+      {new Date(state.lastSuccessfulAcquisitionAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>}
     {agreement && <p className="jp-comparison__scale" data-comparison-agreement={agreement.kind}>{agreement.textJa}</p>}
     {state.document && <JapanMarketComparisonChart document={state.document} />}
   </div>;
@@ -40,7 +40,6 @@ export function JapanMarketHorizonComparison() {
       <button type="button" aria-pressed={mode === 'lines'} onClick={() => setMode('lines')}>未来の線の記録</button>
     </div>
     {mode === 'lines' ? <FutureLinesChart /> : mode === 'research' ? <NikkeiResearchChart /> : <>
-    <p>保存したAI解説とは別に、取得済みの価格と市場条件で計算した参考経路です。</p>
     <div className="jp-comparison-periods" role="group" aria-label="見通しの期間">
       {([5, 10, 20] as const).map(period => <button key={period} type="button"
         aria-pressed={horizon === period} onClick={() => setHorizon(period)}>

@@ -63,7 +63,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
       </div>
       <div className="card cmd-alloc">
         {/* BACKUP SAFETY (v11.16.0) — 保護状態の見える化(端末内判定) */}
-        {ownerWorkflow?<p className="cmd-alloc__note">現在のデータと暗号化保存点の照合状況は、このページ上部で確認できます。以下はJSONと端末内スナップショットの操作です。</p>:<>
+        {ownerWorkflow?null:<>
         <div className="cmd-alloc__note" style={{ fontSize: 12.5 }}>
           <b style={{ color: LEVEL_TONE[safety.protectionLevel], border: `1px solid ${LEVEL_TONE[safety.protectionLevel]}`,
                       borderRadius: 999, padding: '0 8px' }}>
@@ -91,12 +91,6 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
           {vaultOn && ' / 既存の暗号化復旧点は読み取り可能'}
         </div>
         <div className="cmd-alloc__note">
-          ここでの旧記録のJSON書出しと復元は端末内の操作です。所有者の暗号化保存は上の専用欄で扱います。
-        </div>
-        <div className="cmd-alloc__note">
-          端末間ライブ同期は行いません。新方式を利用している場合は、取込み前に現在の変更を暗号化保存点へ退避します。
-        </div>
-        <div className="cmd-alloc__note">
           最終スナップショット: {fmtTs(meta.lastSnapshotAt)}(計{snaps.length}件) / 最終完全バックアップ: {fmtTs(completeExportAt)} / ポートフォリオのみ書出: {fmtTs(meta.lastPortfolioExportAt)} / ポートフォリオ取込: {fmtTs(meta.lastImportAt)}
         </div>
 
@@ -111,7 +105,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
                  onChange={(e) => void onFile(e.target.files?.[0])} />
         </div>
         <p className="cmd-alloc__note" style={{ color: 'var(--amber, #fbbf24)' }}>
-          これは保有・スナップショット・判断記録だけの部分ファイルです。取引・調査・FIRE Core・通知等の完全保護には、上の「完全バックアップJSONを書き出す」を使用してください。
+          部分ファイル（保有・スナップショット・判断記録のみ）。完全な保護は「完全バックアップJSONを書き出す」
         </p>
 
         {preview && !preview.ok && (
@@ -128,7 +122,7 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
               <button type="button" style={btnGhost} onClick={() => { setPreview(null); if (fileRef.current) fileRef.current.value = ''; }}>キャンセル</button>
             </div>
             <p style={{ margin: '4px 0 0', fontSize: 10, color: 'var(--text-faint)' }}>
-              どちらのモードも銘柄そのものは削除しません。適用前にこのプレビューで内容を確認してください。
+              どちらのモードも銘柄そのものは削除しません。
             </p>
           </div>
         )}
@@ -138,14 +132,8 @@ export const PortfolioSyncCard: React.FC<{ assetsApi: UseAssets; appVersion: str
         {snaps.length > 0 && (
           <div className="cmd-alloc__note">
             スナップショット履歴: {snaps.slice(0, 5).map((s) => s.asOf).join(' / ')}{snaps.length > 5 ? ` 他${snaps.length - 5}件` : ''}
-            <span style={{ marginLeft: 6, color: 'var(--text-faint)' }}>
-              (部分復元 = ポートフォリオのみJSONを書き出して新端末で読み込む)
-            </span>
           </div>
         )}
-        <p className="cmd-alloc__note" style={{ fontSize: 10 }}>
-          旧ポートフォリオ記録は保全されています。新しい評価額・損益・積立計画は計算しません。ARGUSの判断履歴は別途継続して記録します。
-        </p>
       </div>
     </section>
   );

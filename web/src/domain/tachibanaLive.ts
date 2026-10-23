@@ -322,7 +322,7 @@ export function tachibanaPriceTime(row: TachibanaLiveRow): string {
   const minute = row.sourceTimestampPrecision === 'MINUTE';
   return new Date(row.sourceTimestamp).toLocaleTimeString('ja-JP', {
     timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', ...(minute ? {} : { second: '2-digit' }),
-  }) + (minute ? '（分精度）' : '');
+  });  // owner policy 2026-10-23: no precision note; minute data simply has no seconds
 }
 
 /**

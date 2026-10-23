@@ -23,7 +23,7 @@ export const AssetImpactCards: React.FC<{
         </span>
         {(item.actionJa || item.statusJa) && <strong className="at-asset-impact__action">{item.actionJa || item.statusJa}</strong>}
         <span className="at-asset-impact__reason">{item.reasonJa}</span>
-        <span className="at-asset-impact__next"><b>次の確認</b><span>{item.checkNextJa || '根拠の更新待ち'}</span></span>
+        <span className="at-asset-impact__next"><b>次の確認</b><span>{item.checkNextJa || 'データ待ち'}</span></span>
         {item.whatWouldChangeJa && <span className="at-asset-impact__next"><b>見方を変える条件</b><span>{item.whatWouldChangeJa}</span></span>}
         {onNavigateToAsset && <span className="at-asset-impact__open" aria-hidden="true">銘柄の詳細へ <span>→</span></span>}
       </>;

@@ -36,14 +36,14 @@ export function newsAnalysisStatusJa(state: string | null | undefined, scope?: s
       : '詳細AI解析未完了・規則による判定';
 }
 
-/** 一覧の読取り成功と、メールの新着確認成功を混同しない。 */
+/** 一覧の読取り成功と、メールの新着確認成功を混同しない。平常は何も言わない(2026-10-23 オーナー方針)。 */
 export function newsIntakeHealthJa(health: { status:string; lastSyncAt:string|null; configured:boolean; threadAlive:boolean; pending:number } | null | undefined, now = Date.now()) {
-  if (!health) return '取り込み状態は未確認';
-  if (!health.configured) return 'ニュースの取り込み未設定';
-  if (!health.threadAlive) return '取り込み処理が停止中';
-  if (health.status !== 'HEALTHY') return '取り込みに不具合があります';
+  if (!health) return '';
+  if (!health.configured) return '取込なし';
+  if (!health.threadAlive) return '取込停止';
+  if (health.status !== 'HEALTHY') return '取込不調';
   const at = Date.parse(health.lastSyncAt ?? '');
-  if (!Number.isFinite(at) || at > now + 300000) return '取り込み時刻は未確認';
-  if (now - at > 15 * 60000) return '新着確認が15分以上遅れています';
-  return health.pending > 0 ? `新着 ${health.pending}件を整理中` : '新着を確認済み';
+  if (!Number.isFinite(at) || at > now + 300000) return '取込時刻不明';
+  if (now - at > 15 * 60000) return '取込遅延';
+  return health.pending > 0 ? `整理中 ${health.pending}件` : '';
 }
