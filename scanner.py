@@ -43506,8 +43506,52 @@ def _cftc_jpy_autorefresh():
         _CFTC_JPY_REFRESH_LOCK.release()
 
 
+_JP_MARKET_STORED_INPUTS = {"state": "NOT_RUN"}
+_JP_MARKET_STORED_INPUTS_LOCK = threading.Lock()
+
+
+def _jp_market_stored_inputs_restore():
+    """Read the kept 1570 margin and VIX records back once per process (2026-10-23).
+
+    Both process caches were empty after every restart until the next
+    collection, so D02 and D06 read MISSING although the records were kept.
+    Read-only, no provider request; a cache the collector already filled is
+    left as it is. An absent or rejected record stays absent (MISSING).
+    """
+    if _JP_MARKET_STORED_INPUTS["state"] != "NOT_RUN":
+        return
+    with _JP_MARKET_STORED_INPUTS_LOCK:
+        if _JP_MARKET_STORED_INPUTS["state"] != "NOT_RUN":
+            return
+        result = {"state": "DONE", "margin1570": 0, "vix": 0}
+        path = (os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3")
+                if _cost_policy_durable_enabled() else None)
+        try:
+            snapshot = (jp_market_source_adapters.restore_margin_snapshot(path)
+                        if path and "1570" not in _JQ_MARGIN_CACHE else None)
+            if snapshot and snapshot.get("rows"):
+                # Not fresh (expires 0): the collector still refreshes as before.
+                _JQ_MARGIN_CACHE.setdefault("1570", {"data": None, "expires": 0, "sourceSnapshot": snapshot,
+                                                     "sourceStatus": snapshot.get("status"), "lastAttemptAt": None})
+                result["margin1570"] = len(snapshot["rows"])
+        except Exception as exc:
+            result["margin1570Error"] = type(exc).__name__
+        try:
+            rows = (jp_market_acquisition.stored_vix_selection(path, source_ref="yahoo:chart:^VIX")
+                    if path and "^VIX" not in _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE else [])
+            if rows:
+                _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.setdefault("^VIX", {
+                    "data": rows, "expires": 0, "acquiredAt": None, "sourceResponseSha256": None,
+                    "lastFetchStatus": "RESTORED"})
+                result["vix"] = len(rows)
+        except Exception as exc:
+            result["vixError"] = type(exc).__name__
+        _JP_MARKET_STORED_INPUTS.update(result)
+
+
 def _jp_market_margin_1570_dynamics(*, cutoff=None):
     """Cached received balances, separate from daily securities finance."""
+    _jp_market_stored_inputs_restore()
     cached = _JQ_MARGIN_CACHE.get("1570") or {}
     snapshot = cached.get("sourceSnapshot") or {}
     # Weekly change on week-final rows; the balances are daily from the
@@ -44199,6 +44243,7 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     memo = _JP_MARKET_ENGINE_PIT_INPUT_MEMO
     if not warm and memo["data"] is not None and now - memo["ts"] < 120:
         return memo["data"]
+    _jp_market_stored_inputs_restore()
     if warm:
         _index_research_restore()
         _n225_analog_history_restore()

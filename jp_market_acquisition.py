@@ -355,15 +355,7 @@ def merge_feature_sources(existing, official, *, path=None, received_at=None):
         db.execute("""CREATE TABLE IF NOT EXISTS selected_vix_inputs(
             seq INTEGER PRIMARY KEY, session TEXT NOT NULL, body TEXT NOT NULL,
             sha256 TEXT NOT NULL, received_at TEXT NOT NULL)""")
-        saved = {}
-        for session, body, digest in db.execute("""SELECT session,body,sha256 FROM selected_vix_inputs
-                WHERE seq IN (SELECT max(seq) FROM selected_vix_inputs GROUP BY session)"""):
-            if hashlib.sha256(body.encode()).hexdigest() != digest:
-                raise ValueError('selected_source_integrity')
-            row = json.loads(body)
-            if row.get('date') != session:
-                raise ValueError('selected_source_date')
-            saved[session] = row
+        saved = _vix_selection(db)
         changes = []
         for row in candidates:
             old = saved.get(row['date'])
@@ -418,6 +410,42 @@ def merge_feature_sources(existing, official, *, path=None, received_at=None):
         return [_scheduled_selection(saved[day]) for day in sorted(saved)]
     finally:
         db.close()
+
+
+def _vix_selection(db):
+    """The latest stored selection per session, integrity-checked."""
+    saved = {}
+    for session, body, digest in db.execute("""SELECT session,body,sha256 FROM selected_vix_inputs
+            WHERE seq IN (SELECT max(seq) FROM selected_vix_inputs GROUP BY session)"""):
+        if hashlib.sha256(body.encode()).hexdigest() != digest:
+            raise ValueError('selected_source_integrity')
+        row = json.loads(body)
+        if row.get('date') != session:
+            raise ValueError('selected_source_date')
+        saved[session] = row
+    return saved
+
+
+def stored_vix_selection(path, *, source_ref=None):
+    """Read the kept VIX selection back, read-only (2026-10-23).
+
+    After a restart the process VIX cache was empty until the next collection,
+    so D06 read MISSING although the sessions were kept here. Returns the same
+    rows the merge returns (newest 3000 sessions, read-side schedule), limited
+    to one provider when `source_ref` is given. No table or no file: nothing
+    kept, an empty list. A damaged row raises; nothing is filled.
+    """
+    if not path or not os.path.isfile(path) or Path(path).is_symlink():
+        return []
+    db = sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True, timeout=10)
+    try:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='selected_vix_inputs'").fetchone():
+            return []
+        saved = _vix_selection(db)
+    finally:
+        db.close()
+    rows = [_scheduled_selection(saved[day]) for day in sorted(saved)[-3000:]]
+    return [row for row in rows if source_ref is None or row.get('sourceRef') == source_ref]
 
 
 def _scheduled_selection(row):

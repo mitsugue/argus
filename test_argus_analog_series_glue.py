@@ -396,3 +396,131 @@ class TenYearIndexHistoryTest(unittest.TestCase):
                                       next_day_available=True, range_='10y')
         self.assertEqual(get.call_count, 1)
         self.assertEqual(rows[0]['date'], '2016-10-03')
+
+
+class StoredInputsAfterRestartTest(unittest.TestCase):
+    """2026-10-23: after a restart the 1570 margin and VIX process caches were
+    empty until the next collection, so D02 and D06 read MISSING (and the
+    margin card PROCESS_CACHE_ONLY) although both records were kept. The first
+    read now reads the kept records back, read-only and without a request."""
+    CUTOFF = "2026-10-23T03:27:22Z"
+
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        self.path = scanner.os.path.join(self.root, "jp_market_source_history.sqlite3")
+        self._saved = (scanner._JQ_MARGIN_CACHE.get("1570"),
+                       scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^VIX"),
+                       dict(scanner._JP_MARKET_STORED_INPUTS))
+        self._restart()
+
+    def tearDown(self):
+        margin, vix, state = self._saved
+        self._restart()
+        if margin is not None:
+            scanner._JQ_MARGIN_CACHE["1570"] = margin
+        if vix is not None:
+            scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE["^VIX"] = vix
+        scanner._JP_MARKET_STORED_INPUTS.clear()
+        scanner._JP_MARKET_STORED_INPUTS.update(state)
+        self._tmp.cleanup()
+
+    def _restart(self):
+        scanner._JQ_MARGIN_CACHE.pop("1570", None)
+        scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.pop("^VIX", None)
+        scanner._JP_MARKET_STORED_INPUTS.clear()
+        scanner._JP_MARKET_STORED_INPUTS["state"] = "NOT_RUN"
+        scanner._JP_MARKET_ENGINE_PIT_INPUT_MEMO.update(ts=0.0, data=None)
+        scanner._JP_MARKET_ENGINE_MARKET_VIEW_MEMO.update(ts=0.0, view=None)
+
+    def _keep_records(self):
+        """What the collector kept before the restart, through its own writers."""
+        import hashlib
+        from datetime import date, timedelta
+        import jp_market_acquisition
+        import jp_market_source_adapters as adapters
+        rows = [{"Date": day, "Code": "15700", "LongVol": long_, "ShrtVol": short,
+                 "LongStdVol": long_ - 10, "LongNegVol": 10, "ShrtStdVol": short - 1, "ShrtNegVol": 1}
+                for day, long_, short in (("2026-10-09", 1200, 110), ("2026-10-16", 1300, 120))]
+        raw = json.dumps({"data": rows}).encode()
+        candidate = adapters.normalize_jquants_margin_snapshot(
+            {"data": rows}, instrument_id="1570", observed_at="2026-10-20T01:00:00Z",
+            response_sha256=hashlib.sha256(raw).hexdigest(), volume_unit="UNITS")
+        adapters.retain_margin_snapshot(candidate, path=self.path, raw=raw)
+        vix = []
+        for offset in range(90):
+            day = date(2026, 7, 1) + timedelta(days=offset)
+            if day.weekday() < 5:
+                close = 16 + (offset % 7) * 0.4
+                vix.append({"instrumentId": "VIX", "date": day.isoformat(), "open": close, "high": close + 1,
+                            "low": close - 1, "close": close, "volume": 0.0, "adjusted": False,
+                            "availableFrom": (day + timedelta(days=1)).isoformat() + "T00:00:00Z",
+                            "sourceRef": "yahoo:chart:^VIX"})
+        official = [{"instrumentId": "VIX", "date": "2016-01-04", "close": 20.7, "value": 20.7,
+                     "availableFrom": "2016-01-05T00:00:00Z", "sourceRef": jp_market_acquisition.VIX_HISTORY}]
+        jp_market_acquisition.merge_feature_sources(vix, official, path=self.path,
+                                                    received_at="2026-10-20T02:00:00Z")
+
+    def _view(self):
+        with mock.patch.object(scanner, "_cost_policy_durable_enabled", return_value=True), \
+                mock.patch.dict(scanner._DURABILITY_PATHS, {"root": self.root}), \
+                mock.patch.object(scanner, "_ai_now_iso", return_value=self.CUTOFF), \
+                mock.patch.object(scanner.requests, "get", side_effect=AssertionError("no request")):
+            return scanner._jp_market_engine_market_view()
+
+    def test_kept_records_make_d02_and_d06_available_right_after_restart(self):
+        self._keep_records()
+        view = self._view()
+        families = view["projection"]["families"]
+        self.assertEqual(families["D02"]["status"], "AVAILABLE")
+        self.assertEqual(families["D06"]["status"], "AVAILABLE")
+        self.assertIsNotNone(families["D02"]["conditionMet"])
+        self.assertIsNotNone(families["D06"]["conditionMet"])
+        self.assertEqual(view["sourceStatus"]["margin1570"], "jquants_weekly")
+        self.assertEqual(view["sourceStatus"]["vix"], "yahoo_ohlcv")
+        margin = view["margin1570Dynamics"]
+        self.assertEqual(margin["status"], "AVAILABLE")
+        self.assertEqual(margin["historyStatus"], "LOCAL_DURABLE")
+        self.assertEqual(margin["acquisitionStatus"], "AVAILABLE")
+        self.assertIsNone(margin["lastAttemptAt"])           # no attempt in this process
+        self.assertEqual(margin["lastSuccessfulAcquisitionAt"], "2026-10-20T01:00:00+00:00")
+        # Only the provider's own rows reach the Yahoo cache, not the official seed.
+        vix = scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE["^VIX"]
+        self.assertEqual({row["sourceRef"] for row in vix["data"]}, {"yahoo:chart:^VIX"})
+        self.assertEqual((vix["expires"], vix["lastFetchStatus"]), (0, "RESTORED"))
+        self.assertEqual(scanner._JQ_MARGIN_CACHE["1570"]["expires"], 0)   # the collector still refreshes
+
+    def test_without_kept_records_d02_and_d06_stay_missing(self):
+        view = self._view()
+        families = view["projection"]["families"]
+        self.assertEqual(families["D02"]["status"], "MISSING")
+        self.assertEqual(families["D06"]["status"], "MISSING")
+        self.assertEqual(view["margin1570Dynamics"]["historyStatus"], "PROCESS_CACHE_ONLY")
+        self.assertFalse(scanner.os.path.exists(self.path))  # reading never creates the store
+        self.assertEqual(scanner._JP_MARKET_STORED_INPUTS, {"state": "DONE", "margin1570": 0, "vix": 0})
+
+    def test_damaged_records_stay_missing_and_are_named(self):
+        import sqlite3
+        self._keep_records()
+        db = sqlite3.connect(self.path)
+        db.execute("UPDATE margin_input_history SET sha256='0'")
+        db.execute("UPDATE selected_vix_inputs SET sha256='0'")
+        db.commit(); db.close()
+        view = self._view()
+        families = view["projection"]["families"]
+        self.assertEqual(families["D02"]["status"], "MISSING")
+        self.assertEqual(families["D06"]["status"], "MISSING")
+        self.assertEqual(scanner._JP_MARKET_STORED_INPUTS["margin1570Error"], "ValueError")
+        self.assertEqual(scanner._JP_MARKET_STORED_INPUTS["vixError"], "ValueError")
+
+    def test_a_cache_the_collector_filled_is_not_replaced(self):
+        self._keep_records()
+        fresh = {"data": [{"date": "2026-10-22", "close": 17.3}], "expires": scanner.time.time() + 1800}
+        scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE["^VIX"] = fresh
+        with mock.patch.object(scanner, "_cost_policy_durable_enabled", return_value=True), \
+                mock.patch.dict(scanner._DURABILITY_PATHS, {"root": self.root}):
+            scanner._jp_market_stored_inputs_restore()
+        self.assertIs(scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE["^VIX"], fresh)
+        self.assertEqual(scanner._JP_MARKET_STORED_INPUTS["vix"], 0)
+        self.assertGreater(scanner._JP_MARKET_STORED_INPUTS["margin1570"], 0)
