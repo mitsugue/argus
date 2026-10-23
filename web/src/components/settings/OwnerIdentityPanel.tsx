@@ -41,15 +41,8 @@ export const OwnerIdentityPanel: React.FC = () => {
           {!OWNER_AUTH_REQUIRED ? '無効' : authenticated ? (online ? '認証中' : '認証中・オフライン') : '未確認'}
         </span>
       </div>
-      {!OWNER_AUTH_REQUIRED && (
-        <p className="cmd-alloc__note">この配信では本人確認は無効です。有効化はサーバーと配信の設定で行います。</p>
-      )}
       {OWNER_AUTH_REQUIRED && (
         <>
-          <p className="cmd-alloc__note">
-            Face ID / Touch ID のパスキーはこの端末に保存され、サーバーには公開鍵だけが残ります。
-            復旧用パスワードはパスキーが使えないときの入口です。
-          </p>
           <div className="owner-identity__actions">
             <button type="button" disabled={busy || !online}
               onClick={() => void run(() => useOwnerPasskey(true), 'この端末のパスキーを登録しました。')}>

@@ -35,10 +35,6 @@ export const BackupSettingsPanel: React.FC<{ initiallyOpen?: boolean }> = ({ ini
       {/* ② portfolio-only export/import plus complete-backup protection/drill status */}
       <PortfolioSyncCard assetsApi={assetsApi} appVersion={__APP_VERSION__} />
 
-      <p style={{ margin: '4px 0 0', fontSize: 10.5, color: 'var(--text-faint)' }}>
-        バックアップの保護状態(保護済み/一部保護/未保護)と復元ドリルの結果は上のBACKUP SAFETYに表示されます。
-        サーバーはパスフレーズの有無・保護状態・バックアップ内容を一切知りません。
-      </p>
         </div>}
       </details>
     </section>

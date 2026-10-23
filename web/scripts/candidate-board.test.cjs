@@ -13,7 +13,7 @@ const candidates = { since: '2026-10-05', tradingSignal: false, noteJa: '記録�
   scoreboard: [row('R1', { records: 2, open: 1, reached: 1 }), row('S6', { dataStatus: 'NOT_IN_PRODUCT' }),
     row('S3', { records: 12, reached: 7, broken: 3, expired: 2, enoughRecords: true, medianDaysToReach: 6, meanEtfReturnPct: 1.4 })] };
 const html = renderToStaticMarkup(React.createElement(mod.exports.CandidateBoardView, { candidates }));
-assert.ok(html.includes('<span class="section-head__title">候補の事前記録</span>') && !html.includes('未検証') && html.includes('記録中の候補。売買の合図ではありません'));
+assert.ok(html.includes('<span class="section-head__title">候補の事前記録</span>') && !html.includes('未検証') && html.includes('記録中の候補。') && !html.includes('売買の合図ではありません'));
 assert.ok(html.includes('件数不足(1/0/0/0)') && html.includes('データなし'));
 assert.ok(html.includes('+1.4%') && html.includes('S4 2026-10-06'));
 for (const word of ['BUY', '買い時', '確率']) assert.ok(!html.includes(word), word);

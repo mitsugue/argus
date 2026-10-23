@@ -35,10 +35,7 @@ export const Settings: React.FC<Props> = ({ settingsSection = 'status' }) => {
   };
 
   return (
-    <PageShell
-      title="Settings"
-      subtitle="本人確認、言語、公開ステータス、バックアップと復元を管理します。"
-    >
+    <PageShell title="Settings">
       <OwnerIdentityPanel />
       <section className="card" aria-label="Language settings">
         <div className="section-head">
@@ -51,7 +48,6 @@ export const Settings: React.FC<Props> = ({ settingsSection = 'status' }) => {
               {value === 'en' ? 'English' : '日本語'}
             </button>
           ))}
-          <span className="cmd-alloc__note">設定はこの端末に保存されます。</span>
         </div>
       </section>
 
@@ -59,7 +55,6 @@ export const Settings: React.FC<Props> = ({ settingsSection = 'status' }) => {
         <div className="section-head">
           <span className="section-head__title">MATERIAL NOTIFICATIONS</span>
         </div>
-        <p className="cmd-alloc__note">結論または重要な条件が変わったときだけ、この端末に保存します。</p>
         <div style={{ display: 'grid', gap: 7 }}>
           {([
             ['action', 'Primary Action・目標'],
@@ -91,13 +86,7 @@ export const Settings: React.FC<Props> = ({ settingsSection = 'status' }) => {
         <div className="section-head">
           <span className="section-head__title">HELP</span>
         </div>
-        <p className="cmd-alloc__note">
-          Todayで今日の姿勢、重要ニュース、直近イベントとその答え合わせを確認します。Watchlistで登録銘柄の見通しと根拠を確認し、13Mでは独立した米国株研究画面を開けます。
-          銘柄の行を開くとDecision / Chart / Evidence / Positionの順で詳細を確認できます。
-        </p>
-        <p className="cmd-alloc__note">
-          公開画面は読み取り専用です。調査・翻訳・AI実行・本番運用の操作は、認証された運用経路だけで行います。
-        </p>
+        <p className="cmd-alloc__note">Today: 今日の見立て · Watchlist: 登録銘柄 · 13M: 米国株の研究</p>
       </section>
     </PageShell>
   );
