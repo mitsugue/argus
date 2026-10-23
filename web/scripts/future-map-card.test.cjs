@@ -62,3 +62,32 @@ const malformed = renderToStaticMarkup(React.createElement(FutureMapView,
   { doc: { ...doc, updatedAt: '2026-02-30T12:00:00Z' }, nowMs: at('2026-10-05T00:00:00Z') }));
 assert.ok(malformed.includes('更新日時を確認できません') && !malformed.includes('NaN'),
   'invalid calendar date is unknown, while saved forecasts remain visible');
+
+// 2026-10-23: the server picks the first rows (not ended, from "いまここ") and
+// the long views; ended rows and the rest stay behind "show all".
+const marked = { ...doc, today: '2026-10-23',
+  rows: [row('p1', '10/14〜10/20', '終わった行', '注意', { past: true }),
+    row('p2', '10月中旬〜', '続いている行', '下落'),
+    row('L1', '今後1年', '長い見方その1', '注意', { long: true }),
+    row('n1', '10/19〜10/30', '今の行', '下落', { isNow: true }),
+    row('L2', '年末まで', '長い見方その2', '注意', { long: true }),
+    row('n2', '10/27〜28', '次の行', '注意'), row('n3', '10/30ごろ', '底の行', '底'),
+    row('n4', '11/3', '四つ目の行', '急落'), row('n5', '11/8〜11/12', '五つ目の行', '戻り'),
+    row('f', '12/25前後', 'クリスマスが底', '大底', { emphasis: true })],
+  leadIds: ['n1', 'n2', 'n3', 'n4'], outlookIds: ['L2', 'L1'] };
+const first = renderToStaticMarkup(React.createElement(FutureMapView, { doc: marked, nowMs: at('2026-10-23T01:00:00Z') }));
+const tableRows = [...first.matchAll(/<tr class="fm-row[^"]*" data-row="([^"]+)"/g)].map(m => m[1]);
+assert.deepEqual(tableRows, ['n1', 'n2', 'n3', 'n4'], 'the first rows are the four marked rows from いまここ');
+assert.ok(!first.includes('終わった行') && !first.includes('続いている行') && !first.includes('五つ目の行'));
+const longLine = /<p class="fm-long"[^>]*>(.*?)<\/p>/.exec(first);
+assert.ok(longLine && longLine[1].includes('長い目の見方'), 'one line of long views under the rows');
+assert.ok(longLine[1].indexOf('年末まで 長い見方その2') < longLine[1].indexOf('今後1年 長い見方その1'));
+assert.ok(first.includes('すべて表示（残り4件・12/25前後 クリスマスが底まで）'));
+assert.ok(first.indexOf('いまここ') < first.indexOf('次の行'));
+// No first rows (only a long period contains today): no empty table, the long view carries いまここ.
+const onlyLong = renderToStaticMarkup(React.createElement(FutureMapView, { doc: { ...marked,
+  rows: [row('L1', '今後1年', '長い見方その1', '注意', { long: true, isNow: true })], leadIds: [], outlookIds: ['L1'] },
+  nowMs: at('2026-10-23T01:00:00Z') }));
+assert.ok(!onlyLong.includes('<table') && onlyLong.includes('今後1年 長い見方その1') && onlyLong.includes('いまここ')
+  && !onlyLong.includes('すべて表示'));
+console.log('Future map card: first rows from いまここ, ended rows hidden, long views in one line PASS');

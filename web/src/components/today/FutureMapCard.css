@@ -31,6 +31,10 @@
 .fm-level { font-variant-numeric: tabular-nums; font-size: 11px; }
 .fm-tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px;
   border: 1px solid currentColor; white-space: nowrap; }
+.fm-long { margin: 6px 0 0; font-size: 11px; color: var(--text-sub); line-height: 1.5; overflow-wrap: anywhere; }
+.fm-long b { font-size: 10px; color: var(--text-faint); font-weight: 600; margin-right: 6px; }
+.fm-long span + span::before { content: ' ・ '; color: var(--text-faint); }
+.fm-long .fm-here { display: inline; margin-left: 4px; }
 .fm-more { width: 100%; margin-top: 6px; padding: 6px; font-size: 11px; border-radius: 8px; cursor: pointer;
   background: transparent; color: var(--text-sub); border: 1px solid var(--border, rgba(255,255,255,.15)); }
 .fm-foot { margin: 6px 0 0; font-size: 10px; color: var(--text-faint); }

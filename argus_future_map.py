@@ -4,7 +4,9 @@ The research side writes one document (future_map.v1) to the existing
 private store; the app validates it and shows it. It is not ARGUS's judgment:
 no probability, no trading decision, BUY stays disabled. The sources are
 neutral symbols and are not served. Rows whose end passed more than two
-weeks ago are dropped from display. Pure: no network, no clock.
+weeks ago are dropped from display; ended rows are shown only behind "show
+all", and long-period rows are kept apart as a one-line long view.
+Pure: no network, no clock.
 """
 from __future__ import annotations
 
@@ -20,6 +22,9 @@ TAG_TONE = {"売り時": "red", "急落": "red", "下落": "red", "戻り": "amb
 MAX_ROWS = 40
 MAX_TEXT = 40
 KEEP_PAST_DAYS = 14
+LEAD_ROWS = 4          # rows shown first
+LONG_DAYS = 45         # a longer period is a long view, not one of the first rows
+OUTLOOK_ROWS = 2       # long views shown under the first rows
 
 
 class FutureMapError(ValueError):
@@ -99,13 +104,41 @@ def validate(doc: Mapping[str, Any]) -> Dict[str, Any]:
         "externalViewsOnly": True, "argusValidated": False, "actionAuthority": False}
 
 
+def _days(row: Mapping[str, Any]) -> int:
+    return (date.fromisoformat(row["end"]) - date.fromisoformat(row["start"])).days
+
+
 def for_display(public: Mapping[str, Any], today: str) -> Dict[str, Any]:
-    """Rows still to show on `today`, with the current row marked."""
+    """Rows still to show on `today`, marked for the card (2026-10-23 owner rule).
+
+    isNow: among the rows containing today, the shortest one (on a tie, the
+    later start); when none contains today, the next one to start. Long rows
+    (more than LONG_DAYS) are not "now" while a shorter row is available.
+    leadIds: the first LEAD_ROWS rows not yet ended and not long, in start
+    order from the isNow row. outlookIds: up to OUTLOOK_ROWS long rows not
+    yet ended (already started first, then nearest end), shown in one line
+    under the lead rows. Ended rows stay only behind "show all" until
+    KEEP_PAST_DAYS. Display only: registration and scoring read the
+    validated document, not these marks.
+    """
     cutoff = (date.fromisoformat(today) - timedelta(days=KEEP_PAST_DAYS)).isoformat()
     rows = [dict(r) for r in public.get("rows") or [] if r["end"] >= cutoff]
-    current = next((r for r in rows if r["start"] <= today <= r["end"]), None) \
-        or next((r for r in rows if r["start"] > today), None)
     for row in rows:
-        row["isNow"] = current is not None and row["id"] == current["id"]
         row["past"] = row["end"] < today
-    return {**public, "rows": rows, "today": today}
+        row["long"] = _days(row) > LONG_DAYS
+
+    def pick(pool):
+        containing = [r for r in pool if r["start"] <= today <= r["end"]]
+        if containing:
+            return min(containing, key=lambda r: (_days(r), -date.fromisoformat(r["start"]).toordinal()))
+        return next((r for r in pool if r["start"] > today), None)
+
+    current = pick([r for r in rows if not r["long"]]) or pick(rows)
+    now_id = current["id"] if current else None
+    start_at = next((i for i, r in enumerate(rows) if r["id"] == now_id), len(rows))
+    lead = [r["id"] for r in rows[start_at:] if not r["past"] and not r["long"]][:LEAD_ROWS]
+    outlook = [r["id"] for r in sorted((r for r in rows if r["long"] and not r["past"]),
+                                       key=lambda r: (r["start"] > today, r["end"], r["start"]))][:OUTLOOK_ROWS]
+    for row in rows:
+        row["isNow"] = row["id"] == now_id
+    return {**public, "rows": rows, "today": today, "leadIds": lead, "outlookIds": outlook}
