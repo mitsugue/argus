@@ -90,15 +90,16 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
   // The band's yen line multiplies the shown (possibly delayed intraday) price; the band itself stays close-based.
   const basisNote = basis && computed ? `上の3つは${basis}で計算${strip.band && liveCurrent && shownPrice !== strip.close ? '・値幅の円は現在値で換算' : ''}` : null;
   const shownChange = liveCurrent ? live!.changePct : strip.dayChangePct;
+  // Owner policy 2026-10-23: no source or time-precision text beside the price; only a delayed value says so.
   const liveLabel = liveCurrent ? (live!.sessionOpen
-    ? `${new Date(live!.tradedAt).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}時点${live!.realtime && live!.tradedAtPrecision === 'MINUTE' ? '（分精度）' : ''}・${live!.realtime ? '立花証券 リアルタイム' : `約${Math.max(1, Math.round(live!.delaySeconds / 60))}分遅れ`}`
+    ? (live!.realtime ? null : '遅延')
     : `${new Date(live!.tradedAt).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })} 大引け`) : '前日終値';
   const preparing = !fresh;
   return <section className="today-strip" aria-label="今日の結論と数字" data-argus-contract="today-decision-strip-v1">
     {shownPrice !== null && <p className="today-strip__close" data-live={liveCurrent ? 'delayed' : 'close'}>
       <span>日経平均</span><b>{yen(shownPrice)}</b>
       {shownChange !== null && <em className={shownChange >= 0 ? 'is-up' : 'is-down'}>{signed(shownChange)}</em>}
-      <small>{liveLabel}</small>
+      {liveLabel && <small>{liveLabel}</small>}
     </p>}
     {preparing && <p className="today-strip__preparing" role="status">{stored
       ? `サーバーが過去データを準備中のため、${new Date(stored.savedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}時点の数字を表示しています。数分〜20分ほどで最新に戻ります。`
