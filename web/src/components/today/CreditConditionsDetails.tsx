@@ -1,4 +1,5 @@
 import React from 'react';
+import { withoutScreenNotes } from '../../lib/screenNotes';
 import type { MarketBrief } from '../../lib/marketBrief';
 import './CreditConditionsDetails.css';
 import { useCreditConditions } from '../../hooks/useCreditConditions';
@@ -29,28 +30,22 @@ export function CreditConditionsDetails({ brief }: { brief?: Pick<MarketBrief, '
   if (!object(doc) || doc.schemaVersion !== 'credit-conditions-v1' || doc.actionAuthority !== false || !object(doc.dimensions)) return null;
   const dimensions = doc.dimensions;
   return <section className="credit-conditions" aria-label="信用環境の公式根拠" data-credit-snapshot={text(doc.snapshotId, '')}>
-    {doc.showToday === true && <p className="credit-conditions__notice">信用環境：{Object.entries(labels).filter(([key]) => object(dimensions[key]) && dimensions[key].status === 'OBSERVED').map(([key, label]) => `${label}は${directions[text((dimensions[key] as Row).direction)] ?? '未分類'}`).join('、') || '入力の取得待ち'}。全体の分類は未検証です。</p>}
-    <details className="argus-editorial__evidence"><summary>信用環境の根拠・取得状況</summary>
-      <small>公式観測の保存値です。上のAI見立てとは作成時点が異なる場合があります。</small>
-      {current.readFailed && <p>信用環境の最新の保存値を確認できません。取得済みの値を表示しています。</p>}
-      {doc.collectionStatus === 'FAILED' && <p>信用環境の更新に失敗しました。受領済みの保存値を表示しています。</p>}
-      <p>月次・四半期・半期の統計です。個社の借入金利や、毎日の売買タイミングを示すものではありません。</p>
+    {doc.showToday === true && <p className="credit-conditions__notice">信用環境：{Object.entries(labels).filter(([key]) => object(dimensions[key]) && dimensions[key].status === 'OBSERVED').map(([key, label]) => `${label}は${directions[text((dimensions[key] as Row).direction)] ?? '未分類'}`).join('、') || 'データ待ち'}</p>}
+    <details className="argus-editorial__evidence"><summary>信用環境の根拠</summary>
+      {(current.readFailed || doc.collectionStatus === 'FAILED') && <p role="status">更新失敗・保存値</p>}
       <dl>{Object.entries(labels).map(([key, label]) => {
         const row = object(dimensions[key]) ? dimensions[key] : {};
-        return <React.Fragment key={key}><dt>{label}</dt><dd>{row.status === 'OBSERVED' ? `${directions[text(row.direction)]} · ${typeof row.value === 'number' ? row.value.toLocaleString('ja-JP') : '未確認'}${units[text(row.unit)] ?? ''} · 対象 ${period(row)}` : row.reason === 'STALE' ? `古い観測のため現状判定は保留 · 対象 ${period(row)}` : key === 'creditQuality' ? '比較できる数値が不足' : '更新・比較に必要な入力が不足'}</dd></React.Fragment>;
+        return <React.Fragment key={key}><dt>{label}</dt><dd>{row.status === 'OBSERVED' ? `${directions[text(row.direction)]} · ${typeof row.value === 'number' ? row.value.toLocaleString('ja-JP') : '未確認'}${units[text(row.unit)] ?? ''} · 対象 ${period(row)}` : row.reason === 'STALE' ? `古い値 · 対象 ${period(row)}` : 'データ不足'}</dd></React.Fragment>;
       })}</dl>
-      <p>日銀の政策伝達：貸出金利と態度の観測を使います。利上げとの因果関係や伝達の強弱は未分類です。</p>
-      <details><summary>数値と公式資料</summary>{rows(doc.evidence).slice(0, 12).map((row, index) => <div key={text(row.observationId, String(index))}>
-        <p>{text(row.statementJa, metrics[text(row.metric)] ?? text(row.title))}{typeof row.value === 'number' ? `：${row.value.toLocaleString('ja-JP')}${units[text(row.unit)] ?? ''}` : ''}</p>
-        <small>対象 {period(row)} · 公表日 {text(row.publicationDate)} · 公表時刻 {time(row.publicationAt)}<br/>受領 {time(row.retrievedAt)} · {states[text(row.validationStatus)] ?? '未確認'} · 改訂 {typeof row.revision === 'number' ? row.revision : '未確認'}<br/>{text(row.tablePageFigureRef)}</small>
+      <details><summary>数値と原資料</summary>{rows(doc.evidence).slice(0, 12).map((row, index) => <div key={text(row.observationId, String(index))}>
+        <p>{withoutScreenNotes(text(row.statementJa, metrics[text(row.metric)] ?? text(row.title)))}{typeof row.value === 'number' ? `：${row.value.toLocaleString('ja-JP')}${units[text(row.unit)] ?? ''}` : ''}</p>
+        <small>対象 {period(row)} · 公表 {text(row.publicationDate, '不明')}</small>
         {source(row.sourceUrl) && <a href={source(row.sourceUrl)!} target="_blank" rel="noopener noreferrer">{text(row.publisher, '公式')}の原資料</a>}
       </div>)}</details>
-      <details><summary>配信元の状態</summary>{rows(doc.sourceHealth).map((row, index) => <p key={text(row.sourceId, String(index))}>
-        {text(row.publisher)} · {sourceLabels[text(row.sourceId)] ?? '公式資料'} · {states[text(row.status)] ?? '未確認'}{row.lastFetchStatus === 'FAILED' ? ' · 次回取得で再確認' : ''}<br/>
-        対象 {text(row.dataAsOf)} · 最新取得 {time(row.lastSuccessAt)} · 次回点検 {time(row.nextCheckAt)} · {typeof row.count === 'number' ? row.count : 0}件<br/>
-        {row.sourceId === 'joint_data_platform' ? '貸出明細への外部アクセス条件・ARGUSの資格は未確認です。' : text(row.cadence) === 'MONTHLY' ? '月次' : text(row.cadence) === 'QUARTERLY' ? '四半期' : '公表時に点検'}
+      <details><summary>取得状況</summary>{rows(doc.sourceHealth).map((row, index) => <p key={text(row.sourceId, String(index))}>
+        {text(row.publisher)} · {sourceLabels[text(row.sourceId)] ?? '公式資料'} · {states[text(row.status)] ?? '未確認'}{row.lastFetchStatus === 'FAILED' ? ' · 取得失敗' : ''}<br/>
+        対象 {text(row.dataAsOf)} · 取得 {time(row.lastSuccessAt)}
       </p>)}</details>
-      <small>FUTURE MAPの検証用候補です。予測の入力・成績は変更していません。今回取得した過去値を、当時の受領値として使いません。</small>
     </details>
   </section>;
 }

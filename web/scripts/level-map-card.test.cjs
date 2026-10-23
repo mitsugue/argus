@@ -29,16 +29,17 @@ const state = { schemaVersion: 'jp-market-level-map-state-v1', status: 'AVAILABL
   missedMornings: [], score: score(true, 1), retrospective: score(false, 84), actionAuthority: false };
 const html = renderToStaticMarkup(React.createElement(LevelMapView, { state }));
 assert.ok(html.includes('<b>PRICE LEVELS</b>') && html.includes('2026-10-05 朝') && html.includes('寄付前に固定保存'));
-assert.ok(html.includes('日経平均が<strong>利益の何倍か</strong>（PER）の目盛り'));
-assert.ok(html.includes('約17.37倍') && html.includes('70,787円まで上がると18倍、66,854円まで下がると17倍'));
+assert.ok(!html.includes('利益の何倍か'),'no explanation line under the heading (owner 2026-10-23)');
+assert.ok(html.includes('17.37倍') && html.includes('18倍まで上がると') && html.includes('70,787') && html.includes('17倍まで下がると') && html.includes('66,854'));
+assert.ok(!html.includes('倍率と価格の読み方'),'the ladder is not repeated in words');
 assert.ok(html.includes('PER18倍線（EPS更新で動く）') && html.includes('直前の天井と同じ倍率 17.884倍'));
 const table = html.split('<tbody>')[1];
 assert.ok(table.indexOf('70,787') < table.indexOf('前日終値</td>') && table.indexOf('前日終値</td>') < table.indexOf('66,854'),
   'upper rows above the close, lower rows below');
 assert.ok(html.includes('公式値ではありません') && html.includes('実績で補った社 22') && html.includes('2026-08-31 時点'));
-assert.ok(html.includes('確率ではありません') && html.includes('±2ATR'));
-assert.ok(html.includes('答え合わせ（2026-10-05からの事前記録）') && html.includes('判定には使いません'));
-assert.ok(html.includes('件数が少ないうちは'));
+assert.ok(!html.includes('確率ではありません') && html.includes('±2ATR'),'server disclaimer sentence hidden, its numbers kept');
+assert.ok(html.includes('答え合わせ（2026-10-05からの事前記録）') && !html.includes('判定には使いません'));
+assert.ok(html.includes('件数不足（'));
 for (const banned of ['BUY', 'SELL', '買い', '売り', '必ず', '止まる水準', '反発する']) assert.ok(!html.includes(banned), banned);
 assert.equal(renderToStaticMarkup(React.createElement(LevelMapView, { state: null })), '');
 assert.equal(renderToStaticMarkup(React.createElement(LevelMapView, { state: { ...state, latest: null } })), '');
@@ -69,7 +70,7 @@ assert.ok(closingHtml.includes('当日分の入力待ち'));
 assert.ok(closingHtml.includes('2026-10-05 朝')&&closingHtml.includes('68,309'));
 assert.deepEqual(state.latest,latest);
 const freshHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:{...closing,epsDate:'2026-10-05',valuationPending:false}}}}));
-assert.ok(freshHtml.includes('当日分のPER・価格の目盛りを再計算済み'));
+assert.ok(!freshHtml.includes('当日分の入力待ち') && freshHtml.includes('推計'));
 const invalidHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{displayMap:{...closing,epsDate:'2026-10-06'}}}}));
 assert.ok(!invalidHtml.includes('最新終値'));
 
@@ -103,7 +104,7 @@ assert.ok(!staleStats.includes('99%')&&staleStats.includes('未集計'),'ignore 
 assert.ok(!html.includes('補った推計'), 'a complete day is not marked as supplied');
 const suppliedHtml = renderToStaticMarkup(React.createElement(LevelMapView, { state: { ...state, estimateSuppliedCount: 175,
   latest: { ...latest, epsCoverage: { ...latest.epsCoverage, suppliedEarnings: 1 } } } }));
-assert.ok(suppliedHtml.includes('この日の推計は補った推計です') && suppliedHtml.includes('評価値が空だった1社'));
+assert.ok(suppliedHtml.includes('この日は補った推計（1社）'));
 assert.ok(suppliedHtml.includes('過去の推計のうち175日は') && suppliedHtml.split('過去の推計のうち').length === 2);
 assert.ok(!renderToStaticMarkup(React.createElement(LevelMapView, { state: { ...state, estimateSuppliedCount: 'x' } })).includes('過去の推計のうち'));
 console.log('Level map supplied estimate PASS');

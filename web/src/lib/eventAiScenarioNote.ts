@@ -92,6 +92,11 @@ export function eventAiScenarioNote(
   return 'AIシナリオ 生成待ち…';
 }
 
+/** Today's one-word state of an event without a saved scenario (owner policy 2026-10-23). */
+export function eventAiScenarioShortJa(cost: EventAiCostFacts | null | undefined): string {
+  return cost && cost.eventOptIn === false ? 'オフ' : '未生成';
+}
+
 export interface EventAiRunMeta {
   requestedModel?: string; returnedModel?: string; fallbackModel?: string;
   completedAt?: string; inputTokens?: number; outputTokens?: number; estUsd?: number;

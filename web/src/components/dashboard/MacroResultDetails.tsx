@@ -25,15 +25,13 @@ export function MacroResultDetails({ result }: { result: unknown }) {
   const rows = cpiRows(result);
   if (!rows.length || !object(result)) return null;
   return <details className="ie-result-details">
-    <summary>指標の定義・対象月・取得記録</summary>
-    <p className="ie-data">対象月 {result.metrics.referenceMonth} · {result.referenceMatched === true ? 'イベント対象月と照合済み' : 'イベント対象月との照合は未確認'}</p>
+    <summary>指標の詳細</summary>
+    <p className="ie-data">対象月 {result.metrics.referenceMonth} · {result.referenceMatched === true ? 'イベント対象月と照合済み' : '照合未確認'}</p>
     {rows.map(row => <p className="ie-line" key={row.key}>
       <span>{row.label}（{row.adjustment}）</span><br />
       <strong>{row.value === null ? '未取得' : `${row.value.toFixed(2)}%`}</strong>
       {row.previous !== null && <small> · 前回 {row.previous.toFixed(2)}%</small>}
     </p>)}
-    <p className="ie-data">公式指数から計算した変化率です。公表文の丸め済み変化率とは区別します。</p>
     <p className="ie-data">公表日時 {stamp(result.releasedAt)}<br />取得日時 {stamp(result.receivedAt)}</p>
-    <p className="ie-data">未取得の値や市場予想は補完していません。</p>
   </details>;
 }

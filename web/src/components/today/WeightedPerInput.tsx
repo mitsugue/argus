@@ -33,7 +33,7 @@ export function WeightedPerInput() {
         const body = await r.json() as State;
         if (!valid(body)) throw new Error('invalid_status');
         if (alive) { setState(body); remember(body); setDay(d => d || body.defaultDate); }
-      } catch { if (alive) setMessage('入力の保存状態を確認できません。'); }
+      } catch { if (alive) setMessage('保存状態不明'); }
     };
     if (!restored && document.visibilityState === 'visible') void read();
     const stop = subscribeInitialVisibleRead(() => { void read(); }, restored);
@@ -68,7 +68,7 @@ export function WeightedPerInput() {
       }
       if (!valid(result)) throw new Error('invalid_status');
       setState(result); remember(result); setValue(''); setEditing(false); setConfirmNeeded(false);
-      setMessage(operation === 'clear' ? '補正なしに戻しました。' : '保存しました。入力後の日付のPER線・目盛りに反映します。');
+      setMessage(operation === 'clear' ? '補正なしに戻しました。' : '保存しました。');
       window.dispatchEvent(new Event('argus:weighted-per-changed'));
     } catch { setMessage('保存を確認できません。入力内容はこの画面に残しています。'); }
     finally { setBusy(false); }
@@ -76,8 +76,8 @@ export function WeightedPerInput() {
   const [confirmNeeded, setConfirmNeeded] = useState(false);
   const show = state && (state.inputDue || editing);
   return <section className="lm-manual-per" aria-label="加重平均PERの入力" data-argus-contract="weighted-per-input-v1">
-    {state && <p className="lm-note">{state.enabled ? `表示用の補正設定あり · 最終入力の対象日 ${state.referenceDate}${state.appliedFromDate ? ` · ${state.appliedFromDate}以降の推計から適用` : ''}` : '表示用補正なし'}
-      {state.stale && ' · 10営業日を超えています。更新してください。'}
+    {state && <p className="lm-note">{state.enabled ? `補正あり · 対象日 ${state.referenceDate}${state.appliedFromDate ? ` · ${state.appliedFromDate}以降に適用` : ''}` : '補正なし'}
+      {state.stale && ' · 10営業日超・要更新'}
       {!show && <button type="button" onClick={() => setEditing(true)}>入力・変更</button>}</p>}
     {show && <form onSubmit={e => { e.preventDefault(); void save('save', confirmNeeded); }}>
       <h4>今週の加重平均を書き写す</h4>
@@ -87,7 +87,6 @@ export function WeightedPerInput() {
       <label>予想PER（加重平均・倍）<input type="number" inputMode="decimal" min="0.01" step="any" required autoComplete="off"
         value={value} onChange={e => { setValue(e.target.value); setConfirmNeeded(false); }} /></label>
       <button disabled={busy} type="submit">{busy ? '保存中…' : confirmNeeded ? '確認して保存' : '保存'}</button>
-      <p className="lm-note">週の最終営業日16:30以降に次の入力を案内します。入力値は非公開で保存し、自動取得しません。朝の固定記録・過去の成績は変えません。</p>
     </form>}
     {state?.enabled && <button type="button" disabled={busy} onClick={() => { void save('clear'); }}>入力値を消して補正をやめる</button>}
     {message && <p role="status">{message}</p>}

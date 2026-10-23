@@ -9,8 +9,8 @@ const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
 const levelText = (row: FutureMapRow) => !row.level ? '―'
   : row.level.low === row.level.high ? yen(row.level.low) : `${yen(row.level.low)}〜${yen(row.level.high)}`;
 const RESULT_JA = { reached: '到達', missed: '外れ' } as const;
-const SCORE_WAIT_JA: Record<string, string> = { LATE_REGISTRATION: '事前記録なし・成績に含めません',
-  PRICES_INCOMPLETE: '採点に必要な価格が不足', DIRECTION_NOT_DEFINED: '方向の採点規則なし' };
+const SCORE_WAIT_JA: Record<string, string> = { LATE_REGISTRATION: '成績対象外',
+  PRICES_INCOMPLETE: '価格待ち', DIRECTION_NOT_DEFINED: '採点なし' };
 
 function sourceUpdateTimestamp(updatedAt: string) {
   const parts = typeof updatedAt === 'string'
@@ -31,7 +31,7 @@ const jstMonthDay = (stamp: number) => new Date(stamp).toLocaleDateString('ja-JP
 export function futureMapUpdateAge(updatedAt: string, nowMs: number) {
   const stamp = sourceUpdateTimestamp(updatedAt);
   if (!Number.isFinite(stamp) || !Number.isFinite(nowMs) || stamp > nowMs) {
-    return { days: null, warning: true, label: '更新日時を確認できません' };
+    return { days: null, warning: true, label: '更新日時不明' };
   }
   const days = Math.floor((nowMs - stamp) / 86_400_000);
   return { days, warning: days >= 2,
@@ -90,7 +90,7 @@ export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?
   return <section className="fm-card card" aria-label="FUTURE MAP" data-argus-contract="future-map-v1">
     <div className="fm-head"><b>FUTURE MAP</b>
       <span>外部の見立て{age.warning ? '' : ` ・ ${updateDate}更新`}</span>
-      <span className={`fm-age${age.warning ? ' is-warning' : ''}`} role={age.warning ? 'status' : undefined}>{age.label}</span></div>
+      {age.warning && <span className="fm-age is-warning" role="status">{age.label}</span>}</div>
     <div className="fm-boxes">
       <div className="fm-box tone-red"><small>いまの位置</small><b>{position}</b></div>
       <div className="fm-box tone-amber"><small>次の警戒日</small><b>{md(nextAlert.date)} {nextAlert.label}</b></div>
@@ -105,13 +105,9 @@ export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?
         {row.periodLabel} {row.view}{row.isNow && <small className="fm-here">いまここ</small>}</span>)}</p>}
     {hidden > 0 && <button type="button" className="fm-more" aria-expanded={open} onClick={() => setOpen(v => !v)}>
       {open ? '閉じる' : `すべて表示（残り${hidden}件${goal ? `・${goal.periodLabel} ${goal.view.split('。')[0]}まで` : ''}）`}</button>}
-    <p className="fm-foot">●の数 = 同じことを言っている見立ての数 ・ {doc.record.scored > 0
+    <p className="fm-foot">●＝同じ見立ての数 ・ {doc.record.scored > 0
       ? `答え合わせ: ${doc.record.scored}件中${doc.record.reached}件到達${doc.record.scored < 10 ? '（件数不足）' : ''}` : '答え合わせ: 0件（まだ成績なし）'}</p>
-    {doc.scoring && <details><summary>答え合わせの条件</summary>
-      <p>水準つきは期日前後５営業日の価格±１％、方向だけは期間中の３％の動きを確認します。確認期間が終わり、全営業日の価格がそろってから採点します。</p>
-      <p>最初に保存した予測だけを成績に数えます。事前記録がない行は除き、変更前の予測と結果は残します。価格到達は天井・底や売買の有効性の証明ではありません。</p>
-      {doc.scoring.status === 'FAILED' && <p role="status">答え合わせの保存・計算を確認できません。前回の結果を表示しています。</p>}
-    </details>}
+    {doc.scoring?.status === 'FAILED' && <p role="status" className="fm-foot">答え合わせ: 更新失敗・前回分</p>}
   </section>;
 }
 

@@ -84,20 +84,20 @@ try {
  await page.locator('[data-news-history-event="ecb-history"]').waitFor();
  assert.equal(historyReads,1);
  const text = await page.locator('body').innerText();
- assert.match(text,/日次予算により解析を見送っています/);
- assert.match(text,/詳細AI解析が未完了の記事が1件/);
+ assert.match(text,/（日次予算）/);
+ assert.match(text,/AI解析待ち 1件/);
  assert.match(text,/日銀、9月政策金利1.25%へ/);
  assert.match(text,/過去の情報/);
  assert.equal(await page.locator('[data-received-event="other-info"]').isVisible(),false);
  await page.locator('[data-received-other] summary').click();
  assert.equal(await page.locator('[data-received-event="other-info"]').isVisible(),true);
- assert.match(await page.locator('[data-received-event="other-info"]').innerText(),/AI未実行・規則による分類/);
+ assert.doesNotMatch(await page.locator('[data-received-event="other-info"]').innerText(),/AI未実行・規則による分類/);
  budgetActive = false;
  await page.goto('about:blank');
  await page.setContent('<div id="root"></div>');
  await page.addScriptTag({content:panelFixture.outputFiles[0].text});
  await page.locator('[data-received-event="rate-plan"]').waitFor();
- assert.match(await page.locator('body').innerText(),/費用による停止は解除済み/);
- assert.doesNotMatch(await page.locator('body').innerText(),/日次予算により解析を見送っています/);
+ assert.match(await page.locator('body').innerText(),/（再解析待ち）/);
+ assert.doesNotMatch(await page.locator('body').innerText(),/（日次予算）/);
  console.log('PASS news visibility: unanalysed WATCH, explicit budget status, automatic past news, optional INFO');
 } finally { await panelBrowser.close(); }

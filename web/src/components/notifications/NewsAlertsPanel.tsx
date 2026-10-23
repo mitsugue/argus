@@ -1,6 +1,6 @@
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React, { useEffect, useState } from 'react';
-import { newsAnalysisStatusJa, displayNewsHeadline } from '../../lib/newsHeadline';
+import { displayNewsHeadline } from '../../lib/newsHeadline';
 import { useNewsIntelligence, type NewsIntelEvent, type NewsIntelView } from '../../hooks/useNewsIntelligence';
 import { useMarketShock } from '../../hooks/useMarketShock';
 import { groupNewsEpisodes } from '../../domain/newsPresentation';
@@ -15,9 +15,8 @@ import './NewsAlertsPanel.css';
 export const NEWS_ALERTS_SECTION_ID = 'news-intel';
 
 const NewsBackground: React.FC<{ event: NewsIntelEvent }> = ({ event }) => event.generalTransmissionJa
-  ? <details className="news-alerts__background"><summary>この分野の一般的な波及経路</summary>
+  ? <details className="news-alerts__background"><summary>一般的な波及経路</summary>
     <p>{event.generalTransmissionJa}</p>
-    <small>この記事で実際に生じた影響や、AIが記事を解析した結論を示すものではありません。</small>
   </details> : null;
 
 const SEVERITY_TONE: Record<string, string> = {
@@ -26,7 +25,7 @@ const SEVERITY_TONE: Record<string, string> = {
   WATCH: 'var(--text-muted)', INFO: 'var(--text-faint)',
 };
 const DIRECTION_JA: Record<string, string> = {
-  BULLISH: '強気', BEARISH: '弱気', MIXED: '混在', UNCLEAR: '方向判定不能',
+  BULLISH: '強気', BEARISH: '弱気', MIXED: '混在', UNCLEAR: '方向なし',
 };
 const SEVERITY_JA: Record<string, string> = { CRITICAL: '重大', HIGH: '重要' };
 
@@ -76,19 +75,18 @@ export const NewsHistory: React.FC<{ automatic?: boolean }> = ({ automatic = fal
       setOpen(!open); if (!open && !view) void load();
     }}>{open ? '過去の重要ニュースを折りたたむ' : '過去の重要ニュースを見る'}</button>
     {open && <>
-      <p className="news-alerts__note">受信から24時間を過ぎた直近7日間の保存記事です。保存は最近の記事を含め最大40件で、全記事の一覧ではありません。当時の説明であり、現在の速報・売買判断ではありません。</p>
-      {loading && <p><TriangleStepLoader label="続報の履歴を読み込んでいます" /></p>}
-      {error && <p role="status">履歴を更新できません。{view ? '前回取得した履歴を表示しています。' : '記事が無いという意味ではありません。'}</p>}
-      {view && <small>最終取得 {receivedJa(view.generatedAt)} JST</small>}
+      {loading && <p><TriangleStepLoader label="読み込み中" /></p>}
+      {error && <p role="status">履歴を更新できません{view ? '（前回分）' : ''}</p>}
+      {view && <small>取得 {receivedJa(view.generatedAt)}</small>}
       {!loading && <button type="button" onClick={() => void load()}>履歴を再取得</button>}
-      {view?.events.length === 0 && <p>保存されている対象記事はありません。</p>}
+      {view?.events.length === 0 && <p>記事なし</p>}
       {view?.events.map(event => <article key={event.eventId} className="news-alerts__item"
         id={`news-history-${event.eventId}`} data-news-history-event={event.eventId}>
         <p className="news-alerts__title"><b>{displayNewsHeadline(event.headlineJa)}</b></p>
         <p className="news-alerts__why">当時の解釈: {event.whyJa}</p>
         {event.japanImpactJa && <p className="news-alerts__japan">当時の日本株への見立て: {event.japanImpactJa}</p>}
         <NewsBackground event={event} />
-        <p className="news-alerts__meta">{event.source} · 受信 {receivedJa(event.sourceReceivedAt)} JST · 過去の情報 · {newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}</p>
+        <p className="news-alerts__meta">{event.source} · 受信 {receivedJa(event.sourceReceivedAt)} · 過去の情報</p>
       </article>)}
     </>}
   </div>;
@@ -104,9 +102,9 @@ const ReceivedNews: React.FC<{ event: NewsIntelEvent; related?: NewsIntelEvent[]
   <p className="news-alerts__title"><b>{displayNewsHeadline(event.headlineJa)}</b></p>
   <p className="news-alerts__why">{event.whyJa}</p>
   <NewsBackground event={event} />
-  <p className="news-alerts__meta">{event.source} · 受信 {receivedJa(event.sourceReceivedAt)} JST · {newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}</p>
+  <p className="news-alerts__meta">{event.source} · 受信 {receivedJa(event.sourceReceivedAt)}</p>
   {event.sourceUrl && /^https?:\/\//i.test(event.sourceUrl)
-    && <a href={event.sourceUrl} target="_blank" rel="noopener noreferrer">配信元の記事を開く</a>}
+    && <a href={event.sourceUrl} target="_blank" rel="noopener noreferrer">元の記事 ↗</a>}
   <RelatedNews events={related} />
 </article>;
 
@@ -130,21 +128,19 @@ export const NewsAlertsPanel: React.FC = () => {
     <section id={NEWS_ALERTS_SECTION_ID} className="news-alerts card" aria-label="ニュース・市場リスク">
       <div className="news-alerts__head">
         <b>ニュース・市場リスク</b>
-        <span>{material.length + shocks.length}件 · 売買権限なし</span>
+        <span>{material.length + shocks.length}件</span>
       </div>
-      {news.view && <p className="news-alerts__meta">記事取得 {receivedJa(news.view.generatedAt)} JST · 受信状態 {news.view.intakeStatus}</p>}
-      {(news.previousObservation || shock.previousObservation) && <p role="status">前回確認した記事と市場状態です。受信状態・市場確認も前回の観測を表示しています。</p>}
-      {news.status === 'error' && news.view && <p role="status">更新できないため前回取得した記事を表示しています。</p>}
+      {news.view && <p className="news-alerts__meta">取得 {receivedJa(news.view.generatedAt)}</p>}
+      {(news.previousObservation || shock.previousObservation) && <p role="status">前回分</p>}
+      {news.status === 'error' && news.view && <p role="status">更新失敗・前回分</p>}
       {pending.length > 0 && <p role="status" className="news-alerts__pending">
-        詳細AI解析が未完了の記事が{pending.length}件あります。受信した見出しと規則による判定を表示しています。
+        AI解析待ち {pending.length}件
         {pending.some(event => event.analysisDiagnostic?.reason === 'scheduled_daily_budget_exhausted')
-          && (news.view?.aiBudgetEnforced === false
-            ? ' 費用による停止は解除済みです。前回見送った記事の再解析を待っています。'
-            : ' 日次予算により解析を見送っています（毎日9:00 JST更新）。')}
+          && (news.view?.aiBudgetEnforced === false ? '（再解析待ち）' : '（日次予算）')}
       </p>}
-      {(news.view?.pendingTranslationCount ?? 0) > 0 && <p className="news-alerts__note">日本語要約待ちの記事があります。未表示の記事がないという意味ではありません。</p>}
+      {(news.view?.pendingTranslationCount ?? 0) > 0 && <p className="news-alerts__note">日本語要約待ちあり</p>}
       {shocks.length > 0 && <div className="news-alerts__group">
-        <small>市場リスク（市場横断で確認された衝撃）</small>
+        <small>市場リスク</small>
         {shocks.map((event) => <article key={event.eventId} className="news-alerts__item"
           id={`news-${event.eventId}`} data-severity={event.severity}>
           <p className="news-alerts__title">
@@ -163,11 +159,9 @@ export const NewsAlertsPanel: React.FC = () => {
       <div className="news-alerts__group">
         <small>重要なニュースと影響</small>
         {news.status === 'loading'
-          && <p className="news-alerts__empty"><TriangleStepLoader label={material.length ? '前回の記事を表示しながら更新しています' : 'ニュースを読み込んでいます'} /></p>}
+          && <p className="news-alerts__empty"><TriangleStepLoader label={material.length ? '更新中' : '読み込み中'} /></p>}
         {news.status !== 'loading' && material.length === 0 && <p className="news-alerts__empty">
-          {news.previousObservation ? '前回保存した一覧には重大と分類した記事がありません。現在の記事の有無は未確認です。'
-            : unread ? 'ニュースを取得できていません（重大ニュースが無いという意味ではありません）'
-            : '現行の規則で重大と分類した直近の記事はありません。受信した記事と解析状態は下に表示します。'}
+          {news.previousObservation ? '重大な記事なし（前回分）' : unread ? '取得できません' : '重大な記事なし'}
         </p>}
         {material.map((event) => {
           const direction = event.impactDirection?.primaryDirection ?? 'UNCLEAR';
@@ -176,7 +170,7 @@ export const NewsAlertsPanel: React.FC = () => {
             <p className="news-alerts__title">
               <mark style={{ color: SEVERITY_TONE[event.severity] ?? 'inherit',
                 borderColor: SEVERITY_TONE[event.severity] ?? 'inherit' }}>{SEVERITY_JA[event.severity] ?? event.severity}</mark>
-              <em>規則による暫定方向: {DIRECTION_JA[direction] ?? direction}</em>
+              <em>方向: {DIRECTION_JA[direction] ?? direction}</em>
               <b>{displayNewsHeadline(event.headlineJa)}</b>
             </p>
             <p className="news-alerts__why">{event.whyJa}</p>
@@ -188,20 +182,18 @@ export const NewsAlertsPanel: React.FC = () => {
                 `${reading.labelJa} ${reading.value ?? '—'}${reading.unit}`).join(' · ')}
             </p>}
             <p className="news-alerts__meta">
-              {event.source} · 受信 {receivedJa(event.sourceReceivedAt)} JST ·{' '}
+              {event.source} · 受信 {receivedJa(event.sourceReceivedAt)} ·{' '}
               {event.confirmationState === 'MARKET_CONFIRMED' ? '市場確認済み' : '市場確認待ち'}
-              {' · '}{newsAnalysisStatusJa(event.analysisState, event.analysisInputScope)}
-              {event.backfill ? ' · 再処理(過去分)' : ''}
+              {event.backfill ? ' · 過去分' : ''}
             </p>
             {event.sourceUrl && /^https?:\/\//i.test(event.sourceUrl)
-              && <a href={event.sourceUrl} target="_blank" rel="noopener noreferrer">配信元の記事を開く</a>}
+              && <a href={event.sourceUrl} target="_blank" rel="noopener noreferrer">元の記事 ↗</a>}
             <RelatedNews events={related.get(event.eventId)} />
           </article>;
         })}
       </div>
       {watch.length > 0 && <div className="news-alerts__group" data-received-watch>
         <h3>受信した注目記事</h3>
-        <p className="news-alerts__note">WATCHは規則による分類です。重要でない、または影響がないという意味ではありません。</p>
         {watch.map(event => <ReceivedNews key={event.eventId} event={event} related={related.get(event.eventId)} />)}
       </div>}
       {other.length > 0 && <details className="news-alerts__group" data-received-other>
@@ -209,9 +201,6 @@ export const NewsAlertsPanel: React.FC = () => {
         {other.map(event => <ReceivedNews key={event.eventId} event={event} related={related.get(event.eventId)} />)}
       </details>}
       <NewsHistory automatic />
-      <p className="news-alerts__note">
-        方向判定不能 = このニュースからは上下を決めない、という判定です。ニュースは売買権限を持ちません。
-      </p>
     </section>
   );
 };

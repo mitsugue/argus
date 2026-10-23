@@ -17,7 +17,7 @@ function IssuedForecastRecord({ record, minimum }: { record: ForecastTrackRecord
       ? `${head}方向を示した${record.directionalForecasts}件を採点済み。一致率は${minimum}件たまってから表示します。`
       : `${head}方向を示した${record.directionalForecasts}件中${record.hits}件が一致（${percent(record.hitRate)}、95%信頼下限 ${percent(record.hitRateWilsonLower95)}）。`
         + `「いつも多数派の方向」と予想した場合は${percent(record.naiveMajorityRate)}で、`
-        + (record.status === 'ABOVE_BASELINE' ? 'これを統計的に上回っています。過去の成績であり、次の確率ではありません。'
+        + (record.status === 'ABOVE_BASELINE' ? 'これを統計的に上回っています。'
           : 'これを統計的に上回っていません。')}
   </p>;
 }
@@ -33,9 +33,8 @@ export function fewAnalogsText(document: JapanMarketComparison): string | null {
     return `${candidate.anchorDate}${distance === null ? '' : `・距離${distance.toFixed(2)}`}`;
   });
   const limit = document.selectionPolicy ? `／上限${document.selectionPolicy.maximumDistance}` : '';
-  return `似た局面は${n}件だけです（${items.join('、')}${limit}）。`
-    + (n === 1 ? '1件では計算予測の線は出さず、過去の動きを参考として示すだけです。' : '件数が少ないので、参考の程度にとどめてください。')
-    + 'データが入れ替わると、似た局面が無くなったり別の局面に変わったりします。';
+  return `似た局面は${n}件（${items.join('、')}${limit}）。`
+    + (n === 1 ? '1件のため計算予測の線はありません。' : '');
 }
 
 export function JapanMarketComparisonChart({ document }: { document: JapanMarketComparison }) {
@@ -120,7 +119,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
     <p className="jp-comparison__scale">{document.unit === 'ANCHOR_100' ? '形状比較 · 基準日＝100' : '指数価格 · 円換算'}</p>
     {document.candidates.length > 0 && <p className="jp-comparison__basis" data-comparison-basis={priceShapeOnly ? 'price-shape-only' : 'price-and-market-state'}>
       比較の根拠：{priceShapeOnly
-        ? '価格形状のみ（市場条件の履歴を再計算中。完了すると候補と計算予測は市場条件つきの比較に入れ替わります）'
+        ? '価格形状のみ（市場条件は再計算中）'
         : `価格形状＋${marketStateNote}`}
     </p>}
     {few && <p className="jp-comparison__notice" data-comparison-few={document.candidates.length}>{few}</p>}
@@ -177,19 +176,19 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       <label><input type="checkbox" checked={showReferences} onChange={event => setShowReferences(event.target.checked)} />その後の参考経路</label>
     </div>
     {document.retainedNoteJa && <p className="jp-comparison__notice" data-comparison-retained="true">{document.retainedNoteJa}</p>}
-    {!document.candidates.length && <p className="jp-comparison__notice">十分に似た過去局面は見つかっていません。</p>}
+    {!document.candidates.length && <p className="jp-comparison__notice">似た局面なし</p>}
     {document.candidates.length > 0 && document.candidates.every(candidate => candidate.comparisonKind === 'PARTIAL_COMPARISON') &&
-      <p className="jp-comparison__notice">比較できるのは一部の条件です。市場状態全体が似ていると判断できる根拠は、まだ不足しています。</p>}
+      <p className="jp-comparison__notice">一部の条件だけで比較</p>}
     {!document.forecast.line.length && validated && <p className="jp-comparison__notice">{noAnalogText(document) ?? (document.candidates.length === 1
-      ? `${forecastName}は、似た局面が2件以上あるときに計算します（今は1件）。`
-      : `${forecastName}を出すための比較事例が不足しています。`)}</p>}
+      ? `${forecastName}なし（似た局面2件以上で計算・今は1件）`
+      : `${forecastName}なし（事例不足）`)}</p>}
     {!validated && !document.candidates.length && noAnalogText(document) && <p className="jp-comparison__notice">{noAnalogText(document)}</p>}
     {showResearchNote && <p className="jp-comparison__notice" data-forecast-role="references-only">
       {document.forecast.validation
-        ? `似た過去の局面とその後の動きを参考として並べています。この方法の方向一致率は過去10年で${document.forecast.validation.hitRate === null ? '—' : (document.forecast.validation.hitRate * 100).toFixed(0) + '%'}で、「いつも多数派の方向」と予想した場合の${document.forecast.validation.naiveMajorityRate === null ? '—' : (document.forecast.validation.naiveMajorityRate * 100).toFixed(0) + '%'}を上回っていないため、予想の線は出していません。`
-        : '似た過去の局面とその後の動きを参考として並べています。予想の線は、過去の検証で基準を超えるまで出しません。'}</p>}
+        ? `方向一致率 ${document.forecast.validation.hitRate === null ? '—' : (document.forecast.validation.hitRate * 100).toFixed(0) + '%'}（いつも多数派の予想 ${document.forecast.validation.naiveMajorityRate === null ? '—' : (document.forecast.validation.naiveMajorityRate * 100).toFixed(0) + '%'}・過去10年）を上回らないため、予想の線は出していません。`
+        : '予想の線は出していません（検証待ち）。'}</p>}
     {issued && trackRecord && <IssuedForecastRecord record={issued} minimum={trackRecord.minimumDirectionalForecasts} />}
-    <details className="jp-comparison__details"><summary>比較元・尺度・検証状態を見る</summary>
+    <details className="jp-comparison__details"><summary>比較元と検証</summary>
       <p>{document.scaleExplanation}</p>
       {document.reviewConditionsJa && <section aria-label="比較を見直す条件">
         <h3>比較を見直すとき</h3>
@@ -197,22 +196,16 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       </section>}
       {document.historyCoverage && <>
         <p>価格の収録：{document.historyCoverage.sourceStart}〜{document.historyCoverage.sourceEnd}
-          （{document.historyCoverage.sourceBars.toLocaleString('ja-JP')}営業日）。
-          全指標がこの期間すべてにそろっているという意味ではありません。</p>
+          （{document.historyCoverage.sourceBars.toLocaleString('ja-JP')}営業日）</p>
         <p>年別の検索対象：{Object.entries(document.historyCoverage.candidatesByYear)
           .map(([year, count]) => `${year}年 ${count}局面`).join(' / ')}</p>
         <p>営業日表または価格の欠損による除外：
-          {document.historyCoverage.excluded.missingCalendarOrPriceSession}局面。
-          直近の重複区間を除き、似た条件の候補を最大{document.historyCoverage.maximumSelected}件選びます。
-          年ごとの枠や、その後の値動きの良し悪しで選んでいません。</p>
+          {document.historyCoverage.excluded.missingCalendarOrPriceSession}局面</p>
       </>}
       {document.selectionPolicy && (() => {
         const scales = Object.values(document.selectionPolicy.stateScales);
         const robust = scales.filter(scale => scale.basis === 'ROBUST_MAD_HISTORY').length;
-        return <p>物差し：市場条件{scales.length}系列のうち{robust}系列は各系列の履歴の頑健な散布度（中央絶対偏差）を1単位とし、
-          残り{scales.length - robust}系列は履歴不足のため定義値を使っています。距離は各要素の差を物差しで割った平均で、
-          採用上限は{document.selectionPolicy.maximumDistance}、候補は重複区間を除いて最大{document.selectionPolicy.maximumCandidates}件です。
-          物差しと上限は再現可能な規則であり、予測力の検証結果ではありません。</p>;
+        return <p>物差し：市場条件{scales.length}系列（頑健な散布度{robust}・定義値{scales.length - robust}）・採用上限{document.selectionPolicy.maximumDistance}・最大{document.selectionPolicy.maximumCandidates}件</p>;
       })()}
       {document.selectionAudit?.['2018'] && (() => {
         const audit = document.selectionAudit['2018'];
@@ -226,21 +219,20 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
           <h3>2018年を検索した結果</h3>
           <p>同じ情報締切・同じ条件で{audit.candidateCount}局面を検索し、
             {audit.admittedCount}局面が距離条件を満たし、{audit.selectedCount}局面を表示対象にしました。{result}</p>
-          <p>この記録は2018年を優先するものではなく、採否を後から確認するための検索証跡です。</p>
         </section>;
       })()}
 
       {document.valuationEvidence && document.valuationEvidence.epsKind === 'MARKET_CAP_WEIGHTED_FORWARD_ESTIMATE' &&
         <p data-valuation-basis="argus-current-estimate">
           {document.valuationEvidence.date}のPER {valuationNumber(document.valuationEvidence.per)}倍、
-          指数EPS {valuationNumber(document.valuationEvidence.eps)}円は<b>ARGUS推計</b>（構成銘柄の時価総額加重の予想EPS。公式値ではありません）。
+          指数EPS {valuationNumber(document.valuationEvidence.eps)}円は<b>ARGUS推計</b>。
           取得：{new Date(document.valuationEvidence.knownAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST。
         </p>}
       {document.valuationEvidence && document.valuationEvidence.epsKind !== 'MARKET_CAP_WEIGHTED_FORWARD_ESTIMATE'
         && (document.valuationEvidence.epsKind === 'PROXY_FROM_CONSTITUENT_FORECAST_EPS'
         ? <p data-valuation-basis="argus-proxy">
           {document.valuationEvidence.date}の指数ベースPER {valuationNumber(document.valuationEvidence.per)}倍、
-          指数EPS {valuationNumber(document.valuationEvidence.eps)}円は<b>ARGUS代理値</b>（構成銘柄の予想EPSとウエートから再構成。公式の指数ベースPERではありません）。
+          指数EPS {valuationNumber(document.valuationEvidence.eps)}円は<b>ARGUS代理値</b>。
           取得：{new Date(document.valuationEvidence.knownAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST。
         </p>
         : <p data-valuation-basis="official">
@@ -256,12 +248,9 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
           {source.firstDate ?? '未取得'}{source.lastDate && `〜${source.lastDate}`}、
           {source.observations.toLocaleString('ja-JP')}観測日。
         </p>)}
-        {!Object.keys(document.sourceAcquisition.sources).length && <p>原データの取込確認待ちです。</p>}
-        <p>新たに取得した履歴を、過去の判断時点で既知だったデータとして使いません。
-          VIXの新しい値は既存の価格取得経路から補います。</p>
+        {!Object.keys(document.sourceAcquisition.sources).length && <p>取込待ち</p>}
       </section>}
       <p>情報締切：{new Date(document.informationCutoff).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST</p>
-      {!document.reviewConditionsJa && <p>基準日は東証の引け後、次回の集計で1営業日進みます。基準日が進むか市場条件の履歴が更新されると、候補と計算予測は再計算されます。</p>}
       {candidates.map(candidate => <article key={candidate.snapshotId}>
         <h3>{candidate.anchorDate}を基準とする{candidate.comparisonKind === 'MARKET_ANALOG' ? '市場比較' : '部分比較'}</h3>
         <p>{candidate.similarReasons.join('。')}</p>
@@ -270,7 +259,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       {document.forecast.sampleCount > 0 && <p>
         比較事例{document.forecast.sampleCount}件の{document.forecast.horizonSessions}営業日後：
         上昇{document.forecast.counts.up}件、横ばい{document.forecast.counts.flat}件、下落{document.forecast.counts.down}件。
-        横ばいは±{document.forecast.flatThresholdPct}%以内です。事例の頻度であり、予測的中率ではありません。
+        横ばい＝±{document.forecast.flatThresholdPct}%以内。
       </p>}
       {document.forecast.validation && (() => {
         const v = document.forecast.validation;
@@ -282,12 +271,11 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
         };
         return <section aria-label="計算予測の過去検証" data-forecast-validation={v.validationStatus}>
           <h3>この計算予測の過去検証（{document.forecast.horizonSessions}営業日後）</h3>
-          <p>{v.evaluationStart}〜{v.evaluationEnd}の各時点で、その時点までの情報だけを使って同じ方法で予測を作り、実際の値動きと照合しました。
-            重ならない{v.evaluations}件のうち方向を示した{v.directionalEvaluations}件で、方向の一致率は{pct(v.hitRate)}
+          <p>{v.evaluationStart}〜{v.evaluationEnd}：重ならない{v.evaluations}件のうち方向を示した{v.directionalEvaluations}件で、方向の一致率は{pct(v.hitRate)}
             （95%信頼下限 {pct(v.hitRateWilsonLower95)}）、「いつも多数派の方向」と予想した場合は{pct(v.naiveMajorityRate)}でした。
             帯（事例の中央半分）の中に実際の値が入った割合は{pct(v.bandCoverage)}（目安50%）です。</p>
           <p>{v.validationStatus === 'VALIDATED'
-            ? '判定：過去検証の基準を満たしています。ただし過去の一致率であり、将来の確率ではありません。'
+            ? '判定：過去検証の基準を満たしています。'
             : `判定：${v.reasons.map(reason => reasonJa[reason] ?? reason).join('。')}。`}</p>
         </section>;
       })()}
@@ -302,8 +290,8 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
             {w.confirmStart ? `${w.confirmStart}〜${w.confirmEnd}で採用するか判断し、どちらにも使っていない` : '選ぶときに使っていない'}{w.testStart}〜{w.testEnd}で成績を測りました。
             {w.choiceHorizon}営業日後の方向一致率は{pct(w.testHitRate)}（95%信頼下限 {pct(w.testWilsonLower95)}）、
             単純予想は{pct(w.testNaiveRate)}、等しい重みでは{pct(w.equalWeightsTestHitRate)}でした。</p>
-          <p>{w.adopted ? '判定：採用判断の期間で基準を満たしたため、この重み付けで候補を選んでいます。上の成績は採用判断に使っていない期間のものです。'
-            : '判定：採用判断の期間で基準を満たさなかったため、重み付けは変えていません。'}</p>
+          <p>{w.adopted ? '判定：基準を満たしたため採用'
+            : '判定：基準未達のため不採用'}</p>
         </section>;
       })()}
       <MaterialReactionLine research={document.forecast.materialReactionResearch} />

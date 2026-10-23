@@ -9,7 +9,7 @@ const mod=new Module(entry,module);mod.filename=entry;mod.paths=module.paths;mod
 const context={comparisonJa:'一部項目は市場予想上振れとの報道（項目別の予想値・数値差は未照合）',storyStatus:'REPORTED_CONTEXT_PRESENT',articles:[{source:'合成の報道元',headline:'合成のCPI記事',facts:['原油高が物価を押し上げた。','CPI上振れで利上げ警戒が強まり株安となったとの報道。'],receivedAt:'2026-10-15T01:00:00Z',sourceRefSha256:'synthetic',scope:'RECEIVED_NEWS_ANALYSIS'}]};
 const original=JSON.stringify(context),html=renderToStaticMarkup(React.createElement(mod.exports.EventResultBrief,{available:true,headline:'合成結果',newsContext:context}));
 assert.ok(html.includes('event-news-context-v1')&&html.includes('市場予想上振れ')&&html.includes('合成の報道元')&&html.includes('利上げ警戒'));
-assert.ok(html.includes('下落原因の実証は別')&&!html.includes('市場が結果をどう受け止めたか、説明する記事根拠が不足'));
+assert.ok(!html.includes('下落原因の実証は別')&&!html.includes('記事根拠が不足'));
 const missing=renderToStaticMarkup(React.createElement(mod.exports.EventResultBrief,{available:true,newsContext:{...context,storyStatus:'ARTICLE_EVIDENCE_INCOMPLETE'}}));
 assert.ok(missing.includes('記事根拠が不足'));assert.equal(JSON.stringify(context),original);
 const event=fs.readFileSync('src/components/dashboard/ImportantEventsCard.tsx','utf8');

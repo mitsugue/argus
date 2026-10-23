@@ -5,11 +5,11 @@ import { useImportantEvents, type ImportantEvent, type EventImpact } from '../..
 import { useMacroEventAnalysis, type MacroAnalysis } from '../../hooks/useMacroEventAnalysis';
 import { useMarketLedger } from '../../hooks/useMarketLedger';
 
-import { eventAiScenarioNote, eventAiRunMetaJa, type EventAiCostFacts } from '../../lib/eventAiScenarioNote';
+import { eventAiScenarioShortJa, type EventAiCostFacts } from '../../lib/eventAiScenarioNote';
 
 function useEventAiScenarioNote(): string {
   const { cost } = useMarketLedger();
-  return eventAiScenarioNote(cost as EventAiCostFacts | null);
+  return eventAiScenarioShortJa(cost as EventAiCostFacts | null);
 }
 import { useDashboardEvents } from '../../hooks/useDashboardEvents';
 import { deriveDashboardEventDisplayState, type DashboardEvent, type DashboardEventReaction } from '../../lib/dashboardEventState';
@@ -103,13 +103,10 @@ const CaosAnalysisBlock: React.FC<{ ai: MacroAnalysis; released: boolean }> = ({
     return (
       <>
         <p className="ie-line"><span className="ie-k">AIシナリオ</span>{pre.argusScenarioJa || pre.summaryJa}</p>
-        {/* v13.5.63 (GPT review item 6): generation time and the model that answered, on tap. */}
-        {eventAiRunMetaJa(pre.generatedAt, pre.ai) && <details className="ie-ai-meta" data-argus-contract="event-ai-run-meta-v1">
-          <summary>生成の記録</summary><p className="ie-data">{eventAiRunMetaJa(pre.generatedAt, pre.ai)}</p></details>}
         {pre.marketPricingJa && <p className="ie-line"><span className="ie-k">市場の織り込み</span>{pre.marketPricingJa}</p>}
         {pre.whatWouldSurpriseJa && <p className="ie-line"><span className="ie-k">サプライズ時</span>{pre.whatWouldSurpriseJa}</p>}
         {(pre.assetsToWatch || []).length > 0 && (
-          <p className="ie-data">注目: {(pre.assetsToWatch || []).join(' · ')} ・ AIシナリオは売買指示ではありません</p>
+          <p className="ie-data">注目: {(pre.assetsToWatch || []).join(' · ')}</p>
         )}
       </>
     );
@@ -120,14 +117,14 @@ const CaosAnalysisBlock: React.FC<{ ai: MacroAnalysis; released: boolean }> = ({
       <EventResultBrief available={ai.actual?.available === true} headline={ai.actual?.headline}
         verdict={hasPre ? v.ja : '事前記録なし・採点不可'} reaction={ai.displayReleaseReaction} newsContext={ai.newsContext}
         reading={ai.displayReleaseReaction?.readingJa || undefined} />
-      <details className="ie-original-analysis"><summary>事前シナリオ・分析全文・取得記録</summary>
+      <details className="ie-original-analysis"><summary>事前シナリオ・全文</summary>
       {hasPre && <p className="ie-line"><span className="ie-k">事前予想(当時)</span>{pre.argusScenarioJa || pre.summaryJa}</p>}
       {ai.actual?.available
         ? <p className="ie-line"><span className="ie-k">公式結果</span>{ai.actual.headline || '取得済み'}</p>
-        : <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">公式結果</span>公式結果待ち</p>}
+        : <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">公式結果</span>結果待ち</p>}
       <MacroResultDetails result={ai.actual} />
       {!hasPre
-        ? <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">答え合わせ</span>事前予想が保存されていないため答え合わせ不可</p>
+        ? <p className="ie-line" style={{ color: 'var(--text-faint)' }}><span className="ie-k">答え合わせ</span>採点不可（事前記録なし）</p>
         : (post.answerCheckJa || post.verdict) && (
             <p className="ie-line"><span className="ie-k">答え合わせ</span>
               <b style={{ color: v.tone }}>{v.ja}</b>{post.answerCheckJa ? ` — ${post.answerCheckJa}` : ''}</p>
@@ -172,7 +169,7 @@ const EventRow: React.FC<{ e: ImportantEvent; open: boolean; ai?: MacroAnalysis;
         {!compact&&<p className="ie-line"><span className="ie-k">{t('ie.nextReview')}</span>{nextReview}</p>}
         {ai && <CaosAnalysisBlock ai={ai} released={released} />}
         {!ai && released && <EventResultBrief available={false} />}
-        <details><summary>出典・取得状態</summary><p className="ie-data">{e.source || '出典未確認'} · 予想値・前回値の取得は未確認</p></details>
+        <details><summary>出典</summary><p className="ie-data">{e.source || '出典不明'}</p></details>
       </div>
     </details>
   );
@@ -194,12 +191,12 @@ const ReleaseSoWhat: React.FC<{ ev: DashboardEvent; reactionValues: string[]; re
   return <div className="ie-sowhat" data-argus-contract="event-so-what-v1" data-reaction-window={rr?.latestWindow ?? ''}>
     {reading
       ? <p><span className="ie-k">市場の読み</span><strong>{reading}</strong>{c.nikkeiImplicationJa ? ` — ${c.nikkeiImplicationJa}` : ''}</p>
-      : <p><span className="ie-k">市場の読み</span>反応を測れていないか、分析の生成待ち</p>}
+      : <p><span className="ie-k">市場の読み</span>データ待ち</p>}
     {measured
-      ? <p><span className="ie-k">反応</span>{measured}{rr?.basis === 'PRE_RELEASE_BASELINE' ? '（発表直前の値が基準）' : ''}</p>
+      ? <p><span className="ie-k">反応</span>{measured}{rr?.basis === 'PRE_RELEASE_BASELINE' ? '（発表直前比）' : ''}</p>
       : reactionValues.length > 0
-        ? <p><span className="ie-k">反応</span>{reactionValues.join(' · ')}{reactionTone ? ` · ${reactionTone}` : ''}（発表後の初回観測が基準）</p>
-        : <p><span className="ie-k">反応</span>市場反応データ未取得</p>}
+        ? <p><span className="ie-k">反応</span>{reactionValues.join(' · ')}{reactionTone ? ` · ${reactionTone}` : ''}（発表後の初回比）</p>
+        : <p><span className="ie-k">反応</span>未取得</p>}
     {c.changeConditionJa && <p><span className="ie-k">読みが変わる条件</span>{c.changeConditionJa}</p>}
     {(c.impactCommentJa || (!measured && c.marketReactionJa)) &&
       <small>{c.impactCommentJa || c.marketReactionJa}</small>}
@@ -250,7 +247,7 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
         {ds.released && <EventResultBrief available={ev.officialResult.available === true}
           headline={ev.officialResult.headlineJa} reaction={ev.releaseReaction}
           verdict={c.verdictJa} newsContext={ev.newsContext} reading={ev.releaseReaction?.readingJa || c.marketReadingJa} next={c.changeConditionJa} />}
-        <details open={!ds.released} className="ie-original-analysis"><summary>{ds.released ? '事前シナリオ・分析全文・取得記録' : '事前シナリオ・確認する条件'}</summary>
+        <details open={!ds.released} className="ie-original-analysis"><summary>{ds.released ? '事前シナリオ・全文' : '事前シナリオ'}</summary>
         <div className="ie-phase-grid" data-result-first={ds.showActualFirst ? 'true' : 'false'}>
           {ds.showActualFirst ? <>
             <section className="ie-phase">
@@ -258,17 +255,15 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
               {ds.showActualFirst
                 ? <p><strong>{ev.officialResult.headlineJa || '取得済み'}</strong></p>
                 : ds.showPendingResult
-                  ? <p>発表時刻通過・取得待ち</p>
+                  ? <p>取得待ち</p>
                   : <p>発表待ち</p>}
               {ev.officialResult.source && <small>出典：{ev.officialResult.source}</small>}
               <MacroResultDetails result={ev.officialResult} />
-              {ds.showPendingResult && <small>定期更新待ち{lastRefresh
-                ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</small>}
             </section>
             <section className="ie-phase">
               <b>発表後</b>
               {ds.showActualFirst ? <ReleaseSoWhat ev={ev} reactionValues={reactionValues} reactionTone={reactionTone}
-                vColor={vColor} showAnswerCheck={ds.showAnswerCheck} /> : <p>公式結果取得後に更新</p>}
+                vColor={vColor} showAnswerCheck={ds.showAnswerCheck} /> : <p>結果待ち</p>}
             </section>
             <details className="ie-phase ie-phase--pre-folded">
               <summary><b>発表前の見立て(参考)</b></summary>
@@ -288,17 +283,15 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
               {ds.showActualFirst
                 ? <p><strong>{ev.officialResult.headlineJa || '取得済み'}</strong></p>
                 : ds.showPendingResult
-                  ? <p>発表時刻通過・取得待ち</p>
+                  ? <p>取得待ち</p>
                   : <p>発表待ち</p>}
               {ev.officialResult.source && <small>出典：{ev.officialResult.source}</small>}
               <MacroResultDetails result={ev.officialResult} />
-              {ds.showPendingResult && <small>定期更新待ち{lastRefresh
-                ? ` · 最終確認 ${String(lastRefresh).slice(11, 16)}Z` : ''}</small>}
             </section>}
             {!compact&&<section className="ie-phase">
               <b>発表後</b>
               {ds.showActualFirst ? <ReleaseSoWhat ev={ev} reactionValues={reactionValues} reactionTone={reactionTone}
-                vColor={vColor} showAnswerCheck={ds.showAnswerCheck} /> : <p>公式結果取得後に更新</p>}
+                vColor={vColor} showAnswerCheck={ds.showAnswerCheck} /> : <p>結果待ち</p>}
             </section>}
           </>}
         </div>
@@ -369,7 +362,7 @@ export const ImportantEventsCard: React.FC<Props> = ({ embedded, sectionId = 'im
           if (!upcoming.length) return null;
           return (
             <div style={{ borderTop: '1px solid var(--line)', marginTop: 6, paddingTop: 4 }}>
-              <p style={{ margin: 0, fontSize: 10.5, color: 'var(--text-faint)' }}>この先の重要イベント(接近すると上に昇格して事前予想が付きます)</p>
+              <p style={{ margin: 0, fontSize: 10.5, color: 'var(--text-faint)' }}>この先の重要イベント</p>
               {upcoming.map((e) => (
                 <p key={e.eventId} style={{ margin: '2px 0 0', fontSize: 11.5, color: 'var(--text-sub)' }}>
                   <b>{e.eventCode}</b>

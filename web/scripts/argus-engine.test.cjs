@@ -156,7 +156,7 @@ check('an unread event feed is distinguishable from an empty calendar',
   unknownView.eventsAuthorityUnknown === true && knownView.eventsAuthorityUnknown === false
   && unknownView.nextEvent === null && knownView.nextEvent === null);
 check('Today never claims an empty calendar it could not read',
-  fs.readFileSync(path.join(root,'src/components/dashboard/TodayEventSchedule.tsx'),'utf8').includes('予定・結果を取得できていません')
+  fs.readFileSync(path.join(root,'src/components/dashboard/TodayEventSchedule.tsx'),'utf8').includes("calendar.loading?'読み込み中':'取得できません'")
   && panel.includes('<ImportantEventsCard embedded sectionId="today-event-details" />'));
 
 // v13.5.54 (owner 2026-09-04: 「イベントが出たばかりなので米雇用統計が出てない」).
