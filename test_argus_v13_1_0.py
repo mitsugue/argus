@@ -185,7 +185,8 @@ class ArgusV1310IntegrationTests(unittest.TestCase):
         self.assertNotIn("argus.replayContext", panel)
         self.assertNotIn("<ProjectionChart projection={projection}", panel)
         self.assertIn('data-argus-contract="other-markets-actuals-v1"', panel)
-        self.assertIn("Todayの見通しや確率は切り替わりません", panel)
+        # 2026-10-23 オーナー指示(画面の言葉の基本方針): 断り書きは出さない。
+        self.assertNotIn("Todayの見通しや確率は切り替わりません", panel)
         self.assertNotIn("onActivate={() => setDetail(true)}", panel)
         self.assertIn("([1, 5, 20] as const)", panel)
         self.assertNotIn("method: 'POST'", route + panel)
