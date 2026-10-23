@@ -15,9 +15,10 @@ assert.match(today, /data-event-memory-status/);
 assert.match(today, /data-flag-recovery/);
 assert.match(today, /data-calibration-mode/);
 assert.match(today, /フラグ回収/);
-assert.match(today, /独立事例/);
+assert.match(today, /類似 \$\{row\.eventMemory\.analogEvidence\.independentEpisodeCount\}件/);
 assert.match(today, /根拠不足/);
-assert.match(today, /校正 SHADOW · 判断権限なし/);
+// Owner policy 2026-10-23: the SHADOW state stays a data attribute, not an on-screen disclaimer.
+assert.doesNotMatch(today, /校正 SHADOW · 判断権限なし/);
 assert.match(css, /\.at-event-memory/);
 assert.match(hook, /calibrationMode:\s*'SHADOW'/);
 assert.match(hook, /sdaAuthority:\s*false/);

@@ -16,7 +16,7 @@ const VERDICT: Record<string, string> = {
 const pct = (value: number | null | undefined) => value == null ? '—' : `${(value * 100).toFixed(1)}%`;
 export function signalPerformanceJa(family: string, study: SignEventStudy | null | undefined, currentBasis?: string | null): string {
   if (family === 'D04' && currentBasis === 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD') {
-    return '最新PERの警戒条件は未定義。旧方式の成績とは別です。';
+    return '過去の成績：基準未確定';
   }
   if (!study || study.status !== 'AVAILABLE') return '過去の成績：未取得';
   const condition = study.conditions[family];

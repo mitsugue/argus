@@ -52,6 +52,7 @@ const cardContext={exports:{},Date,require(name){
  if(name.includes('/TodayDecisionStrip')) return {TodayDecisionStrip:()=>React.createElement('section',{'data-four-cards':'visible'})};
  if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>null};
  if(name.includes('/marketWording')) return {marketChanges:v=>v,marketWording:v=>v};
+ if(name.includes('/screenNotes')) return require('../src/lib/screenNotes.ts');
  if(name.includes('/NumericalResearchDetails')) return {NumericalResearchDetails:()=>null};
  if(name.includes('/CreditConditionsDetails')) return {CreditConditionsDetails:()=>null};
  if(name.includes('/FiscalEnvironmentDetails')) return {FiscalEnvironmentDetails:()=>null};
@@ -78,15 +79,15 @@ console.log('構成情報が欠けても有効な統合AIを最新４カード�
 for (const worker of [undefined, {status:'NOT_RUN'}, {status:'AWAITING_AI'}, {status:'GENERATED'}]) {
  shown={...doc, unifiedStatus:'AWAITING_AI', unifiedSummary:null, generationWorker:worker};
  const html=renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:true}));
- assert.ok(html.includes('新しい見立てを待っています。'));
+ assert.ok(html.includes('見立て待ち'));
  assert.ok(!html.includes('止まっています'));
 }
 for (const status of ['FAILED','INVALID_RESPONSE','UNAVAILABLE']) {
  shown={...doc, unifiedStatus:'AWAITING_AI', unifiedSummary:null, generationWorker:{status}};
  assert.ok(renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:true}))
-  .includes('新しい見立てを作成できませんでした。'));
+  .includes('見立てを作成できませんでした'));
 }
-assert.equal(cardContext.exports.briefWaitingTitle({...doc,generationWorker:{status:'RUNNING'}}),'新しい見立てを作成しています');
+assert.equal(cardContext.exports.briefWaitingTitle({...doc,generationWorker:{status:'RUNNING'}}),'見立てを作成中');
 recovered=doc;
 for (const [status, expected] of [['AWAITING_AI','保存版'],['RUNNING','作成中・保存版'],['FAILED','更新失敗・保存版']]) {
  shown={...doc,unifiedStatus:'AWAITING_AI',unifiedSummary:null,generationWorker:{status}};
@@ -94,7 +95,7 @@ for (const [status, expected] of [['AWAITING_AI','保存版'],['RUNNING','作成
  assert.ok(html.includes(expected));
  assert.ok(html.includes('data-four-cards="visible"'));
  const aboveCards=html.split('data-four-cards="visible"')[0];
- assert.ok(!aboveCards.includes('新しい見立てを待っています') && !aboveCards.includes('要約作成'));
+ assert.ok(!aboveCards.includes('見立て待ち') && !aboveCards.includes('要約作成'));
  assert.ok(!html.includes('最新の見立てを取得できません'));
  assert.ok(html.includes('見立ての作成日時'), 'full timestamp remains in the evidence drawer');
 }

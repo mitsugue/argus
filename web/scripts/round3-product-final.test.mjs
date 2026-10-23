@@ -54,7 +54,8 @@ assert.ok(today.indexOf('at-primary-hero') >= 0);
 assert.ok(today.indexOf('at-primary-hero')
   < today.indexOf('<details className="at-evidence card">'));
 assert.match(today, /view\.canonicalDecision/);
-assert.match(today, /2018年理論の原典との照合待ち。成立件数だけで暴落は判断しません/);
+// Owner policy 2026-10-23: no disclaimer under the 6 signs; the count stays a count.
+assert.doesNotMatch(today, /2018年理論の原典との照合待ち。成立件数だけで暴落は判断しません/);
 assert.doesNotMatch(today, /candidateLevel \?\? 4|view\.decisions/);
 assert.match(command, /sdaBySymbol/);
 assert.match(command, /canonicalDecisions/);

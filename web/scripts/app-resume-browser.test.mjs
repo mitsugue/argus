@@ -180,8 +180,8 @@ try{
  console.log(JSON.stringify({documentRecoveryReadersBefore:dataBeforeRecovery,documentRecoveryReadersAfter:dataAfterRecovery}));
  assert.deepEqual(dataAfterRecovery,dataBeforeRecovery,'storage-lost document recovery must not restart all market readers');
  if(process.env.ARGUS_FULL_APP_FIXTURE==='1'){
-  await page.getByText('前回確認したニュース・市場状態を表示しています。現在の確認結果は次の更新で反映します。',{exact:true}).waitFor();
-  assert.equal(await page.getByText(/突発の市場ショック: 現在なし/).count(),0,
+  await page.getByText('前回分',{exact:true}).waitFor();
+  assert.equal(await page.getByText(/突発の市場ショック: なし/).count(),0,
    'restoring an empty previous news/shock view cannot certify that no shock currently exists');
   console.log('fixture stage: prior news/shock observation displayed without current-absence claim');
  }

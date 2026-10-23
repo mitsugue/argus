@@ -817,18 +817,35 @@ export function confidenceBasisJa(decision: { status: string; primaryAction: Pri
  * (cannot judge), evaluated-but-constrained (judged: risk says wait), and
  * evaluated-with-no-buy-case (judged: the BUY gate is not met / unverified).
  */
+const MISSING_DATA_WORDS: Array<[RegExp, string]> = [
+  [/^market_truth_/, '市場データ'], [/^prediction_ledger_/, '予測記録'], [/^jp_market_engine_/, 'チャートの根拠'],
+  [/^freshness_/, '更新時刻'], [/^risk_/, 'リスク入力'], [/^scenario_event_/, 'イベント'],
+];
+/** The missing data in one or two words (owner 2026-10-23: 「判断保留(評価未了)とは何か」). */
+export function missingDataWordsJa(codes: readonly string[] | undefined): string[] {
+  const words: string[] = [];
+  for (const code of codes ?? []) {
+    const word = MISSING_DATA_WORDS.find(([pattern]) => pattern.test(code))?.[1];
+    if (word && !words.includes(word)) words.push(word);
+  }
+  return words;
+}
+
 export function waitKindJa(decision: { status: string; primaryAction: PrimaryAction;
-  guidance?: { riskConstraint?: string } }): string | null {
+  guidance?: { riskConstraint?: string }; missingReasonCodes?: readonly string[] }): string | null {
   if (decision.primaryAction !== 'WAIT') return null;
-  if (decision.status === 'DATA_GATED') return 'データ不足のため判断保留（評価未了）';
+  if (decision.status === 'DATA_GATED') {
+    const words = missingDataWordsJa(decision.missingReasonCodes);
+    return words.length ? `データ待ち（${words.join('・')}）` : 'データ待ち';
+  }
   const constraint = decision.guidance?.riskConstraint;
   if (constraint && constraint !== 'NONE') {
     const ja: Record<string, string> = {
       WAIT_REQUIRED: '待機が必要', BLOCK_BUY: '新規買い停止', REDUCE_RISK: 'リスク縮小', EXIT_RISK: '撤退',
     };
-    return `評価済み: リスク制約（${ja[constraint] ?? constraint}）により見送り`;
+    return `リスク制約（${ja[constraint] ?? constraint}）`;
   }
-  return '評価済み: 買い条件が未成立（BUY は検証未完了のため構造的に無効）';
+  return '買い条件が未成立';
 }
 
 /** Date-only placeholders never become precise countdowns. No provider reads. */
