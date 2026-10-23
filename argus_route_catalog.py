@@ -249,6 +249,7 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/tdnet-metrics", ("GET",), "api_argus_tdnet_metrics", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/today-headline", ("GET",), "api_argus_today_headline", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/us-movers-push", ("POST",), "api_argus_us_movers_push", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
+    RouteCatalogEntry("/api/argus/us-reference-push", ("POST",), "api_argus_us_reference_push", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/us-universe", ("GET",), "api_argus_us_universe", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/us-watchlist", ("GET",), "api_argus_us_watchlist", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     # v13.5.54: Twelve Data budget truth — counts/budgets only, never symbols.

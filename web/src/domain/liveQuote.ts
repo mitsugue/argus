@@ -2,7 +2,7 @@ import { exactAuthorityEpoch } from './liveAuthority';
 
 export type InstrumentType = 'INDEX' | 'ETF' | 'STOCK' | 'FUND' | 'CRYPTO';
 export type DelayClass = 'LIVE' | '15m' | '20m' | 'EOD' | 'T-1' | 'UNKNOWN' | 'OFFLINE';
-export type QuoteSession = 'PRE' | 'REGULAR' | 'AFTER' | 'CLOSED' | 'UNKNOWN';
+export type QuoteSession = 'PRE' | 'REGULAR' | 'AFTER' | 'OVERNIGHT' | 'CLOSED' | 'UNKNOWN';
 
 export interface LiveQuote {
   symbol: string;
@@ -19,6 +19,8 @@ export interface LiveQuote {
   delayClass: DelayClass;
   session: QuoteSession;
   entitlement: string;
+  /** 米国の取引時間外(プレ/アフター/夜間)の価格。session がその時間帯を示す。 */
+  extendedHours?: boolean;
 }
 
 export interface RawQuoteTruth {
@@ -40,6 +42,7 @@ export interface RawQuoteTruth {
   session?: string | null;
   entitlement?: string | null;
   realtimeEvidence?: boolean | null;
+  extendedHours?: boolean | null;
 }
 
 /** Minimal daily NAV truth accepted by valuation consumers. */
@@ -53,7 +56,7 @@ const DELAY_CLASSES = new Set<DelayClass>([
   'LIVE', '15m', '20m', 'EOD', 'T-1', 'UNKNOWN', 'OFFLINE',
 ]);
 const QUOTE_SESSIONS = new Set<QuoteSession>([
-  'PRE', 'REGULAR', 'AFTER', 'CLOSED', 'UNKNOWN',
+  'PRE', 'REGULAR', 'AFTER', 'OVERNIGHT', 'CLOSED', 'UNKNOWN',
 ]);
 
 function finite(value: unknown): number | null {
@@ -291,7 +294,18 @@ export function normalizeLiveQuote(
     delayClass: classifyDelay(raw, provider, sourceTimestamp, nowMs),
     session: normalizedSession(raw.session),
     entitlement: String(raw.entitlement ?? 'unknown'),
+    ...(raw.extendedHours === true ? { extendedHours: true } : {}),
   };
+}
+
+const EXTENDED_SESSION_JA: Partial<Record<QuoteSession, string>> = {
+  PRE: '時間外(プレ)', AFTER: '時間外(アフター)', OVERNIGHT: '時間外(夜間)',
+};
+
+/** 時間外の価格だと分かる印。通常の価格では空文字。 */
+export function extendedSessionJa(quote: Pick<LiveQuote, 'extendedHours' | 'session'>): string {
+  if (quote.extendedHours !== true) return '';
+  return EXTENDED_SESSION_JA[quote.session] ?? '時間外';
 }
 
 export function quoteStatus(delayClass: DelayClass): 'live' | 'delayed' | 'unknown' | 'mock' {
@@ -321,6 +335,12 @@ export function quoteAsOf(quote: LiveQuote): string {
  * One plain line per quote: what kind of price it is, from whom, as of when.
  */
 export function quoteFreshnessJa(quote: LiveQuote): string {
+  const extended = extendedSessionJa(quote);
+  const line = quoteFreshnessBaseJa(quote);
+  return extended ? `${extended} ${line}` : line;
+}
+
+function quoteFreshnessBaseJa(quote: LiveQuote): string {
   const provider = quote.provider ? `（${quote.provider}）` : '';
   const stamp = quote.sourceTimestamp;
   const dateOnly = typeof stamp === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(stamp);

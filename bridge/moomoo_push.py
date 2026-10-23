@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """ARGUS moomoo bridge — runs NEXT TO OpenD (same machine, e.g. your AWS box).
 
-Collects shared US ETFs and confirmed registered US prices during regular sessions.
+Collects shared US ETFs and confirmed registered US prices during regular and
+extended (pre-market, after-hours, overnight) sessions, each with its own time.
 Money-flow calls and broad universe sweeps remain retired.
 Existing tokens, HMAC signing and provider observation timestamps are retained.
 OpenD remains local; never expose port 11111 to the internet.
@@ -36,7 +37,7 @@ except ImportError:
     OpenQuoteContext = None
     RET_OK = 0
 
-BRIDGE_VERSION = "13.8.72"
+BRIDGE_VERSION = "13.8.160"
 
 BACKEND  = os.environ.get("ARGUS_BACKEND", "https://argus-backend-3j2m.onrender.com").rstrip("/")
 TOKEN    = os.environ.get("ARGUS_ADMIN_TOKEN", "")
@@ -220,6 +221,24 @@ def build_heartbeat(state=None, disable_jp=None, now_iso=None):
         "usSnapshotErrors": int(state.get("usSnapshotErrors") or 0),
         "diskUsagePct": disk_usage_pct(),
         "intervalSec": INTERVAL,
+        # 2026-10-22: 時間外の価格の数(銘柄名は出さない)。
+        "usExtendedSession": state.get("usExtendedSession"),
+        "usExtendedPriced": state.get("usExtendedPriced"),
+        "usExtendedUnpriced": state.get("usExtendedUnpriced"),
+        "usExtendedStatus": state.get("usExtendedStatus"),
+        "usExtendedCheckedAt": state.get("usExtendedCheckedAt"),
+        # 2026-10-22: 日足の取り込みと過去の日足の取得枠(数だけ)。
+        "dailyKlineStatus": state.get("dailyKlineStatus"),
+        "dailyKlineCheckedAt": state.get("dailyKlineCheckedAt"),
+        "dailyKlineRequested": state.get("dailyKlineRequested"),
+        "dailyKlineSent": state.get("dailyKlineSent"),
+        "dailyKlineSkippedQuota": state.get("dailyKlineSkippedQuota"),
+        "dailyKlineFailed": state.get("dailyKlineFailed"),
+        "dailyKlineQuotaUsed": state.get("dailyKlineQuotaUsed"),
+        "dailyKlineQuotaRemain": state.get("dailyKlineQuotaRemain"),
+        "symbolListStatus": state.get("symbolListStatus"),
+        "symbolListCount": state.get("symbolListCount"),
+        "symbolListCheckedAt": state.get("symbolListCheckedAt"),
     }
 
 
@@ -334,47 +353,68 @@ def record_push_result(stocks, accepted, state=None, now_iso=None):
     return state
 
 
+def _quote_right(row):
+    raw = (row.get("quote_right") or row.get("quote_right_status")
+           or row.get("entitlement") or "unknown")
+    value = str(raw).strip().lower()
+    return value[:40] if value and all(c.isalnum() or c in "_- /" for c in value) else "unknown"
+
+
+def _exchange_timestamp(value, market):
+    """OpenD update_time is market-local. Normalize it before transport so
+    the backend never mistakes New York/Tokyo wall time for UTC."""
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw or raw.lower() in ("nan", "nat", "none", "n/a"):
+        return None
+    try:
+        import datetime as _dt
+        numeric = float(raw)
+        if numeric > 0:
+            return _dt.datetime.fromtimestamp(
+                numeric, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError, OverflowError):
+        pass
+    try:
+        import datetime as _dt
+        from zoneinfo import ZoneInfo
+        parsed = _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            zone = ZoneInfo("Asia/Tokyo" if market == "JP" else "America/New_York")
+            parsed = parsed.replace(tzinfo=zone)
+        return parsed.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return None
+
+
+def _first_present(*values):
+    for value in values:
+        raw = str(value).strip()
+        if raw and raw.lower() not in ("nan", "nat", "none", "n/a"):
+            return value
+    return None
+
+
+def _finite_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _snapshot_update_ts(r, market):
+    return _exchange_timestamp(_first_present(
+        r.get("update_timestamp"), r.get("updateTimestamp"),
+        r.get("update_time"), r.get("updateTime")), market)
+
+
 def rows_from_snapshot(df):
     """moomoo market-snapshot dataframe → quote-push payload rows."""
-    def quote_right(row):
-        raw = (row.get("quote_right") or row.get("quote_right_status")
-               or row.get("entitlement") or "unknown")
-        value = str(raw).strip().lower()
-        return value[:40] if value and all(c.isalnum() or c in "_- /" for c in value) else "unknown"
-
-    def exchange_timestamp(value, market):
-        """OpenD update_time is market-local. Normalize it before transport so
-        the backend never mistakes New York/Tokyo wall time for UTC."""
-        if value is None:
-            return None
-        raw = str(value).strip()
-        if not raw or raw.lower() in ("nan", "nat", "none", "n/a"):
-            return None
-        try:
-            import datetime as _dt
-            numeric = float(raw)
-            if numeric > 0:
-                return _dt.datetime.fromtimestamp(
-                    numeric, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        except (TypeError, ValueError, OverflowError):
-            pass
-        try:
-            import datetime as _dt
-            from zoneinfo import ZoneInfo
-            parsed = _dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-            if parsed.tzinfo is None:
-                zone = ZoneInfo("Asia/Tokyo" if market == "JP" else "America/New_York")
-                parsed = parsed.replace(tzinfo=zone)
-            return parsed.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        except Exception:
-            return None
-
-    def first_present(*values):
-        for value in values:
-            raw = str(value).strip()
-            if raw and raw.lower() not in ("nan", "nat", "none", "n/a"):
-                return value
-        return None
+    quote_right = _quote_right
+    exchange_timestamp = _exchange_timestamp
+    first_present = _first_present
 
     stocks = []
     for _, r in df.iterrows():
@@ -427,6 +467,432 @@ def rows_from_snapshot(df):
                 pass
         stocks.append(row)
     return stocks
+
+
+# ── 2026-10-22: 米国の取引時間外の価格(moomoo が主役・Twelve Data を使わない) ──
+# 取引所の暦(argus_market_clock)の時間帯を、行の印に使う短い名前へ写す。
+# OVERNIGHT_CLOSED は取引日の 20:00〜翌4:00(米国東部)で、夜間取引の時間帯。
+_US_PRICE_SESSIONS = {
+    "PRE_MARKET": "PRE", "REGULAR": "REGULAR",
+    "AFTER_HOURS": "POST", "OVERNIGHT_CLOSED": "OVERNIGHT",
+}
+# snapshot の欄の頭(公式 get_market_snapshot: pre_* / after_* / overnight_*)
+_EXTENDED_FIELD_PREFIX = {"PRE": "pre", "POST": "after", "OVERNIGHT": "overnight"}
+
+
+def _market_clock():
+    from pathlib import Path
+    root = str(Path(__file__).resolve().parents[1])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    import argus_market_clock
+    return argus_market_clock
+
+
+def us_quote_session(now=None):
+    """REGULAR / PRE / POST / OVERNIGHT, or None when no US price session runs.
+
+    週末・休場日は None(夜間取引の有無は推測しない)。"""
+    clock = _market_clock()
+    state = clock.market_session(clock.US_EQUITY, now)
+    if not state.get("isTradingDay"):
+        return None
+    return _US_PRICE_SESSIONS.get(state.get("session"))
+
+
+def quote_session_active(now=None):
+    return us_quote_session(now) is not None
+
+
+def _iso_to_datetime(value):
+    import datetime as _dt
+    try:
+        parsed = _dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def extended_rows_from_snapshot(df, session, now=None):
+    """時間外(PRE/POST/OVERNIGHT)の価格の行と、価格が付いていない銘柄の一覧。
+
+    moomoo の snapshot には時間外の価格ごとの時刻が無いため、行の更新時刻
+    (update_time)を時間外の価格の時刻として使う。ただしその時刻が今と同じ
+    時間外の時間帯の中にある時だけ。外なら(まだ時間外の約定が無い等)
+    その銘柄は価格なしとして数え、受信時刻で代用しない。"""
+    import datetime as _dt
+    prefix = _EXTENDED_FIELD_PREFIX[session]
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    rows, unpriced = [], []
+    for _, r in df.iterrows():
+        code = str(r.get("code", ""))
+        market, _, sym = code.partition(".")
+        if market.upper() != "US" or not sym:
+            continue
+        sym = sym.upper()
+        price = _finite_number(r.get(f"{prefix}_price"))
+        stamp = _snapshot_update_ts(r, "US")
+        stamp_at = _iso_to_datetime(stamp) if stamp else None
+        # 境界ちょうど(例: 16:00:00 の引けの約定)は時間外の価格の時刻と認めない。
+        in_session = (stamp_at is not None
+                      and stamp_at <= now + _dt.timedelta(seconds=5)
+                      and us_quote_session(stamp_at) == session
+                      and us_quote_session(stamp_at - _dt.timedelta(seconds=1)) == session)
+        if price is None or price <= 0 or not in_session:
+            unpriced.append(sym)
+            continue
+        right = _quote_right(r)
+        row = {
+            "market": "US", "symbol": sym,
+            "name": str(_first_present(r.get("name")) or "")[:100],
+            "price": price,
+            "session": session,
+            "exchangeTs": stamp,
+            "extendedTs": stamp,
+            "quoteRight": right, "entitlement": right,
+        }
+        change = _finite_number(r.get(f"{prefix}_change_val"))
+        rate = _finite_number(r.get(f"{prefix}_change_rate"))
+        if change is not None and rate is not None:
+            # 公式の欄の値(rate は 20 = 20%)をそのまま運ぶ。比べる基準は moomoo の定義。
+            row["changeAbs"] = round(change, 4)
+            row["changePct"] = round(rate, 4)
+        for source_key, target_key in ((f"{prefix}_high_price", "high"),
+                                       (f"{prefix}_low_price", "low"),
+                                       (f"{prefix}_turnover", "turnover")):
+            value = _finite_number(r.get(source_key))
+            if value is not None:
+                row[target_key] = value
+        volume = _finite_number(r.get(f"{prefix}_volume"))
+        if volume is not None and volume >= 0:
+            row["volume"] = int(volume)
+        regular = _finite_number(r.get("last_price"))
+        if regular is not None and regular > 0:
+            row["regularClose"] = regular
+        rows.append(row)
+    return rows, unpriced
+
+
+def fetch_us_extended_quotes(qc, codes, session, state=None, now=None, ret_ok=None):
+    """時間外の snapshot を1回だけ取る。数は心拍に出す(夜間の権利が無い等の確認用)。"""
+    import datetime as _dt
+    state = STATE if state is None else state
+    ret_ok = RET_OK if ret_ok is None else ret_ok
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    state["usExtendedSession"] = session
+    state["usExtendedCheckedAt"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        ret, df = qc.get_market_snapshot(list(codes))
+    except Exception as exc:
+        state["usExtendedStatus"] = "snapshot_error"
+        state["usSnapshotErrors"] = int(state.get("usSnapshotErrors") or 0) + 1
+        print(time.strftime("%H:%M:%S"), "US extended snapshot exception:", type(exc).__name__)
+        return []
+    if ret != ret_ok:
+        state["usExtendedStatus"] = "snapshot_error"
+        state["usSnapshotErrors"] = int(state.get("usSnapshotErrors") or 0) + 1
+        state["usLastErrorClass"] = classify_opend_error(df)
+        print(time.strftime("%H:%M:%S"), "US extended snapshot error:", str(df)[:160])
+        return []
+    state["lastSnapshotOkAt"] = time.time()
+    state["consecutiveSnapshotErrors"] = 0
+    state["openDErrorClass"] = None
+    rows, unpriced = extended_rows_from_snapshot(df, session, now=now)
+    state["usExtendedPriced"] = len(rows)
+    state["usExtendedUnpriced"] = len(unpriced)
+    # 1銘柄も価格が付かない時は、時間帯の権利(特に夜間)が無い可能性を示す。
+    state["usExtendedStatus"] = "ok" if rows else "no_price_in_session"
+    return rows
+
+
+# ── 2026-10-22: 米国の日足(確定足)を moomoo から取り込む ─────────────────────
+# サーバーからブリッジへは届かないので、サーバーが「欲しい日足の一覧」を
+# us-universe?scope=reference で出し、ブリッジが取引時間外に読みに行く。
+# 過去の日足の取得枠(get_history_kl_quota)を毎回確かめ、残りを心拍に出し、
+# 予備を残して枠を超えないようにする。注文・口座の機能には触れない。
+REFERENCE_CHECK_SEC = max(300, int(os.environ.get("ARGUS_REFERENCE_CHECK_SEC", "1800")))
+KLINE_QUOTA_RESERVE = max(0, int(os.environ.get("ARGUS_KLINE_QUOTA_RESERVE", "5")))
+KLINE_MAX_NEW_PER_RUN = max(0, int(os.environ.get("ARGUS_KLINE_MAX_NEW_PER_RUN", "20")))
+KLINE_PAUSE_SEC = 0.6          # 公式の上限 60回/30秒 を下回る間隔
+KLINE_MAX_PAGES = 4            # 1000本 × 4 = 約15年分まで
+_US_CODE_RE = None
+
+
+def _valid_us_code(code):
+    global _US_CODE_RE
+    if _US_CODE_RE is None:
+        import re
+        _US_CODE_RE = re.compile(r"US\.[A-Z][A-Z0-9.\-]{0,9}")
+    return isinstance(code, str) and bool(_US_CODE_RE.fullmatch(code))
+
+
+def fetch_reference_plan():
+    """サーバーの依頼一覧。読めない時は None(古い一覧で取りに行かない)。"""
+    try:
+        response = requests.get(f"{BACKEND}/api/argus/us-universe",
+                                params={"scope": "reference"},
+                                headers={"X-ARGUS-ADMIN-TOKEN": TOKEN}, timeout=20)
+        if not response.ok:
+            return None
+        body = response.json()
+        return body if isinstance(body, dict) and body.get("scope") == "reference" else None
+    except Exception:
+        return None
+
+
+def read_kline_quota(qc, ret_ok=None):
+    """(使った数, 残り, 期間内に取得済みのコードの集合) または None。"""
+    ret_ok = RET_OK if ret_ok is None else ret_ok
+    try:
+        ret, data = qc.get_history_kl_quota(get_detail=True)
+    except Exception:
+        return None
+    if ret != ret_ok or not isinstance(data, (list, tuple)) or len(data) < 2:
+        return None
+    try:
+        used, remain = int(data[0]), int(data[1])
+    except (TypeError, ValueError):
+        return None
+    rest = list(data[2:])
+    details = rest[0] if len(rest) == 1 and isinstance(rest[0], (list, tuple)) else rest
+    codes = {str(item.get("code")) for item in details
+             if isinstance(item, dict) and item.get("code")}
+    return used, remain, codes
+
+
+def fetch_daily_rows(qc, code, start, end, ret_ok=None, sleep=None):
+    """確定日足 [[日付, 始値, 高値, 安値, 終値, 出来高], ...] と、失敗時の理由の記号。"""
+    ret_ok = RET_OK if ret_ok is None else ret_ok
+    sleep = time.sleep if sleep is None else sleep
+    try:
+        from moomoo import KLType, AuType
+        ktype, autype = KLType.K_DAY, AuType.QFQ
+    except Exception:
+        ktype, autype = "K_DAY", "qfq"
+    rows, page = [], None
+    for page_number in range(KLINE_MAX_PAGES):
+        try:
+            ret, df, page = qc.request_history_kline(
+                code, start=start, end=end, ktype=ktype, autype=autype,
+                max_count=1000, page_req_key=page)
+        except Exception:
+            return None, "api_exception"
+        if ret != ret_ok:
+            text = str(df).lower()
+            return None, ("permission" if "permission" in text
+                          else "quota" if "quota" in text
+                          else "api_error")
+        for _, r in df.iterrows():
+            day = str(r.get("time_key") or "")[:10]
+            rows.append([day, _finite_number(r.get("open")), _finite_number(r.get("high")),
+                         _finite_number(r.get("low")), _finite_number(r.get("close")),
+                         _finite_number(r.get("volume"))])
+        if not page:
+            break
+        sleep(KLINE_PAUSE_SEC)
+    return rows, None
+
+
+# ── 2026-10-23: VWAP 用の当日の5分足(通常取引だけ) ─────────────────────────
+# サーバーが取引中だけ us-universe?scope=reference の vwap に銘柄を出す。ブリッジは
+# 30分ごとに当日の5分足を取って送り、サーバーが VWAP を計算する。取得枠は日足と同じ。
+VWAP_CHECK_SEC = max(600, int(os.environ.get("ARGUS_VWAP_CHECK_SEC", "1800")))
+
+
+def fetch_intraday_rows(qc, code, session_date, ret_ok=None):
+    """当日の5分足 [[時刻, 高値, 安値, 終値, 出来高], ...] と、失敗時の理由の記号。
+    request_history_kline の extended_time は既定で False(通常取引だけ)。"""
+    ret_ok = RET_OK if ret_ok is None else ret_ok
+    try:
+        from moomoo import KLType, AuType
+        ktype, autype = KLType.K_5M, AuType.NONE
+    except Exception:
+        ktype, autype = "K_5M", "None"
+    try:
+        ret, df, _page = qc.request_history_kline(
+            code, start=session_date, end=session_date, ktype=ktype, autype=autype,
+            max_count=200)
+    except Exception:
+        return None, "api_exception"
+    if ret != ret_ok:
+        text = str(df).lower()
+        return None, ("permission" if "permission" in text
+                      else "quota" if "quota" in text else "api_error")
+    rows = []
+    for _, r in df.iterrows():
+        key = str(r.get("time_key") or "")
+        if key[:10] != session_date:
+            continue
+        rows.append([key[:19], _finite_number(r.get("high")), _finite_number(r.get("low")),
+                     _finite_number(r.get("close")), _finite_number(r.get("volume"))])
+    return rows, None
+
+
+def run_vwap_job(qc, plan, state=None):
+    """依頼された銘柄の当日の5分足を、取得枠の範囲で取り、1銘柄ずつ送る。送った数を返す。"""
+    import datetime as _dt
+    state = STATE if state is None else state
+    session_date = (plan or {}).get("vwapSessionDate")
+    codes = [code for code in (plan or {}).get("vwap") or [] if _valid_us_code(code)]
+    state["vwapCheckedAt"] = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if not codes or not isinstance(session_date, str):
+        state["vwapStatus"] = "not_requested"
+        return 0
+    quota = read_kline_quota(qc)
+    if quota is None:
+        state["vwapStatus"] = "quota_unknown"
+        return 0
+    used, remain, pulled = quota
+    sent = skipped = failed = 0
+    for code in codes:
+        is_new = code not in pulled
+        if is_new and remain - KLINE_QUOTA_RESERVE <= 0:
+            skipped += 1
+            continue
+        rows, error = fetch_intraday_rows(qc, code, session_date)
+        if is_new and error != "permission":
+            remain, used = remain - 1, used + 1
+            pulled.add(code)
+        if not rows:
+            failed += 1
+            continue
+        try:
+            if _post_reference({"kind": "intraday5m", "symbol": code.split(".", 1)[1],
+                                "sessionDate": session_date, "bars": rows}):
+                sent += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+        time.sleep(KLINE_PAUSE_SEC)
+    state["vwapStatus"] = "ok" if sent else ("quota_reserve" if skipped else "no_bars")
+    state["vwapSent"], state["vwapSkipped"], state["vwapFailed"] = sent, skipped, failed
+    state["dailyKlineQuotaRemain"] = remain
+    return sent
+
+
+def vwap_job_due(clock, last_at):
+    """VWAP 用の5分足は取引中だけ取る。"""
+    return clock - last_at >= VWAP_CHECK_SEC and us_quote_session() == "REGULAR"
+
+
+SYMBOL_LIST_PART_ROWS = 5000
+
+
+def fetch_us_symbol_rows(qc, ret_ok=None):
+    """米国の株式・ETFの一覧 [[記号, 名前, 種類, 取引所], ...]。上場廃止は除く。
+    片方でも取れなければ None(半端な一覧で差し替えない)。"""
+    ret_ok = RET_OK if ret_ok is None else ret_ok
+    try:
+        from moomoo import Market, SecurityType
+        market, kinds = Market.US, ((SecurityType.STOCK, "stock"), (SecurityType.ETF, "etf"))
+    except Exception:
+        market, kinds = "US", (("STOCK", "stock"), ("ETF", "etf"))
+    rows = []
+    for security_type, kind in kinds:
+        try:
+            ret, df = qc.get_stock_basicinfo(market, security_type)
+        except Exception:
+            return None
+        if ret != ret_ok:
+            return None
+        for _, r in df.iterrows():
+            code = str(r.get("code") or "")
+            prefix, _, symbol = code.partition(".")
+            if prefix.upper() != "US" or not symbol:
+                continue
+            if str(r.get("delisting")).strip().lower() in ("true", "1"):
+                continue
+            exchange = str(_first_present(r.get("exchange_type")) or "").upper()[:24]
+            rows.append([symbol.upper(), str(_first_present(r.get("name")) or "")[:120],
+                         kind, exchange])
+    return rows
+
+
+def send_us_symbol_list(rows, post=None):
+    """分けて送る。全部送れた時だけ True。"""
+    post = _post_reference if post is None else post
+    run_id = secrets.token_hex(8)
+    parts = max(1, (len(rows) + SYMBOL_LIST_PART_ROWS - 1) // SYMBOL_LIST_PART_ROWS)
+    for part in range(parts):
+        chunk = rows[part * SYMBOL_LIST_PART_ROWS:(part + 1) * SYMBOL_LIST_PART_ROWS]
+        if not post({"kind": "symbolList", "runId": run_id, "part": part,
+                     "parts": parts, "rows": chunk}):
+            return False
+    return True
+
+
+def run_symbol_list_job(qc, state=None):
+    import datetime as _dt
+    state = STATE if state is None else state
+    state["symbolListCheckedAt"] = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = fetch_us_symbol_rows(qc)
+    if rows is None:
+        state["symbolListStatus"] = "provider_error"
+        return 0
+    try:
+        sent = send_us_symbol_list(rows)
+    except Exception as exc:
+        print(time.strftime("%H:%M:%S"), "symbol list post error:", type(exc).__name__)
+        sent = False
+    state["symbolListStatus"] = "ok" if sent else "post_error"
+    state["symbolListCount"] = len(rows)
+    return len(rows) if sent else 0
+
+
+def _post_reference(payload):
+    response = _post_signed("/api/argus/us-reference-push", payload, timeout=60)
+    return response.ok
+
+
+def run_daily_reference_job(qc, plan, state=None, sleep=None):
+    """依頼された日足を取得枠の範囲で取り、1銘柄ずつ送る。送った数を返す。"""
+    import datetime as _dt
+    state = STATE if state is None else state
+    sleep = time.sleep if sleep is None else sleep
+    items = [item for item in (plan or {}).get("daily") or []
+             if isinstance(item, dict) and _valid_us_code(item.get("code"))]
+    state["dailyKlineCheckedAt"] = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    state["dailyKlineRequested"] = len(items)
+    if not items:
+        state["dailyKlineStatus"] = "up_to_date"
+        return 0
+    quota = read_kline_quota(qc)
+    if quota is None:
+        # 残りが分からない時は取りに行かない(枠を超えない側に倒す)。
+        state["dailyKlineStatus"] = "quota_unknown"
+        return 0
+    used, remain, pulled = quota
+    sent = new = skipped = failed = 0
+    for item in items:
+        code = item["code"]
+        is_new = code not in pulled
+        if is_new and (remain - KLINE_QUOTA_RESERVE <= 0 or new >= KLINE_MAX_NEW_PER_RUN):
+            skipped += 1
+            continue
+        rows, error = fetch_daily_rows(qc, code, str(item.get("start")), str(item.get("end")),
+                                       sleep=sleep)
+        if is_new and error != "permission":
+            remain, used, new = remain - 1, used + 1, new + 1
+            pulled.add(code)
+        symbol = code.split(".", 1)[1]
+        try:
+            if rows is None:
+                failed += 1
+                _post_reference({"kind": "dailyBars", "symbol": symbol, "error": error})
+            elif _post_reference({"kind": "dailyBars", "symbol": symbol,
+                                  "full": item.get("full") is True, "rows": rows}):
+                sent += 1
+        except Exception as exc:
+            failed += 1
+            print(time.strftime("%H:%M:%S"), "daily bars post error:", type(exc).__name__)
+        sleep(KLINE_PAUSE_SEC)
+    state.update({"dailyKlineQuotaUsed": used, "dailyKlineQuotaRemain": remain,
+                  "dailyKlineSent": sent, "dailyKlineSkippedQuota": skipped,
+                  "dailyKlineFailed": failed,
+                  "dailyKlineStatus": ("quota_reserve_reached" if skipped else
+                                       "partial" if failed else "ok")})
+    return sent
 
 
 # ── Capital distribution (大口/中口/小口の売買フロー) — v10.2 ──
@@ -798,12 +1264,18 @@ def registered_us_codes():
         return list(_REGIME_ETF_CODES)
 
 
-def shared_quote_cycle(qc):
-    """Prices only: shared ETFs plus confirmed registered US names."""
-    if not shared_session_open():
+def shared_quote_cycle(qc, now=None):
+    """Prices only: shared ETFs plus confirmed registered US names.
+
+    取引中は通常の価格、時間外(PRE/POST/OVERNIGHT)は時間外の価格を送る。"""
+    session = us_quote_session(now)
+    if session is None:
         return 0
     codes = registered_us_codes()
-    stocks, _ = fetch_market_quotes(qc, {'JP': [], 'US': codes}, disable_jp=True)
+    if session == "REGULAR":
+        stocks, _ = fetch_market_quotes(qc, {'JP': [], 'US': codes}, disable_jp=True)
+    else:
+        stocks = fetch_us_extended_quotes(qc, codes, session, now=now)
     allowed = set(codes)
     stocks = [s for s in stocks if s.get('market', '') + '.' + s.get('symbol', '') in allowed]
     if not stocks:
@@ -817,6 +1289,11 @@ def shared_quote_cycle(qc):
     return accepted or 0
 
 
+def reference_job_due(clock, last_at):
+    """参照データ(日足など)の依頼を読みに行くか。取引中は読まない。"""
+    return clock - last_at >= REFERENCE_CHECK_SEC and us_quote_session() != "REGULAR"
+
+
 def main():
     if OpenQuoteContext is None:
         print("moomoo-api is not installed: pip3 install moomoo-api", file=sys.stderr)
@@ -824,11 +1301,13 @@ def main():
     if not TOKEN:
         print("ARGUS_ADMIN_TOKEN is not set", file=sys.stderr)
         sys.exit(1)
-    print(f"argus-bridge v{BRIDGE_VERSION}: 共有ETFと登録米国株の価格; interval={INTERVAL}s")
+    print(f"argus-bridge v{BRIDGE_VERSION}: 共有ETFと登録米国株の価格(取引中と時間外); interval={INTERVAL}s")
     # OpenD initialization can wait indefinitely in the SDK. Only one bounded-
     # cadence worker may own that wait; health reporting never waits for it.
     worker = None
-    last_quote_at = last_hb_at = float('-inf')
+    reference_worker = None
+    vwap_worker = None
+    last_quote_at = last_hb_at = last_reference_at = last_vwap_at = float('-inf')
     while True:
         clock = time.monotonic()
         if clock - last_hb_at >= HEARTBEAT_INTERVAL:
@@ -836,13 +1315,64 @@ def main():
             status = send_heartbeat(disable_jp=True)
             if status != 200:
                 print('bridge heartbeat unavailable:', status, flush=True)
-        if (clock - last_quote_at >= INTERVAL and shared_session_open()
+        if (clock - last_quote_at >= INTERVAL and quote_session_active()
                 and (worker is None or not worker.is_alive())):
             last_quote_at = clock
             worker = Thread(target=_shared_quote_worker, daemon=True,
                             name='shared-market-quotes')
             worker.start()
+        if (reference_job_due(clock, last_reference_at)
+                and (reference_worker is None or not reference_worker.is_alive())):
+            last_reference_at = clock
+            reference_worker = Thread(target=_reference_worker, daemon=True,
+                                      name='us-reference-data')
+            reference_worker.start()
+        if (vwap_job_due(clock, last_vwap_at)
+                and (vwap_worker is None or not vwap_worker.is_alive())):
+            last_vwap_at = clock
+            vwap_worker = Thread(target=_vwap_worker, daemon=True, name='us-vwap-bars')
+            vwap_worker.start()
         time.sleep(min(30, HEARTBEAT_INTERVAL))
+
+
+def _reference_worker():
+    """依頼が無ければ OpenD に接続しない。"""
+    qc = None
+    try:
+        plan = fetch_reference_plan()
+        if not plan or not (plan.get("daily") or plan.get("symbolListNeeded") is True):
+            if plan is not None:
+                STATE["dailyKlineStatus"] = "up_to_date"
+            return
+        qc = OpenQuoteContext(host=HOST, port=PORT)
+        if plan.get("daily"):
+            run_daily_reference_job(qc, plan)
+        else:
+            STATE["dailyKlineStatus"] = "up_to_date"
+        if plan.get("symbolListNeeded") is True:
+            run_symbol_list_job(qc)
+    except Exception as exc:
+        print('us reference data unavailable:', type(exc).__name__, flush=True)
+    finally:
+        if qc is not None:
+            qc.close()
+
+
+def _vwap_worker():
+    """依頼が無ければ OpenD に接続しない。"""
+    qc = None
+    try:
+        plan = fetch_reference_plan()
+        if not plan or not plan.get("vwap"):
+            STATE["vwapStatus"] = "not_requested"
+            return
+        qc = OpenQuoteContext(host=HOST, port=PORT)
+        run_vwap_job(qc, plan)
+    except Exception as exc:
+        print('us vwap bars unavailable:', type(exc).__name__, flush=True)
+    finally:
+        if qc is not None:
+            qc.close()
 
 
 def _shared_quote_worker():

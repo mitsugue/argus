@@ -21,12 +21,21 @@ def _rows(monkeypatch, replies):
 
 def test_target_price_probes_count_only_a_real_field(monkeypatch):
     rows = _rows(monkeypatch, {
-        "twelvedata.com/price_target": (200, {"status": "error", "code": 403, "message": "plan"}),
-        "twelvedata.com/recommendations": (200, {"trends": {"current_month": {}}}),
         "finnhub.io/api/v1/stock/price-target": (403, {"error": "premium"}),
         "finnhub.io/api/v1/stock/recommendation": (200, [{"buy": 10}]),
     })
-    assert rows["twelvedata-price-target"]["ok"] is False and rows["twelvedata-price-target"]["httpStatus"] == 403
-    assert rows["twelvedata-recommendations"]["ok"] is True
     assert rows["finnhub-price-target"]["ok"] is False
     assert rows["finnhub-recommendation"]["ok"] is True
+
+
+def test_twelve_data_connection_probes_are_removed(monkeypatch):
+    """2026-10-22 (owner): US data moved to moomoo; the admin Twelve Data probes
+    (quote, time series, target price, recommendations) are gone so the
+    diagnostics spend nothing there."""
+    called = []
+    monkeypatch.setattr(scanner, "_td_get", lambda *a, **k: called.append(a) or R(500, {}))
+    rows = _rows(monkeypatch, {})
+    assert not [name for name in rows if name.startswith("twelvedata")]
+    assert called == []
+    cached = scanner._provider_diagnostics_cached_only()
+    assert not [item for item in cached["items"] if item["provider"].startswith("twelvedata")]

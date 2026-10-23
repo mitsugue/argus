@@ -165,7 +165,10 @@ REPOSITORY_PROVIDER_PRIORITY: Dict[Tuple[str, str], Tuple[str, ...]] = {
     ("JP", "INDEX_PROXY"): ("moomoo", "jquants"),
     ("JP", "NAV"): ("toushin_library",),
     ("US", "QUOTE"): ("moomoo", "twelvedata", "finnhub"),
-    ("US", "OHLCV_BAR"): ("twelvedata", "finnhub"),
+    # 2026-10-23 オーナー承認(本人の言葉:「米国の判断用の終値と日足の取得元にmoomooを加えてください」
+    # 「この3つ(終値の取得元・日足の優先順と承認の記録・VWAPを当日の足で計算)を、私の作業として進めてよい」):
+    # 米国の日足は moomoo の確定足を先頭にする。既存の取得元の順番は変えない。
+    ("US", "OHLCV_BAR"): ("moomoo", "twelvedata", "finnhub"),
     ("US", "INDEX_PROXY"): ("moomoo", "twelvedata", "finnhub"),
     ("FX", "QUOTE"): ("yahoo", "fred"),
     ("FX", "RATE"): ("yahoo", "fred"),

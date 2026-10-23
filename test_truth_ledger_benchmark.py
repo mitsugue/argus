@@ -12,8 +12,9 @@ from scripts import truth_ledger_benchmark as benchmark
 
 ROOT = pathlib.Path(__file__).resolve().parent
 SCRIPT = ROOT / "scripts" / "truth_ledger_benchmark.py"
-SMOKE_DIGEST = "ed41de1ba5cf2455293489e8bd14238232a572c03b36d7af1ddb54ba295ea29a"
-BOUNDED_DIGEST = "13556938f3259f49e2c8127c4a1b969f5b66be2aa7d3a3012c2d38ad6c348297"
+# 2026-10-23: 米国の日足の取得元に moomoo を加えた(オーナー承認)ため、観測の件数と要約値が変わった。
+SMOKE_DIGEST = "dc0e42078c76a344fa1dfab9fa8b9c7fdaee18d2032705ca294ff792e9a43954"
+BOUNDED_DIGEST = "828151fef7a6f5504026410d367139f9c5f6a1b990ca15f27693b08db82e7b10"
 
 
 @pytest.fixture(scope="module")
@@ -49,7 +50,8 @@ def test_smoke_report_is_bounded_valid_and_repository_representative(smoke_repor
     assert smoke_report["passed"] is True
     assert smoke_report["counts"] == {
         "requestCount": 10,
-        "decisionObservationCount": 21,
+        # 2026-10-23: 米国の日足の取得元に moomoo を加えた(オーナー承認)ため1件増えた。
+        "decisionObservationCount": 22,
         "targetObservationCount": 10,
         "selectionCount": 10,
         "selectedCount": 10,
@@ -144,7 +146,8 @@ def test_full_bounded_fixture_stays_within_contract_caps():
     assert report["mode"] == "bounded"
     assert report["counts"] == {
         "requestCount": 32,
-        "decisionObservationCount": 64,
+        # 2026-10-23: 米国の日足の取得元に moomoo を加えた(オーナー承認)ため3件増えた。
+        "decisionObservationCount": 67,
         "targetObservationCount": 32,
         "selectionCount": 32,
         "selectedCount": 32,

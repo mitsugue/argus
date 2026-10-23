@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # 2026-10-23 オーナー承認: 米国の日足(OHLCV_BAR)の優先順の先頭に moomoo の確定足を加えた正確な内容。
+    # 承認の言葉は argus_market_data_truth.py の該当行のコメントに記録。次の変更はまた止まる。
+    'argus_market_data_truth.py': '399a3811f726232432ecfad50d24b2bd6bac26f0',
     # 受領済みの公式結果を既存の見立てとニュースへ渡す正確な内容。
     'argus_macro_material.py': 'fdabb0863e0df5de12e4dd6c835e232ce7c65bc2',
     'test_argus_macro_material.py': 'b5e68b9722079359a1f74f72a21c527e80d94332',
@@ -223,9 +226,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_sector_heatmap.py': '5a149728db22320a40a0e2d00d7ce3f95dc32035',
     'test_argus_material_translation.py': '80f68a5abad282c920926dbb8b9541d97da016ae',
     'test_argus_queue_v1152_backend.py': 'ec3d8c65c5b48755539e0dfdc0f93ccf6362cfb1',
-    'test_argus_shared_bridge.py': '5140426d122bce98289952eb528e6fda34fd8536',
+    'test_argus_shared_bridge.py': 'bf7b0230c73d5eaa7eb6f4834bce806e3abc9a3e',
     'bridge/README.md': '9bcd2afec193b966d963ad7382c43136ed283e7c',
-    'bridge/bridge.env.example': 'd514273baa10eadeef6d274a9befc553e88e656e',
+    'bridge/bridge.env.example': 'b6dbd6d5d7185d2949908ab8699bb3160bd26a31',
     'bridge/moomoo_push.py': '5268c303608bad317a6e47bbe891a64860959674',
     'test_argus_saved_overview.py': 'a0a24d21fa9d37ee44d3e69a9e2991b3dbbe910a',
     'test_argus_overview_policy.py': '3051e457321f71c6e7a4ba1e9ce34179e42a0877',
@@ -686,6 +689,14 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_truth_ledger_benchmark.py",
+    "test_moomoo_us_vwap.py",
+    "test_moomoo_us_decision_close.py",
+    "test_moomoo_us_fallback.py",
+    "test_moomoo_us_symbol_search.py",
+    "test_moomoo_us_daily_bars.py",
+    "argus_moomoo_us.py",
+    "test_moomoo_us_extended_hours.py",
     "test_td_bridge_cover.py",
     "test_argus_route_usage.py",
     "argus_route_usage.py",
