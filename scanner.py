@@ -20468,7 +20468,13 @@ def _news_intake_cycle(*, backfill=False, backfill_days=10):
 
 def _news_intake_cycle_locked(*, backfill=False, backfill_days=10):
     started = time.time()
-    if _news_review_saved_policy_decisions():
+    # Stored news is re-derived once per news policy version (rules only).
+    with _NEWS_INTEL_LOCK:
+        reclassified = argus_news_intelligence.reclassify_stored_events(
+            _NEWS_INTEL["events"], at=_ai_now_iso())
+        for row in reclassified["audit"]:
+            _news_audit(row)
+    if _news_review_saved_policy_decisions() or reclassified["reviewed"]:
         _news_intel_persist()
     try:
         repair = _news_repair_digest_containers()
