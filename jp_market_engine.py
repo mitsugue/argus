@@ -856,34 +856,22 @@ def _value_and_time(value: Optional[Mapping[str, Any]], cutoff: str) \
 
 
 def evaluate_d03(*, cutoff: str,
-                 direct_evidence: Optional[Mapping[str, Any]] = None,
-                 proxy_evidence: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+                 direct_evidence: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """D03: 20-session relative strength of the Nikkei 225 itself against the
+    S&P 500 (日経平均÷S&P500).  The former 1321-vs-SPY ETF fallback is retired
+    (owner 2026-10-23: 全て日経平均そのもので見ること); without the direct
+    index evidence the family is MISSING and nothing is substituted."""
     direct_identity_ok = (isinstance(direct_evidence, Mapping)
                           and _identity_matches(
                               direct_evidence, "NIKKEI_225_INDEX"))
-    proxy_identity_ok = (isinstance(proxy_evidence, Mapping)
-                         and _identity_matches(proxy_evidence, "1321"))
-    direct = (_value_and_time(direct_evidence, cutoff)
-              if direct_identity_ok else None)
-    proxy = (_value_and_time(proxy_evidence, cutoff)
-             if proxy_identity_ok else None)
-    if direct is not None:
-        source_type, lineage, proposition = (
-            "DIRECT_INDEX", "JP_MARKET_ENGINE_ORIGINAL", "JP_MARKET_ENGINE-D03-ORIGINAL")
-        selected = direct
-    elif proxy is not None:
-        source_type, lineage, proposition = (
-            "ETF_PROXY", "ARGUS_CANDIDATE", "ARGUS-D03-ETF-PROXY")
-        selected = proxy
-    else:
-        source_type, lineage, proposition, selected = (
-            "NONE", "JP_MARKET_ENGINE_ORIGINAL", "JP_MARKET_ENGINE-D03-ORIGINAL", None)
+    selected = (_value_and_time(direct_evidence, cutoff)
+                if direct_identity_ok else None)
     return {
         "family": "D03",
-        "propositionId": proposition,
-        "lineage": lineage,
+        "propositionId": "JP_MARKET_ENGINE-D03-ORIGINAL",
+        "lineage": "JP_MARKET_ENGINE_ORIGINAL",
         "status": "AVAILABLE" if selected is not None else "MISSING",
-        "sourceType": source_type,
+        "sourceType": "DIRECT_INDEX" if selected is not None else "NONE",
         "relativeStrengthValue": selected["value"] if selected else None,
         "indexRatio": selected.get("indexRatio") if selected else None,
         "comparisonDate": selected.get("comparisonDate") if selected else None,
@@ -895,12 +883,10 @@ def evaluate_d03(*, cutoff: str,
         "conditionLineage": "ARGUS_CANDIDATE",
         "sourceRef": selected.get("sourceRef") if selected else None,
         "directIdentityRejected": direct_evidence is not None and not direct_identity_ok,
-        "proxyIdentityRejected": proxy_evidence is not None and not proxy_identity_ok,
         "activationSwitch": None,
         "validationStatus": "UNVALIDATED",
         "missing": [] if selected else ["japan_relative_strength"],
-        "note": ("Proxy candidate; not direct Nikkei evidence."
-                 if source_type == "ETF_PROXY" else None),
+        "note": None,
     }
 
 
@@ -1359,7 +1345,6 @@ def evaluate_d01_d07(*, cutoff: str,
                      two_market_rows: Iterable[Mapping[str, Any]] = (),
                      margin_1570_rows: Iterable[Mapping[str, Any]] = (),
                      relative_strength_direct: Optional[Mapping[str, Any]] = None,
-                     relative_strength_proxy: Optional[Mapping[str, Any]] = None,
                      nikkei_eps: Optional[Mapping[str, Any]] = None,
                      nikkei_index: Optional[Mapping[str, Any]] = None,
                      nikkei_license_status: str = "LICENSE_BLOCKED",
@@ -1377,8 +1362,7 @@ def evaluate_d01_d07(*, cutoff: str,
         "D01": evaluate_d01(two_market_rows, cutoff=cutoff),
         "D02": evaluate_d02(margin_1570_rows, cutoff=cutoff),
         "D03": evaluate_d03(
-            cutoff=cutoff, direct_evidence=relative_strength_direct,
-            proxy_evidence=relative_strength_proxy),
+            cutoff=cutoff, direct_evidence=relative_strength_direct),
         "D04": evaluate_d04(
             cutoff=cutoff, analysis_instrument="NIKKEI_225_INDEX",
             eps_evidence=nikkei_eps, index_evidence=nikkei_index,

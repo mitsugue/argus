@@ -49,7 +49,7 @@ VALUATION_STATEMENT_PAGES = 8        # the issuer's statements history is pagina
 STATEMENTS_PATHS = ("/fins/summary", "/fins/statements")
 STATEMENTS_CACHE_SECONDS = 4 * 3600.0
 VALUATION_STATEMENTS_PER_CYCLE = 6   # bounded provider budget per 10-minute cycle
-REFERENCE_JP_HISTORY = ("1321",)         # SIG-03 proxy (1321 vs SPY)
+REFERENCE_JP_HISTORY = ("1321",)         # 1321 chart history (supporting ETF)
 REFERENCE_US_HISTORY = ("SPY",)
 US_INTEREST_MAX = 16
 # Crypto daily bars come from Twelve Data pairs; the chart route reads the
@@ -379,7 +379,7 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
             sleeper(1.0)
     warm["historyWarmed"] = warmed
     warm["interestWarmedAt"] = stamp
-    # SIG-03 proxy inputs (1321 vs SPY) live in the same history caches.
+    # Supporting ETF histories (1321 / SPY) live in the same history caches.
     reference = 0
     for code in REFERENCE_JP_HISTORY:
         try:
@@ -388,7 +388,7 @@ def _warm_cycle(host: Any, *, sleeper: Callable[[float], None], now: Callable[[]
         except Exception as exc:
             warm["referenceErrorClass"] = f"jp:{type(exc).__name__}"
     for code in REFERENCE_US_HISTORY:
-        # The SIG-03 proxy reads the chart history cache, which the Twelve
+        # The SPY chart reads the chart history cache, which the Twelve
         # Data fetcher fills; the Finnhub-based fetcher fills a different cache.
         warmed_us = False
         for name in ("_td_price_history", "_us_price_history"):

@@ -43211,43 +43211,6 @@ def _jp_market_engine_relative_strength_direct():
             "indexRatio": jp[-1]["close"] / us[-1]["close"], "comparisonDate": us[-1]["date"]}
 
 
-def _jp_market_engine_relative_strength_proxy():
-    """20-session relative strength of 1321 vs SPY (verified chart caches).
-
-    One PIT row for JP_MARKET_ENGINE D03's explicit ETF-proxy lane (ARGUS_CANDIDATE
-    lineage is assigned by the evaluator itself). availableFrom is after the
-    15:30 JST close of the row's session; cached-only, None when cold.
-    SPY uses only US sessions dated before the JP session: those closed at
-    06:00 JST at the latest, while a same-date US close arrives after the
-    stamp (look-ahead audit 2026-10-02)."""
-    try:
-        def twenty_day_return(rows, before=None):
-            ordered = sorted((row for row in (rows or [])
-                              if before is None or str(row.get("date") or "")[:10] < before),
-                             key=lambda row: str(row.get("date") or ""))
-            closes = [float(row["close"]) for row in ordered
-                      if isinstance(row.get("close"), (int, float))
-                      and not isinstance(row.get("close"), bool)]
-            if len(closes) < 21 or closes[-21] <= 0:
-                return None, None
-            date = str(ordered[-1].get("date") or "")[:10]
-            return closes[-1] / closes[-21] - 1, date
-        jp_return, jp_date = twenty_day_return(
-            _chart_history_cached("1321", "JP"))
-        if jp_return is None or len(jp_date or "") != 10:
-            return None
-        us_return, _us_date = twenty_day_return(
-            _chart_history_cached("SPY", "US"), before=jp_date)
-        if us_return is None:
-            return None
-        return {"instrumentId": "1321",
-                "seriesId": "relative_strength_20d", "date": jp_date,
-                "value": round(jp_return - us_return, 6),
-                "availableFrom": jp_date + "T07:00:00Z"}
-    except Exception:
-        return None
-
-
 def _jp_market_engine_foreign_flow_rows():
     """flow.foreign observations from the Market Ledger for JP_MARKET_ENGINE D05."""
     rows = []
@@ -43851,7 +43814,6 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
     if warm:
         _jq_margin_history_backfill()
-    rs_proxy = _jp_market_engine_relative_strength_proxy()
     rs_direct = _jp_market_engine_relative_strength_direct()
     flow_rows = _jp_market_engine_foreign_flow_rows()
     _jp_market_engine_statements_rows(warm=warm)
@@ -43865,13 +43827,13 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         _jp_market_feature_history_warm()
     data = {
         "creditRows": credit_rows, "margin1570Rows": margin_rows,
-        "rsProxy": rs_proxy, "rsDirect": rs_direct, "flowRows": flow_rows,
+        "rsDirect": rs_direct, "flowRows": flow_rows,
         "vixRows": vix_rows, "nikkeiRows": nikkei_rows,
         "earningsEvent": earnings_event, "earningsBars": earnings_bars,
         "sourceStatus": {
             "credit": "csv_ledger" if credit_rows else "missing",
             "margin1570": "jquants_weekly" if margin_rows else "cold_cache",
-            "relativeStrength": "direct_index_20d" if rs_direct else "etf_proxy_20d" if rs_proxy else "cold_cache",
+            "relativeStrength": "direct_index_20d" if rs_direct else "cold_cache",
             "foreignFlow": "market_ledger" if flow_rows else "missing",
             "vix": vix_source,
             "nikkei": "yahoo_ohlcv" if nikkei_rows else "cold_cache",
@@ -44108,7 +44070,6 @@ def _jp_market_engine_market_view():
             cutoff=cutoff, two_market_rows=inputs["creditRows"],
             nikkei_current_estimate=_level_map_current_valuation(cutoff, nikkei_rows=inputs["nikkeiRows"]),
             margin_1570_rows=inputs["margin1570Rows"],
-            relative_strength_proxy=inputs["rsProxy"],
             relative_strength_direct=inputs.get("rsDirect"),
             foreign_flow_rows=inputs["flowRows"],
             vix_rows=inputs["vixRows"],

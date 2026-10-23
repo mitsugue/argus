@@ -208,10 +208,11 @@ def _seed_jp_market_engine_inputs():
             "date": margin_date.isoformat(), "value": 1.42,
             "availableFrom": (margin_date + timedelta(days=7)).isoformat()
             + "T00:00:00Z"}],
-        "rsProxy": {"instrumentId": "1321",
-                    "seriesId": "relative_strength_20d",
-                    "date": rs_date.isoformat(), "value": 0.0123,
-                    "availableFrom": rs_date.isoformat() + "T07:00:00Z"},
+        "rsDirect": {"instrumentId": "NIKKEI_225_INDEX",
+                     "seriesId": "relative_strength_20d",
+                     "date": rs_date.isoformat(), "value": 0.0123,
+                     "indexRatio": 7.1,
+                     "availableFrom": rs_date.isoformat() + "T07:00:00Z"},
         "flowRows": [],
         "vixRows": _fixture_index_bars("VIX", 45, base=16.0, step=0.1,
                                        volume=0.0, next_day_available=True),
@@ -220,7 +221,7 @@ def _seed_jp_market_engine_inputs():
                                           volume=150000000.0,
                                           next_day_available=False),
         "sourceStatus": {"credit": "csv_ledger", "margin1570": "jquants_weekly",
-                         "relativeStrength": "etf_proxy_20d",
+                         "relativeStrength": "direct_index_20d",
                          "foreignFlow": "missing", "vix": "yahoo_ohlcv",
                          "nikkei": "yahoo_ohlcv"},
     }
@@ -251,7 +252,7 @@ def test_market_view_projects_real_family_states(monkeypatch):
         assert families["D01"]["conditionMet"] is True          # 6.5e11 < 8e11
         assert families["D02"]["status"] == "AVAILABLE"
         assert families["D03"]["status"] == "AVAILABLE"
-        assert families["D03"]["lineage"] == "ARGUS_CANDIDATE"  # ETF proxy lane
+        assert "日経平均÷S&P500" in families["D03"]["factNoteJa"]   # not the 1321 ETF
         assert families["D05"]["status"] == "MISSING"           # no flow feed
         assert families["D06"]["status"] == "AVAILABLE"
         assert families["D07"]["status"] == "MISSING"
