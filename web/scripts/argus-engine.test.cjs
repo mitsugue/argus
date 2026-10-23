@@ -523,7 +523,7 @@ console.log('argus-engine.test: all checks passed');
     displayedSymbols: new Set(['5803', '1321', 'NVDA', 'BTC']), requestedEvidence: ['1321', '5803'] });
   check('registered / priced / evidenced / shown are reconciled per symbol',
     deskCoverageJa(cov) === '登録 4 · 価格 3/4 · 判断根拠 2/3 · 表示 4/4' && cov.complete === false
-    && deskCoverageDetailJa(cov).join('|').includes('価格未取得: NVDA') && deskCoverageDetailJa(cov).join('|').includes('未要求（取得キューの外）: NVDA'));
+    && deskCoverageDetailJa(cov).join('|').includes('価格未取得: NVDA') && deskCoverageDetailJa(cov).join('|').includes('未要求: NVDA'));
   const hookSrc = fs.readFileSync(path.join(root, 'src/hooks/useDecisionEvidence.ts'), 'utf8');
   check('no device-side cap on the evidence queue', !hookSrc.includes('MAX_SYMBOLS_TOTAL') && hookSrc.includes('requested: [...desiredSymbols]'));
   const wl = fs.readFileSync(path.join(root, 'src/routes/Watchlist.tsx'), 'utf8');
@@ -541,7 +541,7 @@ console.log('argus-engine.test: all checks passed');
   const { deskCoverageJa: coverageJa2 } = require(path.join(root, 'src/domain/deskCoverage.ts'));
   const cov2 = { registered: 3, priced: 3, evidence: 2, evidenceApplicable: 2, displayed: 3, missingPrice: [], missingEvidence: [], notRequested: [], notDisplayed: [], complete: true };
   check('the desk header says when the stored evidence is on screen during the first fetch',
-    coverageJa2(cov2, { loading: true, generatedAt: '2026-09-07T22:00:00Z' }).includes('保存分 9/8 07:00 を表示中（更新取得中）')
+    coverageJa2(cov2, { loading: true, generatedAt: '2026-09-07T22:00:00Z' }).includes('保存分 9/8 07:00（更新中）')
     && coverageJa2(cov2, { loading: true, generatedAt: null }).endsWith('初回取得中')
     && coverageJa2(cov2, { loading: false, generatedAt: '2026-09-07T22:00:00Z' }) === '登録 3 · 価格 3/3 · 判断根拠 2/2 · 表示 3/3');
   check('Today shows the stored evidence time while the first fetch runs',

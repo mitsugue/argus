@@ -109,7 +109,7 @@ export const EntityProfileEditor: React.FC<{ assets: AssetItem[] }> = ({ assets 
       if (r.status === 401) { setStatus('合言葉が違います'); return; }
       if (!r.ok) { setStatus(`保存に失敗 (${r.status})`); return; }
       try { localStorage.setItem(TOKEN_KEY, token.trim()); } catch { /* ignore */ }
-      setStatus('保存しました(AIの自動生成では上書きされません)');
+      setStatus('保存しました');
       setOpenSym(null); setDraft(null);
       load();
     } catch { setStatus('保存に失敗(通信エラー)'); }
@@ -119,15 +119,10 @@ export const EntityProfileEditor: React.FC<{ assets: AssetItem[] }> = ({ assets 
     <section className="epe">
       <button className="epe-head" onClick={() => setCollapsed((c) => !c)}>
         <span className="epe-title">C.A.O.S. プロフィール</span>
-        <span className="epe-sub">連想メタデータ — 自動生成＋手動カスタム</span>
         <span className="epe-toggle">{collapsed ? '▸ 開く' : '▾ 閉じる'}</span>
       </button>
       {!collapsed && (
         <div className="epe-body">
-          <p className="epe-note">
-            ニュースを銘柄に連想で紐づけるための裏メタデータです。空欄は自動生成に任せられます。
-            ここでの編集はオーナーの合言葉で保存され、<b>AIの自動生成では上書きされません</b>。
-          </p>
           <input className="epe-token" type="password" placeholder="合言葉(オーナートークン・この端末に保存)"
                  value={token} onChange={(e) => setToken(e.target.value)} />
           {(() => {

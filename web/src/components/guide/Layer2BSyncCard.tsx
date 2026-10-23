@@ -127,25 +127,20 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
         <div className="guide-term">
           <span className="guide-term__en">登録銘柄の同期</span>
           <span className="guide-term__ja">
-            合言葉を設定すると、登録銘柄の追加・削除を自動保存し、定期分析へ反映します。
-            対象 {items.length} 銘柄（有効 {registeredLocal.length}）。
+            対象 {items.length} 銘柄（有効 {registeredLocal.length}）
           </span>
         </div>
         <div className="guide-term">
           <span className="guide-term__en">オーナー同期トークン</span>
           <span className="guide-term__ja">
             <input
-              type="password" value={token} placeholder="Renderに設定したパスフレーズ"
+              type="password" value={token} placeholder="同期トークン"
               onChange={(e) => setToken(e.target.value)}
               style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box',
                        padding: '6px 8px', borderRadius: 6,
                        border: '1px solid var(--border, #2a3340)', background: 'transparent',
                        color: 'inherit', fontFamily: 'monospace' }}
             />
-            <span style={{ opacity: 0.6, fontSize: '0.85em' }}>
-              この端末にのみ保存。銘柄同期・Layer 2B採点/復元などのオーナー操作用です。
-              管理者・デプロイ権限はありません。
-            </span>
           </span>
         </div>
         <div style={{ marginTop: 4 }}>
@@ -205,13 +200,8 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
                   </div>
                 );
               })}
-              <div style={{ opacity: 0.6 }}>※校正の測定。利益保証ではない。proven表記なし。</div>
             </div>
           )}
-        </div>
-        <div className="guide-note">
-          注意: これは校正(自己採点)のためのメタデータ同期で、注文・自動売買は一切ありません。
-          公開リポ対策で、private ストア未設定の場合は採点無効(銘柄は保存されません)。
         </div>
       </div>
     </div>

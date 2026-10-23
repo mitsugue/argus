@@ -20,11 +20,10 @@ export function AssetTargetDetails({ d }: { d: DeskCardData }) {
         </dl>
         <p className="ad-detail-note">{target.source} · {outlookDay(target.fetchedAt)}取得 · {target.analysts}人</p>
         {(state.refreshFailed || (target.acquisitionStatus && target.acquisitionStatus !== 'AVAILABLE')) &&
-          <p className="ad-overview__warning">更新を確認できないため、保存した目標株価の内訳です。</p>}
-      </> : <p className="ad-detail-note">{state.loading ? '目標株価の内訳を読み込んでいます。' :
+          <p className="ad-overview__warning">更新未確認・保存値</p>}
+      </> : <p className="ad-detail-note">{state.loading ? '読み込み中' :
         state.availability[`${market}:${d.decisionFirst.symbol.toUpperCase()}`]?.status === 'NO_TARGET'
-          ? '取得元に目標株価の集計がありません。' : '目標株価の内訳は未取得です。'}</p>}
-      <p className="ad-detail-note">アナリストの集計値です。到達保証・変更速報ではありません。</p>
+          ? '取得元に目標値なし' : '未取得'}</p>}
     </section>}
     {(d.decisionFirst.targets.length > 0 || d.decisionFirst.invalidation) && <section aria-label="ARGUSの参考水準">
       <h4>ARGUSの参考水準</h4>

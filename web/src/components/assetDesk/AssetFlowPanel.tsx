@@ -42,16 +42,11 @@ export const AssetFlowPanel: React.FC<{ d: DeskCardData }> = ({ d }) => {
             {!isUS && sdg.sourceDates?.weeklyMargin && `信用残 ${outlookDay(sdg.sourceDates.weeklyMargin)}週`}
             {!isUS && sdg.sourceDates?.jsfDaily && ` · 日証金 ${outlookDay(sdg.sourceDates.jsfDaily)}`}
           </p>
-          <p className="ad-detail-note">
-            {d.asset.market === 'US'
-              ? '米国株は実測大口フローによる簡易評価です。日本の信用残・日証金の残高とは別の指標です。'
-              : '信用残は公表された残高、日証金は証券会社の調達分です。現在の注文量ではありません。逆日歩 未取得（取得経路なし）。'}
-          </p>
+          {d.asset.market !== 'US' && <p className="ad-detail-note">逆日歩 未取得</p>}
         </div>
       ) : (
         <p className="uac-next" style={{ margin: '0 0 4px', color: 'var(--text-faint)' }}>
-          {d.asset.market === 'US' ? '実測フローは未取得です。価格や出来高だけで資金流入・流出とは判定しません。'
-            : '需給の根拠は未取得です。データがないことを「需給が良い」とは評価しません。'}
+          {d.asset.market === 'US' ? '実測フロー未取得' : '需給データ未取得'}
         </p>
       )}
       {flow != null && (
