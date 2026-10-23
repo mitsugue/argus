@@ -3051,7 +3051,6 @@ def _td_int_env(name, default):
         return default
 _TD_GROW = _TWELVEDATA_PLAN in ("grow", "pro", "enterprise", "custom")
 _US_DYN_MAX     = _td_int_env("TWELVEDATA_DYNAMIC_MAX", 24 if _TD_GROW else 8)
-_TD_VWAP_MAX    = _td_int_env("TWELVEDATA_VWAP_SYMBOL_MAX", 12 if _TD_GROW else 6)
 _TD_REGIME_ETF_MAX = _td_int_env("TWELVEDATA_REGIME_ETF_MAX", 16 if _TD_GROW else 8)
 _TD_CREDIT_BUDGET_PER_MIN = _td_int_env("TWELVEDATA_CREDIT_BUDGET_PER_MIN", 55 if _TD_GROW else 8)
 # v13.5.54 (owner 2026-09-05): the plan is BASIC. "8 credits/minute" is a REQUEST
@@ -6579,6 +6578,7 @@ def api_argus_us_universe():
         return jsonify({"scope": "reference", "daily": plan[:60],
                         "dailyEnd": end.isoformat(),
                         "symbolListNeeded": _us_symbol_list_needed(),
+                        **_moomoo_vwap_plan(),
                         "asOf": _ai_now_iso()})
     syms = {s.strip().upper() for s in _US_MOVER_UNIVERSE if s.strip()}
     syms |= {s["symbol"].upper() for s in _US_WATCHLIST}
@@ -6619,6 +6619,14 @@ def api_argus_us_reference_push():
         if not isinstance(rows, list) or len(rows) > argus_moomoo_us.MAX_BARS + 200:
             return jsonify({"error": "bad_payload", "message": "rows"}), 400
         result = _moomoo_daily_receive(sym, rows, full=body.get("full") is True)
+        return jsonify({"ok": True, **result})
+    if kind == "intraday5m":
+        sym = str(body.get("symbol") or "").strip().upper()
+        if not argus_moomoo_us.SYMBOL_RE.match(sym):
+            return jsonify({"error": "bad_payload", "message": "symbol"}), 400
+        result = _moomoo_intraday_receive(sym, body.get("sessionDate"), body.get("bars"))
+        if result is None:
+            return jsonify({"error": "bad_payload", "message": "intraday5m"}), 400
         return jsonify({"ok": True, **result})
     if kind == "symbolList":
         run_id, part, parts, rows = (body.get("runId"), body.get("part"),
@@ -48691,44 +48699,96 @@ def _provider_diagnostics_cached_only():
 _MARKET_DEPTH_CACHE = {"data": None, "expires": 0.0}
 _VWAP_CACHE = {"data": None, "expires": 0.0}
 
+# 2026-10-23 オーナー承認: VWAP は moomoo の当日の5分足(通常取引だけ)から作る。
+# ブリッジが取引中に30分ごとに送る。届いていない・古い時は欠測にし、Twelve Data は使わない。
+_VWAP_SYMBOL_MAX = 12
+_VWAP_BARS_MAX_AGE_SEC = 2700
+_VWAP_BARS_PER_DAY_MAX = 100          # 6.5時間 ÷ 5分 = 78本
+_MOOMOO_INTRADAY5M = {}               # symbol -> {sessionDate, bars, lastBarAt, receivedAt}
+_MOOMOO_INTRADAY_LOCK = threading.Lock()
+
+
+def _us_session_date(now_epoch=None):
+    now = time.time() if now_epoch is None else float(now_epoch)
+    return datetime.fromtimestamp(now, pytz.utc).astimezone(TZ_ET).date().isoformat()
+
+
+def _vwap_symbols():
+    return sorted({str(x["symbol"]).upper() for x in _US_WATCHLIST})[:_VWAP_SYMBOL_MAX]
+
+
+def _moomoo_vwap_plan(now_epoch=None):
+    """取引中だけ、当日の5分足を頼む銘柄と日付を出す。"""
+    now = time.time() if now_epoch is None else float(now_epoch)
+    if not _us_market_open(datetime.fromtimestamp(now, pytz.utc).astimezone(TZ_ET)):
+        return {"vwap": [], "vwapSessionDate": None}
+    return {"vwap": [f"US.{sym}" for sym in _vwap_symbols()],
+            "vwapSessionDate": _us_session_date(now)}
+
+
+def _moomoo_intraday_receive(sym, session_date, bars, now_epoch=None):
+    """当日の5分足 [[時刻, 高値, 安値, 終値, 出来高], ...] を検証して持つ。不正なら None。"""
+    now = time.time() if now_epoch is None else float(now_epoch)
+    if session_date != _us_session_date(now) or not isinstance(bars, list) \
+            or not 0 < len(bars) <= _VWAP_BARS_PER_DAY_MAX:
+        return None
+    kept, last_key = [], None
+    for bar in bars:
+        if not isinstance(bar, list) or len(bar) != 5 or not isinstance(bar[0], str) \
+                or bar[0][:10] != session_date:
+            return None
+        try:
+            high, low, close, volume = (float(v) for v in bar[1:])
+        except (TypeError, ValueError):
+            return None
+        if not all(math.isfinite(v) for v in (high, low, close, volume)) \
+                or low <= 0 or high < low or not low <= close <= high or volume < 0:
+            return None
+        if last_key is not None and bar[0] <= last_key:
+            return None                   # 時刻の重複・逆順は信用しない
+        last_key = bar[0]
+        kept.append({"high": high, "low": low, "close": close, "volume": volume})
+    with _MOOMOO_INTRADAY_LOCK:
+        if sym not in _MOOMOO_INTRADAY5M and len(_MOOMOO_INTRADAY5M) >= 4 * _VWAP_SYMBOL_MAX:
+            return None
+        _MOOMOO_INTRADAY5M[sym] = {"sessionDate": session_date, "bars": kept,
+                                   "lastBarAt": last_key, "receivedAt": now}
+    return {"symbol": sym, "bars": len(kept)}
+
+
 def _vwap_probe():
-    """Real capability test (v10.200): compute session VWAP from Twelve Data 5-min
-    intraday bars for the US watchlist. US-session-gated, cached, quota-safe, guarded.
-    Returns {computed, values, asOf, note, probed:True}. VWAP becomes a LIVE capability
-    only when the bars actually compute — never assumed."""
+    """Session VWAP from moomoo's same-day 5-minute bars (regular hours only),
+    pushed by the bridge. Returns {computed, values, asOf, note, probed:True}.
+    VWAP becomes a LIVE capability only when the bars actually compute."""
     now = time.time()
     if _VWAP_CACHE["data"] is not None and now < _VWAP_CACHE["expires"]:
         return _VWAP_CACHE["data"]
     probe = {"computed": False, "values": {}, "probed": True, "asOf": _ai_now_iso(),
-             "note": "intraday barsから算出"}
+             "note": "moomooの当日の5分足から算出"}
     try:
-        if not _TWELVEDATA_API_KEY:
-            probe["note"] = "TWELVEDATA_API_KEY未設定のため算出不可"
-        elif not _us_market_open():
+        if not _us_market_open(datetime.fromtimestamp(now, pytz.utc).astimezone(TZ_ET)):
             probe["note"] = "米レギュラー時間外のためintraday VWAPは算出しない"
         else:
-            syms = sorted({str(x["symbol"]).upper() for x in _US_WATCHLIST})[:_TD_VWAP_MAX]
-            if syms:
-                r = _td_get("time_series", _TWELVEDATA_TS, params={
-                    "symbol": ",".join(syms), "interval": "5min", "outputsize": 96,
-                    "apikey": _TWELVEDATA_API_KEY}, timeout=15)
-                body = r.json() if r.ok else {}
-                if isinstance(body, dict) and str(body.get("status", "")).lower() != "error":
-                    vals = {}
-                    for sym in syms:
-                        node = body.get(sym) if len(syms) > 1 else body
-                        if not isinstance(node, dict):
-                            continue
-                        vw = argus_market_depth.compute_vwap(node.get("values") or [])
-                        if vw is not None:
-                            vals[sym] = vw
-                    if vals:
-                        probe.update({"computed": True, "values": vals,
-                                      "note": f"{len(vals)}銘柄のセッションVWAPを5分足から算出(算出値)"})
+            today = _us_session_date(now)
+            vals = {}
+            with _MOOMOO_INTRADAY_LOCK:
+                entries = {sym: _MOOMOO_INTRADAY5M.get(sym) for sym in _vwap_symbols()}
+            for sym, entry in entries.items():
+                if not entry or entry.get("sessionDate") != today \
+                        or now - float(entry.get("receivedAt") or 0) > _VWAP_BARS_MAX_AGE_SEC:
+                    continue
+                vw = argus_market_depth.compute_vwap(entry.get("bars") or [])
+                if vw is not None:
+                    vals[sym] = vw
+            if vals:
+                probe.update({"computed": True, "values": vals,
+                              "note": f"{len(vals)}銘柄のセッションVWAPをmoomooの5分足から算出(算出値)"})
+            else:
+                probe["note"] = "moomooの当日の5分足が未着"
     except Exception:
         probe["note"] = "VWAPプローブ失敗(次回再試行)"
     _VWAP_CACHE["data"] = probe
-    _VWAP_CACHE["expires"] = now + (1800 if probe["computed"] else 900)
+    _VWAP_CACHE["expires"] = now + 300
     return probe
 
 

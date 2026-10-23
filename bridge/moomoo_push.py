@@ -693,6 +693,89 @@ def fetch_daily_rows(qc, code, start, end, ret_ok=None, sleep=None):
     return rows, None
 
 
+# ── 2026-10-23: VWAP 用の当日の5分足(通常取引だけ) ─────────────────────────
+# サーバーが取引中だけ us-universe?scope=reference の vwap に銘柄を出す。ブリッジは
+# 30分ごとに当日の5分足を取って送り、サーバーが VWAP を計算する。取得枠は日足と同じ。
+VWAP_CHECK_SEC = max(600, int(os.environ.get("ARGUS_VWAP_CHECK_SEC", "1800")))
+
+
+def fetch_intraday_rows(qc, code, session_date, ret_ok=None):
+    """当日の5分足 [[時刻, 高値, 安値, 終値, 出来高], ...] と、失敗時の理由の記号。
+    request_history_kline の extended_time は既定で False(通常取引だけ)。"""
+    ret_ok = RET_OK if ret_ok is None else ret_ok
+    try:
+        from moomoo import KLType, AuType
+        ktype, autype = KLType.K_5M, AuType.NONE
+    except Exception:
+        ktype, autype = "K_5M", "None"
+    try:
+        ret, df, _page = qc.request_history_kline(
+            code, start=session_date, end=session_date, ktype=ktype, autype=autype,
+            max_count=200)
+    except Exception:
+        return None, "api_exception"
+    if ret != ret_ok:
+        text = str(df).lower()
+        return None, ("permission" if "permission" in text
+                      else "quota" if "quota" in text else "api_error")
+    rows = []
+    for _, r in df.iterrows():
+        key = str(r.get("time_key") or "")
+        if key[:10] != session_date:
+            continue
+        rows.append([key[:19], _finite_number(r.get("high")), _finite_number(r.get("low")),
+                     _finite_number(r.get("close")), _finite_number(r.get("volume"))])
+    return rows, None
+
+
+def run_vwap_job(qc, plan, state=None):
+    """依頼された銘柄の当日の5分足を、取得枠の範囲で取り、1銘柄ずつ送る。送った数を返す。"""
+    import datetime as _dt
+    state = STATE if state is None else state
+    session_date = (plan or {}).get("vwapSessionDate")
+    codes = [code for code in (plan or {}).get("vwap") or [] if _valid_us_code(code)]
+    state["vwapCheckedAt"] = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if not codes or not isinstance(session_date, str):
+        state["vwapStatus"] = "not_requested"
+        return 0
+    quota = read_kline_quota(qc)
+    if quota is None:
+        state["vwapStatus"] = "quota_unknown"
+        return 0
+    used, remain, pulled = quota
+    sent = skipped = failed = 0
+    for code in codes:
+        is_new = code not in pulled
+        if is_new and remain - KLINE_QUOTA_RESERVE <= 0:
+            skipped += 1
+            continue
+        rows, error = fetch_intraday_rows(qc, code, session_date)
+        if is_new and error != "permission":
+            remain, used = remain - 1, used + 1
+            pulled.add(code)
+        if not rows:
+            failed += 1
+            continue
+        try:
+            if _post_reference({"kind": "intraday5m", "symbol": code.split(".", 1)[1],
+                                "sessionDate": session_date, "bars": rows}):
+                sent += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+        time.sleep(KLINE_PAUSE_SEC)
+    state["vwapStatus"] = "ok" if sent else ("quota_reserve" if skipped else "no_bars")
+    state["vwapSent"], state["vwapSkipped"], state["vwapFailed"] = sent, skipped, failed
+    state["dailyKlineQuotaRemain"] = remain
+    return sent
+
+
+def vwap_job_due(clock, last_at):
+    """VWAP 用の5分足は取引中だけ取る。"""
+    return clock - last_at >= VWAP_CHECK_SEC and us_quote_session() == "REGULAR"
+
+
 SYMBOL_LIST_PART_ROWS = 5000
 
 
@@ -1223,7 +1306,8 @@ def main():
     # cadence worker may own that wait; health reporting never waits for it.
     worker = None
     reference_worker = None
-    last_quote_at = last_hb_at = last_reference_at = float('-inf')
+    vwap_worker = None
+    last_quote_at = last_hb_at = last_reference_at = last_vwap_at = float('-inf')
     while True:
         clock = time.monotonic()
         if clock - last_hb_at >= HEARTBEAT_INTERVAL:
@@ -1243,6 +1327,11 @@ def main():
             reference_worker = Thread(target=_reference_worker, daemon=True,
                                       name='us-reference-data')
             reference_worker.start()
+        if (vwap_job_due(clock, last_vwap_at)
+                and (vwap_worker is None or not vwap_worker.is_alive())):
+            last_vwap_at = clock
+            vwap_worker = Thread(target=_vwap_worker, daemon=True, name='us-vwap-bars')
+            vwap_worker.start()
         time.sleep(min(30, HEARTBEAT_INTERVAL))
 
 
@@ -1264,6 +1353,23 @@ def _reference_worker():
             run_symbol_list_job(qc)
     except Exception as exc:
         print('us reference data unavailable:', type(exc).__name__, flush=True)
+    finally:
+        if qc is not None:
+            qc.close()
+
+
+def _vwap_worker():
+    """依頼が無ければ OpenD に接続しない。"""
+    qc = None
+    try:
+        plan = fetch_reference_plan()
+        if not plan or not plan.get("vwap"):
+            STATE["vwapStatus"] = "not_requested"
+            return
+        qc = OpenQuoteContext(host=HOST, port=PORT)
+        run_vwap_job(qc, plan)
+    except Exception as exc:
+        print('us vwap bars unavailable:', type(exc).__name__, flush=True)
     finally:
         if qc is not None:
             qc.close()
