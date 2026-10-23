@@ -254,3 +254,10 @@ def test_worker_reads_news_store_independently_of_brief(monkeypatch):
     assert any(row['hash'] == '#notifications/news/material' for row in sent)
     assert 'material' in projected and len(projected) == 16
     assert records == before
+
+
+def test_a_burst_of_news_never_pushes_a_stock_move_out():
+    import argus_web_push as wp
+    events = [{'kind': 'news', 'key': f'n{i}'} for i in range(30)] + [{'kind': 'owner_changes', 'key': 's1'}]
+    picked = wp._per_kind(events)
+    assert sum(e['kind'] == 'news' for e in picked) == 20 and picked[-1]['key'] == 's1'

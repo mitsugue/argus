@@ -65,6 +65,18 @@ def configuration(env):
     except Exception: return {'configured': False}
 
 
+def _per_kind(events, limit=20):
+    """Up to `limit` events of each kind, so a burst of news never pushes a stock move out (2026-10-23)."""
+    seen = {}
+    out = []
+    for event in events:
+        kind = event.get('kind')
+        if seen.get(kind, 0) < limit:
+            seen[kind] = seen.get(kind, 0) + 1
+            out.append(event)
+    return out
+
+
 class NoRedirectSession:
     """pywebpush transport: fixed validated service, no redirect or proxy route."""
     def post(self, *args, **kwargs):
@@ -205,7 +217,7 @@ class PushService:
             now = self.now()
             with self.db() as db:
                 for sub in db.execute('SELECT * FROM subscriptions WHERE enabled=1').fetchall():
-                    for event in events[:20]:
+                    for event in _per_kind(events):
                         column = {'sq':'sq','news':'news','owner_changes':'owner_changes'}.get(event['kind'])
                         if not column or not sub[column]: continue
                         if event['kind']=='news' and event['due']<sub['created']: continue
