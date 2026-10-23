@@ -14,7 +14,8 @@ SCHEMA = 'argus-jp-market-research-package-v1'
 LOOKUP_SCHEMA = 'argus-jp-market-research-lookup-v1'
 MAX_SNAPSHOTS = 1024
 MAX_PACKAGE_BYTES = 65536
-SYMBOLS = {'N225': ('日経平均', 'INDEX'), '1321': ('日経平均連動ETF（1321）', 'ETF')}
+# 日経平均そのもの(^N225 の日足)だけを根拠にする。1321 の計算は読まない(2026-10-23)。
+SYMBOLS = {'N225': ('日経平均', 'INDEX')}
 
 
 def _json(value):
@@ -108,7 +109,7 @@ def lookup(state, *, cutoff):
 
 
 def explanation_facts(result):
-    """Short references, with index and ETF coverage explicitly separated."""
+    """Short references for the Nikkei 225 itself (no ETF substitute)."""
     facts = []
     for package in result.get('packages', []):
         calculation = package['calculation']

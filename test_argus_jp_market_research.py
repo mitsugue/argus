@@ -61,13 +61,18 @@ def test_package_version_changes_only_for_changed_calculation(snapshot):
     assert research.package_from_snapshot(newer)['packageVersion'] != research.package_from_snapshot(snapshot)['packageVersion']
 
 
-def test_index_and_etf_are_distinct_and_original_kept(snapshot):
+def test_research_reads_the_nikkei_itself_not_the_1321_etf(snapshot):
     etf = copy.deepcopy(snapshot)
     etf['symbol'] = '1321'
     etf['id'] = 'today-' + engine._hash({k:v for k,v in etf.items() if k != 'id'})
     result = research.lookup({'snapshots': [snapshot, etf]}, cutoff='2026-09-15T11:00:00Z')
-    assert {p['instrumentId'] for p in result['packages']} == {'JP:N225:INDEX', 'JP:1321:ETF'}
-    assert len({p['packageVersion'] for p in result['packages']}) == 2
+    assert [p['instrumentId'] for p in result['packages']] == ['JP:N225:INDEX']
+    assert result['readReceipt']['errors'] == []
+    only_etf = research.lookup({'snapshots': [etf]}, cutoff='2026-09-15T11:00:00Z')
+    assert only_etf['packages'] == []
+    assert only_etf['readReceipt']['errors'] == [{'symbol': 'N225', 'reason': 'no_stored_calculation'}]
+    with pytest.raises(ValueError, match='research_instrument_outside_scope'):
+        research.package_from_snapshot(etf)
 
 
 def test_context_contains_bounded_calculated_references(snapshot):
