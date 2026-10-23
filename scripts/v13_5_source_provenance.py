@@ -434,7 +434,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/market-brief-response.test.cjs': '64be553e97cb0820761dfd7aafd3db1799586735',
     'web/src/components/chart/JapanMarketComparisonChart.css': 'ed4a3479e60375c21f67e0cb40680a658baac18d',
     'web/src/components/chart/JapanMarketComparisonChart.tsx': 'bbe7754e5cc7a099fb5a60f5d2f7343f268d6530',
-    'web/src/components/chart/JapanMarketComparisonPanel.tsx': '83c175310ffb2f9fbb1675a1080fed82f295c784',
+    'web/src/components/chart/JapanMarketComparisonPanel.tsx': 'fc98eb651b59802834eeb76e7146f625eb5ae58f',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': 'bf645a5a2e4ef7c48b9391df5a8f8d645f3ea64d',
     'web/src/components/dashboard/MacroResultDetails.tsx': '8428449ded5e6b9eab7ac4bd72983a40d500ed77',
