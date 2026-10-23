@@ -67,14 +67,15 @@ def _marks(today):
 def test_now_is_the_shortest_row_containing_today_and_the_first_rows_have_not_ended():
     now, lead, outlook, view = _marks("2026-10-23")
     # Before: the first row containing today (p04, 10/13-10/31) was "now" and two ended rows followed.
-    assert now == ["p07"] and lead == ["p07", "p08", "p09", "p10"]
+    # Owner 2026-10-23: p04 is still in its period, so it stays on top; "now" is the shorter p07.
+    assert now == ["p07"] and lead == ["p04", "p07", "p08", "p09"]
     assert outlook == ["long2", "long1"]                              # long views: started, nearest end first
     rows = {r["id"]: r for r in view["rows"]}
     assert rows["p05"]["past"] and rows["p06"]["past"] and not set(lead) & {"p05", "p06"}
     assert "p05" in rows and "p01" in rows                         # ended rows stay for "show all" (14 days)
     assert [r["id"] for r in view["rows"] if r["long"]] == ["long1", "long2", "long3"]
     for day, expected_now, expected_lead in (
-            ("2026-10-31", "p09", ["p09", "p10", "p11", "p12"]),       # p04 ends today but p09 is shorter
+            ("2026-10-31", "p09", ["p04", "p09", "p10", "p11"]),       # p04 ends today (still listed) but p09 is shorter
             ("2026-11-15", "p12", ["p12", "p13", "p14", "p15"]),       # only long rows contain today: the next row
             ("2026-12-26", "p14", ["p14", "p15"])):
         now, lead, outlook, view = _marks(day)
@@ -88,7 +89,7 @@ def test_ties_take_the_later_start_and_only_long_rows_fall_back_to_a_long_now():
             for i, a, b in (("x", "2026-10-01", "2026-10-11"), ("y", "2026-10-05", "2026-10-15"),
                             ("z", "2026-09-01", "2027-09-01"))]
     view = f.for_display(f.validate({**DOC, "rows": rows}), "2026-10-07")
-    assert [r["id"] for r in view["rows"] if r["isNow"]] == ["y"] and view["leadIds"] == ["y"]
+    assert [r["id"] for r in view["rows"] if r["isNow"]] == ["y"] and view["leadIds"] == ["x", "y"]
     late = f.for_display(f.validate({**DOC, "rows": rows}), "2026-11-01")
     assert [r["id"] for r in late["rows"] if r["isNow"]] == ["z"]
     assert late["leadIds"] == [] and late["outlookIds"] == ["z"]

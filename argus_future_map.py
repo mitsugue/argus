@@ -115,7 +115,8 @@ def for_display(public: Mapping[str, Any], today: str) -> Dict[str, Any]:
     later start); when none contains today, the next one to start. Long rows
     (more than LONG_DAYS) are not "now" while a shorter row is available.
     leadIds: the first LEAD_ROWS rows not yet ended and not long, in start
-    order from the isNow row. outlookIds: up to OUTLOOK_ROWS long rows not
+    order, so a row still in its period comes first even when it started
+    before the isNow row (owner 2026-10-23: rows still in period stay on top). outlookIds: up to OUTLOOK_ROWS long rows not
     yet ended (already started first, then nearest end), shown in one line
     under the lead rows. Ended rows stay only behind "show all" until
     KEEP_PAST_DAYS. Display only: registration and scoring read the
@@ -135,8 +136,7 @@ def for_display(public: Mapping[str, Any], today: str) -> Dict[str, Any]:
 
     current = pick([r for r in rows if not r["long"]]) or pick(rows)
     now_id = current["id"] if current else None
-    start_at = next((i for i, r in enumerate(rows) if r["id"] == now_id), len(rows))
-    lead = [r["id"] for r in rows[start_at:] if not r["past"] and not r["long"]][:LEAD_ROWS]
+    lead = [r["id"] for r in rows if not r["past"] and not r["long"]][:LEAD_ROWS]
     outlook = [r["id"] for r in sorted((r for r in rows if r["long"] and not r["past"]),
                                        key=lambda r: (r["start"] > today, r["end"], r["start"]))][:OUTLOOK_ROWS]
     for row in rows:
