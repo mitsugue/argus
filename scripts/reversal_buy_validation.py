@@ -6,16 +6,17 @@ GPT review item 2 (2026-09-07): 「必要データ、対象期間、合格条件
 runnable verification. It reconstructs the production reversal state
 (``jp_market_engine.build_reversal_engine`` with the same MIXED background the
 serving layer uses) for every trading day of a ten-year daily corpus and
-measures what happened to the judgment subject (1321) after each entry into a
-BUY-eligible state. Nothing here changes production: the outcome is a report
+measures what happened to the Nikkei 225 itself after each entry into a
+BUY-eligible state (the 1321 ETF is no longer the scored subject; owner
+2026-10-23: 全て日経平均そのもので見ること). Nothing here changes production: the outcome is a report
 whose ``verdict`` says whether the eligibility criteria are met, and the
 registry that enables BUY (``VERIFIED_JP_MARKET_ENGINE_BUY_ARTIFACTS``) stays empty until a
 PASS report is reviewed and pinned by a code change.
 
 Data (all daily OHLCV, complete bars only, point-in-time stamped):
-  * NIKKEI_225_INDEX  — the axis' analysis instrument
+  * NIKKEI_225_INDEX  — the axis' analysis instrument and the subject whose
+                        forward returns are scored
   * VIX               — the second reversal axis
-  * 1321              — the judgment subject whose forward returns are scored
 
 Design rules (same family as probability-eligibility-v1):
   * entry is the CLOSE of the trading day AFTER the signal day, so a state
@@ -32,7 +33,7 @@ Design rules (same family as probability-eligibility-v1):
 
 Usage:
   python3 scripts/reversal_buy_validation.py --data-dir <dir with y_N225.json
-      y_VIX.json y_1321_T.json (Yahoo v8 chart JSON)> --out report.json
+      y_VIX.json (Yahoo v8 chart JSON)> --out report.json
   python3 scripts/reversal_buy_validation.py --fetch --out report.json
 """
 from __future__ import annotations
@@ -62,7 +63,6 @@ ELIGIBLE = tuple(argus_single_decision.BUY_ELIGIBLE_JP_MARKET_ENGINE_STATES)
 YAHOO = {
     "N225": ("%5EN225", "NIKKEI_225_INDEX", "T07:00:00Z"),
     "VIX": ("%5EVIX", "VIX", "T21:00:00Z"),
-    "1321_T": ("1321.T", "1321", "T07:00:00Z"),
 }
 
 
@@ -257,7 +257,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--out", default=None, help="write the JSON report here")
     args = parser.parse_args(argv)
     corpus = load_corpus(args.data_dir, args.fetch)
-    nikkei, vix, subject = corpus["N225"], corpus["VIX"], corpus["1321_T"]
+    nikkei, vix = corpus["N225"], corpus["VIX"]
+    subject = nikkei                      # the Nikkei 225 itself is scored
     states = daily_states(nikkei, vix, start_index=min(WINDOW_BARS, len(nikkei) - 1))
     counts: Dict[str, int] = {}
     for _, state, _ in states:
@@ -271,7 +272,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "eligibleStates": list(ELIGIBLE),
         "corpus": {"nikkei": [nikkei[0]["date"], nikkei[-1]["date"], len(nikkei)],
                    "vix": [vix[0]["date"], vix[-1]["date"], len(vix)],
-                   "subject1321": [subject[0]["date"], subject[-1]["date"], len(subject)]},
+                   "subjectNikkei225": [subject[0]["date"], subject[-1]["date"], len(subject)]},
         "stateDays": counts,
         "holdoutStart": HOLDOUT_START,
         "criteria": {"minInSample": MIN_IN_SAMPLE, "minHoldout": MIN_HOLDOUT,

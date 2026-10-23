@@ -12,16 +12,16 @@ BUY 候補になる反転状態は 4 つ（`argus_single_decision.BUY_ELIGIBLE_J
 状態は本番と同じ `jp_market_engine.build_reversal_engine(downside_background="MIXED")` で、
 ^N225（分析主体）と ^VIX（第 2 軸）の完全 OHLCV から決定論に再構成する。
 
-問い: **「その状態に入った翌営業日の終値で 1321 を買ったとき、5 / 20 営業日後に上がって
-いた頻度は、無条件（毎日買う）より本当に高いか」**。
+問い: **「その状態に入った翌営業日の終値を起点に、日経平均が 5 / 20 営業日後に上がって
+いた頻度は、無条件（毎日を起点にする）より本当に高いか」**。
+2026-10-23 から採点の対象は日経平均そのもの（以前は 1321）。
 
 ## 2. 必要データ
 
 | 系列 | 用途 | 出所（検証用） | 本番の出所 |
 |---|---|---|---|
-| NIKKEI_225_INDEX 日足 OHLCV | 反転軸の分析主体 | Yahoo v8 chart `^N225` 10 年 | `_yahoo_index_ohlcv("^N225")` |
+| NIKKEI_225_INDEX 日足 OHLCV | 反転軸の分析主体・その後の騰落の採点 | Yahoo v8 chart `^N225` 10 年 | `_yahoo_index_ohlcv("^N225")` |
 | VIX 日足 OHLCV | 第 2 軸（MACD デッドクロス） | Yahoo v8 chart `^VIX` 10 年 | `_jp_market_engine_vix_rows` |
-| 1321 日足終値 | 判断主体の成績 | Yahoo v8 chart `1321.T` 10 年 | J-Quants |
 
 不完全な足（O/H/L/C/V のいずれか欠落）は補完せず除外する。各足は `availableFrom` を持ち、
 判定日 D の cutoff は `D T23:59:59Z`（米国引け後）。**エントリーは D の翌営業日の終値** なので、
@@ -56,9 +56,27 @@ python3 scripts/reversal_buy_validation.py --fetch --data-dir /tmp/buyval --out 
 ```
 
 約 1 分。ネットワークが使えない環境では `--data-dir` に Yahoo v8 chart JSON
-（`y_N225.json` / `y_VIX.json` / `y_1321_T.json`）を置く。
+（`y_N225.json` / `y_VIX.json`）を置く。
 
-## 6. 2026-09-07 の結果 — **FAIL（BUY は無効のまま）**
+## 6. 2026-10-23 の結果（日経平均そのものを採点）— **FAIL（BUY は無効のまま）**
+
+コーパス 2016-10-24 〜 2026-10-23（日経平均 2442 営業日・VIX 2516 本）。2026-10-23 16:53 JST に実行。
+
+| 項目 | 値 |
+|---|---|
+| 状態日数 | MIXED 1544 / REVERSAL_EARLY 239 / RECOVERY_TEST 234 / FALSE_RALLY 220 / TECHNICAL_REBOUND 31 / CONFIRMED_ADVANCE 14 |
+| エピソード | 223（in-sample 134・holdout 89）→ 件数条件は **満たす** |
+| 5 日 | 的中 in 57.5% → holdout 65.2%、基準率 58.9%、Wilson [54.8%, 74.3%]（半幅 9.7pt）、BSS +0.016、ECE 0.079 |
+| 20 日 | 的中 in 59.7% → holdout 66.3%、基準率 66.6%、Wilson [56.0%, 75.3%]（半幅 9.6pt）、BSS +0.012、ECE 0.080 |
+| 落ちた条件 | 5 日・20 日とも: 下限が基準率以下・ECE > 0.05 |
+
+同じ期間・同じ状態で 1321 を採点した場合（旧方式・比較用）: 5 日 holdout 64.0%（基準率 59.3%・
+Wilson [53.7%, 73.2%]・ECE 0.075）、20 日 holdout 67.4%（基準率 66.3%・Wilson [57.1%, 76.3%]・
+ECE 0.092）で、落ちた条件は同じ。対象を日経平均に替えても判定は変わらない。
+9/7 の結果との差（5 日の Wilson 半幅が 10pt 以下になった）は、期間が 6 週間ずれて holdout が
+84→89 件に増えたことによる。
+
+### 6a. 2026-09-07 の結果（1321 を採点・履歴）— **FAIL**
 
 | 項目 | 値 |
 |---|---|
@@ -78,8 +96,7 @@ python3 scripts/reversal_buy_validation.py --fetch --data-dir /tmp/buyval --out 
 1. **判定の分解能を上げる**（最大の欠陥は holdout 84 件での区間幅）: 反転軸に加えて
    D01〜D07 の需給ファミリー（信用倍率・売り残・海外フロー）で条件付けした状態を評価に加え、
    状態の細分化で的中率の差が出るかを同じスクリプトで測る（`--conditioning` オプション追加）。
-2. **サンプルを増やす**: J-Quants の 1321 日足を 2011 年まで遡り（V2 API の 10 年超は
-   要プラン確認）、^N225/^VIX は 20 年に延長。件数が倍になれば Wilson 半幅は約 7pt。
+2. **サンプルを増やす**: ^N225/^VIX を 20 年に延長。件数が倍になれば Wilson 半幅は約 7pt。
 3. **基準を 2 つにする**: 無条件基準に加えてモメンタム基準（20 日トレンド > 0 の日）にも
    勝つこと（`probabilityTruthEvidence.beatsMomentum` を None から実測に）。
 4. **月次で再実行**して報告 JSON を `docs/evidence/` に積む。3 回連続 PASS で初めて
@@ -90,6 +107,7 @@ python3 scripts/reversal_buy_validation.py --fetch --data-dir /tmp/buyval --out 
 ## 8. 変更履歴
 
 - v13.5.63: 初版。スクリプト `scripts/reversal_buy_validation.py` と本結果を追加。
+- 2026-10-23: 採点の対象を 1321 から日経平均そのものに替え、§6 を流し直した結果に更新（9/7 の結果は §6a に残す）。
 
 ## 9. 本番での確認（2026-09-08・v13.5.63・バックエンド eb6f89ed）
 

@@ -35,4 +35,4 @@ GPT レビュー項目 3「日本・米国の予測方式を確定する」へ�
 - 「終値方向（検証済み）」: 確率適格性（`probability-eligibility-v1`: n≥100/60、holdout 再現、基準予測優位、Wilson 幅 ≤10pt、ECE ≤0.05、breadth 鮮度、分割整合）を全て満たした場合のみ。現在は未達。
 - 「方式と根拠の詳細」（タップ）: 条件付け状態、実効 n、BSS、不確実性の理由。
 - MARKET SIGNALS と市場要約の「成立 x/7」は同じ market-view 文書・同じ情報時刻（HH:MM 時点）から描画（日本選択時）。米国選択時は成立数を借用しない。
-- BUY の検証状況は `docs/REVERSAL_BUY_VALIDATION.md`（2026-09-07: FAIL・BUY 無効のまま）。
+- BUY の検証状況は `docs/REVERSAL_BUY_VALIDATION.md`（2026-10-23 に日経平均そのものを採点して再実行: FAIL・BUY 無効のまま）。
