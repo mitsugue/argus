@@ -45,7 +45,12 @@ DROP_CRITICAL = -8.0       # %
 HIGH_BETA_DROP = -4.0      # %: high-beta/momentum names trigger one notch sooner
 GAP_DOWN = -3.0            # %: gap vs prev close
 UNDERPERF_VS_INDEX = -2.0  # %: stock minus index
-NIKKEI_RISK = -1.5         # %: JP index proxy intraday
+# 2026-10-23: the Nikkei 225 itself replaces the 1306/1321 ETF average.  The
+# levels are kept: over 2016-10..2026-10 the Nikkei alone was at/below -1.5%
+# on 217 days against 190 for the ETF average (-2.5%: 70 vs 55), mostly on
+# days the Nikkei fell more than TOPIX, and it no longer fires on the ETF
+# dividend ex-dates (early January / July) where the average fell alone.
+NIKKEI_RISK = -1.5         # %: Nikkei 225 change from the previous close
 NIKKEI_RISK_HARD = -2.5    # %
 BREADTH_RISK = -1.0        # %: avg JP watchlist change
 BREADTH_RISK_HARD = -2.5   # %
@@ -487,6 +492,10 @@ def jp_intraday_overlay(m):
     dec, tot = m.get("jpDecliners"), m.get("jpTotal")
     flags = []
     overlay = "NORMAL"
+    # Without the Nikkei 225 the market tone is unknown, never calm.
+    index_unknown = m.get("nikkeiStatus") == "UNKNOWN"
+    if index_unknown:
+        flags.append("JP_INDEX_UNKNOWN")
 
     if nik is not None and nik <= NIKKEI_RISK:
         flags.append("JP_BREADTH_RISK")
@@ -522,7 +531,8 @@ def jp_intraday_overlay(m):
 
     if overlay == "NORMAL":
         display = f"Global regime: {glob}"
-        reason = "日本市場の地合いに大きな崩れは確認されていない。"
+        reason = ("日経平均の値が無く、日本市場の地合いは不明。" if index_unknown
+                  else "日本市場の地合いに大きな崩れは確認されていない。")
     else:
         display = f"Global regime: {glob}, JP intraday overlay: {overlay}"
         reason = ("米ETF基準の地合いは" + str(glob) + "だが、日本市場(指数/breadth/高ベータ)は"

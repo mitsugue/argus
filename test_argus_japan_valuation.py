@@ -102,11 +102,11 @@ def test_d07_not_applicable_only_when_statements_feed_is_warm():
 
 def test_family_conditions_are_deterministic_and_labelled():
     cutoff = "2026-09-03T09:00:00Z"
-    proxy = {"instrumentId": "1321", "seriesId": "relative_strength_20d", "date": "2026-09-02",
-             "value": 0.012, "availableFrom": "2026-09-02T07:00:00Z"}
-    d03 = jp_market_engine.evaluate_d03(cutoff=cutoff, proxy_evidence=proxy)
+    direct = {"instrumentId": "NIKKEI_225_INDEX", "seriesId": "relative_strength_20d", "date": "2026-09-02",
+              "value": 0.012, "availableFrom": "2026-09-02T07:00:00Z"}
+    d03 = jp_market_engine.evaluate_d03(cutoff=cutoff, direct_evidence=direct)
     assert d03["conditionMet"] is True and d03["conditionLineage"] == "ARGUS_CANDIDATE"
-    assert jp_market_engine.evaluate_d03(cutoff=cutoff, proxy_evidence={**proxy, "value": -0.02})["conditionMet"] is False
+    assert jp_market_engine.evaluate_d03(cutoff=cutoff, direct_evidence={**direct, "value": -0.02})["conditionMet"] is False
     assert jp_market_engine.evaluate_d03(cutoff=cutoff)["conditionMet"] is None
     flow = {"seriesId": "flow.foreign", "periodEnd": "2026-08-29", "availableFrom": "2026-09-02T00:00:00Z", "value": -1099300000000.0}
     d05 = jp_market_engine.evaluate_d05([flow], cutoff=cutoff)

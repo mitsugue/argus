@@ -27,6 +27,7 @@ import { headlineProjectionInput,
 import { useMarketLedger } from '../hooks/useMarketLedger';
 import { useChartIntelligence, useIndexChart } from '../hooks/useChartIntelligence';
 import { useMarketNews } from '../hooks/useMarketNews';
+import { nikkeiSp500Change20Pct } from '../lib/nikkeiSp500';
 import type { ChartIntelligencePayload } from '../types/chartIntelligence';
 import type { TodayProjectionInput } from '../domain/argusTodayView';
 import {
@@ -210,6 +211,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   // the panel says so; only the drawn series and its projection change.
   const headlineIndex = useIndexChart(
     INDEX_FOR_INSTRUMENT[selectedSymbol] ?? null, 'daily');
+  // 日米強弱は日経平均÷S&P500(指数そのもの)で見る(2026-10-23)。
+  const sp500Index = useIndexChart('SPX', 'daily');
   // v13.5.0 restoration: selector summaries, index moves, and the four
   // headline mini-charts come from one compact canonical bootstrap response
   // instead of four multi-megabyte verified snapshots. Only the selected
@@ -460,9 +463,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     const ratio25 = metric(['breadth.prime.ratio25', 'breadth.ratio25']);
     if (ratio6 != null || ratio25 != null) jpPositioning.push({ key: 'breadth-ratios', label: '騰落比率',
       value: [ratio6 == null ? null : `6日${ratio6.toFixed(0)}`, ratio25 == null ? null : `25日${ratio25.toFixed(0)}`].filter(Boolean).join(' / ') });
-    const jpRs = headlineEntry('1321')?.relativeStrengthSummary?.nikkeiSp500Change20Pct
-      ?? (effectiveMarket === 'JP'
-        ? selectedChart.decisionData?.relativeStrength?.nikkei_sp500?.change20Pct : null);
+    // 日経平均÷S&P500 の20営業日の変化。どちらかの指数が無ければ出さない(1321で埋めない)。
+    const jpRs = headlineIndex.data?.symbol === 'N225' && sp500Index.data?.symbol === 'SPX'
+      ? nikkeiSp500Change20Pct(headlineIndex.data.indicators.bars, sp500Index.data.indicators.bars)
+      : null;
     if (jpRs != null) jpPositioning.push({ key: 'relative-numeric', label: '日米強弱',
       value: jpRs >= 0 ? 'JP優位' : 'US優位', detail: `${signed(jpRs, 1)}pt`,
       tone: jpRs >= 0 ? 'positive' : 'negative' });
@@ -547,7 +551,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     regime.data, impEvents, rates.data, events247,
     assets, apItems, marketMode,
     headline.document, marketNews.data,
-    selectedChart.data, headlineIndex.data,
+    selectedChart.data, headlineIndex.data, sp500Index.data,
     marketNews.lastChecked, marketNews.failureClass,
     selectedInstrument, effectiveMarket, selectedChart.decisionData, decisionCalendar,
     sdaBySymbol, calendarNow]);

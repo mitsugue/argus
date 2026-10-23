@@ -198,15 +198,24 @@ class PointInTimeAndPropositionTest(unittest.TestCase):
         self.assertTrue(one["conditionMet"])
         self.assertFalse(one["inferred"])
 
-    def test_direct_relative_strength_precedes_proxy_candidate(self):
+    def test_relative_strength_reads_the_nikkei_itself_or_stays_missing(self):
         direct = evidence("relative_strength", 1.1, instrument="NIKKEI_225_INDEX")
-        proxy = evidence("relative_strength", 1.2, instrument="1321")
-        chosen = jp_market_engine.evaluate_d03(
-            cutoff=CUTOFF, direct_evidence=direct, proxy_evidence=proxy)
+        chosen = jp_market_engine.evaluate_d03(cutoff=CUTOFF, direct_evidence=direct)
         self.assertEqual(chosen["sourceType"], "DIRECT_INDEX")
-        proxy_only = jp_market_engine.evaluate_d03(cutoff=CUTOFF, proxy_evidence=proxy)
-        self.assertEqual(proxy_only["lineage"], "ARGUS_CANDIDATE")
-        self.assertEqual(proxy_only["sourceType"], "ETF_PROXY")
+        self.assertEqual(chosen["lineage"], "JP_MARKET_ENGINE_ORIGINAL")
+        # 1321 is no longer a fallback: without 日経平均÷S&P500 D03 is MISSING.
+        etf = evidence("relative_strength", 1.2, instrument="1321")
+        missing = jp_market_engine.evaluate_d03(cutoff=CUTOFF, direct_evidence=etf)
+        self.assertEqual(missing["status"], "MISSING")
+        self.assertEqual(missing["sourceType"], "NONE")
+        self.assertIsNone(missing["relativeStrengthValue"])
+        self.assertIsNone(missing["conditionMet"])
+        self.assertTrue(missing["directIdentityRejected"])
+        self.assertEqual(jp_market_engine.evaluate_d03(cutoff=CUTOFF)["status"], "MISSING")
+        with self.assertRaises(TypeError):
+            jp_market_engine.evaluate_d03(cutoff=CUTOFF, proxy_evidence=etf)
+        with self.assertRaises(TypeError):
+            jp_market_engine.evaluate_d01_d07(cutoff=CUTOFF, relative_strength_proxy=etf)
 
     def test_nikkei_valuation_is_license_and_identity_gated(self):
         eps = evidence("nikkei_eps", 2000, instrument="NIKKEI_225_INDEX")

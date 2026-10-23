@@ -28,7 +28,7 @@ SIGNAL_DEFINITIONS = (
     {"id": "SIG-02", "family": "D02", "nameEn": "1570 / Supply-Demand",
      "nameJa": "1570制度信用倍率", "sourceRole": "J-Quants margin (1570, standardized)"},
     {"id": "SIG-03", "family": "D03", "nameEn": "Relative Strength",
-     "nameJa": "相対力", "sourceRole": "verified ETF proxy bars (1321 vs SPY)"},
+     "nameJa": "相対力", "sourceRole": "direct index closes (Nikkei 225 / S&P 500)"},
     {"id": "SIG-04", "family": "D04", "nameEn": "Japan Earnings / Valuation",
      "nameJa": "EPS基準・バリュエーション",
      "sourceRole": "ARGUS-derived from licensed J-Quants inputs (no Nikkei non-display PER)"},

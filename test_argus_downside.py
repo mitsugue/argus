@@ -112,6 +112,17 @@ def test_jp_overlay_calm_stays_normal():
     assert ov["jpIntradayOverlay"] == "NORMAL"
 
 
+def test_jp_overlay_without_the_nikkei_is_unknown_not_calm():
+    ov = D.jp_intraday_overlay({"globalRegime": "RISK_ON", "nikkeiProxyPct": None,
+                                "nikkeiStatus": "UNKNOWN", "jpDecliners": 2, "jpTotal": 7})
+    assert "JP_INDEX_UNKNOWN" in ov["flags"]
+    assert ov["reasonJa"] == "日経平均の値が無く、日本市場の地合いは不明。"
+    # Breadth evidence still escalates on its own; the unknown index is not read as calm.
+    ov = D.jp_intraday_overlay({"globalRegime": "RISK_ON", "nikkeiStatus": "UNKNOWN",
+                                "jpBreadth": -3.0, "jpDecliners": 6, "jpTotal": 7})
+    assert ov["jpIntradayOverlay"] == "RISK_OFF_WATCH" and "JP_INDEX_UNKNOWN" in ov["flags"]
+
+
 # 10. notification contains cause + action override + next condition
 def test_notification_actionable():
     a = {"symbol": "5803", "market": "JP", "name": "フジクラ", "changePct": -6.2,

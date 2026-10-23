@@ -21609,8 +21609,9 @@ def _theme_peers_down(sym, by_sym):
     return False
 
 
-_JP_INDEX_CACHE = {"val": None, "ts": 0.0, "expires": 0.0}
-_JP_INDEX_TTL = 300
+# Yahoo's Nikkei 225 quote runs about 20 minutes late and is read once a
+# minute; an older delayed value during the session is not the market now.
+_JP_INDEX_DELAYED_MAX_AGE_SEC = 30 * 60
 
 _TDNET_FEED_CACHE = {"data": None, "expires": 0.0}
 _TDNET_FEED_TTL = 600
@@ -22239,39 +22240,41 @@ def api_argus_admin_official_events_restore():
                     "ledgerDate": snap.get("dateJst")})
 
 
-def _jp_index_proxy():
-    """Real JP index move (TOPIX ETF 1306 + Nikkei ETF 1321 average), cached 5m.
-    A direct index read beats watchlist-average breadth for market-wide detection.
-    Returns None if unavailable (caller falls back to watchlist breadth)."""
-    now = time.time()
-    if (_JP_INDEX_CACHE["val"] is not None
-            and now < _JP_INDEX_CACHE.get("expires", 0.0)):
-        return _JP_INDEX_CACHE["val"]
-    val = None
-    deadlines = []
+def _jp_index_proxy(now_epoch=None):
+    """The Nikkei 225 itself for the downside market context (owner
+    2026-10-23: 全て日経平均そのもので見ること; the 1306/1321 ETF average is
+    retired).  Tachibana 101 in real time first, otherwise the delayed Yahoo
+    quote, which is recorded as delayed.  Only a quote from the current Tokyo
+    date is used, and while the cash session can be open a delayed quote older
+    than _JP_INDEX_DELAYED_MAX_AGE_SEC is not.  None means 地合い不明: nothing
+    (watchlist breadth, ETFs) is substituted."""
+    now = time.time() if now_epoch is None else now_epoch
     try:
-        snap = get_japan_watchlist_snapshot(["1306", "1321"])
-        usable = [q for q in (
-            _decision_usable_watch_quote_row(
-                s, "JP", now_epoch=now, allow_delayed=False)
-            for s in (snap.get("stocks") or [])) if q is not None]
-        chs = [float(s["changePct"]) for s in usable
-               if isinstance(s.get("changePct"), (int, float))]
-        for row in usable:
-            source_epoch = _coerce_epoch(row.get("sourceTimestamp"))
-            if source_epoch is not None:
-                deadlines.append(
-                    source_epoch + _DECISION_QUOTE_LIVE_MAX_AGE_SEC)
-        if chs:
-            val = round(sum(chs) / len(chs), 2)
+        quote = (argus_index_live.current_quote_safe() or {}).get("quote")
+        if not isinstance(quote, dict):
+            return None
+        change = quote.get("changePct")
+        if isinstance(change, bool) or not isinstance(change, (int, float)) \
+                or not math.isfinite(change):
+            return None
+        traded = datetime.fromisoformat(str(quote.get("tradedAt") or "").replace("Z", "+00:00"))
+        if traded.tzinfo is None:
+            return None
+        tokyo = pytz.timezone("Asia/Tokyo")
+        now_utc = datetime.fromtimestamp(now, timezone.utc)
+        if traded.astimezone(tokyo).date() != now_utc.astimezone(tokyo).date():
+            return None
+        age = max(0, int(now - traded.timestamp()))
+        realtime = quote.get("realtime") is True
+        if (not realtime and argus_index_live.session_window(now_utc)
+                and age > _JP_INDEX_DELAYED_MAX_AGE_SEC):
+            return None
+        return {"instrumentId": "NIKKEI_225_INDEX", "changePct": round(float(change), 2),
+                "source": quote.get("source"), "realtime": realtime,
+                "delayed": not realtime, "ageSeconds": age,
+                "tradedAt": quote.get("tradedAt")}
     except Exception:
-        val = None
-    _JP_INDEX_CACHE["val"] = val
-    _JP_INDEX_CACHE["ts"] = now
-    _JP_INDEX_CACHE["expires"] = (
-        min([now + _JP_INDEX_TTL] + deadlines)
-        if val is not None else now)
-    return val
+        return None
 
 
 def _downside_catalyst_for(item, *, now_epoch=None):
@@ -22344,12 +22347,14 @@ def get_downside_incidents():
     high_beta_down = bool(hb_live) and all(float(s.get("changePct", 0) or 0) < -1.0 for s in hb_live)
     reg = _REGIME_CACHE.get("data") or {}
     global_regime = (reg.get("regime") or {}).get("label") or "UNKNOWN"
-    index_proxy = _jp_index_proxy()                     # real 1306/1321 move (v10.99)
-    nikkei_proxy = index_proxy if index_proxy is not None else jp_breadth
+    # The Nikkei 225 itself; without it the market tone is unknown (no breadth fill).
+    nikkei_index = _jp_index_proxy(now_epoch=now)
+    nikkei_proxy = nikkei_index["changePct"] if nikkei_index else None
 
     market_ctx = {
         "globalRegime": global_regime,
         "nikkeiProxyPct": nikkei_proxy, "jpBreadth": jp_breadth,
+        "nikkeiStatus": "AVAILABLE" if nikkei_index else "UNKNOWN",
         "jpDecliners": jp_dec, "jpTotal": len(live_jp),
         "highBetaDown": high_beta_down,
         "themeUnwind": high_beta_down,
@@ -22503,12 +22508,15 @@ def get_downside_incidents():
         "jpIntradayOverlay": overlay["jpIntradayOverlay"],
         "holderRiskOverlay": overlay["holderRiskOverlay"],
         "overlay": overlay,
+        "jpIndex": ({**nikkei_index, "status": "AVAILABLE"} if nikkei_index
+                    else {"instrumentId": "NIKKEI_225_INDEX", "status": "UNKNOWN",
+                          "changePct": None}),
         "dataLimitations": [
             ("原因のニュース/開示は自動取得(SEC/Finnhub/J-Quants + TDnet適時開示[yanoshin経由])。"
              if tdnet_ok else
              "原因のニュース/開示は自動取得(SEC/Finnhub/J-Quants)。TDnet適時開示は現在取得不可(即時確認に限界)。"),
             "個別材料を検知しても『悪材料』とは自動断定しない(内容は要確認・無材料=安全ではない)。",
-            "地合いはTOPIX/日経ETF(1306/1321)の前日比を指数プロキシに使用(取得不可時はwatchlist平均にフォールバック)。",
+            "地合いは日経平均の前日比(立花のリアルタイム、無い時はYahooの遅延値)。値が無い時は地合い不明。",
             "前日比はJ-Quantsでは前営業日終値ベース。moomooブリッジ稼働時のみ当日リアルタイム。",
             "テーマ判定は固定グループ(AI/半導体/電線)による簡易版。",
         ],
@@ -43211,43 +43219,6 @@ def _jp_market_engine_relative_strength_direct():
             "indexRatio": jp[-1]["close"] / us[-1]["close"], "comparisonDate": us[-1]["date"]}
 
 
-def _jp_market_engine_relative_strength_proxy():
-    """20-session relative strength of 1321 vs SPY (verified chart caches).
-
-    One PIT row for JP_MARKET_ENGINE D03's explicit ETF-proxy lane (ARGUS_CANDIDATE
-    lineage is assigned by the evaluator itself). availableFrom is after the
-    15:30 JST close of the row's session; cached-only, None when cold.
-    SPY uses only US sessions dated before the JP session: those closed at
-    06:00 JST at the latest, while a same-date US close arrives after the
-    stamp (look-ahead audit 2026-10-02)."""
-    try:
-        def twenty_day_return(rows, before=None):
-            ordered = sorted((row for row in (rows or [])
-                              if before is None or str(row.get("date") or "")[:10] < before),
-                             key=lambda row: str(row.get("date") or ""))
-            closes = [float(row["close"]) for row in ordered
-                      if isinstance(row.get("close"), (int, float))
-                      and not isinstance(row.get("close"), bool)]
-            if len(closes) < 21 or closes[-21] <= 0:
-                return None, None
-            date = str(ordered[-1].get("date") or "")[:10]
-            return closes[-1] / closes[-21] - 1, date
-        jp_return, jp_date = twenty_day_return(
-            _chart_history_cached("1321", "JP"))
-        if jp_return is None or len(jp_date or "") != 10:
-            return None
-        us_return, _us_date = twenty_day_return(
-            _chart_history_cached("SPY", "US"), before=jp_date)
-        if us_return is None:
-            return None
-        return {"instrumentId": "1321",
-                "seriesId": "relative_strength_20d", "date": jp_date,
-                "value": round(jp_return - us_return, 6),
-                "availableFrom": jp_date + "T07:00:00Z"}
-    except Exception:
-        return None
-
-
 def _jp_market_engine_foreign_flow_rows():
     """flow.foreign observations from the Market Ledger for JP_MARKET_ENGINE D05."""
     rows = []
@@ -43851,7 +43822,6 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
     if warm:
         _jq_margin_history_backfill()
-    rs_proxy = _jp_market_engine_relative_strength_proxy()
     rs_direct = _jp_market_engine_relative_strength_direct()
     flow_rows = _jp_market_engine_foreign_flow_rows()
     _jp_market_engine_statements_rows(warm=warm)
@@ -43865,13 +43835,13 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         _jp_market_feature_history_warm()
     data = {
         "creditRows": credit_rows, "margin1570Rows": margin_rows,
-        "rsProxy": rs_proxy, "rsDirect": rs_direct, "flowRows": flow_rows,
+        "rsDirect": rs_direct, "flowRows": flow_rows,
         "vixRows": vix_rows, "nikkeiRows": nikkei_rows,
         "earningsEvent": earnings_event, "earningsBars": earnings_bars,
         "sourceStatus": {
             "credit": "csv_ledger" if credit_rows else "missing",
             "margin1570": "jquants_weekly" if margin_rows else "cold_cache",
-            "relativeStrength": "direct_index_20d" if rs_direct else "etf_proxy_20d" if rs_proxy else "cold_cache",
+            "relativeStrength": "direct_index_20d" if rs_direct else "cold_cache",
             "foreignFlow": "market_ledger" if flow_rows else "missing",
             "vix": vix_source,
             "nikkei": "yahoo_ohlcv" if nikkei_rows else "cold_cache",
@@ -44108,7 +44078,6 @@ def _jp_market_engine_market_view():
             cutoff=cutoff, two_market_rows=inputs["creditRows"],
             nikkei_current_estimate=_level_map_current_valuation(cutoff, nikkei_rows=inputs["nikkeiRows"]),
             margin_1570_rows=inputs["margin1570Rows"],
-            relative_strength_proxy=inputs["rsProxy"],
             relative_strength_direct=inputs.get("rsDirect"),
             foreign_flow_rows=inputs["flowRows"],
             vix_rows=inputs["vixRows"],
