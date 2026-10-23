@@ -21,7 +21,7 @@ export function JapanMarketComparisonPanel({ horizon }: { horizon: number }) {
       {state.document ? '更新失敗・前回分' : '取得できません'}
       <button type="button" onClick={state.retry}>再取得</button>
     </p>}
-    {state.lastSuccessfulAcquisitionAt && <p className="jp-comparison__scale">取得 
+    {state.lastSuccessfulAcquisitionAt && <p className="jp-comparison__scale">取得{' '}
       {new Date(state.lastSuccessfulAcquisitionAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>}
     {agreement && <p className="jp-comparison__scale" data-comparison-agreement={agreement.kind}>{agreement.textJa}</p>}
     {state.document && <JapanMarketComparisonChart document={state.document} />}
