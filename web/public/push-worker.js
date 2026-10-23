@@ -16,7 +16,28 @@
   }
   const safeHash = hash => hash === '#settings' || hash === '#notifications'
     || /^#notifications\/news\/[A-Za-z0-9:_-]{1,150}$/.test(hash)
-    || /^#notifications\/sq\/jp-monthly-sq-\d{4}-\d{2}$/.test(hash);
+    || /^#notifications\/sq\/jp-monthly-sq-\d{4}-\d{2}$/.test(hash)
+    // A registered symbol's screen; the same shape argus_web_push.ASSET_SYMBOL sends.
+    || /^#asset\/[A-Z0-9]{1,10}(?:[.-][A-Z0-9]{1,5})?$/.test(hash);
+  // Focus an open ARGUS window, then move it to the target. When navigate is
+  // missing, refused (iOS home-screen apps) or throws, open the target instead:
+  // a tap must never end with nothing opened.
+  async function openTarget(target) {
+    const scope = new URL(self.registration.scope);
+    let windows = [];
+    try { windows = await self.clients.matchAll({type:'window',includeUncontrolled:true}); } catch { /* Open below. */ }
+    for (const client of windows) {
+      let url; try { url = new URL(client.url); } catch { continue; }
+      if (url.origin !== scope.origin || !url.pathname.startsWith(scope.pathname)) continue;
+      let current = client;
+      try { current = (await client.focus()) || client; } catch { /* Navigation may still work. */ }
+      try {
+        if (typeof current.navigate === 'function' && await current.navigate(target)) return;
+      } catch { /* Fall through to openWindow. */ }
+      break;
+    }
+    await self.clients.openWindow(target);
+  }
   self.addEventListener('push', event => {
     event.waitUntil((async () => {
       let data; try { data = event.data.json(); } catch { return; }
@@ -38,16 +59,11 @@
     if (!data || !safeHash(data.hash) || !/^[a-f0-9-]{36}$/.test(data.deliveryId)) return;
     event.notification.close();
     event.waitUntil((async () => {
-      try { await receipt(data.deliveryId,'openedAt'); } catch { /* Navigation remains available. */ }
-      const target = new URL(data.hash,self.registration.scope).href;
-      const windows = await self.clients.matchAll({type:'window',includeUncontrolled:true});
-      for (const client of windows) {
-        const url = new URL(client.url); const scope = new URL(self.registration.scope);
-        if (url.origin === scope.origin && url.pathname.startsWith(scope.pathname)) {
-          const navigated = await client.navigate(target); if (navigated) await navigated.focus(); return;
-        }
-      }
-      await self.clients.openWindow(target);
+      // Record the open alongside the navigation so storage never delays the
+      // click's permission to focus or open a window.
+      const opened = receipt(data.deliveryId,'openedAt').catch(() => { /* Navigation remains available. */ });
+      try { await openTarget(new URL(data.hash,self.registration.scope).href); }
+      finally { await opened; }
     })());
   });
 })();

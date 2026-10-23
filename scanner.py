@@ -5081,6 +5081,9 @@ _EVENT_NTFY_MIN_SEV     = _ev_int("EVENT_NTFY_MIN_SEVERITY", 4)   # push only se
 _EVENT_TTL_SEC          = _ev_int("EVENT_TTL_HOURS", 8) * 3600
 _EVENTS_ACTIVE = {}                 # dedupKey -> latest envelope revision
 _EVENTS_LOG    = deque(maxlen=200)  # recent events (history)
+# 2026-10-23: owner-symbol moves go to the app's Web Push, not ntfy. Event ids
+# that passed the notify decision below; _web_push_tick reads only these.
+_EVENT_PUSH_CANDIDATES = deque(maxlen=200)
 _EVENT_LOCK    = threading.Lock()
 _EVENT_STATE   = {"lastDetectionAt": None, "lastEventAt": None, "detections": 0}
 
@@ -5201,7 +5204,9 @@ def _event_ntfy(env, *, notification_scope="individual_security", eligibility=No
     """Push an event to the user's phone (ntfy). Topic from env only — never in
     code/logs. Title ASCII (header limit); Japanese reason in the UTF-8 body."""
     topic = os.environ.get("NTFY_TOPIC", "")
-    if not topic:
+    # 2026-10-23 owner decision: individual-symbol moves are sent only by the
+    # app's Web Push (it opens the symbol's screen); ntfy keeps system notices.
+    if not topic or notification_scope == "individual_security":
         return False
     decision = eligibility or _push_eligibility(notification_scope, env.get("symbol"))
     if not decision["pushEligible"]:
@@ -5331,10 +5336,10 @@ def _record_event(market, symbol, trig, now, session, bucket_minutes=30,
         # Every event producer (bridge anomalies, movers, breakouts, volatility,
         # themes/news routed into the event backbone) converges here.  The event
         # remains available for background analysis even when owner Push is
-        # suppressed.
+        # suppressed.  Delivery is the app's Web Push (_web_push_tick).
         eligibility = _push_eligibility("individual_security", out.get("symbol"))
-        if eligibility["pushEligible"]:
-            _event_ntfy(out, eligibility=eligibility)
+        if eligibility["pushEligible"] and out.get("eventId"):
+            _EVENT_PUSH_CANDIDATES.append(out["eventId"])
     return out                                   # newly-stored env (for dossier build)
 
 def _process_events_from_push(market, rows):
@@ -19001,15 +19006,20 @@ def _web_push_tick():
             # owner profile is temporarily unavailable. Only owner-event
             # proposals are omitted for this tick.
             owner = {}
+        status = _OWNER_SYMS_CACHE.get("status") or "unknown"
         with _EVENT_LOCK:
+            candidates = set(_EVENT_PUSH_CANDIDATES)
             owner_events = []
             for event in _EVENTS_LOG:
-                symbol = str(event.get('symbol') or '').upper()
-                if symbol not in owner:
+                # Same notify decision ntfy used, and still registered now.
+                if event.get('eventId') not in candidates:
                     continue
-                projected = copy.deepcopy(event)
-                projected['ownerState'] = (owner[symbol] or {}).get('ownerState') or 'watch'
-                owner_events.append(projected)
+                if not argus_notification_eligibility.evaluate_push_eligibility(
+                        scope=argus_notification_eligibility.INDIVIDUAL_SECURITY,
+                        symbol=event.get('symbol'), owner_membership=owner,
+                        membership_status=status)["pushEligible"]:
+                    continue
+                owner_events.append(copy.deepcopy(event))
         proposals = argus_web_push.proposals(
             calendar, events, time.time(), owner_events=owner_events)
         if not _JP_FISCAL_REFRESH_STATE.get("pendingPersistence"):

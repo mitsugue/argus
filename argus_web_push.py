@@ -6,9 +6,10 @@ Subscription endpoints never appear in API responses or logs.
 from __future__ import annotations
 import base64
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -62,6 +63,18 @@ def configuration(env):
             serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)).decode().rstrip('=')
         return {'configured': True, 'publicKey': public, 'privateKey': private, 'contact': subject}
     except Exception: return {'configured': False}
+
+
+def _per_kind(events, limit=20):
+    """Up to `limit` events of each kind, so a burst of news never pushes a stock move out (2026-10-23)."""
+    seen = {}
+    out = []
+    for event in events:
+        kind = event.get('kind')
+        if seen.get(kind, 0) < limit:
+            seen[kind] = seen.get(kind, 0) + 1
+            out.append(event)
+    return out
 
 
 class NoRedirectSession:
@@ -204,7 +217,7 @@ class PushService:
             now = self.now()
             with self.db() as db:
                 for sub in db.execute('SELECT * FROM subscriptions WHERE enabled=1').fetchall():
-                    for event in events[:20]:
+                    for event in _per_kind(events):
                         column = {'sq':'sq','news':'news','owner_changes':'owner_changes'}.get(event['kind'])
                         if not column or not sub[column]: continue
                         if event['kind']=='news' and event['due']<sub['created']: continue
@@ -229,6 +242,62 @@ class PushService:
                     db.execute('UPDATE deliveries SET status=? WHERE id=?',(status,row['id']))
                     if status=='SUBSCRIPTION_EXPIRED': db.execute('UPDATE subscriptions SET enabled=0 WHERE id=?',(row['subscription_id'],))
         finally: self.lock.release()
+
+
+# Registered-symbol price moves (2026-10-23 owner decision: moved here from ntfy).
+# The hash is the existing asset deep link (#asset/<SYMBOL>); push-worker.js
+# accepts exactly the same symbol shape.
+ASSET_SYMBOL = re.compile(r'[A-Z0-9]{1,10}(?:[.-][A-Z0-9]{1,5})?')
+_MOVE_WORDS = {'PRICE_SPIKE': '急騰', 'PRICE_CRASH': '急落',
+               'LIMIT_UP': 'ストップ高', 'LIMIT_DOWN': 'ストップ安',
+               'LIMIT_UP_PROXIMITY': 'ストップ高に接近', 'LIMIT_DOWN_PROXIMITY': 'ストップ安に接近'}
+_SIGNED_MOVE_TYPES = {'MARKET_MOVER', 'CRYPTO_SHOCK', 'MOMENTUM_ACCELERATION'}
+_PERCENT_MOVE_TYPES = {'PRICE_SPIKE', 'PRICE_CRASH', 'MARKET_MOVER', 'CRYPTO_SHOCK'}
+_JST = timezone(timedelta(hours=9))
+
+
+def _move_word(item):
+    """急騰/急落 etc. for price-move events; None for volume/flow-only events."""
+    kind = item.get('eventType')
+    if kind in _MOVE_WORDS:
+        return _MOVE_WORDS[kind]
+    if kind in _SIGNED_MOVE_TYPES:
+        reason = str(item.get('reasonJa') or '')
+        if '急騰' in reason or '上昇' in reason:
+            return '急騰'
+        if '急落' in reason or '下落' in reason:
+            return '急落'
+    return None
+
+
+def _move_pct(item):
+    incident = item.get('downsideIncident')
+    pct = incident.get('changePct') if isinstance(incident, dict) else None
+    if isinstance(pct, (int, float)) and not isinstance(pct, bool) and math.isfinite(pct):
+        return f'{pct:+.1f}%'
+    if item.get('eventType') in _PERCENT_MOVE_TYPES:
+        found = re.search(r'([+-]\d{1,4}(?:\.\d+)?)%', str(item.get('reasonJa') or ''))
+        if found:
+            return f'{float(found.group(1)):+.1f}%'
+    return ''
+
+
+def _subject(item, symbol):
+    """JP: code + company name (long names shortened). Others: the symbol."""
+    name = str(item.get('nameJa') or '').strip()
+    if item.get('market') == 'JP' and name and name.upper() != symbol:
+        return f'{symbol} {name if len(name) <= 10 else name[:9] + "…"}'
+    return symbol
+
+
+def _move_time(item):
+    try:
+        stamp = datetime.fromisoformat(str(item.get('observedAt')).replace('Z', '+00:00'))
+        if stamp.tzinfo is None:
+            raise ValueError
+    except Exception:
+        return '銘柄の画面で値動きを確認してください。'
+    return stamp.astimezone(_JST).strftime('%H:%M') + '時点の値動きです。'
 
 
 def proposals(calendar, news, now, owner_events=()):
@@ -259,9 +328,14 @@ def proposals(calendar, news, now, owner_events=()):
     for item in owner_events:
         event_id = item.get('eventId')
         received = item.get('ingestAt') or item.get('observedAt')
-        if (not isinstance(event_id, str) or not re.fullmatch(r'[A-Za-z0-9:_-]{1,150}', event_id)
+        if (not isinstance(event_id, str) or not re.fullmatch(r'[A-Za-z0-9:_#.-]{1,150}', event_id)
                 or item.get('sourceTimeValidated') is not True
                 or not isinstance(item.get('severity'), int) or item['severity'] < 4):
+            continue
+        move = _move_word(item)
+        symbol = str(item.get('symbol') or '').strip().upper()
+        # Only a price move of a symbol the asset screen can open is sent.
+        if move is None or not ASSET_SYMBOL.fullmatch(symbol):
             continue
         try:
             due = datetime.fromisoformat(str(received).replace('Z', '+00:00')).timestamp()
@@ -269,11 +343,8 @@ def proposals(calendar, news, now, owner_events=()):
             continue
         if not 0 <= now-due <= 3600:
             continue
-        state = str(item.get('ownerState') or
-                    (item.get('downsideIncident') or {}).get('ownerState') or '')
-        audience = '保有銘柄' if state in {'held','active','protected'} else '監視銘柄'
+        title = ' '.join(part for part in ('監視銘柄', _subject(item, symbol), move, _move_pct(item)) if part)
         result.append({'key':'owner-change:'+event_id+':'+str(item['severity']),
-            'kind':'owner_changes','title':audience+'に重要な変化があります',
-            'body':'価格と市場の反応が確認条件に達しました。アプリで根拠と次に見る条件を確認してください。',
-            'hash':'#holdings','due':due,'expires':due+3600})
+            'kind':'owner_changes','title':title,'body':_move_time(item),
+            'hash':'#asset/'+symbol,'due':due,'expires':due+3600})
     return result

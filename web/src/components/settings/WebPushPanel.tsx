@@ -53,7 +53,7 @@ export function WebPushPanel(){
     <div className="ai-usage__controls"><button disabled={busy||!token} onClick={()=>void load()}>接続・受信状況を更新</button></div>
     <label className="web-push__preference"><input type="checkbox" checked={sq} disabled={busy} onChange={e=>setSq(e.target.checked)}/>SQの日程案内</label>
     <label className="web-push__preference"><input type="checkbox" checked={news} disabled={busy} onChange={e=>setNews(e.target.checked)}/>重大ニュース・財政金利の警戒変化</label>
-    <label className="web-push__preference"><input type="checkbox" checked={ownerChanges} disabled={busy} onChange={e=>setOwnerChanges(e.target.checked)}/>保有・監視銘柄の重要な変化</label>
+    <label className="web-push__preference"><input type="checkbox" checked={ownerChanges} disabled={busy} onChange={e=>setOwnerChanges(e.target.checked)}/>監視銘柄の急騰・急落</label>
     <div className="ai-usage__controls"><button disabled={busy||!token||!publicKey} onClick={enable}>{status?.enabled?'通知項目を保存':'通知を有効にする'}</button>
       {status?.enabled&&<><button disabled={busy} onClick={()=>void test()}>1分後に確認通知</button><button disabled={busy} onClick={()=>void disable()}>この端末への通知を停止</button></>}</div>
     {busy&&<p><TriangleStepLoader label="通知の接続を確認しています" /></p>}{message&&<p role="status">{message}</p>}

@@ -68,23 +68,32 @@ def test_peer_is_context_only_and_holding_remains_subject():
     assert _decision("SBG", membership)["ownerRelationship"] == "holding"
 
 
-def test_peer_context_push_keeps_owner_holding_as_subject(monkeypatch):
+def test_individual_symbol_ntfy_is_retired_even_for_owner_symbols(monkeypatch):
+    """2026-10-23 owner decision: symbol moves reach the phone only through
+    the app's Web Push (which opens the symbol's screen), never ntfy."""
     sent = []
     monkeypatch.setenv("NTFY_TOPIC", "test-topic")
     monkeypatch.setattr(scanner.requests, "post", lambda *a, **k: sent.append((a, k)))
-    monkeypatch.setattr(scanner, "_owner_symbols_cached", lambda: _membership(SBG="held"))
+    monkeypatch.setattr(scanner, "_owner_symbols_cached", lambda: _membership(SOXL="watch"))
     monkeypatch.setitem(scanner._OWNER_SYMS_CACHE, "status", "fresh")
-    env = {"symbol": "SBG", "nameJa": "SOFTBANK GROUP",
-           "eventType": "PEER_CONTEXT", "market": "JP",
-           "session": "JP_REGULAR", "severity": 4,
-           "recommendedPosture": "HOLD",
-           "reasonJa": "Positive context from ARM strength."}
-    assert scanner._event_ntfy(env) is True
+    env = {"symbol": "SOXL", "eventType": "PRICE_SPIKE", "market": "US",
+           "session": "US_REGULAR", "severity": 5,
+           "recommendedPosture": "AVOID_CHASING", "reasonJa": "急騰 +12.0%"}
+    assert scanner._event_ntfy(env) is False
+    eligible = scanner._push_eligibility("individual_security", "SOXL")
+    assert scanner._event_ntfy(env, eligibility=eligible) is False
+    assert sent == []
+
+
+def test_system_ntfy_test_notice_is_unaffected(monkeypatch):
+    sent = []
+    monkeypatch.setenv("NTFY_TOPIC", "test-topic")
+    monkeypatch.setattr(scanner.requests, "post", lambda *a, **k: sent.append((a, k)))
+    env = {"symbol": "TEST", "eventType": "TEST_NOTIFICATION", "market": "—",
+           "session": "test", "severity": 4, "recommendedPosture": "WATCH",
+           "reasonJa": "通知テスト"}
+    assert scanner._event_ntfy(env, notification_scope="system") is True
     assert len(sent) == 1
-    args, kwargs = sent[0]
-    assert "SBG" in kwargs["headers"]["Title"]
-    assert "ARM" not in kwargs["headers"]["Title"]
-    assert "ARM" in kwargs["data"].decode("utf-8")
 
 
 def test_symbol_removed_from_watchlist_is_blocked():
@@ -131,17 +140,71 @@ def test_market_mover_remains_recordable_but_direct_push_is_blocked(monkeypatch)
     assert env["eventType"] == "MARKET_MOVER"  # analysis object remains intact
 
 
-def test_marked_market_mover_reaches_event_transport_once(monkeypatch):
+def _isolated_event_store(monkeypatch, membership):
+    from collections import deque
+    monkeypatch.setattr(scanner, "_EVENTS_ACTIVE", {})
+    monkeypatch.setattr(scanner, "_EVENTS_LOG", deque(maxlen=200))
+    monkeypatch.setattr(scanner, "_EVENT_PUSH_CANDIDATES", deque(maxlen=200))
+    monkeypatch.setattr(scanner, "_mover_push_allowed", lambda market: True)
+    monkeypatch.setattr(scanner, "_owner_symbols_cached", lambda: membership)
+    monkeypatch.setitem(scanner._OWNER_SYMS_CACHE, "status", "fresh")
+
+
+def _web_push_rows(monkeypatch):
+    captured = []
+    monkeypatch.setattr(scanner.argus_web_push, "configuration", lambda env: {"configured": True})
+    monkeypatch.setattr(scanner, "_news_intel_ensure_loaded", lambda: None)
+    monkeypatch.setattr(scanner, "_NEWS_INTEL", {"events": {}, "order": []})
+    monkeypatch.setattr(scanner.jp_market_events, "published_sq_calendar", lambda now: {})
+    monkeypatch.setitem(scanner._JP_FISCAL_REFRESH_STATE, "pendingPersistence", True)
+    monkeypatch.setattr(scanner._WEB_PUSH, "tick", lambda rows: captured.extend(rows))
+    scanner._web_push_tick()
+    return [row for row in captured if row["kind"] == "owner_changes"]
+
+
+def _record_move(symbol, *, trig=None, observed=True):
+    now = scanner.datetime.now(scanner.pytz.utc)
+    trig = trig or {"type": "PRICE_SPIKE", "severity": 4, "triggerScore": 0.8,
+                    "reasonJa": "急騰 +8.24%(US_REGULAR閾値5%)"}
+    return scanner._record_event("US", symbol, trig, now, "US_REGULAR",
+                                 observed_at=now if observed else None)
+
+
+def test_marked_symbol_move_goes_to_web_push_not_ntfy(monkeypatch):
     sent = []
     monkeypatch.setenv("NTFY_TOPIC", "test-topic")
     monkeypatch.setattr(scanner.requests, "post", lambda *a, **k: sent.append((a, k)))
-    monkeypatch.setattr(scanner, "_owner_symbols_cached", lambda: _membership(NVDA="watch"))
-    monkeypatch.setitem(scanner._OWNER_SYMS_CACHE, "status", "fresh")
-    env = {"symbol": "NVDA", "eventType": "MARKET_MOVER", "market": "US",
-           "session": "US_REGULAR", "severity": 5,
-           "recommendedPosture": "AVOID_CHASING", "reasonJa": "+20%"}
-    assert scanner._event_ntfy(env) is True
-    assert len(sent) == 1
+    _isolated_event_store(monkeypatch, _membership(SOXL="watch"))
+    env = _record_move("SOXL")
+    assert sent == []                                   # no ntfy
+    assert env in list(scanner._EVENTS_LOG)             # still recorded for screens
+    assert scanner._EVENTS_ACTIVE                       # and active
+    rows = _web_push_rows(monkeypatch)
+    assert len(rows) == 1
+    assert rows[0]["title"] == "監視銘柄 SOXL 急騰 +8.2%"
+    assert rows[0]["hash"] == "#asset/SOXL"
+
+
+def test_unmarked_mover_and_unnotified_events_stay_off_web_push(monkeypatch):
+    _isolated_event_store(monkeypatch, _membership(SOXL="watch"))
+    _record_move("ARM")                                 # not registered
+    _record_move("SOXL", observed=False)                # no source time
+    assert _web_push_rows(monkeypatch) == []
+    assert len(scanner._EVENTS_LOG) == 2                # both remain recorded
+
+
+def test_symbol_removed_after_detection_is_not_sent(monkeypatch):
+    _isolated_event_store(monkeypatch, _membership(SOXL="watch"))
+    _record_move("SOXL")
+    monkeypatch.setattr(scanner, "_owner_symbols_cached", lambda: {})
+    assert _web_push_rows(monkeypatch) == []
+
+
+def test_repeated_same_move_queues_one_web_push(monkeypatch):
+    _isolated_event_store(monkeypatch, _membership(SOXL="watch"))
+    _record_move("SOXL")
+    assert _record_move("SOXL") is None                 # same bucket, same severity
+    assert len(_web_push_rows(monkeypatch)) == 1
 
 
 def test_owner_cache_reads_snapshot_members_and_expires_failed_fallback(monkeypatch):

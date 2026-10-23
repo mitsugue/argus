@@ -135,20 +135,71 @@ def test_news_pending_ai_can_notify_but_backfill_cannot():
     assert push.proposals({},[{**record,'backfill':True}],now.timestamp())==[]
 
 
-def test_owner_change_is_opt_in_generic_and_not_backfilled(service):
+def _move(clock, **kwargs):
+    # The shape scanner._record_event stores (argus_events.make_envelope).
+    stamp = datetime.fromtimestamp(clock[0], timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return {'eventId': 'US:SOXL:PRICE_SPIKE:2026-10-23:20#' + stamp, 'eventType': 'PRICE_SPIKE',
+            'severity': 4, 'symbol': 'SOXL', 'market': 'US', 'sourceTimeValidated': True,
+            'observedAt': stamp, 'ingestAt': stamp,
+            'reasonJa': '急騰 +8.24%(US_REGULAR閾値5%)', **kwargs}
+
+
+def test_owner_change_is_opt_in_names_the_symbol_and_is_not_backfilled(service):
     value,clock,sent=service
     data=sub();identity=subscribe(value,subscription=data,ownerChanges=False)
-    item={'eventId':'move-1','severity':4,'symbol':'7203','sourceTimeValidated':True,
-          'ingestAt':datetime.fromtimestamp(clock[0],timezone.utc).isoformat(),
-          'ownerState':'held'}
+    item=_move(clock,ownerState='held')
     rows=push.proposals({},[],clock[0],owner_events=[item])
-    assert rows[0]['kind']=='owner_changes' and rows[0]['hash']=='#holdings'
-    assert rows[0]['title'].startswith('保有銘柄')
-    assert '7203' not in json.dumps(rows[0],ensure_ascii=False)
+    assert len(rows)==1 and rows[0]['kind']=='owner_changes'
+    # The symbol's own screen, never the retired holdings landing.
+    assert rows[0]['hash']=='#asset/SOXL'
+    assert rows[0]['title']=='監視銘柄 SOXL 急騰 +8.2%'
+    assert '保有' not in rows[0]['title']
+    assert rows[0]['body'].endswith('時点の値動きです。') and len(rows[0]['body'])<=20
     value.tick(rows);assert not sent
     subscribe(value,subscription=data,ownerChanges=True);value.tick(rows);assert len(sent)==1
-    old={**item,'eventId':'move-old','ingestAt':datetime.fromtimestamp(clock[0]-3601,timezone.utc).isoformat()}
+    payload=sent[0][1]
+    assert payload['hash']=='#asset/SOXL' and payload['title']=='監視銘柄 SOXL 急騰 +8.2%'
+    value.tick(rows);assert len(sent)==1   # one notice per event and severity
+    old=_move(clock,eventId='US:SOXL:PRICE_SPIKE:old',
+              ingestAt=datetime.fromtimestamp(clock[0]-3601,timezone.utc).isoformat())
     assert push.proposals({},[],clock[0],owner_events=[old])==[]
+
+
+def test_jp_move_title_carries_code_and_company_name(service):
+    _,clock,_=service
+    item=_move(clock,eventId='JP:7203:PRICE_CRASH:2026-10-23:20#x',symbol='7203',market='JP',
+               eventType='PRICE_CRASH',nameJa='トヨタ自動車',reasonJa='急落 -6.12%(JP_REGULAR閾値5%)')
+    row=push.proposals({},[],clock[0],owner_events=[item])[0]
+    assert row['title']=='監視銘柄 7203 トヨタ自動車 急落 -6.1%' and row['hash']=='#asset/7203'
+    long=_move(clock,symbol='285A',market='JP',nameJa='とても長い会社名株式会社ホールディングス')
+    assert push.proposals({},[],clock[0],owner_events=[long])[0]['title']=='監視銘柄 285A とても長い会社名株…'+' 急騰 +8.2%'
+    stop=_move(clock,symbol='7203',market='JP',eventType='LIMIT_DOWN',nameJa='トヨタ自動車',
+               reasonJa='ストップ安(S安)に到達 — 制限値幅±500円',severity=5)
+    assert push.proposals({},[],clock[0],owner_events=[stop])[0]['title']=='監視銘柄 7203 トヨタ自動車 ストップ安'
+
+
+def test_downside_incident_percent_and_signed_movers(service):
+    _,clock,_=service
+    crash=_move(clock,eventType='MOMENTUM_ACCELERATION',reasonJa='急加速下落 -2.4%/分(直近60秒・閾値2.5%/分)',
+                downsideIncident={'changePct':-7.25})
+    assert push.proposals({},[],clock[0],owner_events=[crash])[0]['title']=='監視銘柄 SOXL 急落 -7.2%'
+    mover=_move(clock,eventType='MARKET_MOVER',reasonJa='SOXL 全市場急騰 +12.3%($40.1)')
+    assert push.proposals({},[],clock[0],owner_events=[mover])[0]['title']=='監視銘柄 SOXL 急騰 +12.3%'
+
+
+@pytest.mark.parametrize('change',[
+    {'eventType':'VOLUME_ANOMALY','reasonJa':'出来高が平常の5.0倍(閾値3倍)'},
+    {'eventType':'FLOW_REVERSAL','reasonJa':'大口資金が流入→流出に反転(40%→-40%)'},
+    {'severity':3},
+    {'sourceTimeValidated':False},
+    {'symbol':'../settings'},
+    {'symbol':'SOXL/x'},
+    {'symbol':''},
+    {'eventId':'bad id with spaces'},
+])
+def test_non_price_or_unsafe_moves_are_not_sent(service,change):
+    _,clock,_=service
+    assert push.proposals({},[],clock[0],owner_events=[_move(clock,**change)])==[]
 
 
 def test_existing_subscription_schema_migrates_without_enabling_owner_changes(service):
@@ -203,3 +254,10 @@ def test_worker_reads_news_store_independently_of_brief(monkeypatch):
     assert any(row['hash'] == '#notifications/news/material' for row in sent)
     assert 'material' in projected and len(projected) == 16
     assert records == before
+
+
+def test_a_burst_of_news_never_pushes_a_stock_move_out():
+    import argus_web_push as wp
+    events = [{'kind': 'news', 'key': f'n{i}'} for i in range(30)] + [{'kind': 'owner_changes', 'key': 's1'}]
+    picked = wp._per_kind(events)
+    assert sum(e['kind'] == 'news' for e in picked) == 20 and picked[-1]['key'] == 's1'
