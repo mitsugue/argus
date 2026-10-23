@@ -202,7 +202,6 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
       <b>{external.indexOf(selectedPoint) + 1} {selectedPoint.tag} · {md(selectedPoint.start)}〜{md(selectedPoint.end)}</b>
       <p className="nr-selected-price">{selectedPoint.high > selectedPoint.low ? `${yen(selectedPoint.low)}〜${yen(selectedPoint.high)}` : yen(selectedPoint.value)}<span>円</span></p>
       <p>{position(selectedPoint.value)}{selectedPoint.high > selectedPoint.low && '（価格の幅の中央）'}</p>
-      <small>この期間の中央に点を置いています。特定の日の到達予想ではありません。予測の成績は未検証です。</small>
     </div>}
     {layers.external && selectedPeriod && <div className="nr-selection is-period" aria-live="polite">
       <small>{periodNow ? 'いま該当する時期' : '選んだ時期'} · FUTURE MAPの参考予測</small>

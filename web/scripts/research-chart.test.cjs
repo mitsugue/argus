@@ -75,7 +75,8 @@ assert.ok(html.includes('1 谷')&&html.includes('2 底'));
 assert.ok(html.includes('EPSがない日はPER線を途切れさせています'));
 assert.ok(html.includes('aria-label="拡大"')&&html.includes('今日へ戻る'));
 assert.ok(html.includes('前日終値より下')&&html.includes('10/30〜10/30'));
-assert.ok(html.includes('特定の日の到達予想ではありません'));
+// 2026-10-23 オーナー指示(画面の言葉の基本方針): 断り書きは出さない。
+assert.ok(!html.includes('特定の日の到達予想ではありません') && !html.includes('予測の成績は未検証です'));
 assert.ok(!html.includes('NaN')&&!html.includes('Infinity'));
 assert.ok(html.includes('10/1の山は未確定'),'高値・安値は初期状態で表示する');
 assert.ok(!html.includes('aria-label="チャートに重ねる情報"'),'不要な線の切り替えは出さない');
