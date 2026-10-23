@@ -2,7 +2,7 @@ const fs=require('node:fs'),ts=require('typescript'),vm=require('node:vm'),asser
 const React=require('react'),{renderToStaticMarkup}=require('react-dom/server');
 let current={document:null,readFailed:false,denied:false};
 require.extensions['.ts']??=(mod,filename)=>mod._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,filename);
-const context={exports:{},URL,require:name=>name.includes('useCreditConditions')?{useCreditConditions:()=>current}:name.includes('/screenNotes')?require('../src/lib/screenNotes.ts'):name.endsWith('.css')?{}:require(name)};
+const context={exports:{},URL,require:name=>name.includes('useCreditConditions')?{useCreditConditions:()=>current}:name.includes('/screenNotes')?(()=>{const m={exports:{}};vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/lib/screenNotes.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,{exports:m.exports,RegExp});return m.exports;})():name.endsWith('.css')?{}:require(name)};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/today/CreditConditionsDetails.tsx','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,context);
 const doc={schemaVersion:'credit-conditions-v1',snapshotId:'a'.repeat(64),actionAuthority:false,showToday:true,
  dimensions:{borrowingCost:{status:'OBSERVED',direction:'RISING',value:1.5,unit:'PERCENT',dataAsOf:'2026-08-31'},creditQuality:{status:'INSUFFICIENT_DATA'}},

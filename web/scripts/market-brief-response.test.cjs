@@ -52,7 +52,7 @@ const cardContext={exports:{},Date,require(name){
  if(name.includes('/TodayDecisionStrip')) return {TodayDecisionStrip:()=>React.createElement('section',{'data-four-cards':'visible'})};
  if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>null};
  if(name.includes('/marketWording')) return {marketChanges:v=>v,marketWording:v=>v};
- if(name.includes('/screenNotes')) return require('../src/lib/screenNotes.ts');
+ if(name.includes('/screenNotes')) return (()=>{const m={exports:{}};vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/lib/screenNotes.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,{exports:m.exports,RegExp});return m.exports;})();
  if(name.includes('/NumericalResearchDetails')) return {NumericalResearchDetails:()=>null};
  if(name.includes('/CreditConditionsDetails')) return {CreditConditionsDetails:()=>null};
  if(name.includes('/FiscalEnvironmentDetails')) return {FiscalEnvironmentDetails:()=>null};
