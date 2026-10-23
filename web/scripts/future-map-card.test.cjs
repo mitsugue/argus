@@ -24,7 +24,7 @@ const doc = { schemaVersion: 'argus-future-map-public-v1', updatedAt: '2026-10-0
   record: { scored: 0, reached: 0 }, argusValidated: false, actionAuthority: false };
 const NOW = Date.parse('2026-10-04T12:01:00Z');
 const html = renderToStaticMarkup(React.createElement(FutureMapView, { doc, nowMs: NOW }));
-assert.ok(html.includes('FUTURE MAP') && html.includes('外部の見立て') && html.includes('予測が当たるかは未検証') && html.includes('10/4更新'));
+assert.ok(html.includes('FUTURE MAP') && html.includes('外部の見立て') && !html.includes('未検証') && html.includes('10/4更新'));
 assert.ok(html.includes('いまの位置') && html.includes('天井圏') && html.includes('10/14 米CPI') && html.includes('10/30ごろ'));
 assert.ok(html.includes('いまここ') && html.includes('●●') && html.includes('69,700〜72,000'));
 assert.ok(html.includes('AI投資の反動') && html.includes('別の見方: 選挙後は上がる') === false, 'only four rows at first');

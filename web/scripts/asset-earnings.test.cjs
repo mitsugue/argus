@@ -27,7 +27,7 @@ m._compile(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{mod
 const {AssetEarningsDate,AssetEarningsDetails} = m.exports;
 const render = () => renderToStaticMarkup(React.createElement(AssetEarningsDetails,{market:'US',symbol:'TEST'}));
 const html=render();
-for (const text of ['前回の決算','次回の注目点','見通し','2026-06-30期','EPS','8人','7人','上方修正','発表日は未取得','株価予測ではありません']) assert.ok(html.includes(text),text);
+for (const text of ['前回の決算','次回の注目点','見通し','2026-06-30期','EPS','8人','7人','上方修正','発表日は未取得']) assert.ok(html.includes(text),text);
 state={...state,earnings:{'US:TEST':{...row,currency:'JPY',estimate:{...row.estimate,revenueCurrency:'JPY'}}}};
 assert.ok(render().includes('$2.00') && render().includes('￥1,000,000,000'));
 state={...state,earnings:{'US:TEST':{...row,previous:{...row.previous,currency:undefined},estimate:{...row.estimate,epsCurrency:undefined}}}};

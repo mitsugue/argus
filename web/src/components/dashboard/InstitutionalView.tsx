@@ -65,7 +65,7 @@ export const InstitutionalView: React.FC<{ symbol: string }> = ({ symbol }) => {
   return (
     <div className="uac-sec">
       {credit && <div className="iv-row"><div className="uac-sec-t">金利・信用環境</div>
-        <p>{credit.textJa}</p><small>ARGUSの条件付きの見方 · 株価への影響は未検証</small>
+        <p>{credit.textJa}</p><small>ARGUSの条件付きの見方</small>
         {(Array.isArray(credit.sources) ? credit.sources : []).slice(0, 2).map((row, index) => <p className="iv-meta" key={index}>
           対象 {row.dataAsOf} · 受領 {row.retrievedAt} · <a href={row.sourceUrl} target="_blank" rel="noopener noreferrer">{row.publisher}の根拠</a>
         </p>)}

@@ -145,8 +145,8 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
       {strip.rows.map(row => <details key={row.id} className="today-strip__row" data-lean={row.lean} data-row={row.id}>
         <summary><span className={`today-strip__chip is-${row.lean}`}>{leanLabel[row.lean]}</span>
           <span><b>{row.title}</b><small>{row.meaning}</small></span></summary>
-        {row.id === 'trend' ? <p className="today-strip__detail">{row.soWhat}</p> :
-          <dl><dt>これは何？</dt><dd>{row.what}</dd><dt>今の状態</dt><dd>{row.now}</dd><dt>見るポイント</dt><dd>{row.soWhat}</dd></dl>}
+        {row.id === 'trend' ? row.soWhat && <p className="today-strip__detail">{row.soWhat}</p> :
+          <dl><dt>これは何？</dt><dd>{row.what}</dd><dt>今の状態</dt><dd>{row.now}</dd>{row.soWhat && <><dt>見るポイント</dt><dd>{row.soWhat}</dd></>}</dl>}
         {row.id === 'sq' && <a className="today-strip__source" href="https://www.jpx.co.jp/glossary/ta/326.html" target="_blank" rel="noopener noreferrer">SQの仕組みを読む（日本取引所グループ）</a>}
       </details>)}
     </div>}

@@ -201,8 +201,8 @@ const {renderToStaticMarkup}=require('react-dom/server');
 const {WarningConditionsDetails}=require(path.join(src,'components/today/WarningConditionsDetails.tsx'));
 const html=renderToStaticMarkup(React.createElement(WarningConditionsDetails,{view}));
 assert.match(html,/基準未確定/);
-assert.match(html,/条件の計算が動くことと、下落を予測できることは別/);
-assert.match(html,/時間がたつだけで検証済みにはなりません/);
+// Owner policy 2026-10-23: no 「未検証」 disclaimer or its explanation on screen; counts stay.
+assert.doesNotMatch(html,/未検証/);
 assert.match(html,/測定できる条件 4件/);
 assert.match(html,/成績：まだ採点できる記録がありません/);
 assert.match(html,/3・4番は判定基準の確定待ち/);

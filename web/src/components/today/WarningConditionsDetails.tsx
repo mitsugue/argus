@@ -8,10 +8,10 @@ export function warningPerformanceJa(row: MarketSignalsView['signals'][number]) 
     || five.evaluated < 0 || !Number.isInteger(five.falls) || five.falls < 0 || five.falls > five.evaluated)
     return '成績：まだ採点できる記録がありません';
   const grade = p.status === 'NOT_ABOVE_BASELINE' ? '通常時より予測が優れるとは確認できません'
-    : p.status === 'INSUFFICIENT_SAMPLE' ? '件数不足' : '予測力は未検証';
+    : p.status === 'INSUFFICIENT_SAMPLE' ? '件数不足' : '';
   const source = p.availabilityBasis === 'RECONSTRUCTED_PUBLICATION_18JST_NOT_ARCHIVED_VINTAGE'
     ? '過去データを復元した検査' : '過去の成立後5営業日';
-  return `${source}：${five.evaluated}件中${five.falls}件下落・未検証・${grade}`;
+  return `${source}：${five.evaluated}件中${five.falls}件下落${grade ? `・${grade}` : ''}`;
 }
 
 export function warningCoverageJa(view: MarketSignalsView) {
@@ -48,9 +48,6 @@ export function WarningConditionsDetails({ view }: { view: MarketSignalsView }) 
         <small className="at-seven-performance">{warningPerformanceJa(row)}</small>
       </i>
     </div>)}
-    <details><summary>「成績：未検証」の意味</summary>
-      <p>条件の計算が動くことと、下落を予測できることは別です。判定基準を固定し、当時利用できたデータで過去の下落を測り、普段の下落割合との比較と件数を確認します。基準を上回らない場合もあり、時間がたつだけで検証済みにはなりません。</p>
-    </details>
     <small>測定できる条件 {coverage.measured}件／全{view.total}サイン。成立件数から暴落の確率は出しません。</small>
     <small className="at-seven-closed">7番目の条件（好決算でも株価下落）は、10年分の過去を当時受け取ったデータで判定できず、2026年10月21日に外しました（計算と記録は続けています）。</small>
   </div>;

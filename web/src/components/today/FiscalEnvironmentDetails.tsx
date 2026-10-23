@@ -37,7 +37,7 @@ export function FiscalEnvironmentDetails({ brief }: { brief: MarketBrief }) {
   const auctionSeries = object(auctions?.series) ? auctions.series : {};
   return <details className="argus-editorial__evidence fiscal-evidence" data-fiscal-reference={doc.id}>
     <summary>日本の財政・金利の根拠</summary>
-    <p>この説明に使った公式試算と市場金利です。財政の作用を点検する参考計算で、株価や財政危機の予測ではありません。</p>
+    <p>この説明に使った公式試算と市場金利です。</p>
     {rows.map(({ key, label, row }) => {
       const fiscal = object(row.fiscal) ? row.fiscal : {};
       const definition = object(fiscal.definition) ? fiscal.definition : {};
@@ -103,9 +103,9 @@ export function FiscalEnvironmentDetails({ brief }: { brief: MarketBrief }) {
           </>}
         </details>;
       })}
-      <p>入札結果と株価方向の関係は未検証です。財政・市場金利の警戒条件には加算しません。</p>
+      <p>財政・市場金利の警戒条件には加算しません。</p>
     </section>}
-    <p>警戒ルールと予測性能は未検証です。{auctions ? '借換構成は未接続。' : '国債入札・借換構成は未接続。'}為替の判定は{series['fx.usdjpy']?.status === 'AVAILABLE' ? '取得済みの別系列を使用します。' : '未取得です。'}</p>
+    <p>未接続：{auctions ? '借換構成' : '国債入札・借換構成'}{series['fx.usdjpy']?.status === 'AVAILABLE' ? '' : ' · 為替：未取得'}</p>
     <p>解除には、比較可能な財政入力と市場データがそろい、警戒条件の解消を確認する必要があります。取得障害だけで解除しません。</p>
     {(Array.isArray(doc.sources) ? doc.sources : []).filter(object).slice(0, 6).map((source, index) => <p key={index}>
       {sourceUrl(source.sourceUrl) && <a href={sourceUrl(source.sourceUrl)!} target="_blank" rel="noopener noreferrer">内閣府の原資料</a>}

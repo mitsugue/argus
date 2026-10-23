@@ -77,7 +77,7 @@ export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?
   const { position, nextAlert, nextBottom } = doc.status;
   return <section className="fm-card card" aria-label="FUTURE MAP" data-argus-contract="future-map-v1">
     <div className="fm-head"><b>FUTURE MAP</b>
-      <span>外部の見立て ・ {age.warning ? '' : `${updateDate}更新 ・ `}予測が当たるかは未検証</span>
+      <span>外部の見立て{age.warning ? '' : ` ・ ${updateDate}更新`}</span>
       <span className={`fm-age${age.warning ? ' is-warning' : ''}`} role={age.warning ? 'status' : undefined}>{age.label}</span></div>
     <div className="fm-boxes">
       <div className="fm-box tone-red"><small>いまの位置</small><b>{position}</b></div>

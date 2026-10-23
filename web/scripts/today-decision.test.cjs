@@ -51,7 +51,7 @@ const ids = s.rows.map(r => r.id);
 assert.deepEqual(ids, ['foreign', 'us10y', 'm1570', 'vix', 'trend', 'sq'], 'small FX moves are left out');
 assert(s.rows.find(r => r.id === 'foreign').title.includes('約3,499億円の売り越し'));
 assert.equal(s.rows.find(r => r.id === 'm1570').lean, 'soft-head');
-assert(s.rows.every(r => r.what && r.now && r.soWhat), 'every row explains what, now and so what');
+assert(s.rows.every(r => r.what && r.now && (r.soWhat || r.id === 'trend')), 'every row explains what, now and so what');
 assert.equal(s.rows.find(r => r.id === 'us10y').lean, 'neutral', 'the 10-year yield has no measured direction');
 assert(s.rows.find(r => r.id === 'us10y').soWhat.includes('61%'));
 assert.equal(s.tone, 'wait', 'one headwind and a soft headwind against one tailwind');
@@ -177,7 +177,7 @@ console.log('日経平均の右はリアルタイムなら無し・遅延だけ�
   assert.deepEqual([anchored.alert, anchored.momentum, anchored.band], [night.alert, night.momentum, night.band], 'the date never changes a number');
   const trend = s.rows.find(r => r.id === 'trend');
   assert.equal(trend.title, '日経平均の勢い 5日で+4.0%');
-  assert.equal(trend.soWhat, '流れの向きの確認用で、この先を当てる指標ではありません。');
+  assert.equal(trend.soWhat, '', 'owner policy 2026-10-23: no disclaimer line under the trend row');
   assert.equal(trend.lean, 'tail', 'the 5-session reading itself is unchanged');
 }
 const tileOf = (html, cls) => html.split(`today-strip__tile ${cls}`)[1].split('</button>')[0];

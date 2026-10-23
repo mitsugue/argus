@@ -316,7 +316,7 @@ const MarketViewStrip: React.FC = () => {
   // (SIG-01..07) with a count recomputed from the per-signal states shown.
   return <div className="at-marketview" data-argus-contract="jp-market-engine-market-view-v1"
     aria-label="市場観（行動権限なし）">
-    <small>市場観（検証前の参考情報） — 売買の最終判断とは別枠</small>
+    <small>市場観</small>
     {/* v13.5.59 (owner iPhone): MARKET SIGNALS is rendered ONCE, at the top of
         the Primary Action (tap to expand). The seven family chips that repeated
         the same conditions here are gone; only the JP_MARKET_ENGINE reversal/downside states
@@ -333,7 +333,6 @@ const MarketViewStrip: React.FC = () => {
           ? (JP_MARKET_ENGINE_STATE_JA[reversal.downsideState] ?? reversal.downsideState) : 'データ待ち'}</b>
       </GlossaryTip></span>
     </div>
-    <span className="mv-note">市場観は行動権限を持たない（各項目は検証前・確率は主張しない）</span>
   </div>;
 };
 
@@ -852,7 +851,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
           <b data-argus-contract="market-signals-top-v1">
             {topSignals ? `成立している条件 ${topSignals.activeCount}件` : '成立状況を確認中'}</b>
           {usSelected&&<span className="at-seven-status">米国の条件付けはVIX水準・VIX10日変化・対SPY相対力です。6サインは日本固有（米国は適用外）。</span>}
-          <span className="at-seven-status">{topSignals?.kind === 'warning' ? '各条件の成立状況を表示。下落を予測できるかは未検証です。' : '現行規則の向きと過去の成績を並べています。予測としての有効性は未検証です。'}</span>
+          <span className="at-seven-status">{topSignals?.kind === 'warning' ? '各条件の成立状況を表示。' : '現行規則の向きと過去の成績を並べています。'}</span>
         </summary>
         <div className="at-seven-detail">
           {topSignals?.kind === 'warning' && <WarningConditionsDetails view={topSignals}/> }
