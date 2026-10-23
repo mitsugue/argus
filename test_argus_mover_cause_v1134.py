@@ -221,13 +221,3 @@ def test_store_merge_preserves_created_at_and_cooldown():
     assert merged["freshness"]["createdAt"] == NOW, "original createdAt survives"
     assert merged["freshness"]["lastAiExplainAt"] == NOW
     assert merged["refreshPolicy"]["aiExplainCooldownUntil"] == "2026-07-02T05:30:00Z"
-
-
-# ── scanner integration ──────────────────────────────────────────────────────
-import scanner
-
-
-def test_new_admin_routes_require_token():
-    with scanner.app.test_client() as c:
-        assert c.post("/api/argus/admin/mover-causes/refresh-queue/run").status_code in (401, 503)
-        assert c.post("/api/argus/admin/market-confirmation/refresh").status_code in (401, 503)

@@ -352,12 +352,6 @@ def test_dq_exposes_integrity_cost_ledger():
             assert banned not in body
 
 
-def test_dl_snapshot_admin_only():
-    with scanner.app.test_client() as c:
-        r = c.post("/api/argus/admin/decision-ledger/snapshot", json={})
-        assert r.status_code in (401, 403, 503)
-
-
 def test_osint_build_has_warmth_docs_disclosure():
     scanner._OSINT_AGENT_QUEUE.clear()
     scanner._OSINT_PROGRESS.clear()

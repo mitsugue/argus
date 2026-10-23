@@ -225,52 +225,14 @@ def test_full_private_prompt_requires_warning_in_ui():
 
 # ── 公開経路: 外部AI不発火・非漏洩 ──────────────────────────────────────────
 
-def test_public_deep_dive_never_calls_external_ai(monkeypatch):
-    monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
-    scanner._OSINT_AGENT_QUEUE.clear()      # 順序依存防止(重複ガード誤発火)
-    scanner._OSINT_PROGRESS.clear()
-
-    def die(*a, **k):
-        raise AssertionError("external AI called from public route")
-    monkeypatch.setattr(scanner, "_gemini_osint", die)
-    monkeypatch.setattr(scanner, "_gpt_osint", die)
-    monkeypatch.setattr(scanner, "_openai_research", die)
-    monkeypatch.setattr(scanner, "_openai_prose", die)
-    with scanner.app.test_client() as c:
-        r = c.post("/api/argus/osint/deep-dive", json={"symbol": "6965", "market": "JP"})
-        assert r.status_code == 200
-        d = r.get_json()
-    assert d["ok"] is True
-    assert "公開画面から外部AIは起動しません" in d["agentNoteJa"]
-    inv = d["investigation"]
-    assert inv["schemaVersion"] == "osint-investigation-v1"
-    import argus_portfolio_sync
-    assert not argus_portfolio_sync.contains_sensitive(d)
-
-
 def test_public_investigation_get_leak_free(monkeypatch):
     monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
     with scanner.app.test_client() as c:
-        c.post("/api/argus/osint/deep-dive", json={"symbol": "6965", "market": "JP"})
         d = c.get("/api/argus/osint/investigation?symbol=6965").get_json()
     blob = json.dumps(d, ensure_ascii=False)
     for banned in ("quantity", "avgCost", "fundName", "monthlyContribution",
                    "vaultPass", "login_pwd", "ownerNote"):
         assert banned not in blob, banned
-
-
-def test_terms_endpoint_sanitizes_and_bounds(monkeypatch):
-    scanner._OSINT_TERM_OVERLAY.clear()   # 順序依存防止(他テストの自動学習で満杯化)
-    with scanner.app.test_client() as c:
-        r = c.post("/api/argus/osint/terms", json={
-            "symbol": "6965",
-            "terms": ["Samsung", "http://evil", "x", "A" * 100] + [f"w{i}" for i in range(20)]})
-        d = r.get_json()
-    assert "Samsung" in d["storedTerms"]
-    assert all(not t.lower().startswith("http") for t in d["storedTerms"])
-    assert all(len(t) <= 40 for t in d["storedTerms"])
-    assert len(d["storedTerms"]) <= 12
-    assert "本文はサーバーに保存しません" in d["noteJa"]
 
 
 def test_admin_agents_run_requires_admin():

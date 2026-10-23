@@ -178,27 +178,6 @@ def test_worker_has_research_loop_and_progress():
     assert "検証済みに昇格: {promoted}件" in src
 
 
-# ── Part E: 即時実行UX(進捗/二重防止/ETA) ───────────────────────────────────
-
-def test_deep_dive_duplicate_guard(monkeypatch):
-    monkeypatch.setitem(scanner._NEWS_JA_STATE, "restored", True)
-    monkeypatch.setitem(scanner._OSINT_PERSIST_STATE, "restored", True)
-    # 前のテスト(v12.1.0系のdeep-dive)が残したキュー/進捗を必ずクリア
-    scanner._OSINT_AGENT_QUEUE.clear()
-    scanner._OSINT_PROGRESS.clear()
-    with scanner.app.test_client() as c:
-        r1 = c.post("/api/argus/osint/deep-dive", json={"symbol": "6965", "market": "JP"}).get_json()
-        assert r1["ok"] and not r1.get("duplicate")
-        assert r1.get("queuePosition") == 1
-        assert isinstance(r1.get("nextCronEtaMin"), int)
-        r2 = c.post("/api/argus/osint/deep-dive", json={"symbol": "6965", "market": "JP"}).get_json()
-        assert r2.get("duplicate") is True               # 連打しても新規jobを作らない
-        assert "二重実行" in r2["agentNoteJa"]
-        g = c.get("/api/argus/osint/investigation?symbol=6965").get_json()
-        assert g.get("progress") is not None             # 進捗が見える(黙って待たない)
-        assert g["progress"]["stage"] == "queued_for_agents"
-
-
 # ── Part F: 頑健パーサ ──────────────────────────────────────────────────────
 
 def test_parser_handles_fences_and_prose():

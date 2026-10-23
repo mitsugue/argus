@@ -214,11 +214,11 @@ def test_route_catalog_matches_every_flask_rule_and_is_fail_closed():
     )
     assert catalog.ROUTE_CATALOG_VALIDATION_ERRORS == ()
     assert catalog.route_contract_keys() == actual
-    assert len(catalog.ROUTE_CATALOG) == len(actual) == 174
+    assert len(catalog.ROUTE_CATALOG) == len(actual) == 154
     assert Counter(row.trustDomain for row in catalog.ROUTE_CATALOG) == {
-        "PUBLIC": 75,
-        "AUTH_OPERATIONAL": 88,
-        "OWNER_SYNC": 7,
+        "PUBLIC": 72,
+        "AUTH_OPERATIONAL": 72,
+        "OWNER_SYNC": 6,
         "RECOVERY_PROOF": 3,
         "OWNER_AUTH": 1,
     }
@@ -229,10 +229,6 @@ def test_route_catalog_matches_every_flask_rule_and_is_fail_closed():
     moved = {
         "/api/argus/caos/investigate-now",
         "/api/argus/news/translation-request",
-        "/api/argus/osint/deep-dive",
-        "/api/argus/osint/terms",
-        "/api/argus/osint/verify-gaps",
-        "/api/argus/osint/url-verify",
         "/api/argus/mover-causes/explain-request",
         "/api/argus/vault-push",
     }
@@ -456,10 +452,6 @@ def test_operational_diagnostics_requires_auth_is_fixed_and_not_cors(
 @pytest.mark.parametrize("path,payload", [
     ("/api/argus/caos/investigate-now", {"symbol": "5803", "market": "JP"}),
     ("/api/argus/news/translation-request", {"context": "x", "items": []}),
-    ("/api/argus/osint/deep-dive", {"symbol": "5803", "market": "JP"}),
-    ("/api/argus/osint/terms", {"terms": ["semiconductor"]}),
-    ("/api/argus/osint/verify-gaps", {"symbol": "5803"}),
-    ("/api/argus/osint/url-verify", {"url": "https://example.com/news"}),
     ("/api/argus/mover-causes/explain-request", {"symbol": "NVDA", "market": "US"}),
     ("/api/argus/vault-push", {"vaultId": "v" * 64, "blob": "ciphertext"}),
 ])
@@ -1020,20 +1012,53 @@ def test_round1_retired_public_get_contracts_are_exactly_absent(monkeypatch):
     client = scanner.app.test_client()
     for route in sorted(RETIRED_PUBLIC_GET_PATHS):
         response = client.get(_public_probe_path(route))
-        expected = 405 if route == \
-            "/api/argus/institutional-intelligence/missed" else 404
-        assert response.status_code == expected, route
+        assert response.status_code == 404, route
 
-    retained = [
-        row for row in catalog.ROUTE_CATALOG
-        if row.route == "/api/argus/institutional-intelligence/missed"
-    ]
-    assert len(retained) == 1
-    assert retained[0].methods == ("POST",)
-    assert retained[0].trustDomain == "AUTH_OPERATIONAL"
-    assert client.post(
-        "/api/argus/institutional-intelligence/missed", json={}
-    ).status_code == 401
+
+# 2026-10-23 owner decision: routes that no current screen, bridge, schedule,
+# acceptance check or operating tool calls, and that production route usage
+# did not record since counting began on 2026-10-22, are removed outright.
+RETIRED_UNUSED_ROUTES_2026_10_23 = (
+    ("/api/argus/decision-value/shadow-summary", ("GET", "POST")),
+    ("/api/argus/portfolio-sync/pull", ("GET",)),
+    ("/api/argus/portfolio-sync/push", ("POST",)),
+    ("/api/argus/portfolio-sync/snapshots", ("GET", "POST")),
+    ("/api/argus/institutional-intelligence/capture", ("POST",)),
+    ("/api/argus/institutional-intelligence/missed", ("POST",)),
+    ("/api/argus/institutional-intelligence/missed/apply", ("POST",)),
+    ("/api/argus/event-memory", ("GET",)),
+    ("/api/argus/event-memory/<event_id>", ("GET",)),
+    ("/api/argus/admin/event-memory/assess", ("POST",)),
+    ("/api/argus/admin/event-memory/review", ("POST",)),
+    ("/api/argus/admin/event-memory/outcome", ("POST",)),
+    ("/api/argus/osint/deep-dive", ("POST",)),
+    ("/api/argus/osint/terms", ("POST",)),
+    ("/api/argus/osint/verify-gaps", ("POST",)),
+    ("/api/argus/osint/url-verify", ("POST",)),
+    ("/api/argus/admin/decision-ledger/snapshot", ("POST",)),
+    ("/api/argus/admin/mover-causes/refresh-queue/run", ("POST",)),
+    ("/api/argus/admin/market-confirmation/refresh", ("POST",)),
+    ("/api/argus/jp-fiscal-environment", ("GET",)),
+)
+
+
+def test_retired_unused_routes_are_absent_for_every_caller(monkeypatch):
+    retired = {route for route, _ in RETIRED_UNUSED_ROUTES_2026_10_23}
+    assert len(retired) == 20
+    assert retired.isdisjoint(row.route for row in catalog.ROUTE_CATALOG)
+    assert retired.isdisjoint(
+        rule.rule for rule in scanner.app.url_map.iter_rules())
+    assert retired.isdisjoint(scanner._AUTH_OPERATIONAL_MUTATION_ROUTES)
+
+    monkeypatch.setattr(scanner, "_ARGUS_ADMIN_TOKEN", "boundary-test-admin")
+    client = scanner.app.test_client()
+    for route, methods in RETIRED_UNUSED_ROUTES_2026_10_23:
+        path = _public_probe_path(route)
+        for method in methods:
+            for headers in ({}, ADMIN_HEADER):
+                response = client.open(path, method=method, json={},
+                                       headers=headers)
+                assert response.status_code == 404, (route, method)
 
 
 def test_every_catalogued_public_route_rejects_private_domain_sentinels(

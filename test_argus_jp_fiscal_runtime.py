@@ -199,8 +199,7 @@ def test_existing_collector_merges_and_retries_save_without_duplicate_fetch(monk
     assert len(calls)==10
     assert scanner._JP_FISCAL_REFRESH_STATE['persistenceStatus']=='VERIFIED'
     assert not scanner._JP_FISCAL_REFRESH_STATE['pendingPersistence']
-    with scanner.app.test_request_context('/api/argus/jp-fiscal-environment'):
-        document=scanner.api_argus_jp_fiscal_environment().get_json()
+    document=scanner._jp_fiscal_environment_document()
     assert document['id']==scanner._JP_FISCAL_REFRESH_STATE['verifiedReportId']
     assert document['fetchesDuringRead']==0 and len(calls)==10
     scanner._jp_fiscal_environment_warm(); work.pop()()

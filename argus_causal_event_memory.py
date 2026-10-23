@@ -1651,29 +1651,3 @@ def active_evidence_refs(state: Mapping[str, Any], *, limit: int = 8) -> List[st
         if len(refs) >= limit:
             break
     return refs[:limit]
-
-
-def compact_public_view(state: Mapping[str, Any], *, as_of: str,
-                        event_limit: int = 20) -> Dict[str, Any]:
-    views = all_event_views(state)
-    views.sort(key=lambda row: (row["lastKnownAt"], row["eventId"]), reverse=True)
-    compact = []
-    for row in views[:max(1, min(event_limit, 50))]:
-        compact.append({key: row[key] for key in (
-            "eventId", "episodeId", "firstSeenAt", "lastKnownAt", "eventType",
-            "eventFamily", "headline", "initialSeverity", "currentSeverity",
-            "currentStatus", "origin", "hypothesisStates", "assessmentCount",
-            "outcomeWindowCount", "flagRecovery", "calibrationMode",
-            "authority", "sdaAuthority")})
-    return {
-        "schemaVersion": "argus-causal-event-memory-view-v1",
-        "generatedAt": _iso(as_of, "as_of"),
-        "eventCount": len(views), "events": compact,
-        "openEvents": sum(1 for row in views if row["currentStatus"] not in _TERMINAL),
-        "flagRecoveryCount": sum(1 for row in views if row["flagRecovery"]),
-        "eventIntelligenceMetrics": event_intelligence_metrics(state),
-        "maturity": maturity(state, as_of=as_of),
-        "calibrationMode": CALIBRATION_MODE,
-        "automaticCalibrationEnabled": False,
-        "authority": "EVENT_MEMORY_EVIDENCE", "sdaAuthority": False,
-    }
