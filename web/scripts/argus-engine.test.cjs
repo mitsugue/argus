@@ -455,6 +455,7 @@ console.log('argus-engine.test: all checks passed');
   check('the three WAITs are named',
     waitKindJa({ status: 'DATA_GATED', primaryAction: 'WAIT' }) === 'データ待ち'
     && waitKindJa({ status: 'DATA_GATED', primaryAction: 'WAIT', missingReasonCodes: ['market_truth_missing', 'jp_market_engine_stale', 'quality_missing'] }) === 'データ待ち（市場データ・チャートの根拠）'
+    && waitKindJa({ status: 'DATA_GATED', primaryAction: 'WAIT', missingReasonCodes: ['freshness_unknown', 'jp_market_engine_missing', 'market_truth_missing', 'prediction_ledger_missing', 'risk_evidence_missing'] }) === 'データ待ち（市場データ・予測記録・チャートの根拠 ほか2）'
     && waitKindJa({ status: 'EVALUATED', primaryAction: 'WAIT', guidance: { riskConstraint: 'BLOCK_BUY' } }).includes('リスク制約')
     && waitKindJa({ status: 'EVALUATED', primaryAction: 'WAIT', guidance: { riskConstraint: 'NONE' } }).includes('買い条件が未成立')
     && waitKindJa({ status: 'EVALUATED', primaryAction: 'HOLD' }) === null);

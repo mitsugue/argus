@@ -764,12 +764,15 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       <details className="at-data-detail" data-argus-contract="other-analysis-data-status-v1">
       <summary>データの状態 <b className={`is-${view.dataStatus.tone}`}>● {view.dataStatus.label}</b></summary>
       <div className="at-kpis">
-        {(view.dataQualityReasonCodes.length > 0 || view.dataQualityDetailLinesJa.length > 0 || view.dataQualityNotes.length > 0)
+        {(view.dataQualityReasonCodes.length > 0 || view.dataQualityNotes.length > 0)
           && <ul className="at-data-summary" aria-label="不足しているデータ">
           {view.dataQualityReasonCodes.map(code => <li key={code}>{DATA_PARTIAL_REASON_JA[code] ?? code}</li>)}
-          {view.dataQualityDetailLinesJa.map((line, index) => <li key={`detail:${index}`}>{line}</li>)}
           {view.dataQualityNotes.map(code => <li key={`note:${code}`} className="at-data-note">{DATA_NOTE_JA[code] ?? code}</li>)}
         </ul>}
+        {view.dataQualityDetailLinesJa.length > 0 && <details className="at-data-lines">
+          <summary>詳細 {view.dataQualityDetailLinesJa.length}件</summary>
+          <ul className="at-data-summary" aria-label="不足している取得元の詳細">
+            {view.dataQualityDetailLinesJa.map((line, index) => <li key={index}>{line}</li>)}</ul></details>}
         {/* v13.5.65 (stabilization item 5): while this session's first fetch runs,
             the stored evidence is on screen — with its time, never silently. */}
         {decisionEvidence.loading && decisionEvidence.generatedAt && <span className="at-stored-note" data-argus-contract="stored-evidence-note-v1">

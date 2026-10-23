@@ -823,12 +823,12 @@ const MISSING_DATA_WORDS: Array<[RegExp, string]> = [
 ];
 /** The missing data in one or two words (owner 2026-10-23: 「判断保留(評価未了)とは何か」). */
 export function missingDataWordsJa(codes: readonly string[] | undefined): string[] {
-  const words: string[] = [];
+  const found = new Set<string>();
   for (const code of codes ?? []) {
     const word = MISSING_DATA_WORDS.find(([pattern]) => pattern.test(code))?.[1];
-    if (word && !words.includes(word)) words.push(word);
+    if (word) found.add(word);
   }
-  return words;
+  return MISSING_DATA_WORDS.map(([, word]) => word).filter(word => found.has(word));
 }
 
 export function waitKindJa(decision: { status: string; primaryAction: PrimaryAction;
@@ -836,7 +836,9 @@ export function waitKindJa(decision: { status: string; primaryAction: PrimaryAct
   if (decision.primaryAction !== 'WAIT') return null;
   if (decision.status === 'DATA_GATED') {
     const words = missingDataWordsJa(decision.missingReasonCodes);
-    return words.length ? `データ待ち（${words.join('・')}）` : 'データ待ち';
+    // At most three names in the fixed order; the rest as a count.
+    const shown = words.slice(0, 3).join('・') + (words.length > 3 ? ` ほか${words.length - 3}` : '');
+    return words.length ? `データ待ち（${shown}）` : 'データ待ち';
   }
   const constraint = decision.guidance?.riskConstraint;
   if (constraint && constraint !== 'NONE') {
