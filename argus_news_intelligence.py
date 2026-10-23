@@ -24,11 +24,22 @@ NEWS_EVENT_SCHEMA = "argus-news-event-v1"
 # Existing source, freshness and market-confirmation boundaries still apply.
 # v7 (owner 2026-10-23): digital attacks are their own family. A hacker
 # group's "攻撃" is no longer read as an armed conflict (oil/energy chain).
-NEWS_POLICY_VERSION = "news-policy-v7"
-# Families each policy version introduced. A stored event classified under an
-# older version is re-derived from its stored headline only when that headline
-# now matches one of these (rules only; the excerpt is not retained).
-POLICY_FAMILY_INTRODUCTIONS = {7: ("CYBER_SECURITY",)}
+# v8 (owner 2026-10-23): system failures join that family; the headline's
+# family outranks one found only in the excerpt; geopolitics needs a region,
+# troop movement or security action (an actor's name alone is not enough);
+# the department name "treasury" is not a rates story.
+NEWS_POLICY_VERSION = "news-policy-v8"
+# Headline cues a v8 rule retired, per family. A stored record whose headline
+# carries one of these (and no v8 cue) was typed by the headline under the old
+# rules, so the headline alone re-derives it. Remove this table once no
+# retained record predates news-policy-v8 (the store keeps 7 days / 40 rows).
+_RETIRED_HEADLINE_CUES = {
+    "GEOPOLITICS": ("米軍", "国防総省", "pentagon", "軍事", "military", "トランプ大統領",
+                    "trump", "ホワイトハウス", "white house", "deployment", "戦争", "派遣"),
+    "RATES": ("treasury",),
+    "JAPAN_POLICY": ("政府", "首相"),
+    "SANCTIONS": ("制裁",),
+}
 SEVERITIES = ("INFO", "WATCH", "HIGH", "CRITICAL")
 
 # ── Source families (§2/§9) — the six owner-subscribed sources only ────────
@@ -171,6 +182,42 @@ _DATA_LEAK_RE = re.compile(r"(?:情報|データ)[^。\n]{0,12}?(?:漏洩|漏え
 _KINETIC_MILITARY_PHRASES = ("空爆", "ミサイル", "侵攻", "戦闘", "airstrike",
                              "missile", "武力衝突")
 
+# ── v8 geopolitics cues (owner 2026-10-23) ─────────────────────────────────
+# Regions, troop movements and threats establish geopolitics on their own.
+# An actor (米軍, a president, the White House) does so only together with a
+# security action: 「米軍、F35を10年調達」 and 「Trump Administration is Making
+# Homeownership More Affordable」 are procurement and housing policy.
+_GEO_STRONG_PHRASES = ("派遣", "増派", "部隊", "空母", "中東", "イスラエル", "israel",
+                       "ガザ", "レバノン", "フーシ", "台湾有事", "台湾海峡", "北朝鮮",
+                       "地政学", "戦争", "troops", "geopolit")
+_GEO_ACTOR_PHRASES = ("米軍", "国防総省", "pentagon", "軍事", "military",
+                      "トランプ大統領", "trump", "ホワイトハウス", "white house")
+_GEO_ACTION_PHRASES = ("威嚇", "緊張", "演習", "配備", "駐留", "撤退", "撤収", "派兵",
+                       "攻撃", "衝突", "脅威", "有事", "侵攻", "作戦", "軍事行動",
+                       "軍事介入", "空爆", "ミサイル", "核兵器", "核実験", "開戦", "宣戦",
+                       "軍艦", "艦隊", "threat", "invasion", "conflict", "attack",
+                       "missile", "warship", "airstrike", "deploy")
+_GEO_WAR_WORD_RE = re.compile(r"(?<![a-z])wars?(?![a-z])")
+# Economic "wars" and staffing are not armed conflict.
+_NON_MILITARY_COMPOUNDS = ("貿易戦争", "関税戦争", "価格戦争", "通貨戦争", "為替戦争",
+                           "半導体戦争", "情報戦争", "人材派遣", "派遣社員", "派遣労働",
+                           "派遣会社", "trade war", "price war", "currency war",
+                           "tariff war", "chip war")
+# A foreign government or prime minister is not Japanese policy.
+_FOREIGN_GOVERNMENT_RE = re.compile(
+    r"(?:中国|米国|米|英国|英|仏|独|ロシア|露|韓国|韓|北朝鮮|イラン|イスラエル|"
+    r"ウクライナ|台湾|インド|欧州|eu|ドイツ|フランス)(?:政府|首相)|政府系")
+# Conflict families that a market report often cites as background (「中東情勢の
+# 緊迫を警戒した売り」). Under a headline that reports a market move, a mention
+# found only in the excerpt does not become the article's primary event.
+_BACKGROUND_FAMILIES = ("GEOPOLITICS", "WAR_ESCALATION", "IRAN", "HORMUZ", "CEASEFIRE")
+_MARKET_MOVE_HEADLINE_RE = re.compile(
+    r"(?:株|日経平均|ナスダック|ダウ|s&p|topix|指数|相場|円|ドル|原油|金利|利回り|債券|"
+    r"国債|nasdaq|dow|stocks?|shares|yields?|dollar|yen|oil)"
+    r"[^。\n]{0,12}?"
+    r"(?:急落|急騰|急伸|急反発|急低下|急上昇|続落|続伸|反落|反発|下落|上昇|安|高|"
+    r"plunge|surge|fall|drop|rally|jump|slump|tumble|soar)")
+
 _FAMILY_RULES = (
     ("CYBER_SECURITY", _CYBER_PHRASES),
     ("HORMUZ", ("ホルムズ", "hormuz")),
@@ -182,17 +229,20 @@ _FAMILY_RULES = (
                         "武力衝突")),
     # 2026-10-03 (owner): troop movements, threats and leaders' statements
     # move the market before any strike; they were falling into OTHER.
-    ("GEOPOLITICS", ("米軍", "派遣", "増派", "部隊", "空母", "国防総省", "pentagon",
-                     "中東", "イスラエル", "israel", "ガザ", "レバノン", "フーシ",
-                     "台湾有事", "台湾海峡", "北朝鮮", "地政学", "軍事", "戦争",
-                     "トランプ大統領", "trump", "ホワイトハウス", "white house",
-                     "troops", "deployment", "military", "geopolit")),
+    # v8: matched by _geopolitics_cue (strong cue, or actor + security action).
+    ("GEOPOLITICS", _GEO_STRONG_PHRASES + _GEO_ACTOR_PHRASES),
     ("BOJ", ("日銀", "日本銀行", "boj", "植田", "金融政策決定会合")),
     ("FED", ("frb", "fomc", "連邦準備", "パウエル", "米連銀", "fed ")),
     ("CENTRAL_BANK", ("中央銀行", "利上げ", "利下げ", "金融政策", "政策金利",
                       "ecb", "量的緩和", "yield curve control", "ycc")),
+    # v8: the bare department name "treasury" (sanctions, tax rules, housing,
+    # meetings) is not a rates story; Treasury securities and rates are.
     ("RATES", ("長期金利", "国債利回り", "30年債", "10年債", "米国債",
-               "treasury", "jgb", "超長期債", "金利上昇", "金利急騰",
+               "treasury yield", "treasury rate", "treasury real", "treasury long-term",
+               "treasury par", "treasuries", "treasury note", "treasury bond",
+               "treasury bill", "t-bill", "treasury auction", "bond auction",
+               "quarterly refunding", "国債入札",
+               "jgb", "超長期債", "金利上昇", "金利急騰",
                "債券安", "利回り")),
     ("INFLATION", ("cpi", "消費者物価", "インフレ", "物価上昇", "pce",
                    "デフレ", "コアコア", "consumer price index",
@@ -207,6 +257,7 @@ _FAMILY_RULES = (
     ("OIL", ("原油", "wti", "ブレント", "opec", "石油", "crude")),
     ("COMMODITIES", ("金価格", "銅", "商品市況", "レアアース", "lng", "天然ガス")),
     ("TARIFFS", ("関税", "tariff", "通商法", "301条")),
+    # v8: a court's 制裁金 is a fine, not a sanction.
     ("SANCTIONS", ("制裁", "禁輸", "輸出規制", "sanction", "エンティティリスト")),
     ("TRADE", ("貿易", "通商", "輸出入", "貿易赤字", "サプライチェーン")),
     ("SEMICONDUCTORS", ("半導体", "tsmc", "エヌビディア", "nvidia", "ラピダス",
@@ -219,8 +270,10 @@ _FAMILY_RULES = (
                   "営業利益", "純利益", "guidance")),
     ("CORPORATE_ACTION", ("買収", "tob", "mbo", "合併", "増資", "自社株買い",
                           "上場廃止", "株式分割", "経営統合")),
+    # v8: an agency's proposed or final rule is regulation.
     ("REGULATION", ("規制", "独禁法", "金融庁", "課徴金", "行政処分",
-                    "antitrust")),
+                    "antitrust", "proposed rule", "final rule", "rulemaking",
+                    "proposed regulation", "規則案")),
 )
 
 _LOW_VALUE_HINTS = (
@@ -305,50 +358,106 @@ def _lower(text: Any) -> str:
     return str(text or "").lower()
 
 
-def classify_event(subject: str, excerpt: str = "") -> Dict[str, Any]:
-    """Deterministic taxonomy over subject + bounded excerpt (data, not
-    instructions). Returns primary family, all matched families, and generic
-    theme tags (never owner-specific)."""
-    haystack = _lower(subject) + "\n" + _lower(excerpt)[:2000]
-    cyber_text = haystack
-    for name in _CYBER_NAME_EXCLUSIONS:
-        cyber_text = cyber_text.replace(name, "")
-    cyber = any(phrase in cyber_text for phrase in _CYBER_PHRASES) or bool(
-        _DATA_LEAK_RE.search(cyber_text))
-    it_text = cyber_text
-    for phrase in _IT_CONTEXT_EXCLUSIONS:
-        it_text = it_text.replace(phrase, "")
-    # A system failure joins the family but, unlike a digital attack, does
-    # not reinterpret a physical "攻撃" in the same text.
+def _strip(text: str, phrases: Iterable[str]) -> str:
+    for phrase in phrases:
+        text = text.replace(phrase, "")
+    return text
+
+
+def _cyber_cues(text: str) -> tuple:
+    """(digital attack, system failure) cues in lower-cased text."""
+    attack_text = _strip(text, _CYBER_NAME_EXCLUSIONS)
+    attack = any(phrase in attack_text for phrase in _CYBER_PHRASES) or bool(
+        _DATA_LEAK_RE.search(attack_text))
+    it_text = _strip(attack_text, _IT_CONTEXT_EXCLUSIONS)
     outage = any(phrase in it_text for phrase in _IT_OUTAGE_PHRASES) or bool(
         _IT_FAULT_RE.search(it_text))
+    return attack, outage
+
+
+def _geopolitics_cue(text: str) -> bool:
+    text = _strip(text, _NON_MILITARY_COMPOUNDS)
+    if any(phrase in text for phrase in _GEO_STRONG_PHRASES):
+        return True
+    return any(phrase in text for phrase in _GEO_ACTOR_PHRASES) and (
+        any(phrase in text for phrase in _GEO_ACTION_PHRASES)
+        or bool(_GEO_WAR_WORD_RE.search(text)))
+
+
+def _match_families(haystack: str) -> List[str]:
+    attack, outage = _cyber_cues(haystack)
     # Digital attacks alone do not establish an armed conflict. Independent
-    # military cues in the same article still participate in classification.
+    # military cues in the same text still participate in classification.
     military_text = re.sub(r"(?:サイバー|サイバ|ハッキング|ddos|dos)[・\s-]*攻撃|cyber[\s-]*attack", "", haystack)
-    war_phrases = _KINETIC_MILITARY_PHRASES if cyber else None
-    matched = [family for family, phrases in _FAMILY_RULES
-               if ((cyber or outage) if family == "CYBER_SECURITY" else any(
-                   phrase in (military_text if family == "WAR_ESCALATION" else haystack)
-                   for phrase in (war_phrases if family == "WAR_ESCALATION" and war_phrases
-                                  else phrases)))]
-    # The cyber check runs first; an armed-conflict cue in the same article
+    matched = []
+    for family, phrases in _FAMILY_RULES:
+        if family == "CYBER_SECURITY":
+            hit = attack or outage
+        elif family == "WAR_ESCALATION":
+            hit = any(phrase in military_text for phrase in (
+                _KINETIC_MILITARY_PHRASES if attack else phrases))
+        elif family == "GEOPOLITICS":
+            hit = _geopolitics_cue(haystack)
+        elif family == "JAPAN_POLICY":
+            hit = any(phrase in _FOREIGN_GOVERNMENT_RE.sub("", haystack) for phrase in phrases)
+        elif family == "SANCTIONS":
+            hit = any(phrase in haystack.replace("制裁金", "") for phrase in phrases)
+        else:
+            hit = any(phrase in haystack for phrase in phrases)
+        if hit:
+            matched.append(family)
+    # The cyber check runs first; an armed-conflict cue in the same text
     # (missile, airstrike…) still makes the conflict the primary event.
     if "CYBER_SECURITY" in matched and "WAR_ESCALATION" in matched:
         matched.remove("WAR_ESCALATION")
         matched.insert(0, "WAR_ESCALATION")
-    # A report quoting an interview is not itself an interview/digest section.
-    low_value = any(hint in _lower(subject) for hint in _LOW_VALUE_HINTS)
-    if not matched:
-        primary = "LOW_RELEVANCE" if low_value else "OTHER_MARKET_RELEVANT"
+    return matched
+
+
+def is_market_move_headline(subject: str) -> bool:
+    """A headline that reports a price or index move (「ナスダック急落2.6%安」)."""
+    return bool(_MARKET_MOVE_HEADLINE_RE.search(_lower(subject)))
+
+
+def classify_event(subject: str, excerpt: str = "") -> Dict[str, Any]:
+    """Deterministic taxonomy over subject + bounded excerpt (data, not
+    instructions). Returns primary family, all matched families, and generic
+    theme tags (never owner-specific).
+
+    v8 (owner 2026-10-23): the headline states the event, the excerpt adds
+    background. A family the headline names is primary; the excerpt decides
+    only when the headline names none — and a conflict mentioned only in the
+    excerpt of a market-move report stays background (「ナスダック急落」 whose
+    excerpt cited 中東情勢 was GEOPOLITICS/CRITICAL). ``basis`` records which
+    text decided the type so a later policy can re-derive it safely.
+    """
+    subject_text = _lower(subject)
+    subject_families = _match_families(subject_text)
+    all_families = _match_families(subject_text + "\n" + _lower(excerpt)[:2000])
+    matched = subject_families + [f for f in all_families if f not in subject_families]
+    if subject_families:
+        primary, basis = subject_families[0], "headline"
     else:
-        primary = matched[0]
+        background_allowed = (is_mail_container_title(subject)
+                              or not is_market_move_headline(subject))
+        candidates = [f for f in all_families
+                      if background_allowed or f not in _BACKGROUND_FAMILIES]
+        primary = candidates[0] if candidates else None
+        basis = "excerpt" if primary else "none"
+    # A report quoting an interview is not itself an interview/digest section.
+    low_value = any(hint in subject_text for hint in _LOW_VALUE_HINTS)
+    if primary is None:
+        primary = "LOW_RELEVANCE" if low_value else "OTHER_MARKET_RELEVANT"
+    elif primary in matched and matched[0] != primary:
+        matched.remove(primary)
+        matched.insert(0, primary)
     tags: List[str] = []
     for family in matched:
         for tag in _THEME_TAGS.get(family, ()):
             if tag not in tags:
                 tags.append(tag)
     return {"eventType": primary, "families": matched,
-            "lowValueHints": low_value, "themeTags": tags}
+            "lowValueHints": low_value, "themeTags": tags, "basis": basis}
 
 
 def is_mail_container_title(subject: str) -> bool:
@@ -1402,6 +1511,9 @@ def build_news_event(*, message: Mapping[str, Any],
         "titleOriginal": str(message.get("subject") or "")[:160],
         "headlineJa": str(message.get("headlineJa") or "翻訳処理中")[:160],
         "eventType": family,
+        # v8: which text decided the type (headline / excerpt / none), so a
+        # later policy re-derives only what the stored headline determines.
+        "classificationBasis": taxonomy.get("basis"),
         "themeTags": list(taxonomy.get("themeTags") or []),
         "facts": list((ai_analysis or {}).get("facts") or [])[:5],
         "entities": list((ai_analysis or {}).get("entities") or [])[:8],
@@ -1440,17 +1552,53 @@ _SCORE_CAP_REASONS = ("low_value_editorial", "official_data_input",
                       "unauthenticated_capped", "digest_container_pending_split")
 
 
+def headline_rederivation(event: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    """What the current rules make of a stored event from its headline alone.
+
+    The excerpt is never stored, so a type can be re-derived only when the
+    current result does not depend on it. Returns the taxonomy and the reason,
+    or None when the stored type must stand:
+
+    * ``headline_rules`` — the headline names a family; under v8 the headline
+      decides, whatever the excerpt said.
+    * ``retired_headline_cue`` — the headline names none now, but the stored
+      type came from the headline (recorded basis, or a cue a later rule
+      retired): the headline's current result replaces it.
+    * ``background_excluded`` — a conflict family under a market-move headline
+      can only have come from the excerpt, and v8 never makes it primary
+      there. The excerpt that might name another family is unavailable, so
+      the type falls back to OTHER_MARKET_RELEVANT (unknown, not guessed).
+    * otherwise the type came from the excerpt (or cannot be told): kept.
+    """
+    title = str(event.get("titleOriginal") or "")
+    if not title:
+        return None
+    taxonomy = classify_event(title)
+    if taxonomy.get("basis") == "headline":
+        return {"taxonomy": taxonomy, "reason": "headline_rules"}
+    old_family = str(event.get("eventType") or "")
+    lowered = _lower(title)
+    if event.get("classificationBasis") == "headline" or any(
+            cue in lowered for cue in _RETIRED_HEADLINE_CUES.get(old_family, ())):
+        return {"taxonomy": taxonomy, "reason": "retired_headline_cue"}
+    if (old_family in _BACKGROUND_FAMILIES and not is_mail_container_title(title)
+            and is_market_move_headline(title)):
+        return {"taxonomy": dict(taxonomy, eventType="OTHER_MARKET_RELEVANT"),
+                "reason": "background_excluded"}
+    return None
+
+
 def reclassify_stored_event(event: Mapping[str, Any], *, at: str
                             ) -> Optional[Dict[str, Any]]:
     """Re-derive one stored event under the current rules, once per version.
 
     Returns the updated record, or None when the event needs no review. Rules
     only: no model is called and the excerpt (never persisted) is not
-    reconstructed. The type changes only when the stored headline now matches
-    a family introduced after the event's own policy version, so a type that
-    came from the excerpt is not overturned by the headline alone. Severity
-    moves only by the family component (§14) and never re-alerts; the prior
-    record stays addressable as ``classificationPreviousRevision``.
+    reconstructed. The type changes only when ``headline_rederivation`` finds
+    the current result fixed by the stored headline, so a type that came from
+    the excerpt is not overturned by the headline alone. Severity moves only
+    by the family component (§14) and never re-alerts; the prior record stays
+    addressable as ``classificationPreviousRevision``.
     """
     stored_version = _policy_number(event.get("policyVersion"))
     current_version = _policy_number(NEWS_POLICY_VERSION)
@@ -1462,17 +1610,16 @@ def reclassify_stored_event(event: Mapping[str, Any], *, at: str
         return None
     title = str(event.get("titleOriginal") or "")
     old_family = str(event.get("eventType") or "")
-    introduced = {family for number, families in POLICY_FAMILY_INTRODUCTIONS.items()
-                  if stored_version < number <= current_version for family in families}
-    taxonomy = classify_event(title)
+    derived = headline_rederivation(event)
+    taxonomy = (derived or {}).get("taxonomy") or {}
     new_family = str(taxonomy.get("eventType") or "")
     updated = dict(event)
     updated["policyReview"] = {
         "policyVersion": NEWS_POLICY_VERSION, "at": at, "method": "stored_headline_rules",
         "previousPolicyVersion": event.get("policyVersion"), "changed": False,
+        "basis": (derived or {}).get("reason") or "excerpt_or_unknown_kept",
         "aiCalled": False}
-    if (not title or new_family == old_family
-            or not introduced.intersection(taxonomy.get("families") or [])):
+    if not derived or new_family == old_family:
         return updated
     previous = dict(event)      # an older correction stays nested within it
     order = {name: index for index, name in enumerate(SEVERITIES)}
@@ -1502,6 +1649,7 @@ def reclassify_stored_event(event: Mapping[str, Any], *, at: str
             confirmation_state=str(event.get("confirmationState") or ""),
             impact_direction=direction),
         "policyVersion": NEWS_POLICY_VERSION,
+        "classificationBasis": taxonomy.get("basis"),
         "revision": int(event.get("revision") or 1) + 1,
         "alertEligible": False,
         "classificationPreviousRevision": previous,
@@ -1537,7 +1685,8 @@ def reclassify_stored_events(events: Dict[str, Dict[str, Any]], *, at: str
                           "eventType": updated.get("eventType"),
                           "previousSeverity": review.get("previousSeverity"),
                           "severity": updated.get("severity"),
-                          "revision": updated.get("revision"), "aiCalled": False})
+                          "revision": updated.get("revision"),
+                          "basis": review.get("basis"), "aiCalled": False})
     return {"reviewed": reviewed, "audit": audit}
 
 

@@ -320,7 +320,8 @@ def test_multi_source_families_resolve_and_apply_policy(monkeypatch, news_env):
 
 def test_english_watch_has_pending_notice_until_japanese_translation_exists(
         monkeypatch, news_env):
-    subject = "Treasury Increases Sanctions on Target Network"
+    # v8: the bare department name is not a rates story; Treasury yields are.
+    subject = "Treasury yields rise on fiscal worries"
     run_cycle(monkeypatch, {"en1": mail("en1", subject)})
     client = scanner.app.test_client()
 
@@ -333,14 +334,14 @@ def test_english_watch_has_pending_notice_until_japanese_translation_exists(
     assert pending["pendingTranslationCount"] == 1
 
     scanner._NEWS_JA_CACHE[news_i18n.text_hash(subject)] = {
-        "ja": "米財務省、対象ネットワークへの制裁を強化",
+        "ja": "米国債利回りが財政不安で上昇",
         "at": "2026-08-21T00:00:00Z",
     }
     translated = client.get("/api/argus/news-intelligence").get_json()
     assert translated["pendingTranslationCount"] == 0
     assert translated["eventCount"] == 1
     event = translated["events"][0]
-    assert event["headlineJa"] == "米財務省、対象ネットワークへの制裁を強化"
+    assert event["headlineJa"] == "米国債利回りが財政不安で上昇"
     assert event["translationStatus"] == "translated"
     assert event["titleOriginal"] == subject
     assert subject not in event["headlineJa"]
@@ -1042,7 +1043,7 @@ def test_cyber_attack_mail_is_classified_as_cyber(monkeypatch, news_env):
     body = scanner.app.test_client().get("/api/argus/news-intelligence").get_json()
     event = body["events"][0]
     assert event["eventType"] == "CYBER_SECURITY" and event["themeTags"] == ["CYBER"]
-    assert event["policyVersion"] == "news-policy-v7"
+    assert event["policyVersion"] == scanner.argus_news_intelligence.NEWS_POLICY_VERSION
     assert event["impactDirection"]["directionByTarget"]["energy"] == "UNCLEAR"
     assert event["generalTransmissionJa"].startswith("サービス停止や情報流出")
 

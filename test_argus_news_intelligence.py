@@ -902,7 +902,7 @@ def test_stored_event_is_reclassified_once_by_rules_only():
     assert result["reviewed"] == 1 and result["audit"][0]["eventType"] == "CYBER_SECURITY"
     assert result["audit"][0]["aiCalled"] is False
     assert fixed["eventType"] == "CYBER_SECURITY" and fixed["themeTags"] == ["CYBER"]
-    assert fixed["policyVersion"] == ni.NEWS_POLICY_VERSION == "news-policy-v7"
+    assert fixed["policyVersion"] == ni.NEWS_POLICY_VERSION == "news-policy-v8"
     assert set(fixed["impactDirection"]["directionByTarget"].values()) == {"UNCLEAR"}
     # Only the family component leaves; no retroactive alert; history kept.
     assert fixed["severity"] == "WATCH" and fixed["alertEligible"] is False
@@ -915,21 +915,135 @@ def test_stored_event_is_reclassified_once_by_rules_only():
     projected = ni.project_owner_event(fixed)
     assert projected["generalTransmissionJa"].startswith("サービス停止や情報流出")
     assert "classificationPreviousRevision" not in projected
+    assert fixed["policyReview"]["basis"] == "headline_rules"
+    assert fixed["classificationBasis"] == "headline"
     # Once per policy version.
     assert ni.reclassify_stored_events(events, at="2026-10-23T00:10:00Z")["reviewed"] == 0
 
 
 def test_reclassification_never_overturns_an_excerpt_derived_type():
-    # The excerpt (never stored) named the missile strike; the headline alone
-    # carries no newly introduced family, so the stored type stands.
-    event = _stored_v6_war_event("中東情勢で株が急落")
+    # The excerpt (never stored) named the chip family; the headline names no
+    # family now or under the old rules, so the stored type stands.
+    event = dict(_stored_v6_war_event("東エレク、受注が過去最高"), eventType="SEMICONDUCTORS",
+                 severityReasons=["family_semiconductors", "extreme_language"])
     events = {event["eventId"]: event}
     assert ni.reclassify_stored_events(events, at="2026-10-23T00:00:00Z") == {"reviewed": 1, "audit": []}
     kept = events[event["eventId"]]
-    assert kept["eventType"] == "WAR_ESCALATION" and kept["severity"] == "HIGH"
+    assert kept["eventType"] == "SEMICONDUCTORS" and kept["severity"] == "HIGH"
     assert kept["policyVersion"] == "news-policy-v6"
-    assert kept["policyReview"]["policyVersion"] == "news-policy-v7"
+    assert kept["policyReview"]["policyVersion"] == ni.NEWS_POLICY_VERSION
     assert kept["policyReview"]["changed"] is False
+    assert kept["policyReview"]["basis"] == "excerpt_or_unknown_kept"
     assert ni.reclassify_stored_events(events, at="2026-10-23T00:10:00Z")["reviewed"] == 0
+    # A conflict excerpt under a non-market headline is kept as well (a real
+    # war story whose headline names no cue must not be dropped).
+    war = _stored_v6_war_event("プーチン氏、総動員を発令")
+    assert ni.reclassify_stored_event(war, at="2026-10-23T00:00:00Z")["eventType"] == "WAR_ESCALATION"
     current = dict(_stored_v6_war_event(ARTEX), policyVersion=ni.NEWS_POLICY_VERSION)
     assert ni.reclassify_stored_event(current, at="2026-10-23T00:00:00Z") is None
+
+
+# ── v8 (owner 2026-10-23): the misclassifications found in the 10/23 store ──
+NASDAQ = "米ナスダック急落2.6%安 メタは一時8%安、AI巨額投資に警戒再燃"
+NASDAQ_EXCERPT = ("22日の米国株式市場でテクノロジー株が急落した。AI関連の巨額投資への警戒が再燃。"
+                  "中東情勢の緊迫を警戒したリスク回避が株安を増幅した。")
+F35 = "米軍、ロッキードからF35異例の10年調達 コスト削減で日本にも恩恵"
+OUTBOUND = "Treasury Issues Proposed Rule to Implement Comprehensive Outbound Investment National Security Act"
+OUTBOUND_EXCERPT = ("The rule covers technologies that may contribute to the military modernization "
+                    "of countries of concern.")
+HOUSING = "The Trump Administration is Making Homeownership More Affordable"
+HOUSING_EXCERPT = "Treasury published proposed regulations limiting purchases by large institutional investors."
+
+
+def test_the_six_headlines_of_2026_10_23_classify_as_expected():
+    expected = {
+        (ARTEX, ""): "CYBER_SECURITY",
+        (PHP_OUTAGE, ""): "CYBER_SECURITY",
+        (NASDAQ, ""): "OTHER_MARKET_RELEVANT",
+        (NASDAQ, NASDAQ_EXCERPT): "OTHER_MARKET_RELEVANT",   # 中東 is background
+        (F35, ""): "OTHER_MARKET_RELEVANT",                  # procurement, no security action
+        (OUTBOUND, ""): "REGULATION",
+        (OUTBOUND, OUTBOUND_EXCERPT): "REGULATION",          # the headline outranks the excerpt
+        (HOUSING, ""): "OTHER_MARKET_RELEVANT",              # a president's name alone
+        (HOUSING, HOUSING_EXCERPT): "REGULATION",
+    }
+    for (subject, excerpt), family in expected.items():
+        taxonomy = ni.classify_event(subject, excerpt)
+        assert taxonomy["eventType"] == family, subject
+        assert "GEOPOLITICS" != taxonomy["eventType"]
+    assert "JAPAN_POLICY" not in ni.classify_event(ARTEX)["families"]   # 中国政府系
+    assert ni.classify_event(NASDAQ, NASDAQ_EXCERPT)["basis"] == "none"
+    assert ni.classify_event(OUTBOUND, OUTBOUND_EXCERPT)["basis"] == "headline"
+    assert ni.classify_event(HOUSING, HOUSING_EXCERPT)["basis"] == "excerpt"
+
+
+def test_real_geopolitics_still_classifies_as_geopolitics():
+    for subject in ("米軍、中東へ数千人を追加派遣 緊張高まる", "Pentagon orders additional troops to the Middle East",
+                    "中国軍が台湾海峡で大規模演習", "北朝鮮が弾道ミサイル発射", "米軍、空母を派遣し威嚇",
+                    "トランプ大統領、軍事行動を警告", "国防総省、部隊の配備を拡大", "地政学リスクが再燃",
+                    "Trump threatens military strikes", "White House warns of war"):
+        families = ni.classify_event(subject)["families"]
+        assert families and families[0] in ("GEOPOLITICS", "WAR_ESCALATION", "IRAN"), subject
+        assert "GEOPOLITICS" in families or families[0] == "WAR_ESCALATION", subject
+    # Excerpt-only conflict cues still decide when the headline is not a market report.
+    tx = ni.classify_event("プーチン氏、総動員を発令", "ウクライナ侵攻の長期化に備える")
+    assert tx["eventType"] == "WAR_ESCALATION" and tx["basis"] == "excerpt"
+    # A container mail's excerpt is its content.
+    assert ni.classify_event("日経メールニュース配信のお知らせ", "米軍が中東に空母を派遣")["eventType"] == "GEOPOLITICS"
+
+
+def test_economic_wars_staffing_fines_and_foreign_governments_are_not_misread():
+    assert ni.classify_event("貿易戦争が激化")["eventType"] == "TRADE"
+    assert ni.classify_event("価格競争が激化")["eventType"] == "OTHER_MARKET_RELEVANT"
+    assert ni.classify_event("人材派遣大手が増益")["families"] == []
+    assert ni.classify_event("Trade war fears weigh on exporters")["eventType"] != "GEOPOLITICS"
+    assert ni.classify_event("トランプ大統領、中国に追加関税")["eventType"] == "TARIFFS"
+    fine = ni.classify_event("米裁判所、メタに制裁金4兆円の判決")
+    assert "SANCTIONS" not in fine["families"]
+    assert ni.classify_event("米、ロシアに追加制裁")["eventType"] == "SANCTIONS"
+    assert "JAPAN_POLICY" not in ni.classify_event("英首相が辞任表明")["families"]
+    assert ni.classify_event("政府、経済対策を決定")["eventType"] == "JAPAN_POLICY"
+    # Treasury securities stay a rates story; the department name alone does not.
+    for subject in ("Daily Treasury Yield Curve Rates", "Daily Treasury Bill Rates",
+                    "Daily Treasury Real Long-Term Rates Update", "Treasury announces a bond auction"):
+        assert ni.classify_event(subject)["eventType"] == "RATES", subject
+    for subject in ("READOUT: Secretary of the Treasury Meeting with President", "IRS Auctions"):
+        assert ni.classify_event(subject)["eventType"] != "RATES", subject
+
+
+def _stored_v6(subject, family, severity, reasons, eid):
+    event = _stored_v6_war_event(subject, severity=severity, reasons=reasons)
+    event.update(eventType=family, eventId=eid, themeTags=[])
+    return event
+
+
+def test_v8_corrects_the_retained_misclassifications_without_ai():
+    events = {
+        "nasdaq": _stored_v6(NASDAQ, "GEOPOLITICS", "CRITICAL",
+                             ["family_geopolitics", "extreme_language", "ai_materiality_high"], "nasdaq"),
+        "f35": _stored_v6(F35, "GEOPOLITICS", "HIGH", ["family_geopolitics", "ai_materiality_high"], "f35"),
+        "outbound": _stored_v6(OUTBOUND, "GEOPOLITICS", "HIGH",
+                               ["family_geopolitics", "ai_materiality_high"], "outbound"),
+        "housing": _stored_v6(HOUSING, "GEOPOLITICS", "HIGH",
+                              ["family_geopolitics", "ai_materiality_high"], "housing"),
+        "php": _stored_v6(PHP_OUTAGE, "OTHER_MARKET_RELEVANT", "HIGH",
+                          ["extreme_language", "ai_materiality_high"], "php"),
+    }
+    before = {eid: dict(row) for eid, row in events.items()}
+    result = ni.reclassify_stored_events(events, at="2026-10-23T03:00:00Z")
+    got = {eid: (row["eventType"], row["severity"]) for eid, row in events.items()}
+    assert got == {"nasdaq": ("OTHER_MARKET_RELEVANT", "HIGH"),
+                   "f35": ("OTHER_MARKET_RELEVANT", "WATCH"),
+                   "outbound": ("REGULATION", "WATCH"),
+                   "housing": ("OTHER_MARKET_RELEVANT", "WATCH"),
+                   "php": ("CYBER_SECURITY", "HIGH")}
+    bases = {row["eventId"]: row["basis"] for row in result["audit"]}
+    assert bases == {"nasdaq": "background_excluded", "f35": "retired_headline_cue",
+                     "outbound": "headline_rules", "housing": "retired_headline_cue",
+                     "php": "headline_rules"}
+    for eid, row in events.items():
+        assert row["eventId"] == eid and row["revision"] == before[eid]["revision"] + 1
+        assert row["classificationPreviousRevision"]["eventType"] == before[eid]["eventType"]
+        assert row["alertEligible"] is False and row["policyReview"]["aiCalled"] is False
+        assert "family_geopolitics" not in row["severityReasons"]
+    assert all(row["aiCalled"] is False for row in result["audit"])
