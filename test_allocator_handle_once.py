@@ -12,11 +12,15 @@ def test_the_c_library_handle_is_made_once():
 
 # Measured in a fresh interpreter: inside the whole suite other threads (imports,
 # timers) allocate in the same window and the count drifted past the limit.
+# Counted after 200 settling calls, so one-time allocations (seen up to 19 KB on
+# Linux CI) are not mistaken for growth; the old fault keeps growing every call.
 _MEASURE = textwrap.dedent("""
     import tracemalloc
     import argus_checkpoint_v2 as v2
-    v2._release_unused_allocator_memory(64 * 1024 ** 2)
     tracemalloc.start()
+    for _ in range(200):  # settle one-time allocations (ctypes caches, first calls)
+        v2._release_unused_allocator_memory(64 * 1024 ** 2)
+        {extra}
     before = tracemalloc.take_snapshot()
     for _ in range(200):
         v2._release_unused_allocator_memory(64 * 1024 ** 2)
@@ -41,4 +45,4 @@ def test_repeated_release_keeps_almost_nothing():
 
 def test_the_measure_still_sees_the_old_leak():
     # The same measure catches the old fault (a new C library handle every call).
-    assert _kept_bytes(_MEASURE.replace("{extra}", "__import__('ctypes').CDLL(None)")) > 2 * 8 * 1024  # well past the 8 KiB limit
+    assert _kept_bytes(_MEASURE.replace("{extra}", "__import__('ctypes').CDLL(None)")) > 8 * 1024  # the old fault fails the same limit
