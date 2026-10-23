@@ -76,7 +76,7 @@ try {
   assert.equal(await page.getByText('株価の重し').isVisible(),true);
   assert.equal(await page.getByText('影響を確認中',{exact:true}).isVisible(),true);
   assert.equal(await page.locator('.at-event-memory').isVisible(),false,'internal evidence is initially folded');
-  await page.getByText('過去の事例との照合 · 検証中',{exact:true}).click();
+  await page.getByText('過去の事例',{exact:true}).click();
   assert.equal(await page.locator('.at-event-memory').isVisible(),true);
   await page.locator('article[data-news-event-id="story"] > button').click();
   assert.equal(await page.evaluate(()=>window.openedNews),'story','tap must open the same article');
@@ -84,7 +84,7 @@ try {
   assert.deepEqual(errors,[]);
   if(process.env.NEWS_UI_EVIDENCE_DIR) {
     fs.mkdirSync(process.env.NEWS_UI_EVIDENCE_DIR,{recursive:true});
-    await page.getByText('過去の事例との照合 · 検証中',{exact:true}).click();
+    await page.getByText('過去の事例',{exact:true}).click();
     await page.screenshot({path:path.join(process.env.NEWS_UI_EVIDENCE_DIR,`news-cards-${width}.png`),fullPage:true});
   }
   await page.close();
