@@ -99,6 +99,9 @@ def news_env(monkeypatch, tmp_path):
         "missing": []})
     monkeypatch.setattr(scanner, "_openai_prose",
                         lambda *a, **k: None)  # AI unavailable path
+    # No saved market position and no market series unless a test sets them.
+    monkeypatch.setattr(scanner, "_market_position_news_context", lambda: None)
+    monkeypatch.setattr(scanner, "_news_market_observation", lambda: {})
     return fresh
 
 
@@ -1076,3 +1079,111 @@ def test_intake_cycle_reclassifies_retained_news_once_without_ai(monkeypatch, ne
     scanner._NEWS_INTEL["events"] = {}
     scanner._news_intel_load()
     assert scanner._NEWS_INTEL["events"][stored["eventId"]]["eventType"] == "CYBER_SECURITY"
+
+
+# ── Owner 2026-10-23: judge against the current market, then check it ──────
+WAR_SUBJECT = "【速報】ロシア軍がポーランドに侵攻"
+
+
+def _iso_after(hours):
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _observation(hours, vix, usdjpy):
+    at = _iso_after(hours)
+    return {"vix": {"value": vix, "at": at}, "usdJpy": {"value": usdjpy, "at": at},
+            "us10y": {"value": 4.3, "at": at}, "nikkeiFutures": {"value": 40000.0, "at": at}}
+
+
+def test_news_judgment_reads_the_market_summary_and_is_checked_against_the_market(monkeypatch, news_env):
+    prompts, calls = [], []
+    summary = "動きのある主題: 中東・イラン情勢。中東・イラン情勢: 恐れ 戦線の拡大"
+
+    def fake_prose(user, max_out=600, system=None, *, purpose="prose",
+                   event_id="", event_phase="", model=None, diagnostic=None):
+        if purpose == "news_intel":
+            prompts.append(user)
+            calls.append(model)
+            return {"facts": ["ロシア軍がポーランドに侵攻したと報じられた。"],
+                    "eventTypeCandidate": "WAR_ESCALATION", "entities": [],
+                    "causalPathJa": None, "uncertaintyJa": None, "secondOrderJa": None,
+                    "materialityGuess": 2, "currentRelevance": 3}
+        return None
+
+    monkeypatch.setattr(scanner, "_openai_prose", fake_prose)
+    monkeypatch.setattr(scanner, "_market_position_news_context", lambda: summary)
+    monkeypatch.setattr(scanner, "_news_corroboration", lambda family, polarity=None: {
+        "confirmed": False, "signals": [], "readings": [], "missing": [],
+        "expectedDirections": {"oil": 1, "vix": 1, "usdJpy": -1}})
+    monkeypatch.setattr(scanner, "_news_market_observation", lambda: _observation(0, 18.0, 150.0))
+    assert run_cycle(monkeypatch, {"w1": mail("w1", WAR_SUBJECT)}) == "HEALTHY"
+    # One analysis call, as before; the summary rides in it.
+    assert len(calls) == 1 and summary in prompts[0] and WAR_SUBJECT in prompts[0]
+    events = scanner._NEWS_INTEL["events"]
+    (event_id, event), = events.items()
+    assert event["eventType"] == "WAR_ESCALATION" and event["severity"] == "HIGH"
+    assert "ai_materiality_high" in event["severityReasons"]
+    assert event["judgmentDecision"] == {"severity": "HIGH", "aiMaterialityGuess": 2,
+                                         "currentRelevance": 3, "marketContextProvided": True}
+    assert scanner._NEWS_INTEL["judgmentOpen"][event_id]["baseline"]["vix"]["value"] == 18.0
+    revision = event["revision"]
+    # Two hours later: VIX up, yen up — the existing confirmation rule holds.
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: _iso_after(2))
+    monkeypatch.setattr(scanner, "_news_market_observation", lambda: _observation(2, 20.6, 148.0))
+    assert scanner._news_judgment_followup() == 1
+    raised = scanner._NEWS_INTEL["events"][event_id]
+    assert raised["severity"] == "CRITICAL" and raised["revision"] == revision + 1
+    assert raised["confirmationState"] == "MARKET_CONFIRMED" and raised["alertEligible"] is True
+    audit = [row for row in scanner._NEWS_INTEL["audit"] if row.get("stage") == "market_reaction_confirmed"]
+    assert audit and audit[-1]["aiCalled"] is False and audit[-1]["previousSeverity"] == "HIGH"
+    assert scanner._news_judgment_followup() == 0                     # once
+    assert len(calls) == 1                                            # no model call afterwards
+    # After the day: the window closes into the ledger, counted on the health page.
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: _iso_after(25))
+    assert scanner._news_judgment_followup() == 1
+    assert event_id not in scanner._NEWS_INTEL["judgmentOpen"]
+    row, = scanner._NEWS_INTEL["judgmentLedger"]
+    assert row["severity"] == "HIGH" and row["finalSeverity"] == "CRITICAL" and row["currentRelevance"] == 3
+    assert row["largeSeries"] == ["usdJpy", "vix"]
+    health = scanner.app.test_client().get("/api/argus/news-intake/health").get_json()
+    assert health["judgmentCalibration"]["bySeverity"]["HIGH"]["n"] == 1
+    assert health["judgmentCalibration"]["bySeverity"]["HIGH"]["large"] == 1
+    assert health["judgmentOpenCount"] == 0
+    assert WAR_SUBJECT not in str(health["judgmentCalibration"])
+    # The ledger survives a restart through the same document.
+    scanner._news_intel_persist()
+    scanner._NEWS_INTEL["judgmentLedger"] = []
+    scanner._news_intel_load()
+    assert scanner._NEWS_INTEL["judgmentLedger"][0]["eventId"] == event_id
+
+
+def test_news_analysis_without_a_market_summary_keeps_the_old_rule(monkeypatch, news_env):
+    prompts = []
+
+    def fake_prose(user, *a, purpose="prose", diagnostic=None, **k):
+        if purpose == "news_intel":
+            prompts.append(user)
+            return {"facts": ["x"], "eventTypeCandidate": None, "entities": [], "causalPathJa": None,
+                    "uncertaintyJa": None, "secondOrderJa": None, "materialityGuess": 2,
+                    "currentRelevance": 0}
+        return None
+
+    monkeypatch.setattr(scanner, "_openai_prose", fake_prose)
+    monkeypatch.setattr(scanner, "_market_position_news_context", lambda: None)
+    run_cycle(monkeypatch, {"w2": mail("w2", WAR_SUBJECT)})
+    assert prompts and "今の相場の要約" not in prompts[0]
+    (event,) = scanner._NEWS_INTEL["events"].values()
+    # The model's relevance is ignored without a summary: guess 2 still counts.
+    assert event["judgmentDecision"]["currentRelevance"] is None
+    assert "ai_materiality_high" in event["severityReasons"] and event["severity"] == "HIGH"
+
+
+_real_market_position_news_context = scanner._market_position_news_context
+
+
+def test_market_position_context_failure_does_not_break_analysis(monkeypatch, news_env):
+    def broken():
+        raise RuntimeError("memory unavailable")
+    monkeypatch.setattr(scanner, "_market_position_memory_locked", broken)
+    assert _real_market_position_news_context() is None

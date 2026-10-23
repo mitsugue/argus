@@ -554,6 +554,48 @@ def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
     return facts
 
 
+NEWS_AI_CONTEXT_LIMIT = 300
+_VIEW_SNIPPET = 60
+
+
+def news_ai_context(view: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """A short summary of the market's current position for the news analysis.
+
+    Built from the saved memory's snapshot only (no model, no new store):
+    the active themes with their state, the emerging ones, and the latest
+    expectation and fear the integrated AI recorded. None when nothing is
+    active, so the analysis falls back to the old single-guess rule.
+    """
+    if not isinstance(view, Mapping):
+        return None
+    themes = [t for t in view.get("themes") or [] if isinstance(t, Mapping)]
+    active = [t for t in themes if t.get("status") == "ACTIVE" and not t.get("emerging")]
+    emerging = [t for t in themes if t.get("emerging")]
+    if not active and not emerging:
+        return None
+    active.sort(key=lambda t: str(t.get("lastUpdatedAt") or ""), reverse=True)
+    parts = []
+    if active:
+        parts.append("動きのある主題: " + "、".join(str(t.get("labelJa")) for t in active[:5]))
+    quiet = [t for t in themes if t.get("status") == "QUIET" and not t.get("emerging")]
+    if quiet:
+        parts.append("静かな主題: " + "、".join(str(t.get("labelJa")) for t in quiet[:3]))
+    if emerging:
+        parts.append("新しい話題: " + "、".join(str(t.get("labelJa")) for t in emerging))
+    viewed = sorted((t for t in active + emerging if isinstance(t.get("view"), Mapping)),
+                    key=lambda t: str((t.get("view") or {}).get("at") or ""), reverse=True)
+    for theme in viewed[:2]:
+        body = theme["view"]
+        bits = []
+        if body.get("expectationJa"):
+            bits.append("期待 " + str(body["expectationJa"])[:_VIEW_SNIPPET])
+        if body.get("fearJa"):
+            bits.append("恐れ " + str(body["fearJa"])[:_VIEW_SNIPPET])
+        if bits:
+            parts.append(f"{theme.get('labelJa')}: " + " / ".join(bits))
+    return "。".join(parts)[:NEWS_AI_CONTEXT_LIMIT] or None
+
+
 def generation_inputs(view: Mapping[str, Any]) -> Dict[str, Any]:
     """Project the display snapshot onto external materials for paid reuse.
 

@@ -333,3 +333,25 @@ def test_ai_views_may_cover_a_shown_emerging_theme():
     shown = next(t for t in mpm.snapshot(memory, now_iso="2026-10-23T01:10:00Z")["themes"]
                  if t["themeId"] == "EMERGING_CYBER_SECURITY")
     assert shown["view"]["fearJa"] == "被害企業の事業停止が広がること"
+
+
+# ── Owner 2026-10-23: a short market summary for the news analysis ─────────
+def test_news_ai_context_names_active_themes_and_the_latest_fear():
+    assert mpm.news_ai_context(mpm.snapshot(mpm.empty(), now_iso="2026-10-23T00:00:00Z")) is None
+    assert mpm.news_ai_context(None) is None
+    memory = mpm.empty()
+    mpm.ingest_news(memory, [
+        _cyber("s1", "2026-10-22T10:00:00Z", family="SEMICONDUCTORS"),
+        _cyber("f1", "2026-10-22T11:00:00Z", family="FED"),
+        _cyber("c1", "2026-10-22T12:00:00Z"), _cyber("c2", "2026-10-22T13:00:00Z")])
+    mpm.ingest_views(memory, [{"themeId": "AI_SEMIS", "expectationJa": "AI投資の継続",
+                               "fearJa": "AI投資の回収不安で半導体株が崩れること" * 3,
+                               "triggerJa": "大手の設備投資計画", "evidenceIds": [], "kind": "INFERENCE"}],
+                     context_id="ctx", generated_at="2026-10-22T14:00:00Z")
+    text = mpm.news_ai_context(mpm.snapshot(memory, now_iso="2026-10-23T00:00:00Z"))
+    assert text.startswith("動きのある主題: ")
+    assert "AI・半導体相場" in text and "米国の利上げ・利下げ観測" in text
+    assert "新しい話題: サイバー・システム障害" in text
+    assert "恐れ AI投資の回収不安" in text and "期待 AI投資の継続" in text
+    assert len(text) <= mpm.NEWS_AI_CONTEXT_LIMIT == 300
+    assert "s1" not in text                                   # no ids, no article text
