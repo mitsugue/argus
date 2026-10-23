@@ -3561,6 +3561,10 @@ def _decision_usable_quote_row(row, *, now_epoch=None, allow_extended=False):
 
 _DECISION_DAILY_QUOTE_SOURCES = frozenset({
     "jquants", "twelvedata", "finnhub",
+    # 2026-10-23(オーナーの指示): moomoo の確定日足の終値。日足の取り込みと同じ
+    # source 名 "moomoo"。ブリッジの価格の行(moomoo-rt)はここに入らない。
+    # 引け後に確定した足から作った行(moomooDailyBar)だけを認める。
+    "moomoo",
 })
 
 
@@ -3595,11 +3599,19 @@ def _decision_usable_watch_quote_row(
     live = _decision_usable_quote_row(row, now_epoch=now_epoch)
     if live is not None:
         return live
+    provider = str(row.get("source") or "").strip().lower()
+    if allow_delayed and (row.get("extendedHours") is True
+                          or provider not in _DECISION_DAILY_QUOTE_SOURCES):
+        # 2026-10-23: 米国の取引時間外は、表示の行が時間外の価格・遅延値・古い
+        # ブリッジの行でも、判断用の終値は moomoo の確定日足から作る。
+        close_row = _us_offhours_decision_close_row(row, market, now_epoch)
+        if close_row is not None:
+            row, provider = close_row, "moomoo"
     if not allow_delayed or str(row.get("status") or "").lower() != "delayed":
         return None
-
-    provider = str(row.get("source") or "").strip().lower()
     if provider not in _DECISION_DAILY_QUOTE_SOURCES:
+        return None
+    if provider == "moomoo" and not _moomoo_confirmed_close_row(row, now_epoch):
         return None
     source_date = row.get("date")
     parsed, _reason = _bounded_market_session_date(
@@ -3632,6 +3644,64 @@ def _decision_usable_watch_quote_row(
         "decisionSourceKind": "bounded_daily_close",
         "sourceTimestamp": row.get("sourceTimestamp") or source_date,
     }
+
+
+def _moomoo_confirmed_close_row(row, now_epoch=None):
+    """moomoo の行が、引け後に確定した日足の終値から作られたものか。"""
+    if row.get("moomooDailyBar") is not True:
+        return False
+    date = row.get("date")
+    if not isinstance(date, str) or row.get("sourceTimestamp") != date:
+        return False
+    try:
+        return date <= _moomoo_daily_end(now_epoch).isoformat()
+    except Exception:
+        return False
+
+
+def _moomoo_daily_close_row(symbol, now_epoch=None):
+    """保存した moomoo の確定日足から作る、その銘柄の最新の確定した取引日の終値の行。"""
+    found = _moomoo_daily_history(symbol, limit=2, now_epoch=now_epoch)
+    if found is None:
+        return None
+    history, entry = found
+    closes, dates = history["closes"], history["dates"]
+    if not closes or not dates:
+        return None
+    try:
+        if dates[0] > _moomoo_daily_end(now_epoch).isoformat():
+            return None
+    except Exception:
+        return None
+    price = float(closes[0])
+    prev = float(closes[1]) if len(closes) > 1 and closes[1] else None
+    sym = str(symbol).strip().upper()
+    return {
+        "symbol": sym, "name": sym, "price": price, "close": price,
+        "open": history["opens"][0], "high": history["highs"][0], "low": history["lows"][0],
+        "changeAbs": round(price - prev, 4) if prev else None,
+        "changePct": round((price / prev - 1) * 100, 4) if prev else None,
+        "volume": history["volumes"][0], "date": dates[0],
+        "sourceTimestamp": dates[0], "receivedAt": entry.get("receivedAt"),
+        "source": "moomoo", "moomooDailyBar": True, "adjusted": True,
+        "status": "delayed", "freshness": "delayed", "delayClass": "EOD",
+        "realtimeEvidence": False,
+    }
+
+
+def _us_offhours_decision_close_row(row, market, now_epoch=None):
+    if str(market).upper() not in ("US", argus_market_clock.US_EQUITY):
+        return None
+    now = time.time() if now_epoch is None else float(now_epoch)
+    if _td_us_session(datetime.fromtimestamp(now, pytz.utc)) == "REGULAR":
+        return None                     # 取引中の判断の入力は従来どおり
+    symbol = str(row.get("symbol") or "").strip().upper()
+    if not symbol:
+        return None
+    close_row = _moomoo_daily_close_row(symbol, now)
+    if close_row is not None and row.get("name"):
+        close_row["name"] = row["name"]
+    return close_row
 
 
 def _decision_usable_watch_snapshot(snapshot, market, *, now_epoch=None,
@@ -4293,7 +4363,20 @@ def _td_warm_tick(now_utc=None):
     _TD_WARM_LAST_SESSION["value"] = session
     universe = _td_warm_universe(now)
     covered = _td_bridge_covered_rows(universe["symbols"], now, session)
+    # 2026-10-23: 取引時間外で、時間外の価格が無い銘柄は moomoo の確定日足の終値を
+    # 温め置きにする(判断用の終値にもなる)。Yahoo へは、これも無い銘柄だけ。
+    daily_closes = {}
+    if session != "REGULAR":
+        for sym in universe["symbols"]:
+            if sym in covered:
+                continue
+            close_row = _moomoo_daily_close_row(sym, now)
+            if close_row is not None:
+                daily_closes[sym] = close_row
     with _TD_WARM_LOCK:
+        if daily_closes:
+            _td_warm_store(list(daily_closes.values()), now, session)
+        _TD_WARM_STATE["moomooDailyCloses"] = len(daily_closes)
         if covered:
             # Readers of the warm rows get the bridge row unchanged in shape.
             # An overnight row keeps the extended-session lifetime, not the
@@ -4304,7 +4387,8 @@ def _td_warm_tick(now_utc=None):
         fit = universe.get("cadenceFit") or {}
         decision = argus_td_warm.plan_tick(
             _TD_WARM_STATE, now_utc=now_utc, session=session,
-            universe=[sym for sym in universe["symbols"] if sym not in covered], batch_cap=_US_DYN_MAX,
+            universe=[sym for sym in universe["symbols"]
+                      if sym not in covered and sym not in daily_closes], batch_cap=_US_DYN_MAX,
             warm_daily_cap=_TD_WARM_DAILY_CAP,
             regular_sec=fit.get("regularSec") or _TD_WARM_REGULAR_SEC,
             extended_sec=fit.get("extendedSec") or _TD_WARM_EXTENDED_SEC,

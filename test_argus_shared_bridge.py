@@ -93,7 +93,7 @@ def test_quote_worker_releases_context_on_failure(monkeypatch):
 
 def test_registered_price_cycle_accepts_only_confirmed_names_and_preserves_source_time(monkeypatch):
     m = load(monkeypatch); posted = []; calls = []
-    monkeypatch.setattr(m, 'shared_session_open', lambda: True)
+    monkeypatch.setattr(m, 'us_quote_session', lambda now=None: 'REGULAR')
     monkeypatch.setattr(m, 'registered_us_codes', lambda: m._REGIME_ETF_CODES + ['US.NVDA'])
     rows = [{'market': 'US', 'symbol': 'NVDA', 'price': 123.4,
              'exchangeTs': '2026-10-07T14:00:00Z'},
@@ -137,7 +137,7 @@ def test_registered_list_is_private_bounded_removed_and_fail_closed(monkeypatch)
 
 def test_zero_acceptance_never_claims_price_push_success(monkeypatch):
     m = load(monkeypatch)
-    monkeypatch.setattr(m, 'shared_session_open', lambda: True)
+    monkeypatch.setattr(m, 'us_quote_session', lambda now=None: 'REGULAR')
     monkeypatch.setattr(m, 'registered_us_codes', lambda: m._REGIME_ETF_CODES)
     monkeypatch.setattr(m, 'fetch_market_quotes', lambda *a, **kw: ([{'market': 'US', 'symbol': 'SPY'}], False))
     class Response:
