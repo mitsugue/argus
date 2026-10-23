@@ -19,9 +19,14 @@ const prices=[64200,65600,63100,64600,63900,65700,66800,65900,67000,68957,68309]
 const chart={schemaVersion:'jp-market-chart-layers-v1',today:'2026-10-05',start:'2026-04-04',end:'2027-01-05',
 points:prices.map((close,i)=>({date:new Date(Date.UTC(2026,8,2+i*3)).toISOString().slice(0,10),close,eps:3987.78,epsDate:'2026-08-31'})),
 current:{morningOf:'2026-10-05',eps:3987.78,epsDate:'2026-10-02',previousClose:68309,previousSession:'2026-10-02',atr14:1235},
-pivots:[{date:'2026-09-08',kind:'BOTTOM',price:63100,confirmedOn:'2026-09-14'}],pending:null,candidates:[],
+pivots:[{date:'2026-09-08',kind:'BOTTOM',price:63100,confirmedOn:'2026-09-14'}],pending:null,
+candidates:[{id:'cand-a',label:'見本の候補A',start:'2026-10-01',end:'2026-10-30',target:71780,stop:66000},{id:'cand-b',label:'見本の候補B',start:'2026-10-02',end:'2026-10-31',target:70600,stop:64400,movingTarget:true}],
 nearest:[{side:'UP',multiple:18,price:71780,reachedWithin10SessionsPct:38,sessionsMedian:10},{side:'DOWN',multiple:17,price:67792,reachedWithin10SessionsPct:89,sessionsMedian:0}],actionAuthority:false,automaticAiCalls:0};
-const future={rows:[['one','2026-10-01','2026-10-10',69700,72000,'天井圏'],['two','2026-10-16','2026-10-22',65500,65500,'戻り'],['three','2026-10-27','2026-11-04',63300,63300,'底'],['four','2026-11-06','2026-11-13',64800,64800,'戻り'],['five','2026-11-19','2026-11-26',63600,63600,'底']].map(([id,start,end,low,high,tag])=>({id,start,end,level:{low,high},tag}))};
+const future={rows:[['one','2026-10-01','2026-10-10',69700,72000,'天井圏'],['two','2026-10-16','2026-10-22',65500,65500,'戻り'],['three','2026-10-27','2026-11-04',63300,63300,'底'],['four','2026-11-06','2026-11-13',64800,64800,'戻り'],['five','2026-11-19','2026-11-26',63600,63600,'底']].map(([id,start,end,low,high,tag])=>({id,start,end,level:{low,high},tag}))
+ // 価格の無い見立て: 短い期間だけを時期の印にする。長い期間と終わった期間は出さない。
+ .concat([['mark-a','2026-10-20','2026-10-24','10/22前後','警戒'],['mark-b','2026-11-30','2026-12-20','12月','安値'],
+  ['mark-long','2026-10-06','2027-10-05','今後1年','長期'],['mark-ended','2026-09-20','2026-10-01','9月','終了']]
+  .map(([id,start,end,periodLabel,tag])=>({id,start,end,periodLabel,level:null,tag,view:`${tag}の見本の見立て`})))};
 const latest={morningOf:chart.today,createdAt:'2026-10-04T09:35:00Z',previousClose:68309,previousSession:'2026-10-02',eps:3987.78,epsDate:'2026-10-02',per:17.13,atr14:1235,epsJumped:false,epsLabelJa:'ARGUS推計（公式値ではありません）',
 rows:chart.nearest.map(n=>({...n,kinds:['PER_LINE'],distancePct:n.side==='UP'?5.1:-.8,distanceAtr:n.side==='UP'?2.8:-.4,bandJa:'2割前後',tier:'MAP',sessions25:0,sessions75:12})),atrGuides:{UP:[],DOWN:[]},fixedNotesJa:[],actionAuthority:false};
 const browser=await chromium.launch({headless:true});
@@ -61,7 +66,7 @@ try{
   await page.waitForFunction(previous=>JSON.stringify([...document.querySelectorAll('.nr-axis')].map(el=>el.textContent))!==JSON.stringify(previous),initial);
   assert.notDeepEqual(await axes(),initial,'two-finger separation zooms the dates');
   await page.getByRole('button',{name:'今日へ戻る',exact:true}).click();
-  await page.locator('svg g[role="button"]').nth(1).click();
+  await page.locator('svg g[role="button"] .nr-point-hit').nth(1).click();
   assert.equal(await page.locator('.nr-selection > b').innerText(),'2 戻り · 10/16〜10/22','tap opens that point, not a nearby point');
   await page.locator('svg g[role="button"]').nth(2).focus();await page.keyboard.press('Enter');
   assert.equal(await page.locator('.nr-selection > b').innerText(),'3 底 · 10/27〜11/4');
@@ -70,6 +75,32 @@ try{
     const boxes=labels.map(el=>el.getBoundingClientRect());
     return boxes.every((a,i)=>boxes.slice(i+1).every(b=>a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top));
   }),true,'the five price labels do not overlap');
+  assert.equal(await page.locator('.nr-point-label').count(),5,'every priced point keeps its price label');
+  // 文字の箱は互いに重ならず、線(終値・PER・予測・目標・撤回・目盛り・引き出し線)の上にも載らない。
+  const collisions=await svg.evaluate(root=>{
+    const plot=root.querySelector('#nr-plot rect').getBBox(),texts=[...root.querySelectorAll('text')].filter(t=>t.textContent.trim());
+    const boxes=texts.map(t=>{const b=t.getBBox();return {t:t.textContent,x1:b.x+.5,y1:b.y+.5,x2:b.x+b.width-.5,y2:b.y+b.height-.5}});
+    const found=[];
+    boxes.forEach((a,i)=>boxes.slice(i+1).forEach(b=>{if(a.x1<b.x2&&b.x1<a.x2&&a.y1<b.y2&&b.y1<a.y2)found.push(`${a.t} / ${b.t}`)}));
+    for(const el of root.querySelectorAll('line,path')){
+      const clipped=!!el.closest('[clip-path]'),length=el.getTotalLength();
+      for(let d=0;d<=length;d+=1){const p=el.getPointAtLength(d);
+        if(clipped&&(p.x<plot.x||p.x>plot.x+plot.width||p.y<plot.y||p.y>plot.y+plot.height))continue;
+        const hit=boxes.find(b=>p.x>b.x1&&p.x<b.x2&&p.y>b.y1&&p.y<b.y2);
+        if(hit){found.push(`${el.getAttribute('class')} on ${hit.t}`);break;}}
+    }
+    return found;
+  });
+  assert.deepEqual(collisions,[],'no text box overlaps another text box or sits on a line');
+  assert.ok(await page.locator('.nr-line-label.is-target',{hasText:'目標'}).count()>=1,'the target line is named');
+  assert.ok(await page.locator('.nr-line-label.is-stop',{hasText:'撤回'}).count()>=1,'the withdrawal line is named');
+  assert.deepEqual(await page.locator('.nr-legend span').allTextContents(),['日経平均・終値','PER15〜21','参考予測','目標','撤回','確定した高値・安値']);
+  assert.deepEqual(await page.locator('.nr-period-tag').allTextContents(),['警戒','安値'],'short unpriced views appear as time marks; long and ended ones do not');
+  await page.locator('.nr-period',{hasText:'警戒'}).click();
+  assert.equal(await page.locator('.nr-selection > b').innerText(),'警戒 · 10/22前後');
+  assert.equal(await page.locator('.nr-selection > p').innerText(),'警戒の見本の見立て');
+  assert.equal(await page.locator('.nr-period-band').count(),1,'the selected period is shaded on the chart');
+  await page.getByRole('button',{name:'今日へ戻る',exact:true}).click();
   assert.equal(await page.locator('.lm-reach article strong').first().evaluate(el=>parseFloat(getComputedStyle(el).fontSize)),30);
   assert.equal(await page.locator('.nr-nearest').count(),0,'the reach statistic has one reading location');
   // 2026-10-23 オーナー指示(画面の言葉の基本方針): 断り書きは出さない。
@@ -80,5 +111,5 @@ try{
   if(process.env.CHART_UI_EVIDENCE_DIR){fs.mkdirSync(process.env.CHART_UI_EVIDENCE_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.CHART_UI_EVIDENCE_DIR,`chart-reading-${width}.png`),fullPage:true});}
   await page.close();
  }
- console.log('PASS chart reading: 320/390/1280px, point taps, keyboard, drag, pinch arithmetic, return to today, prominent frequencies, nonblocking news health');
+ console.log('PASS chart reading: 320/390/1280px, point taps, keyboard, drag, pinch arithmetic, return to today, labels clear of lines and text, target/withdrawal names, unpriced time marks, prominent frequencies, nonblocking news health');
 }finally{await browser.close()}
