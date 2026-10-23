@@ -56,6 +56,19 @@ function Row({ row }: { row: FutureMapRow }) {
   </tr>;
 }
 
+/** The first rows and the long views as the server marked them (2026-10-23):
+ *  rows not yet ended from "いまここ", long periods apart. A table from an older
+ *  server without the marks keeps the former four rows from "いまここ". */
+export function firstRows(doc: FutureMapDoc): { lead: FutureMapRow[]; outlook: FutureMapRow[] } {
+  const byId = new Map(doc.rows.map(r => [r.id, r] as const));
+  const pick = (ids: string[]) => ids.map(id => byId.get(id)).filter((r): r is FutureMapRow => !!r);
+  if (Array.isArray(doc.leadIds) && Array.isArray(doc.outlookIds)) {
+    return { lead: pick(doc.leadIds), outlook: pick(doc.outlookIds) };
+  }
+  const nowIndex = Math.max(0, doc.rows.findIndex(r => r.isNow));
+  return { lead: doc.rows.slice(nowIndex, nowIndex + 4), outlook: [] };
+}
+
 export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?: number }) {
   const [open, setOpen] = useState(false);
   const [clock, setClock] = useState(() => Date.now());
@@ -69,10 +82,9 @@ export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?
   const age = futureMapUpdateAge(doc.updatedAt, nowMs ?? clock);
   const updatedStamp = sourceUpdateTimestamp(doc.updatedAt);
   const updateDate = Number.isFinite(updatedStamp) ? jstMonthDay(updatedStamp) : '―';
-  const nowIndex = Math.max(0, doc.rows.findIndex(r => r.isNow));
-  const lead = doc.rows.slice(nowIndex, nowIndex + 4);
+  const { lead, outlook } = firstRows(doc);
   const shown = open ? doc.rows : lead;
-  const hidden = doc.rows.length - lead.length;
+  const hidden = doc.rows.length - lead.length - outlook.length;
   const goal = [...doc.rows].reverse().find(r => r.emphasis);
   const { position, nextAlert, nextBottom } = doc.status;
   return <section className="fm-card card" aria-label="FUTURE MAP" data-argus-contract="future-map-v1">
@@ -84,10 +96,13 @@ export function FutureMapView({ doc, nowMs }: { doc: FutureMapDoc | null; nowMs?
       <div className="fm-box tone-amber"><small>次の警戒日</small><b>{md(nextAlert.date)} {nextAlert.label}</b></div>
       <div className="fm-box tone-green"><small>次の買い場</small><b>{nextBottom.label}</b></div>
     </div>
-    <table className="fm-table">
+    {shown.length > 0 && <table className="fm-table">
       <thead><tr><th>時期</th><th>見立て</th><th>目安(円)</th><th>警戒</th></tr></thead>
       <tbody>{shown.map(row => <Row key={row.id} row={row} />)}</tbody>
-    </table>
+    </table>}
+    {!open && outlook.length > 0 && <p className="fm-long" data-argus-contract="future-map-long-view">
+      <b>長い目の見方</b>{outlook.map(row => <span key={row.id} data-row={row.id}>
+        {row.periodLabel} {row.view}{row.isNow && <small className="fm-here">いまここ</small>}</span>)}</p>}
     {hidden > 0 && <button type="button" className="fm-more" aria-expanded={open} onClick={() => setOpen(v => !v)}>
       {open ? '閉じる' : `すべて表示（残り${hidden}件${goal ? `・${goal.periodLabel} ${goal.view.split('。')[0]}まで` : ''}）`}</button>}
     <p className="fm-foot">●の数 = 同じことを言っている見立ての数 ・ {doc.record.scored > 0

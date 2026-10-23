@@ -42,6 +42,70 @@ def test_display_marks_the_current_row_and_drops_rows_two_weeks_past():
     assert [r["isNow"] for r in later["rows"]] == [False, True] and later["rows"][0]["past"] is True
 
 
+# The shape of the 10/23 table (periods only; neutral words): overlapping
+# periods, two ended rows inside the old window, and three long periods.
+SHAPE = [("p01", "2026-10-01", "2026-10-10"), ("p02", "2026-10-06", "2026-10-16"), ("p03", "2026-10-12", "2026-10-16"),
+         ("p04", "2026-10-13", "2026-10-31"), ("p05", "2026-10-14", "2026-10-20"), ("p06", "2026-10-16", "2026-10-22"),
+         ("long1", "2026-10-16", "2027-10-15"), ("p07", "2026-10-19", "2026-10-30"), ("long2", "2026-10-19", "2026-12-30"),
+         ("p08", "2026-10-27", "2026-10-28"), ("p09", "2026-10-27", "2026-11-04"), ("p10", "2026-11-03", "2026-11-10"),
+         ("p11", "2026-11-06", "2026-11-13"), ("p12", "2026-11-19", "2026-11-26"), ("p13", "2026-12-01", "2026-12-24"),
+         ("p14", "2026-12-18", "2026-12-30"), ("p15", "2027-01-01", "2027-01-31"), ("long3", "2027-07-01", "2027-08-31")]
+
+
+def _shaped():
+    rows = [{"id": i, "periodLabel": i, "start": a, "end": b, "view": f"見立て{i}", "reason": None, "alt": None,
+             "level": None, "tag": "注意", "agree": 1, "sources": [], "emphasis": False, "changed": None, "result": None}
+            for i, a, b in SHAPE]
+    return f.validate({**DOC, "rows": rows})
+
+
+def _marks(today):
+    view = f.for_display(_shaped(), today)
+    return [r["id"] for r in view["rows"] if r["isNow"]], view["leadIds"], view["outlookIds"], view
+
+
+def test_now_is_the_shortest_row_containing_today_and_the_first_rows_have_not_ended():
+    now, lead, outlook, view = _marks("2026-10-23")
+    # Before: the first row containing today (p04, 10/13-10/31) was "now" and two ended rows followed.
+    assert now == ["p07"] and lead == ["p07", "p08", "p09", "p10"]
+    assert outlook == ["long2", "long1"]                              # long views: started, nearest end first
+    rows = {r["id"]: r for r in view["rows"]}
+    assert rows["p05"]["past"] and rows["p06"]["past"] and not set(lead) & {"p05", "p06"}
+    assert "p05" in rows and "p01" in rows                         # ended rows stay for "show all" (14 days)
+    assert [r["id"] for r in view["rows"] if r["long"]] == ["long1", "long2", "long3"]
+    for day, expected_now, expected_lead in (
+            ("2026-10-31", "p09", ["p09", "p10", "p11", "p12"]),       # p04 ends today but p09 is shorter
+            ("2026-11-15", "p12", ["p12", "p13", "p14", "p15"]),       # only long rows contain today: the next row
+            ("2026-12-26", "p14", ["p14", "p15"])):
+        now, lead, outlook, view = _marks(day)
+        assert now == [expected_now] and lead == expected_lead, day
+        assert outlook == ["long2", "long1"] and "long1" not in now, day
+        assert all(not r["past"] for r in view["rows"] if r["id"] in lead), day
+
+
+def test_ties_take_the_later_start_and_only_long_rows_fall_back_to_a_long_now():
+    rows = [{"id": i, "periodLabel": i, "start": a, "end": b, "view": i, "tag": "―", "agree": 0}
+            for i, a, b in (("x", "2026-10-01", "2026-10-11"), ("y", "2026-10-05", "2026-10-15"),
+                            ("z", "2026-09-01", "2027-09-01"))]
+    view = f.for_display(f.validate({**DOC, "rows": rows}), "2026-10-07")
+    assert [r["id"] for r in view["rows"] if r["isNow"]] == ["y"] and view["leadIds"] == ["y"]
+    late = f.for_display(f.validate({**DOC, "rows": rows}), "2026-11-01")
+    assert [r["id"] for r in late["rows"] if r["isNow"]] == ["z"]
+    assert late["leadIds"] == [] and late["outlookIds"] == ["z"]
+    assert f.LONG_DAYS == 45 and f.LEAD_ROWS == 4 and f.OUTLOOK_ROWS == 2 and f.KEEP_PAST_DAYS == 14
+
+
+def test_display_marks_leave_registration_and_scoring_unchanged():
+    import argus_future_map_scoring as scoring
+    public = _shaped()
+    before = json.dumps(public, sort_keys=True)
+    ids = {r["id"]: scoring.record_id(r) for r in public["rows"]}
+    for day in ("2026-10-23", "2026-10-31", "2026-12-26"):
+        view = f.for_display(public, day)
+        assert all(scoring.record_id(r) == ids[r["id"]] for r in view["rows"])
+    assert json.dumps(public, sort_keys=True) == before                # the validated document is not touched
+
+
 def test_refresh_reads_the_private_store_once_per_change_and_the_route_never_fetches(monkeypatch, tmp_path):
     calls = []
 

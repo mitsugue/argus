@@ -50,9 +50,13 @@ const flush = () => new Promise(r => setImmediate(r));
     record: { scored: 1, reached: 1 } };
   intervalFn(); await flush(); assert.equal(renders, 4);
   intervalFn(); await flush(); assert.equal(renders, 4, 'unchanged result must not replace the table');
+  // The server's choice of first rows changed (2026-10-23 rule) with the same version: replaced.
+  server = { ...server, leadIds: ['a'], outlookIds: [] };
+  intervalFn(); await flush(); assert.equal(renders, 5);
+  intervalFn(); await flush(); assert.equal(renders, 5, 'same first rows must not replace the table');
   // A failed read keeps the last table.
   global.fetch = async () => { reads += 1; throw new Error('offline'); };
-  intervalFn(); await flush(); assert.equal(renders, 4);
+  intervalFn(); await flush(); assert.equal(renders, 5);
   // Unsubscribing stops the timer and the front/back listener.
   stop(); assert.equal(cleared, 2, 'hidden pause and final cleanup clear timers'); assert.equal(handlers.visibilitychange, undefined);
   // The 30-minute reuse is gone.
