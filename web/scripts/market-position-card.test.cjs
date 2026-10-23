@@ -76,3 +76,10 @@ const latestNews=render({...base,marketPosition:{...position,themes:[theme({view
  recent:[{entryId:'cpi-news',kind:'NEWS_CONTEXT',at:'2026-10-15T02:00:00Z',textJa:'CPI後の新しい報道',severity:'HIGH'}]})]}});
 assert.ok(latestNews.split('</summary>')[0].includes('CPI後の新しい報道'));
 assert.ok(!latestNews.split('</summary>')[0].includes('利上げ観測の後退を安心材料に株高'));
+// An emerging theme (server-added from repeated news) reads as a new topic, not a status colour.
+const cyber=theme({themeId:'EMERGING_CYBER_SECURITY',labelJa:'サイバー攻撃',emerging:true,pricing:null,lastReaction:null,nextEvent:null,
+ recent:[{entryId:'c1',kind:'NEWS',at:'2026-10-22T12:45:00Z',textJa:'NIKKEI: 中国政府系ハッカー集団、AIで攻撃',severity:'WATCH'}]});
+const emergingHtml=render({...base,marketPosition:{...position,themes:[...position.themes,cyber]}});
+assert.ok(emergingHtml.includes('サイバー攻撃')&&emergingHtml.includes('新しい話題')&&emergingHtml.includes('data-emerging="true"'));
+assert.ok(emergingHtml.includes('7日間で重要なニュースが続いた話題'));
+assert.ok(emergingHtml.includes('3テーマ中 2件に更新'));

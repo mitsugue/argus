@@ -9,7 +9,7 @@ NEWS = [
     {"eventId": "nie-2", "severity": "CRITICAL", "eventType": "WAR_ESCALATION", "headlineJa": "米軍、中東へ数千人を追加派遣",
      "sourceReceivedAt": "2026-10-01T02:00:00Z", "sourceFamily": "NIKKEI"},
     {"eventId": "nie-3", "severity": "WATCH", "eventType": "FED", "headlineJa": "小さな話", "sourceReceivedAt": "2026-10-01T03:00:00Z"},
-    {"eventId": "nie-4", "severity": "HIGH", "eventType": "EARNINGS", "headlineJa": "決算", "sourceReceivedAt": "2026-10-01T03:00:00Z"},
+    {"eventId": "nie-4", "severity": "HIGH", "eventType": "OTHER_MARKET_RELEVANT", "headlineJa": "決算", "sourceReceivedAt": "2026-10-01T03:00:00Z"},
     {"eventId": "nie-5", "severity": "HIGH", "eventType": "BOJ", "headlineJa": "翻訳処理中", "sourceReceivedAt": "2026-10-01T03:00:00Z"},
 ]
 # Raw synthetic quote clocks, rather than an unverified precomputed reading.
@@ -30,8 +30,8 @@ CALENDAR = [{"eventCode": "FOMC", "title": "FOMC", "eventTimeUtc": "2026-10-28T1
 
 def test_news_entries_are_themed_filtered_and_appended_once():
     memory = mpm.empty()
-    # 2026-10-15: themed WATCH reporting is remembered too; unthemed EARNINGS
-    # and a pending translation are left out.
+    # 2026-10-15: themed WATCH reporting is remembered too; unclassified news
+    # (no fixed or emerging theme) and a pending translation are left out.
     assert mpm.ingest_news(memory, NEWS) == 3
     assert mpm.ingest_news(memory, NEWS) == 0
     themes = {row["themeId"] for row in memory["entries"]}
@@ -220,3 +220,116 @@ def test_old_unverified_derived_memory_is_preserved_but_not_cited_as_current_evi
     restored = mpm.snapshot(memory,now_iso="2026-10-03T02:00:00Z")
     facts = mpm.explanation_facts(restored)
     assert facts[0]["verification"] == "VERIFIED"
+
+
+# ── Emerging themes (owner 2026-10-23) ─────────────────────────────────────
+def _cyber(eid, at, severity="HIGH", family="CYBER_SECURITY"):
+    return {"eventId": eid, "severity": severity, "eventType": family,
+            "headlineJa": f"ハッカー集団の攻撃 {eid}", "sourceReceivedAt": at, "sourceFamily": "NIKKEI"}
+
+
+def _emerging(memory, now_iso):
+    view = mpm.snapshot(memory, now_iso=now_iso)
+    return [t for t in view["themes"] if t.get("emerging")], view
+
+
+def test_emerging_theme_appears_with_repeated_important_news_and_leaves_when_quiet():
+    memory = mpm.empty()
+    assert mpm.ingest_news(memory, [_cyber("c1", "2026-10-22T12:45:00Z")]) == 1
+    shown, view = _emerging(memory, "2026-10-23T00:00:00Z")
+    assert shown == []                                   # one story is an event, not a theme
+    assert [t["themeId"] for t in view["themes"]] == list(mpm.FIXED_THEMES)
+    mpm.ingest_news(memory, [_cyber("c2", "2026-10-25T01:00:00Z")])
+    shown, view = _emerging(memory, "2026-10-25T02:00:00Z")
+    assert [t["themeId"] for t in shown] == ["EMERGING_CYBER_SECURITY"]
+    theme = shown[0]
+    assert theme["labelJa"] == "サイバー攻撃" and theme["status"] == "ACTIVE"
+    assert theme["recent"][0]["ref"]["eventId"] == "c2"
+    # The fixed seven keep their order; the new theme follows them.
+    assert [t["themeId"] for t in view["themes"]][:7] == list(mpm.FIXED_THEMES)
+    fact = next(f for f in mpm.explanation_facts(view)
+                if f["provenance"]["eventId"] == "market-position-EMERGING_CYBER_SECURITY")
+    assert fact["text"].startswith("現在位置・サイバー攻撃(新しい話題)")
+    # Still shown within 14 days of the last article, gone after.
+    assert _emerging(memory, "2026-11-07T01:00:00Z")[0]
+    assert _emerging(memory, "2026-11-08T01:30:00Z")[0] == []
+    # Saved and public forms keep the emerging theme.
+    restored = mpm.load(json.loads(json.dumps(memory)))
+    assert len(restored["entries"]) == 2
+    public = mpm.public_snapshot(view)
+    assert public["themes"][-1]["themeId"] == "EMERGING_CYBER_SECURITY" and public["themes"][-1]["emerging"] is True
+
+
+def test_emerging_theme_needs_two_important_or_four_articles_in_seven_days():
+    memory = mpm.empty()
+    mpm.ingest_news(memory, [_cyber("c1", "2026-10-01T00:00:00Z"), _cyber("c2", "2026-10-08T00:00:01Z")])
+    assert _emerging(memory, "2026-10-08T01:00:00Z")[0] == []          # 7 days apart
+    memory = mpm.empty()
+    watch = [_cyber(f"w{i}", f"2026-10-1{i}T00:00:00Z", severity="WATCH") for i in range(4)]
+    mpm.ingest_news(memory, watch[:3])
+    assert _emerging(memory, "2026-10-13T01:00:00Z")[0] == []          # three WATCH
+    mpm.ingest_news(memory, watch[3:])
+    assert _emerging(memory, "2026-10-13T01:00:00Z")[0][0]["themeId"] == "EMERGING_CYBER_SECURITY"
+    # Fixed families never become emerging; unclassified news is not named.
+    other = mpm.empty()
+    mpm.ingest_news(other, [_cyber(f"o{i}", "2026-10-13T00:00:00Z", family=family)
+                            for i, family in enumerate(["OTHER_MARKET_RELEVANT"] * 4 + ["FED"] * 4)])
+    assert _emerging(other, "2026-10-13T01:00:00Z")[0] == []
+
+
+def test_at_most_two_emerging_themes_busiest_first():
+    memory = mpm.empty()
+    for family, count in (("EARNINGS", 4), ("CYBER_SECURITY", 3), ("REGULATION", 2), ("COMMODITIES", 2)):
+        mpm.ingest_news(memory, [_cyber(f"{family}-{i}", f"2026-10-2{i}T00:00:00Z", family=family)
+                                 for i in range(count)])
+    shown, _ = _emerging(memory, "2026-10-24T00:00:00Z")
+    assert [t["themeId"] for t in shown] == ["EMERGING_EARNINGS", "EMERGING_CYBER_SECURITY"]
+
+
+def test_reclassified_news_moves_to_its_new_theme_without_rewriting_history():
+    memory = mpm.empty()
+    war = _cyber("nie-58ec472f1b292c45", "2026-10-22T12:45:00Z", family="WAR_ESCALATION")
+    assert mpm.ingest_news(memory, [war]) == 1
+    view = mpm.snapshot(memory, now_iso="2026-10-23T00:00:00Z")
+    assert next(t for t in view["themes"] if t["themeId"] == "MIDDLE_EAST")["entryCount"] == 1
+    # The news store re-derived it (news-policy-v7); a second cyber story follows.
+    fixed = dict(war, eventType="CYBER_SECURITY", severity="WATCH")
+    assert mpm.ingest_news(memory, [fixed, _cyber("c2", "2026-10-23T01:00:00Z"),
+                                    _cyber("c3", "2026-10-23T01:10:00Z")]) == 3
+    assert mpm.ingest_news(memory, [fixed]) == 0
+    assert len(memory["entries"]) == 4                          # the old row stays stored
+    view = mpm.snapshot(memory, now_iso="2026-10-23T02:00:00Z")
+    middle_east = next(t for t in view["themes"] if t["themeId"] == "MIDDLE_EAST")
+    assert middle_east["status"] == "EMPTY" and middle_east["recent"] == []
+    cyber = next(t for t in view["themes"] if t["themeId"] == "EMERGING_CYBER_SECURITY")
+    moved = next(r for r in cyber["recent"] if r["ref"]["eventId"] == war["eventId"])
+    assert moved["ref"]["reclassifiedFrom"] == "MIDDLE_EAST"
+    # Re-derived to an unthemed family: withdrawn from its old theme.
+    gone = dict(_cyber("c4", "2026-10-23T01:30:00Z", family="FED"))
+    mpm.ingest_news(memory, [gone])
+    mpm.ingest_news(memory, [dict(gone, eventType="OTHER_MARKET_RELEVANT")])
+    view = mpm.snapshot(memory, now_iso="2026-10-23T02:00:00Z")
+    us = next(t for t in view["themes"] if t["themeId"] == "US_POLICY_RATE")
+    assert us["status"] == "EMPTY" and all(r["kind"] != "NEWS_WITHDRAWN" for r in us["recent"])
+
+
+def test_ai_views_may_cover_a_shown_emerging_theme():
+    import argus_market_brief
+    memory = mpm.empty()
+    mpm.ingest_news(memory, [_cyber("c1", "2026-10-22T12:45:00Z"), _cyber("c2", "2026-10-23T00:00:00Z")])
+    view = mpm.snapshot(memory, now_iso="2026-10-23T01:00:00Z")
+    facts = mpm.explanation_facts(view)
+    context = {"contextId": "ctx", "facts": [{"evidenceId": "brief-fact-" + f["provenance"]["eventId"], **f} for f in facts]}
+    active = [t["themeId"] for t in view["themes"] if t["status"] == "ACTIVE"]
+    row = {"themeId": "EMERGING_CYBER_SECURITY", "expectationJa": "被害は限定的との見方",
+           "fearJa": "被害企業の事業停止が広がること", "triggerJa": "被害企業の続報",
+           "evidenceIds": [context["facts"][0]["evidenceId"]], "kind": "INFERENCE"}
+    diag = {}
+    out = argus_market_brief.validate_theme_views(
+        [row], context, theme_ids=mpm.THEMES, active_theme_ids=active, fields=mpm.VIEW_FIELDS,
+        text_limit=mpm.VIEW_TEXT_LIMIT, diagnostic=diag)
+    assert diag["status"] == "ACCEPTED" and out[0]["themeId"] == "EMERGING_CYBER_SECURITY"
+    assert mpm.ingest_views(memory, out, context_id="ctx", generated_at="2026-10-23T01:05:00Z") == 1
+    shown = next(t for t in mpm.snapshot(memory, now_iso="2026-10-23T01:10:00Z")["themes"]
+                 if t["themeId"] == "EMERGING_CYBER_SECURITY")
+    assert shown["view"]["fearJa"] == "被害企業の事業停止が広がること"
