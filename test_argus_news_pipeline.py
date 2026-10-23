@@ -1032,3 +1032,46 @@ def test_full_analysis_drains_previously_failed_watch_after_material(tmp_path, m
     assert calls == ['ECB、利上げ決定', '金利見通し']
     assert all(row['analysisState'] == 'ANALYZED' for row in rows)
     assert all(row['sourceReceivedAt'] == stamp for row in rows)
+
+
+ARTEX_SUBJECT = "【速報】中国政府系ハッカー集団、AI「ARTEX」で攻撃　マイクロソフトが確認"
+
+
+def test_cyber_attack_mail_is_classified_as_cyber(monkeypatch, news_env):
+    assert run_cycle(monkeypatch, {"c1": mail("c1", ARTEX_SUBJECT)}) == "HEALTHY"
+    body = scanner.app.test_client().get("/api/argus/news-intelligence").get_json()
+    event = body["events"][0]
+    assert event["eventType"] == "CYBER_SECURITY" and event["themeTags"] == ["CYBER"]
+    assert event["policyVersion"] == "news-policy-v7"
+    assert event["impactDirection"]["directionByTarget"]["energy"] == "UNCLEAR"
+    assert event["generalTransmissionJa"].startswith("被害企業の事業停止")
+
+
+def test_intake_cycle_reclassifies_retained_news_once_without_ai(monkeypatch, news_env):
+    import argus_news_intelligence as ni
+    message = {"eventIdentity": "nie-58ec472f1b292c45", "fingerprint": "f" * 32,
+               "subject": ARTEX_SUBJECT, "headlineJa": ARTEX_SUBJECT, "url": None,
+               "receivedIso": "2026-10-22T12:45:00Z", "publishedIso": None}
+    stored = ni.build_news_event(
+        message=message, taxonomy={"eventType": "WAR_ESCALATION", "families": ["WAR_ESCALATION"],
+                                   "themeTags": ["ENERGY"]},
+        staleness="FRESH_BREAKING",
+        materiality={"severity": "HIGH", "reasons": ["family_war_escalation", "extreme_language"],
+                     "confirmationState": "MARKET_CONFIRMATION_PENDING"},
+        ai_analysis=None, corroboration={}, analysis_state="DETERMINISTIC_ONLY",
+        processed_iso="2026-10-22T12:53:00Z")
+    stored["policyVersion"] = "news-policy-v6"
+    scanner._NEWS_INTEL["events"][stored["eventId"]] = stored
+    scanner._NEWS_INTEL["order"].append(stored["eventId"])
+    monkeypatch.setattr(scanner, "_openai_prose", lambda *a, **kw: pytest.fail("No AI during reclassification"))
+    assert run_cycle(monkeypatch, {}) == "HEALTHY"
+    run_cycle(monkeypatch, {})
+    event = scanner._NEWS_INTEL["events"][stored["eventId"]]
+    assert event["eventType"] == "CYBER_SECURITY" and event["revision"] == 2
+    assert event["impactDirection"]["directionByTarget"]["energy"] == "UNCLEAR"
+    audit = [row for row in scanner._NEWS_INTEL["audit"] if row.get("stage") == "policy_reclassified"]
+    assert len(audit) == 1 and audit[0]["previousEventType"] == "WAR_ESCALATION"
+    # Persisted on the existing news store.
+    scanner._NEWS_INTEL["events"] = {}
+    scanner._news_intel_load()
+    assert scanner._NEWS_INTEL["events"][stored["eventId"]]["eventType"] == "CYBER_SECURITY"

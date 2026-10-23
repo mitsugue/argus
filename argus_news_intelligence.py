@@ -22,7 +22,13 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 NEWS_EVENT_SCHEMA = "argus-news-event-v1"
 # v5: explicit policy-rate decisions remain material without external AI.
 # Existing source, freshness and market-confirmation boundaries still apply.
-NEWS_POLICY_VERSION = "news-policy-v6"
+# v7 (owner 2026-10-23): digital attacks are their own family. A hacker
+# group's "攻撃" is no longer read as an armed conflict (oil/energy chain).
+NEWS_POLICY_VERSION = "news-policy-v7"
+# Families each policy version introduced. A stored event classified under an
+# older version is re-derived from its stored headline only when that headline
+# now matches one of these (rules only; the excerpt is not retained).
+POLICY_FAMILY_INTRODUCTIONS = {7: ("CYBER_SECURITY",)}
 SEVERITIES = ("INFO", "WATCH", "HIGH", "CRITICAL")
 
 # ── Source families (§2/§9) — the six owner-subscribed sources only ────────
@@ -127,12 +133,27 @@ def review_quarantine(*, authenticated: bool, source: Optional[str],
 EVENT_FAMILIES = (
     "RATES", "CENTRAL_BANK", "INFLATION", "EMPLOYMENT", "FX", "COMMODITIES",
     "OIL", "GEOPOLITICS", "WAR_ESCALATION", "CEASEFIRE", "IRAN", "HORMUZ",
+    "CYBER_SECURITY",
     "TRADE", "TARIFFS", "SANCTIONS", "SEMICONDUCTORS", "AI_DATACENTER",
     "JAPAN_POLICY", "BOJ", "FED", "US_FISCAL", "EARNINGS", "CORPORATE_ACTION",
     "REGULATION", "OTHER_MARKET_RELEVANT", "LOW_RELEVANCE",
 )
 
+# Digital-attack cues. Company names that merely contain "サイバー" are
+# removed first; bare "breach"/"脆弱性" are avoided because markets use them
+# for price levels and fiscal fragility.
+_CYBER_PHRASES = ("サイバー", "ハッカー", "ハッキング", "ランサムウェア", "ランサム",
+                  "不正アクセス", "情報流出", "情報漏洩", "情報漏えい", "マルウェア",
+                  "ゼロデイ", "脆弱性を突", "脆弱性を悪用", "ddos", "cyber", "hacker",
+                  "hacking", "ransomware", "malware", "data breach", "security breach")
+_CYBER_NAME_EXCLUSIONS = ("サイバーエージェント", "サイバーダイン", "cyberagent", "cyberdyne")
+# With a digital-attack cue present, only these establish an armed conflict;
+# "攻撃"/"報復"/"封鎖" alone then describe the digital attack.
+_KINETIC_MILITARY_PHRASES = ("空爆", "ミサイル", "侵攻", "戦闘", "airstrike",
+                             "missile", "武力衝突")
+
 _FAMILY_RULES = (
+    ("CYBER_SECURITY", _CYBER_PHRASES),
     ("HORMUZ", ("ホルムズ", "hormuz")),
     ("IRAN", ("イラン", "iran", "テヘラン", "tehran", "革命防衛隊")),
     ("CEASEFIRE", ("停戦", "休戦", "ceasefire", "cease-fire", "truce",
@@ -216,6 +237,8 @@ _JAPAN_TRANSMISSION_JA = {
                       "日本株全体の下押し要因になり得ます。",
     "GEOPOLITICS": "軍の展開・威嚇・首脳の発言は、衝突前でも原油・VIX・円を通じて"
                    "日本株の地合いを変え得ます。実際の市場反応の確認が必要です。",
+    "CYBER_SECURITY": "被害企業の事業停止・情報流出のおそれ。国家が関わる場合は"
+                      "地政学の緊張にもつながります。",
     "BOJ": "日銀の政策変更は円金利・為替を直接動かし、銀行・輸出・"
            "高配当株の相対評価を変えます。",
     "FED": "FRBの政策とガイダンスは米金利・ドル円経由で日本株の"
@@ -237,6 +260,7 @@ CORROBORATION_PLAN = {
     "HORMUZ": ("oil", "vix", "usdJpy"),
     "WAR_ESCALATION": ("oil", "vix", "usdJpy"),
     "GEOPOLITICS": ("oil", "vix", "usdJpy"),
+    "CYBER_SECURITY": ("vix", "usdJpy"),
     "CEASEFIRE": ("oil", "vix"),
     "OIL": ("oil", "vix"),
     "SEMICONDUCTORS": ("vix", "usdJpy"),
@@ -255,6 +279,7 @@ _THEME_TAGS = {
     "IRAN": ("ENERGY",),
     "HORMUZ": ("ENERGY",),
     "WAR_ESCALATION": ("ENERGY",),
+    "CYBER_SECURITY": ("CYBER",),
 }
 
 
@@ -267,12 +292,24 @@ def classify_event(subject: str, excerpt: str = "") -> Dict[str, Any]:
     instructions). Returns primary family, all matched families, and generic
     theme tags (never owner-specific)."""
     haystack = _lower(subject) + "\n" + _lower(excerpt)[:2000]
+    cyber_text = haystack
+    for name in _CYBER_NAME_EXCLUSIONS:
+        cyber_text = cyber_text.replace(name, "")
+    cyber = any(phrase in cyber_text for phrase in _CYBER_PHRASES)
     # Digital attacks alone do not establish an armed conflict. Independent
     # military cues in the same article still participate in classification.
     military_text = re.sub(r"(?:サイバー|サイバ|ハッキング|ddos|dos)[・\s-]*攻撃|cyber[\s-]*attack", "", haystack)
+    war_phrases = _KINETIC_MILITARY_PHRASES if cyber else None
     matched = [family for family, phrases in _FAMILY_RULES
-               if any(phrase in (military_text if family == "WAR_ESCALATION" else haystack)
-                      for phrase in phrases)]
+               if (cyber if family == "CYBER_SECURITY" else any(
+                   phrase in (military_text if family == "WAR_ESCALATION" else haystack)
+                   for phrase in (war_phrases if family == "WAR_ESCALATION" and war_phrases
+                                  else phrases)))]
+    # The cyber check runs first; an armed-conflict cue in the same article
+    # (missile, airstrike…) still makes the conflict the primary event.
+    if "CYBER_SECURITY" in matched and "WAR_ESCALATION" in matched:
+        matched.remove("WAR_ESCALATION")
+        matched.insert(0, "WAR_ESCALATION")
     # A report quoting an interview is not itself an interview/digest section.
     low_value = any(hint in _lower(subject) for hint in _LOW_VALUE_HINTS)
     if not matched:
@@ -1081,6 +1118,7 @@ _DIR_TIME_HORIZONS = {
     "FX": "IMMEDIATE-5D", "OIL": "IMMEDIATE-5D", "COMMODITIES": "1D-20D",
     "IRAN": "IMMEDIATE-5D", "HORMUZ": "IMMEDIATE-5D",
     "WAR_ESCALATION": "IMMEDIATE-5D", "CEASEFIRE": "IMMEDIATE-5D",
+    "CYBER_SECURITY": "IMMEDIATE-5D",
     "TARIFFS": "1D-20D", "SANCTIONS": "1D-20D",
     "SEMICONDUCTORS": "1D-20D", "AI_DATACENTER": "1D-20D",
     "EARNINGS": "1D-5D",
@@ -1100,6 +1138,10 @@ _DIR_TRANSMISSION_CHAINS = {
                                      "原油リスクプレミアム↑", "株式全般に下押し"],
     ("CEASEFIRE", "deescalate"): ["緊張緩和", "リスクプレミアム剥落",
                                   "原油↓/株式リスクオン"],
+    # No direction rule: a digital attack does not by itself move oil or the
+    # whole market, so every target stays UNCLEAR (owner 2026-10-23).
+    ("CYBER_SECURITY", "escalate"): ["被害企業の事業停止・情報流出のおそれ",
+                                     "国家が関われば地政学の緊張"],
 }
 
 _UNCLEAR_ALL = {target: "UNCLEAR" for target in DIRECTION_TARGETS}
@@ -1244,6 +1286,10 @@ def evaluate_impact_direction(*, taxonomy: Mapping[str, Any], subject: str,
     # result, so a reachable rule is never shadowed by family ordering.
     families = [primary] + [str(f) for f in (taxonomy.get("families") or [])
                             if str(f) != primary]
+    if primary == "CYBER_SECURITY":
+        # Primary only when no armed-conflict cue exists: an Iranian hacker
+        # group's "攻撃" must not borrow the IRAN escalation (oil-up) rule.
+        families = [primary]
     for family in families:
         if polarity and (family, polarity) in _DIRECTION_RULES:
             signal = direction_for(family, polarity)
@@ -1354,6 +1400,119 @@ def build_news_event(*, message: Mapping[str, Any],
         # v13.5.63: a split article names its digest mail; None otherwise.
         "digestOf": message.get("digestOf"),
     }
+
+
+def _policy_number(version: Any) -> int:
+    match = re.fullmatch(r"news-policy-v(\d+)", str(version or ""))
+    return int(match.group(1)) if match else 0
+
+
+_SCORE_CAP_REASONS = ("low_value_editorial", "official_data_input",
+                      "scheduled_release_headline_only",
+                      "routine_official_publication",
+                      "mail_container_no_material_event", "stale_capped",
+                      "unauthenticated_capped", "digest_container_pending_split")
+
+
+def reclassify_stored_event(event: Mapping[str, Any], *, at: str
+                            ) -> Optional[Dict[str, Any]]:
+    """Re-derive one stored event under the current rules, once per version.
+
+    Returns the updated record, or None when the event needs no review. Rules
+    only: no model is called and the excerpt (never persisted) is not
+    reconstructed. The type changes only when the stored headline now matches
+    a family introduced after the event's own policy version, so a type that
+    came from the excerpt is not overturned by the headline alone. Severity
+    moves only by the family component (§14) and never re-alerts; the prior
+    record stays addressable as ``classificationPreviousRevision``.
+    """
+    stored_version = _policy_number(event.get("policyVersion"))
+    current_version = _policy_number(NEWS_POLICY_VERSION)
+    review = event.get("policyReview") or {}
+    if (stored_version >= current_version
+            or review.get("policyVersion") == NEWS_POLICY_VERSION
+            or event.get("authority") != "NEWS_RISK_EVIDENCE"
+            or is_digest_container_event(event)):
+        return None
+    title = str(event.get("titleOriginal") or "")
+    old_family = str(event.get("eventType") or "")
+    introduced = {family for number, families in POLICY_FAMILY_INTRODUCTIONS.items()
+                  if stored_version < number <= current_version for family in families}
+    taxonomy = classify_event(title)
+    new_family = str(taxonomy.get("eventType") or "")
+    updated = dict(event)
+    updated["policyReview"] = {
+        "policyVersion": NEWS_POLICY_VERSION, "at": at, "method": "stored_headline_rules",
+        "previousPolicyVersion": event.get("policyVersion"), "changed": False,
+        "aiCalled": False}
+    if (not title or new_family == old_family
+            or not introduced.intersection(taxonomy.get("families") or [])):
+        return updated
+    previous = dict(event)      # an older correction stays nested within it
+    order = {name: index for index, name in enumerate(SEVERITIES)}
+    severity = str(event.get("severity") or "INFO")
+    reasons = [r for r in (event.get("severityReasons") or [])
+               if r != f"family_{old_family.lower()}"]
+    rank = order.get(severity, 0)
+    if not any(r in _SCORE_CAP_REASONS for r in reasons) and rank > 0:
+        rank -= int(old_family in _HIGH_IMPACT_FAMILIES)
+        rank += int(new_family in _HIGH_IMPACT_FAMILIES)
+        rank = max(0, min(rank, len(SEVERITIES) - 1))
+    if new_family in _HIGH_IMPACT_FAMILIES:
+        reasons.insert(0, f"family_{new_family.lower()}")
+    reasons.append("policy_reclassified")
+    direction = evaluate_impact_direction(taxonomy=taxonomy, subject=title)
+    new_severity = SEVERITIES[rank]
+    old_template = _JAPAN_TRANSMISSION_JA.get(old_family)
+    new_template = _JAPAN_TRANSMISSION_JA.get(new_family)
+    updated.update({
+        "eventType": new_family,
+        "themeTags": list(taxonomy.get("themeTags") or []),
+        "severity": new_severity,
+        "severityReasons": list(dict.fromkeys(reasons)),
+        "impactDirection": direction,
+        "executionConstraint": derive_execution_constraint(
+            severity=new_severity,
+            confirmation_state=str(event.get("confirmationState") or ""),
+            impact_direction=direction),
+        "policyVersion": NEWS_POLICY_VERSION,
+        "revision": int(event.get("revision") or 1) + 1,
+        "alertEligible": False,
+        "classificationPreviousRevision": previous,
+    })
+    # Template text named the old family; an article's own analysis stays.
+    if not event.get("whyJa") or event.get("whyJa") == old_template:
+        updated["whyJa"] = new_template or "市場への波及経路は追加確認中です。"
+    if event.get("japanImpactJa") == old_template:
+        updated["japanImpactJa"] = new_template
+    updated["policyReview"] = dict(updated["policyReview"], changed=True,
+                                   previousEventType=old_family,
+                                   previousSeverity=severity)
+    return updated
+
+
+def reclassify_stored_events(events: Dict[str, Dict[str, Any]], *, at: str
+                             ) -> Dict[str, Any]:
+    """Apply ``reclassify_stored_event`` in place over the retained store."""
+    reviewed, audit = 0, []
+    for event_id in list(events):
+        try:
+            updated = reclassify_stored_event(events[event_id], at=at)
+        except Exception:
+            continue
+        if updated is None:
+            continue
+        events[event_id] = updated
+        reviewed += 1
+        review = updated["policyReview"]
+        if review.get("changed"):
+            audit.append({"stage": "policy_reclassified", "eventId": event_id,
+                          "previousEventType": review.get("previousEventType"),
+                          "eventType": updated.get("eventType"),
+                          "previousSeverity": review.get("previousSeverity"),
+                          "severity": updated.get("severity"),
+                          "revision": updated.get("revision"), "aiCalled": False})
+    return {"reviewed": reviewed, "audit": audit}
 
 
 def project_owner_event(event: Mapping[str, Any]) -> Dict[str, Any]:

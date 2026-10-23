@@ -812,3 +812,98 @@ def test_troop_movements_and_leader_statements_classify_as_geopolitics():
     assert ni.classify_event("今週の読まれた記事ランキング")["eventType"] == "LOW_RELEVANCE"
     assert "GEOPOLITICS" in ni._HIGH_IMPACT_FAMILIES and ni.CORROBORATION_PLAN["GEOPOLITICS"] == ("oil", "vix", "usdJpy")
     assert "GEOPOLITICS" in ni._JAPAN_TRANSMISSION_JA
+
+
+# ── v7 (owner 2026-10-23): digital attacks are their own family ─────────────
+ARTEX = "【速報】中国政府系ハッカー集団、AI「ARTEX」で攻撃　マイクロソフトが確認"
+
+
+def test_hacker_group_attack_is_cyber_not_armed_conflict():
+    taxonomy = ni.classify_event(ARTEX)
+    assert taxonomy["eventType"] == "CYBER_SECURITY"
+    assert "WAR_ESCALATION" not in taxonomy["families"]
+    assert taxonomy["themeTags"] == ["CYBER"]
+    direction = ni.evaluate_impact_direction(taxonomy=taxonomy, subject=ARTEX)
+    # No oil/energy chain: every target stays UNCLEAR.
+    assert set(direction["directionByTarget"].values()) == {"UNCLEAR"}
+    assert not any("原油" in step for step in direction["transmissionChain"])
+    assert ni.CORROBORATION_PLAN["CYBER_SECURITY"] == ("vix", "usdJpy")
+    assert "CYBER_SECURITY" not in ni._HIGH_IMPACT_FAMILIES
+
+
+def test_military_attacks_stay_armed_conflict_and_lead_mixed_articles():
+    for subject in ("イスラエル軍がミサイル攻撃", "ロシア軍が空爆、報復を警告"):
+        assert ni.classify_event(subject)["eventType"] == "WAR_ESCALATION"
+    mixed = ni.classify_event("ロシアがサイバー攻撃とミサイル攻撃")
+    assert mixed["eventType"] == "WAR_ESCALATION"
+    assert "CYBER_SECURITY" in mixed["families"]
+    # An Iranian hacker group's attack does not borrow the oil-up IRAN rule.
+    iran = ni.classify_event("イラン系ハッカーが米企業に攻撃")
+    assert iran["eventType"] == "CYBER_SECURITY"
+    direction = ni.evaluate_impact_direction(taxonomy=iran, subject="イラン系ハッカーが米企業に攻撃")
+    assert direction["directionByTarget"]["energy"] == "UNCLEAR"
+
+
+def test_cyber_cues_ignore_company_names_and_market_vocabulary():
+    assert ni.classify_event("サイバーエージェント、上方修正")["eventType"] == "EARNINGS"
+    assert ni.classify_event("財政の脆弱性に懸念")["eventType"] != "CYBER_SECURITY"
+    assert ni.classify_event("ランサムウェアで工場停止")["eventType"] == "CYBER_SECURITY"
+    assert ni.classify_event("顧客の情報流出、不正アクセスか")["eventType"] == "CYBER_SECURITY"
+
+
+def _stored_v6_war_event(subject, severity="HIGH", reasons=("family_war_escalation", "extreme_language")):
+    taxonomy = {"eventType": "WAR_ESCALATION", "families": ["WAR_ESCALATION"],
+                "themeTags": ["ENERGY"], "lowValueHints": False}
+    message = _msg(subject)
+    event = ni.build_news_event(
+        message={**message, "eventIdentity": "nie-58ec472f1b292c45", "headlineJa": subject},
+        taxonomy=taxonomy, staleness="FRESH_BREAKING",
+        materiality={"severity": severity, "reasons": list(reasons),
+                     "confirmationState": "MARKET_CONFIRMATION_PENDING"},
+        ai_analysis=None, corroboration={}, analysis_state="DETERMINISTIC_ONLY",
+        processed_iso="2026-10-22T12:53:00Z")
+    event["policyVersion"] = "news-policy-v6"
+    return event
+
+
+def test_stored_event_is_reclassified_once_by_rules_only():
+    event = _stored_v6_war_event(ARTEX)
+    # The 2026-10-22 record: armed-conflict chain, energy BULLISH.
+    assert event["impactDirection"]["directionByTarget"]["energy"] == "BULLISH"
+    events = {event["eventId"]: event}
+    result = ni.reclassify_stored_events(events, at="2026-10-23T00:00:00Z")
+    fixed = events[event["eventId"]]
+    assert result["reviewed"] == 1 and result["audit"][0]["eventType"] == "CYBER_SECURITY"
+    assert result["audit"][0]["aiCalled"] is False
+    assert fixed["eventType"] == "CYBER_SECURITY" and fixed["themeTags"] == ["CYBER"]
+    assert fixed["policyVersion"] == ni.NEWS_POLICY_VERSION == "news-policy-v7"
+    assert set(fixed["impactDirection"]["directionByTarget"].values()) == {"UNCLEAR"}
+    # Only the family component leaves; no retroactive alert; history kept.
+    assert fixed["severity"] == "WATCH" and fixed["alertEligible"] is False
+    assert "family_war_escalation" not in fixed["severityReasons"]
+    assert "policy_reclassified" in fixed["severityReasons"]
+    assert fixed["revision"] == event["revision"] + 1
+    assert fixed["classificationPreviousRevision"]["eventType"] == "WAR_ESCALATION"
+    assert fixed["whyJa"] == ni._JAPAN_TRANSMISSION_JA["CYBER_SECURITY"]
+    assert fixed["eventId"] == event["eventId"]
+    projected = ni.project_owner_event(fixed)
+    assert projected["generalTransmissionJa"].startswith("被害企業の事業停止")
+    assert "classificationPreviousRevision" not in projected
+    # Once per policy version.
+    assert ni.reclassify_stored_events(events, at="2026-10-23T00:10:00Z")["reviewed"] == 0
+
+
+def test_reclassification_never_overturns_an_excerpt_derived_type():
+    # The excerpt (never stored) named the missile strike; the headline alone
+    # carries no newly introduced family, so the stored type stands.
+    event = _stored_v6_war_event("中東情勢で株が急落")
+    events = {event["eventId"]: event}
+    assert ni.reclassify_stored_events(events, at="2026-10-23T00:00:00Z") == {"reviewed": 1, "audit": []}
+    kept = events[event["eventId"]]
+    assert kept["eventType"] == "WAR_ESCALATION" and kept["severity"] == "HIGH"
+    assert kept["policyVersion"] == "news-policy-v6"
+    assert kept["policyReview"]["policyVersion"] == "news-policy-v7"
+    assert kept["policyReview"]["changed"] is False
+    assert ni.reclassify_stored_events(events, at="2026-10-23T00:10:00Z")["reviewed"] == 0
+    current = dict(_stored_v6_war_event(ARTEX), policyVersion=ni.NEWS_POLICY_VERSION)
+    assert ni.reclassify_stored_event(current, at="2026-10-23T00:00:00Z") is None

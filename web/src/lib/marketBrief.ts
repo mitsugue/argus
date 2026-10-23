@@ -14,6 +14,8 @@ export interface MarketBriefFact {
 
 export interface MarketPositionTheme {
   themeId: string; labelJa: string; status: 'ACTIVE' | 'QUIET' | 'EMPTY'; entryCount: number;
+  /** Added from accumulating news beyond the fixed themes (at most two, server-chosen). */
+  emerging?: boolean;
   lastUpdatedAt: string | null;
   recent: Array<{ entryId: string; kind: string; at: string; textJa: string; severity: string; ref?: Record<string, unknown> }>;
   pricing: { ffImpliedRatePct?: number | null } | null;
