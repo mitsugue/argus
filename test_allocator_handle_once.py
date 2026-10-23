@@ -17,8 +17,11 @@ def test_repeated_release_keeps_almost_nothing():
         before = tracemalloc.take_snapshot()
         for _ in range(200):
             v2._release_unused_allocator_memory(64 * 1024 ** 2)
-        kept = sum(stat.size_diff for stat in tracemalloc.take_snapshot().compare_to(before, 'filename')
-                   if stat.size_diff > 0)
+        # Count only what the release path and ctypes allocate; other threads of
+        # the whole suite (imports, timers) allocate meanwhile and are not this.
+        scope = [tracemalloc.Filter(True, "*argus_checkpoint_v2.py"), tracemalloc.Filter(True, "*ctypes*")]
+        kept = sum(stat.size_diff for stat in tracemalloc.take_snapshot().filter_traces(scope).compare_to(
+                   before.filter_traces(scope), 'filename') if stat.size_diff > 0)
     finally:
         tracemalloc.stop()
     assert kept < 8 * 1024, kept

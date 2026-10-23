@@ -37,7 +37,7 @@ export function SectorHeatmap({internals}:{internals:unknown}){
   const names=new Set(assets.filter(a=>a.market==='JP').map(a=>a.symbol));
   const members=context?.assets.filter(a=>names.has(a.instrumentId.replace('.T',''))&&a.sectorNameJa===row?.nameJa)??[];
   return <section className="card sector-heatmap" aria-label="業種ヒートマップ">
-    <h3>どの業種が強いか</h3>
+    <h3>SECTORS</h3>
     {loading&&<TriangleStepLoader label="業種データを読み込んでいます"/>}
     {error&&<p role="status">最新データを読み込めません。取得済みの値は元の時点を確認してください。</p>}
     {data&&<>

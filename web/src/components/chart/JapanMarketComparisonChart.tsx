@@ -46,7 +46,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
   // path (median of past outcomes), not an outlook, and is named as such.
   // Owner instruction 2026-10-02: always draw it; the on/off switch is gone.
   const validated = document.forecast.validationStatus === 'VALIDATED';
-  const forecastName = validated ? '計算予測' : '参考経路（過去事例の中央値・未検証）';
+  const forecastName = validated ? '計算予測' : '参考経路（過去事例の中央値）';
   const [showReferences, setShowReferences] = useState(true);
   const trackRecord = useForecastTrackRecord();
   const issued = trackRecord?.horizons[String(document.forecast.horizonSessions)];
@@ -257,8 +257,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
           {source.observations.toLocaleString('ja-JP')}観測日。
         </p>)}
         {!Object.keys(document.sourceAcquisition.sources).length && <p>原データの取込確認待ちです。</p>}
-        <p>収録期間は予測力の検証結果ではありません。当時の公表時刻・訂正前の値と、全営業日の充足は未検証です。
-          新たに取得した履歴を、過去の判断時点で既知だったデータとして使いません。
+        <p>新たに取得した履歴を、過去の判断時点で既知だったデータとして使いません。
           VIXの新しい値は既存の価格取得経路から補います。</p>
       </section>}
       <p>情報締切：{new Date(document.informationCutoff).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST</p>
@@ -289,7 +288,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
             帯（事例の中央半分）の中に実際の値が入った割合は{pct(v.bandCoverage)}（目安50%）です。</p>
           <p>{v.validationStatus === 'VALIDATED'
             ? '判定：過去検証の基準を満たしています。ただし過去の一致率であり、将来の確率ではありません。'
-            : `判定：未検証。${v.reasons.map(reason => reasonJa[reason] ?? reason).join('。')}。`}</p>
+            : `判定：${v.reasons.map(reason => reasonJa[reason] ?? reason).join('。')}。`}</p>
         </section>;
       })()}
       {document.forecast.weightSearch && (() => {

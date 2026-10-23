@@ -434,29 +434,30 @@ export function tachibanaJpRealtimeLamp(
 ): { status: HealthLampStatus; detailJa: string } | null {
   const view = tachibanaLiveView(doc);
   if (!view.present || view.status === 'DISABLED' || doc?.enabled === false) return null;
+  // 2026-10-23: 一目で読める短い一語にする。銘柄の一覧は出さない。
+  // DEGRADED は取引の少ない銘柄が直近の分に約定せず古い値のままの時にも起きるため、
+  // 現在値の行が1つでもあれば緑にする(どの値を使うかの判定は変えない)。
   const current = tachibanaCurrentRows(doc, nowMs);
-  const symbols = [...current.keys()].sort().join('/');
   switch (view.status) {
     case 'LIVE':
-      return { status: 'ok', detailJa: `LIVE — Tachibanaから更新中（${symbols}）` };
+      return { status: 'ok', detailJa: '立花 更新中' };
     case 'DEGRADED':
-      return { status: 'warning', detailJa: `Tachibana 一部銘柄のみ現在値（${symbols || '—'}）` };
+      return current.size > 0
+        ? { status: 'ok', detailJa: '立花 更新中' }
+        : { status: 'warning', detailJa: '立花 更新待ち' };
     case 'STALE':
-      return { status: 'warning', detailJa: 'Tachibana 鮮度期限切れ（再取得待ち）' };
-    case 'CLOSED': {
-      const priced = view.rows.filter((r) => r.price !== null).map((r) => r.symbol).join('/');
-      return { status: 'ok', detailJa: `Tachibana 接続確認済 · 市場クローズ（${priced || '—'}）` };
-    }
+      return { status: 'warning', detailJa: '立花 更新待ち' };
+    case 'CLOSED':
+      return { status: 'ok', detailJa: '立花 閉場中' };
     case 'AUTH_FAILED': {
       const boundary = (doc as { authBoundary?: unknown } | null | undefined)?.authBoundary;
       const code = typeof boundary === 'string' && boundary ? boundary : (doc?.lastErrorClass ?? 'AUTH');
-      return { status: 'warning', detailJa: `Tachibana 認証失敗（${code}）` };
+      return { status: 'warning', detailJa: `立花 認証失敗（${code}）` };
     }
     case 'MAINTENANCE':
-      return { status: 'warning', detailJa: 'Tachibana メンテナンス中' };
+      return { status: 'warning', detailJa: '立花 保守中' };
     default:
-      return { status: 'off', detailJa: doc?.lastErrorClass
-        ? `Tachibana 未取得（${doc.lastErrorClass}）` : 'Tachibana 待機中（セッション外）' };
+      return { status: 'off', detailJa: '立花 待機中' };
   }
 }
 

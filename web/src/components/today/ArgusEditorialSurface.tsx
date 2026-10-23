@@ -49,7 +49,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
       ...plan.elements.filter(choice => /^evidence-news-/.test(choice.id) && choice.placement !== 'detail').slice(0, 1)];
     return <section className="argus-editorial argus-editorial--live" aria-label="ARGUSの今日の見立て"
       data-argus-contract="presentation-intent-v1" data-presentation-id={plan.planId} data-context-id={plan.contextId}>
-      <header className="argus-editorial__edition"><span>日経平均の見通し · 今後5営業日</span>
+      <header className="argus-editorial__edition"><span>MARKET VIEW</span>
         <time dateTime={at}>{new Date(at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 更新</time>
         {updateState ?? (retained && <span role="status">{generationStatus === 'RUNNING' ? '作成中・保存版' : '保存版'}</span>)}</header>
       <TodayDecisionStrip brief={brief} criticalNews={criticalNews} />
@@ -98,7 +98,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
   }
   return <section className="argus-editorial" aria-label={archived ? '当時のARGUSの説明' : 'ARGUSの今日の見立て'}
     data-argus-contract="presentation-intent-v1" data-presentation-id={plan.planId} data-context-id={plan.contextId}>
-    <header className="argus-editorial__edition"><span>{archived ? '保存した説明 / 日本市場' : 'Today / 日本市場'}</span>
+    <header className="argus-editorial__edition"><span>{archived ? '保存した説明' : 'MARKET VIEW'}</span>
       <time dateTime={at}>{new Date(at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} {archived ? '作成' : '更新'}</time></header>
     <p className="argus-editorial__period">日経平均 · 5営業日先まで</p>
     {updateState}

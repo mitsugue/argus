@@ -29,7 +29,7 @@ const cards = [
   [11, '信用の動き', '<MarginDynamicsCard', JP_ONLY],
   [12, '円の持ち高', '<JpyPositionCard', JP_ONLY],
   [13, '他の市場を見る', '<details className="at-other-markets card"', ALWAYS],
-  [14, '市場データの一覧・従来の判定', '<summary>市場データの一覧・従来の判定を見る</summary>', '<details className="at-event card at-context" aria-label="市場観・需給（参考）">'],
+  [14, '市場データの一覧・従来の判定', '<summary>DATA</summary>', '<details className="at-event card at-context" aria-label="市場観・需給（参考）">'],
 ];
 
 let previous = -1;

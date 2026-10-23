@@ -263,7 +263,7 @@ export const ChartIntelligencePanel: React.FC<{
       {scope === 'asset' && assetProjection && assetProbabilities && (
         <div className={`card ci-owner-prob ${assetProjection.directionProbabilities ? 'is-verified' : 'is-reference'}`}>
           <div><b>{assetProjection.horizonDays}営業日の方向見通し</b>
-            <span>{assetProjection.directionProbabilities ? '検証済み' : '参考値・未検証'}</span></div>
+            <span>{assetProjection.directionProbabilities ? '検証済み' : '参考値'}</span></div>
           <div>{(['UP', 'RANGE', 'DOWN'] as const).map((key) => (
             <span key={key} className={strongestAssetDirection === key ? 'is-max' : ''}>
               {key === 'UP' ? '上昇' : key === 'RANGE' ? '横ばい' : '下落'}

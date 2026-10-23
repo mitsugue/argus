@@ -30,7 +30,7 @@ const units = (v: number) => `${v.toLocaleString('ja-JP')}口`;
 
 export function MarginDynamicsCard({ document, refreshFailed = false }: { document: unknown; refreshFailed?: boolean }) {
   if (!validMarginDynamics(document)) return <section className="card at-margin-dynamics" aria-label="日経レバの信用需給">
-    <h3>日経レバの信用需給</h3><p>買残・売残と取得時刻がそろったデータをまだ確認できていません。</p>
+    <h3>MARGIN</h3><p>買残・売残と取得時刻がそろったデータをまだ確認できていません。</p>
   </section>;
   const { current, previous, change } = document;
   const failed = refreshFailed || !['AVAILABLE','PARTIAL'].includes(document.acquisitionStatus);
@@ -46,7 +46,7 @@ export function MarginDynamicsCard({ document, refreshFailed = false }: { docume
   const showDaily = !!latestDay && latestDay > current.periodEnd && !!latestLong && !!latestShort && latestShort.value > 0;
   const diff = (v: number) => `${v >= 0 ? '+' : ''}${v.toLocaleString('ja-JP')}口`;
   return <section className="card at-margin-dynamics" aria-label="日経レバの信用需給">
-    <h3>日経レバの信用需給</h3>
+    <h3>MARGIN</h3>
     <p className="at-context-lead">{change.status==='AVAILABLE'&&previous
       ? `買い残が${change.longBalanceChange!>0?'増え':change.longBalanceChange!<0?'減り':'横ばいで'}、売り残は${change.shortBalanceChange!>0?'増えています':change.shortBalanceChange!<0?'減っています':'横ばいです'}`
       : '買い・売りの残高は取得済み。変化を比べる前回値は不足しています'}</p>
@@ -55,7 +55,7 @@ export function MarginDynamicsCard({ document, refreshFailed = false }: { docume
       <article><span>信用買いの残高の変化</span><strong>{diff(change.longBalanceChange!)}</strong></article>
       <article><span>信用売りの残高の変化</span><strong>{diff(change.shortBalanceChange!)}</strong></article>
     </div>}
-    <div className="at-context-use"><b>これから出る返済売り・買い戻しの余地を見る</b>
+    <div className="at-context-use">
       <p>信用買いの残高は、将来返済の売りに回る可能性があります。信用売りの残高は、買い戻されると上昇を支える可能性があります。残高が増えた側と、実際の値動きを合わせて読みます。</p>
       <small>実際の買い戻し注文は未観測。買いサインではありません。</small></div>
     {showDaily&&<div className="at-context-latest" data-margin-daily={latestDay}>

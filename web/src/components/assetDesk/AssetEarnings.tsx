@@ -40,7 +40,7 @@ export const AssetEarningsDetails: React.FC<{ market: string; symbol: string }> 
       {e.epsLow !== null && e.epsHigh !== null && e.epsLow <= e.epsHigh && <>予想の幅は{amount(e.epsLow, e.epsCurrency)}〜{amount(e.epsHigh, e.epsCurrency)}。</>}
       {e.epsCurrency && e.eps30DaysAgo !== null && <>30日前の予想{amount(e.eps30DaysAgo, e.epsCurrency)}から
         {e.eps === e.eps30DaysAgo ? '変化なし' : e.eps > e.eps30DaysAgo ? '上方修正' : '下方修正'}。</>}
-      <small> 市場の業績予想であり、ARGUSの株価予測ではありません。</small></p> :
+      </p> :
       c?.forecastOperatingProfit !== null && c?.forecastOperatingProfit !== undefined ?
         <p>{c.fiscalYearEnd ?? '当年度'}の会社予想は営業利益{companyAmount(c.forecastOperatingProfit)}
           {c.forecastDisclosedDate && <>（{outlookDay(c.forecastDisclosedDate)}発表）</>}。次の四半期だけの利益予想は未取得です。</p> :

@@ -75,9 +75,9 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
     below && `下の目印までは${signed(below.distancePct)}%`].filter(Boolean);
   return <section id="today-price-scale" className="lm-card card" aria-label="日経平均の価格の目盛り" data-argus-contract="level-map-v1"
     data-morning={map.morningOf}>
-    <header className="lm-heading"><b>日経平均の価格の目盛り</b><span>PER · {current ? `${map.previousSession.slice(5).replace('-', '/')}終値` : `${map.morningOf.slice(5).replace('-', '/')}朝の保存値`}</span></header>
+    <header className="lm-heading"><b>PRICE LEVELS</b><span>PER · {current ? `${map.previousSession.slice(5).replace('-', '/')}終値` : `${map.morningOf.slice(5).replace('-', '/')}朝の保存値`}</span></header>
     <div className="lm-reading">
-      <p>この表は、<strong>企業の利益に対して、日経平均が何倍の値段になっているか</strong>を示す目盛りです。</p>
+      <p>日経平均が<strong>利益の何倍か</strong>（PER）の目盛り</p>
     </div>
     {state.chart?.closePending === true && /^\d{4}-\d{2}-\d{2}$/.test(state.chart.today ?? '') && state.chart.today! > map.previousSession && <p role="status" className="lm-note">{state.chart.today!.slice(5).replace('-', '/')}の終値は取得待ち。{map.previousSession.slice(5).replace('-', '/')}の終値を表示しています。</p>}
     <div className="lm-price-ladder" aria-label="価格と利益の倍率">
@@ -128,7 +128,7 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
 export function LevelMapCard() {
   const state = useJapanMarketComparison(5);
   if (!state.levelMap?.latest) return <><section className="lm-card card" aria-label="日経平均の価格の目盛り">
-    <header className="lm-heading"><b>日経平均の価格の目盛り</b></header>
+    <header className="lm-heading"><b>PRICE LEVELS</b></header>
     <p role="status">{state.loading ? '朝の保存データを読み込んでいます' : state.levelMapError ? '朝の保存データを読み込めませんでした' : '朝の価格と利益のデータを準備しています'}</p>
     {state.levelMapError && <button type="button" onClick={state.retry}>再取得</button>}
   </section><WeightedPerInput /></>;

@@ -1,5 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { jumpTo } from '../../lib/todayJump';
 import './MobileStickyCommand.css';
 
 // V11.21.0 — モバイル専用の下部コンパクトバー(720px以下のみ表示)。
@@ -8,21 +9,24 @@ import './MobileStickyCommand.css';
 // NOTE: AppShellのページ遷移transformがfixedの基準を奪うため、バー本体は
 // portalでdocument.body直下に描画する(spacerはページ内)。
 
-export const MobileStickyCommand: React.FC<{
-  text: string;
-  event?: { name: string; when: string; remaining: string | null } | null;
-}> = ({ text, event }) => (
+type StickyEvent = { name: string; when: string; remaining: string | null };
+
+// Owner request 2026-10-23: tapping the next event opens Today's EVENTS block, the same move as the tiles.
+// The bar is shown on Today only (MobileStickyCommand.css gates it by route), so no page switch is needed.
+export const MobileStickyBar: React.FC<{ text: string; event?: StickyEvent | null }> = ({ text, event }) => (
+  <div className="msc" role="status" aria-label="次のイベント" title={text}>
+    {event ? <button type="button" className="msc__jump" onClick={() => jumpTo('today-events')}
+      aria-label={`次のイベント ${event.name}。予定の一覧へ移る`}>
+      <span className="msc__name">次: {event.name}</span>
+      <span className="msc__when">{event.when}{event.remaining && ` · ${event.remaining}`}</span>
+    </button> : <span className="msc__name">{text}</span>}
+  </div>
+);
+
+export const MobileStickyCommand: React.FC<{ text: string; event?: StickyEvent | null }> = ({ text, event }) => (
   <>
     <div className="msc-spacer" aria-hidden />
-    {createPortal(
-      <div className="msc" role="status" aria-label="次のイベント" title={text}>
-        {event ? <>
-          <span className="msc__name">次: {event.name}</span>
-          <span className="msc__when">{event.when}{event.remaining && ` · ${event.remaining}`}</span>
-        </> : <span className="msc__name">{text}</span>}
-      </div>,
-      document.body,
-    )}
+    {createPortal(<MobileStickyBar text={text} event={event} />, document.body)}
   </>
 );
 

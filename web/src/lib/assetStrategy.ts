@@ -104,7 +104,7 @@ function scenariosFor(changePct: number | undefined): { scenarios: ScenarioProb[
         { label: 'sideways_stabilization', labelJa: SCEN_JA.sideways_stabilization, probability: 34, rationaleJa: 'データ不十分のため広めの配分。' },
         { label: 'rebound_attempt', labelJa: SCEN_JA.rebound_attempt, probability: 33, rationaleJa: 'データ不十分のため広めの配分。' },
       ],
-      disclaimer: 'データが不十分なため、広めのシナリオ配分です。予測ではありません。',
+      disclaimer: 'データが不十分なため、広めのシナリオ配分です。',
     };
   }
   if (changePct <= -7) return scen(45, 40, 15, '大幅下落でモメンタムが強く、下値継続の警戒。');

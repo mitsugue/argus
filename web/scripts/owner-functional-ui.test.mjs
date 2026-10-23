@@ -44,7 +44,8 @@ assert.doesNotMatch(editorial, /OwnerDialogue|discussion/);
 
 assert.match(chart, /buildTodayProjection/);
 assert.match(chart, /方向確率を検証できないため、チャートは表示しません/);
-assert.match(chart, /参考値・未検証/);
+assert.match(chart, /'参考値'/);
+assert.doesNotMatch(chart, /参考値・未検証/);
 assert.match(chart, /\['UP', 'RANGE', 'DOWN'\]/);
 
 assert.match(newsHook, /translationStatus:\s*'translated' \| 'not_needed'/);

@@ -51,7 +51,7 @@ const ids = s.rows.map(r => r.id);
 assert.deepEqual(ids, ['foreign', 'us10y', 'm1570', 'vix', 'trend', 'sq'], 'small FX moves are left out');
 assert(s.rows.find(r => r.id === 'foreign').title.includes('約3,499億円の売り越し'));
 assert.equal(s.rows.find(r => r.id === 'm1570').lean, 'soft-head');
-assert(s.rows.every(r => r.what && r.now && r.soWhat), 'every row explains what, now and so what');
+assert(s.rows.every(r => r.what && r.now && (r.soWhat || r.id === 'trend')), 'every row explains what, now and so what');
 assert.equal(s.rows.find(r => r.id === 'us10y').lean, 'neutral', 'the 10-year yield has no measured direction');
 assert(s.rows.find(r => r.id === 'us10y').soWhat.includes('61%'));
 assert.equal(s.tone, 'wait', 'one headwind and a soft headwind against one tailwind');
@@ -99,11 +99,13 @@ const vm = require('node:vm'), React = require('react'), {renderToStaticMarkup} 
 const wordingCode = ts.transpileModule(fs.readFileSync('src/lib/marketWording.ts','utf8'),
   {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 const wordingContext = {exports:{},require,Date}; vm.runInNewContext(wordingCode,wordingContext);
+let stripLive={quote:null,futures:null};
 const stripContext = {exports:{},localStorage:{getItem:()=>null},require(name){
   if(name.endsWith('.css')) return {};
   if(name.includes('/todayDecision')) return d;
   if(name.includes('/marketWording')) return wordingContext.exports;
-  if(name.includes('/hooks/')) return {useNikkeiLive:()=>({quote:null,futures:null}),nikkeiLiveCurrent:()=>false};
+  if(name.includes('/todayJump')) return {jumpTo:()=>{}};
+  if(name.includes('/hooks/')) return {useNikkeiLive:()=>stripLive,nikkeiLiveCurrent:q=>!!q};
   if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>React.createElement('section',{'data-market-position':'slot'})};
   return require(name);
 }};
@@ -142,6 +144,21 @@ for (const html of [normalStrip, unavailableStrip]) {
 assert.ok(normalStrip.indexOf('today-strip__close') < normalStrip.indexOf('today-strip__verdict'));
 assert.ok(normalStrip.indexOf('data-market-position') < normalStrip.indexOf('today-strip__rows'));
 console.log('タイル4つの下に市場の現在位置 PASS');
+// Owner policy 2026-10-23: the price line carries no source/precision text; only a delayed value says 「遅延」.
+const priceLine=html=>html.split('today-strip__close')[1].split('</p>')[0];
+const liveQuote={price:48000,changePct:0.5,tradedAt:'2026-10-05T00:48:00Z',sessionOpen:true,realtime:true,tradedAtPrecision:'MINUTE',delaySeconds:0};
+stripLive={quote:liveQuote,futures:null};
+const realtimeLine=priceLine(renderStrip([]));
+assert.ok(!realtimeLine.includes('<small>'),realtimeLine);
+for(const word of ['時点','分精度','立花','リアルタイム']) assert.ok(!realtimeLine.includes(word),word);
+stripLive={quote:{...liveQuote,realtime:false,delaySeconds:1200},futures:null};
+const delayedLine=priceLine(renderStrip([]));
+assert.ok(delayedLine.includes('<small>遅延</small>')&&!delayedLine.includes('分遅れ'),delayedLine);
+stripLive={quote:{...liveQuote,sessionOpen:false,tradedAt:'2026-10-05T06:30:00Z'},futures:null};
+assert.ok(priceLine(renderStrip([])).includes('<small>10/5 大引け</small>'));
+stripLive={quote:null,futures:null};
+assert.ok(priceLine(renderStrip([])).includes('<small>前日終値</small>'));
+console.log('日経平均の右はリアルタイムなら無し・遅延だけ「遅延」 PASS');
 
 // Owner request 2026-10-22: one line under the tiles says which close the three numbers used;
 // the tiles stay at a heading, a verdict and one line (owner check the same evening).
@@ -161,7 +178,7 @@ console.log('タイル4つの下に市場の現在位置 PASS');
   assert.deepEqual([anchored.alert, anchored.momentum, anchored.band], [night.alert, night.momentum, night.band], 'the date never changes a number');
   const trend = s.rows.find(r => r.id === 'trend');
   assert.equal(trend.title, '日経平均の勢い 5日で+4.0%');
-  assert.equal(trend.soWhat, '流れの向きの確認用で、この先を当てる指標ではありません。');
+  assert.equal(trend.soWhat, '', 'owner policy 2026-10-23: no disclaimer line under the trend row');
   assert.equal(trend.lean, 'tail', 'the 5-session reading itself is unchanged');
 }
 const tileOf = (html, cls) => html.split(`today-strip__tile ${cls}`)[1].split('</button>')[0];

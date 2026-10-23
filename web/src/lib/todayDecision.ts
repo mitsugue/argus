@@ -174,7 +174,7 @@ export function materialRows(features: FeatureRow[], fiveDayChangePct: number | 
     meaning: fiveDayChangePct >= 1.5 ? '上昇の流れが続いている。' : fiveDayChangePct <= -1.5 ? '下落の流れが続いている。' : '方向感は小さい。',
     what: '直近5営業日の日経平均の騰落率です。',
     // Owner check 2026-10-22: the tile headline reads the 20-close deviation, this row the 5-session change.
-    now: `${pct(fiveDayChangePct)}です。`, soWhat: '流れの向きの確認用で、この先を当てる指標ではありません。' });
+    now: `${pct(fiveDayChangePct)}です。`, soWhat: '' });
   const sq = f('event.sq_sessions');
   if (sq !== undefined && sq <= 5) rows.push({ id: 'sq', lean: 'neutral',
     title: `SQ(先物・オプションの清算日)まであと${Math.round(sq)}営業日`,

@@ -154,8 +154,8 @@ const backendHealth = {
 const liveHealth = tl.applyTachibanaHealthOverlay(backendHealth, liveDoc, nowMs);
 const jpLamp = liveHealth.lamps.find((l) => l.key === 'jp_realtime');
 assert.equal(jpLamp.status, 'ok');
-assert.ok(jpLamp.detailJa.startsWith('LIVE — Tachibanaから更新中'), jpLamp.detailJa);
-assert.ok(jpLamp.detailJa.includes('9984'));
+assert.equal(jpLamp.detailJa, '立花 更新中');               // short word, no symbol list
+assert.ok(!jpLamp.detailJa.includes('9984'));
 assert.ok(!jpLamp.detailJa.includes('moomoo'));
 assert.equal(liveHealth.overall, 'ok');                       // beacon recomputed from lamps
 assert.equal(backendHealth.lamps[1].status, 'warning');       // input untouched
@@ -165,12 +165,26 @@ const authHealth = tl.applyTachibanaHealthOverlay(backendHealth,
     authBoundary: 'AUTH_SECRET_UNREADABLE', symbols: {} }, nowMs);
 const authLamp = authHealth.lamps.find((l) => l.key === 'jp_realtime');
 assert.equal(authLamp.status, 'warning');
-assert.ok(authLamp.detailJa.includes('認証失敗') && authLamp.detailJa.includes('AUTH_SECRET_UNREADABLE'));
+assert.equal(authLamp.detailJa, '立花 認証失敗（AUTH_SECRET_UNREADABLE）');
 assert.equal(authHealth.overall, 'warning');
 // a LIVE claim without current rows never turns the lamp green
 const emptyHealth = tl.applyTachibanaHealthOverlay(backendHealth,
   { provider: 'TACHIBANA', status: 'LIVE', displayApproved: true, mode: 'DISPLAY', enabled: true, symbols: {} }, nowMs);
 assert.notEqual(emptyHealth.lamps.find((l) => l.key === 'jp_realtime').status, 'ok');
+// DEGRADED: a thinly traded symbol may keep its previous-minute trade while connected.
+// With at least one current row the lamp stays green; with none it waits (amber).
+const degradedDoc = { ...liveDoc, status: 'DEGRADED', enabled: true };
+const degradedLamp = tl.tachibanaJpRealtimeLamp(degradedDoc, nowMs);
+assert.ok(tl.tachibanaCurrentRows(degradedDoc, nowMs).size > 0, 'fixture must carry a current row');
+assert.deepEqual(degradedLamp, { status: 'ok', detailJa: '立花 更新中' });
+const degradedEmptyLamp = tl.tachibanaJpRealtimeLamp({ ...degradedDoc, symbols: {} }, nowMs);
+assert.deepEqual(degradedEmptyLamp, { status: 'warning', detailJa: '立花 更新待ち' });
+assert.deepEqual(tl.tachibanaJpRealtimeLamp({ ...degradedDoc, symbols: staleDoc.symbols }, nowMs),
+  { status: 'warning', detailJa: '立花 更新待ち' }, 'DEGRADED with only stale rows waits');
+assert.deepEqual(tl.tachibanaJpRealtimeLamp({ ...liveDoc, status: 'STALE', enabled: true }, nowMs),
+  { status: 'warning', detailJa: '立花 更新待ち' });
+assert.deepEqual(tl.tachibanaJpRealtimeLamp({ ...liveDoc, status: 'MAINTENANCE', enabled: true, symbols: {} }, nowMs),
+  { status: 'warning', detailJa: '立花 保守中' });
 // disabled / absent document: backend lamp is left exactly as published
 assert.equal(tl.applyTachibanaHealthOverlay(backendHealth, null, nowMs), backendHealth);
 assert.equal(tl.applyTachibanaHealthOverlay(backendHealth,
@@ -233,7 +247,7 @@ assert.ok(glossary.GLOSSARY[closedView.glossaryKey], 'CLOSED needs a glossary en
 const closedHealth = tl.applyTachibanaHealthOverlay(backendHealth, closedDoc, nowMs);
 const closedLamp = closedHealth.lamps.find((l) => l.key === 'jp_realtime');
 assert.equal(closedLamp.status, 'ok');
-assert.ok(closedLamp.detailJa.includes('市場クローズ') && closedLamp.detailJa.includes('5803'));
+assert.equal(closedLamp.detailJa, '立花 閉場中');
 assert.ok(!closedLamp.detailJa.includes('moomoo'));
 // CLOSED baseline never overlays price/provider (no false LIVE) but attaches the board
 const jpClosedSnapshot = { status: 'delayed', stocks: [

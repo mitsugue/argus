@@ -54,7 +54,7 @@ export function MarketPositionCard({ brief }: { brief: MarketBrief }) {
   const raw = brief.marketPosition as MarketPosition | undefined;
   if (!raw || !Array.isArray(raw.themes) || typeof raw.entryCount !== 'number') return <section
     className="mp-card card" aria-label="市場の現在位置" data-argus-contract="market-position-pending-v1">
-    <div className="at-head"><b>市場の現在位置</b><span>更新待ち</span></div>
+    <div className="at-head"><b>MARKET POSITION</b><span>更新待ち</span></div>
     <p role="status">{raw && 'status' in raw && raw.status === 'UNAVAILABLE'
       ? '現在位置の読み込みを完了できませんでした。次の更新を待っています。'
       : '現在位置の記録はまだ届いていません。次の見立てが届くと表示します。'}</p>
@@ -64,7 +64,7 @@ export function MarketPositionCard({ brief }: { brief: MarketBrief }) {
   const active = themes.filter(t => t.status === 'ACTIVE').length;
   return <section className="mp-card card" aria-label="市場の現在位置" data-argus-contract="market-position-v1"
     data-entry-count={position.entryCount}>
-    <div className="at-head"><b>市場の現在位置</b><span>{active > 0 ? `${themes.length}テーマ中 ${active}件に更新` : '更新待ち'}</span></div>
+    <div className="at-head"><b>MARKET POSITION</b><span>{active > 0 ? `${themes.length}テーマ中 ${active}件に更新` : '更新待ち'}</span></div>
     {themes.map(theme => <ThemeRow key={theme.themeId} theme={theme} />)}
   </section>;
 }

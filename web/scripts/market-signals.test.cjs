@@ -97,7 +97,8 @@ assert.ok(panel.includes('data-argus-contract="market-signals-top-v1"'), 'top bl
 assert.ok(panel.includes('const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null)'),
   'top block derives from the projection');
 assert.ok(panel.includes("{topSignals ? `成立している条件 ${topSignals.activeCount}件` : '成立状況を確認中'}"), 'top count from the view or truthful placeholder');
-assert.ok(panel.includes('6サイン（日本株の警戒条件）') && panel.includes("'6サイン'"), 'warning direction and legacy names are distinct (2026-10-21: the 6 signs)');
+// Owner policy 2026-10-23: one short block title; the line under it still tells the warning view from the legacy one.
+assert.ok(panel.includes('<small>6 SIGNS</small>') && panel.includes("'各条件の成立状況を表示。' : '現行規則の向きと過去の成績を並べています。'"), 'short title, distinct readings (2026-10-23)');
 assert.ok(panel.includes('data-argus-contract="market-signals-top-detail-v1"'), 'seven per-signal states expand at the top');
 assert.ok(!/<b>1 \/ 7<\/b>/.test(panel), 'no hard-coded 1 / 7');
 
@@ -201,8 +202,8 @@ const {renderToStaticMarkup}=require('react-dom/server');
 const {WarningConditionsDetails}=require(path.join(src,'components/today/WarningConditionsDetails.tsx'));
 const html=renderToStaticMarkup(React.createElement(WarningConditionsDetails,{view}));
 assert.match(html,/基準未確定/);
-assert.match(html,/条件の計算が動くことと、下落を予測できることは別/);
-assert.match(html,/時間がたつだけで検証済みにはなりません/);
+// Owner policy 2026-10-23: no 「未検証」 disclaimer or its explanation on screen; counts stay.
+assert.doesNotMatch(html,/未検証/);
 assert.match(html,/測定できる条件 4件/);
 assert.match(html,/成績：まだ採点できる記録がありません/);
 assert.match(html,/3・4番は判定基準の確定待ち/);

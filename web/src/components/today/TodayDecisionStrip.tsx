@@ -5,6 +5,7 @@ import { ALERT_HISTORY, ALERT_RAISED_HISTORY, MOMENTUM_Z, OVERNIGHT_HISTORY, TON
 import { nikkeiLiveCurrent, useNikkeiLive } from '../../hooks/useJapanMarketComparison';
 import { marketHeadline } from '../../lib/marketWording';
 import { MarketPositionCard } from './MarketPositionCard';
+import { jumpTo } from '../../lib/todayJump';
 import './TodayDecisionStrip.css';
 
 const toneLabel = { tail: '材料は追い風寄り', head: '材料は逆風寄り', wait: '材料はまちまち' } as const;
@@ -14,15 +15,7 @@ const alertLabel = { low: '起きにくい', normal: '普段並み', high: '起�
 const momentumLabel = { strong: '上昇・過熱に注意', normal: '通常の範囲', weak: '下落・売られすぎに注意' } as const;
 const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
 export type CriticalTodayNews = { id: string; title: string; why: string; meta: string };
-// Owner request 2026-10-02: each tile opens the part of Today it summarises.
-function jumpTo(id: string, openRow?: string) {
-  const target = document.getElementById(id);
-  if (openRow) {
-    const row = document.querySelector<HTMLDetailsElement>(`.today-strip__row[data-row="${openRow}"]`);
-    if (row) { row.open = true; row.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
-  }
-  target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
+// Owner request 2026-10-02: each tile opens the part of Today it summarises (shared jumpTo in lib/todayJump).
 // Owner decision 2026-10-22: a raised alert carries its own record and count; too few past days are said as such.
 const raisedRecord = (r: { pct: number; hits: number; days: number }) => r.days < 20
   ? `直近の下げで一段上げ・過去の例は${r.days}日のみ` : `直近の下げで一段上げ・過去${r.pct}%(${r.days}日中${r.hits}日)`;
@@ -90,15 +83,16 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
   // The band's yen line multiplies the shown (possibly delayed intraday) price; the band itself stays close-based.
   const basisNote = basis && computed ? `上の3つは${basis}で計算${strip.band && liveCurrent && shownPrice !== strip.close ? '・値幅の円は現在値で換算' : ''}` : null;
   const shownChange = liveCurrent ? live!.changePct : strip.dayChangePct;
+  // Owner policy 2026-10-23: no source or time-precision text beside the price; only a delayed value says so.
   const liveLabel = liveCurrent ? (live!.sessionOpen
-    ? `${new Date(live!.tradedAt).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' })}時点${live!.realtime && live!.tradedAtPrecision === 'MINUTE' ? '（分精度）' : ''}・${live!.realtime ? '立花証券 リアルタイム' : `約${Math.max(1, Math.round(live!.delaySeconds / 60))}分遅れ`}`
+    ? (live!.realtime ? null : '遅延')
     : `${new Date(live!.tradedAt).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })} 大引け`) : '前日終値';
   const preparing = !fresh;
   return <section className="today-strip" aria-label="今日の結論と数字" data-argus-contract="today-decision-strip-v1">
     {shownPrice !== null && <p className="today-strip__close" data-live={liveCurrent ? 'delayed' : 'close'}>
       <span>日経平均</span><b>{yen(shownPrice)}</b>
       {shownChange !== null && <em className={shownChange >= 0 ? 'is-up' : 'is-down'}>{signed(shownChange)}</em>}
-      <small>{liveLabel}</small>
+      {liveLabel && <small>{liveLabel}</small>}
     </p>}
     {preparing && <p className="today-strip__preparing" role="status">{stored
       ? `サーバーが過去データを準備中のため、${new Date(stored.savedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}時点の数字を表示しています。数分〜20分ほどで最新に戻ります。`
@@ -144,8 +138,8 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
       {strip.rows.map(row => <details key={row.id} className="today-strip__row" data-lean={row.lean} data-row={row.id}>
         <summary><span className={`today-strip__chip is-${row.lean}`}>{leanLabel[row.lean]}</span>
           <span><b>{row.title}</b><small>{row.meaning}</small></span></summary>
-        {row.id === 'trend' ? <p className="today-strip__detail">{row.soWhat}</p> :
-          <dl><dt>これは何？</dt><dd>{row.what}</dd><dt>今の状態</dt><dd>{row.now}</dd><dt>見るポイント</dt><dd>{row.soWhat}</dd></dl>}
+        {row.id === 'trend' ? row.soWhat && <p className="today-strip__detail">{row.soWhat}</p> :
+          <dl><dt>これは何？</dt><dd>{row.what}</dd><dt>今の状態</dt><dd>{row.now}</dd>{row.soWhat && <><dt>見るポイント</dt><dd>{row.soWhat}</dd></>}</dl>}
         {row.id === 'sq' && <a className="today-strip__source" href="https://www.jpx.co.jp/glossary/ta/326.html" target="_blank" rel="noopener noreferrer">SQの仕組みを読む（日本取引所グループ）</a>}
       </details>)}
     </div>}
