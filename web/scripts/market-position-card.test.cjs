@@ -82,4 +82,8 @@ const cyber=theme({themeId:'EMERGING_CYBER_SECURITY',labelJa:'サイバー・シ
 const emergingHtml=render({...base,marketPosition:{...position,themes:[...position.themes,cyber]}});
 assert.ok(emergingHtml.includes('サイバー・システム障害')&&emergingHtml.includes('新しい話題')&&emergingHtml.includes('data-emerging="true"'));
 assert.ok(emergingHtml.includes('7日間で重要なニュースが続いた話題'));
+// One critical breaking report: the same chip, its own description.
+const breakingHtml=render({...base,marketPosition:{...position,themes:[...position.themes,{...cyber,emergingBasis:'BREAKING'}]}});
+assert.ok(breakingHtml.includes('重大な速報の話題')&&breakingHtml.includes('新しい話題'));
+assert.ok(!breakingHtml.includes('7日間で重要なニュースが続いた話題'));
 assert.ok(emergingHtml.includes('3テーマ中 2件に更新'));
