@@ -5,6 +5,7 @@ import { ALERT_HISTORY, ALERT_RAISED_HISTORY, MOMENTUM_Z, OVERNIGHT_HISTORY, TON
 import { nikkeiLiveCurrent, useNikkeiLive } from '../../hooks/useJapanMarketComparison';
 import { marketHeadline } from '../../lib/marketWording';
 import { MarketPositionCard } from './MarketPositionCard';
+import { jumpTo } from '../../lib/todayJump';
 import './TodayDecisionStrip.css';
 
 const toneLabel = { tail: '材料は追い風寄り', head: '材料は逆風寄り', wait: '材料はまちまち' } as const;
@@ -14,15 +15,7 @@ const alertLabel = { low: '起きにくい', normal: '普段並み', high: '起�
 const momentumLabel = { strong: '上昇・過熱に注意', normal: '通常の範囲', weak: '下落・売られすぎに注意' } as const;
 const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
 export type CriticalTodayNews = { id: string; title: string; why: string; meta: string };
-// Owner request 2026-10-02: each tile opens the part of Today it summarises.
-function jumpTo(id: string, openRow?: string) {
-  const target = document.getElementById(id);
-  if (openRow) {
-    const row = document.querySelector<HTMLDetailsElement>(`.today-strip__row[data-row="${openRow}"]`);
-    if (row) { row.open = true; row.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
-  }
-  target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
+// Owner request 2026-10-02: each tile opens the part of Today it summarises (shared jumpTo in lib/todayJump).
 // Owner decision 2026-10-22: a raised alert carries its own record and count; too few past days are said as such.
 const raisedRecord = (r: { pct: number; hits: number; days: number }) => r.days < 20
   ? `直近の下げで一段上げ・過去の例は${r.days}日のみ` : `直近の下げで一段上げ・過去${r.pct}%(${r.days}日中${r.hits}日)`;

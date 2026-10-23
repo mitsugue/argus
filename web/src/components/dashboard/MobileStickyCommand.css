@@ -33,6 +33,12 @@ body:not([data-argus-route='command']) > .msc { display: none !important; }
   .msc__name { font-weight: 700; color: var(--text-main); }
   .msc__name, .msc__when { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .msc__when { color: var(--text-sub); }
+  .msc__jump {
+    display: grid; gap: 1px; min-width: 0; width: 100%; padding: 0; margin: 0;
+    background: none; border: 0; color: inherit; font: inherit; line-height: inherit;
+    text-align: left; cursor: pointer;
+  }
+  .msc__jump:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -104,6 +104,7 @@ const stripContext = {exports:{},localStorage:{getItem:()=>null},require(name){
   if(name.endsWith('.css')) return {};
   if(name.includes('/todayDecision')) return d;
   if(name.includes('/marketWording')) return wordingContext.exports;
+  if(name.includes('/todayJump')) return {jumpTo:()=>{}};
   if(name.includes('/hooks/')) return {useNikkeiLive:()=>stripLive,nikkeiLiveCurrent:q=>!!q};
   if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>React.createElement('section',{'data-market-position':'slot'})};
   return require(name);
