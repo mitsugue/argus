@@ -461,3 +461,20 @@ def test_existing_two_market_consumer_gets_new_rule_without_changing_other_serie
         rows, sessions=['2026-10-09'], sessions_after=3, utc_time='06:00:00',
         source_label='jpx-weekly-margin-fourth-session-open')
     assert other[0]['availableFrom'] == '2026-10-14T06:00:00Z'
+
+
+def test_stored_vix_selection_reads_the_kept_rows_without_writing(tmp_path):
+    """2026-10-23: the restart read-back returns what the merge returns, read-only."""
+    path = tmp_path / 'sources.sqlite3'
+    assert m.stored_vix_selection(path) == [] and not path.exists()
+    official = [{'date': '2026-09-17', 'close': 16, 'availableFrom': AT, 'sourceRef': 'official'}]
+    yahoo = [{'date': '2026-09-18', 'close': 15.1, 'availableFrom': AT, 'sourceRef': 'yahoo'}]
+    merged = m.merge_feature_sources(yahoo, official, path=path, received_at=AT)
+    before = path.read_bytes()
+    assert m.stored_vix_selection(path) == merged
+    assert m.stored_vix_selection(path, source_ref='yahoo') == [merged[1]]
+    assert path.read_bytes() == before
+    with m.connect(path) as db:
+        db.execute("UPDATE selected_vix_inputs SET sha256='0'")
+    with pytest.raises(ValueError, match='selected_source_integrity'):
+        m.stored_vix_selection(path)
