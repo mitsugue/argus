@@ -90,3 +90,61 @@ export function displayedChartValuation(chart: ResearchChart) {
     return { eps: map.eps, epsDate: map.epsDate, at: map.asOf };
   return chart.current ? { eps: chart.current.eps, epsDate: chart.current.epsDate, at: chart.current.morningOf } : null;
 }
+
+/** 価格の無い見立て。終わっておらず、45日以内の時期だけを時間軸の印にする。 */
+export const PERIOD_MARK_MAX_DAYS = 45;
+export function externalPeriods(doc: FutureMapDoc | null, chart: ResearchChart) {
+  return (doc?.rows ?? []).filter(r => !r.level && !r.past && !r.long && day(r.start) && day(r.end) && r.end >= r.start
+    && r.end >= chart.today && r.start <= chart.end && r.end >= chart.start
+    && (dayNumber(r.end) - dayNumber(r.start)) / DAY <= PERIOD_MARK_MAX_DAYS)
+    .map(r => ({ id: r.id, start: r.start, end: r.end, view: r.view, periodLabel: r.periodLabel || '',
+      tag: /^[\s\-―—–]*$/.test(r.tag) ? (r.periodLabel || '') : r.tag }))
+    .filter(r => r.tag)
+    .sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end));
+}
+
+/** 文字と線の重なりを避けるための箱と線分。座標はSVGの値。 */
+export type Box = { x1: number; y1: number; x2: number; y2: number };
+export type Segment = { x1: number; y1: number; x2: number; y2: number; clip?: boolean };
+/** 文字の幅の見積り。数字は約0.62字、全角は1字。少し広めに見る。 */
+export function textWidth(text: string, size = 10) {
+  let w = 0;
+  for (const ch of text) w += /[0-9,.\-+%]/.test(ch) ? .62 : ch === ' ' ? .3 : /[\x21-\x7e]/.test(ch) ? .62 : ch === '·' ? .45 : 1.02;
+  return w * size + 2;
+}
+export function textBox(x: number, y: number, text: string, anchor: 'start' | 'middle' | 'end' = 'start', size = 10): Box {
+  const w = textWidth(text, size), x1 = anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2;
+  return { x1: x1 - 1, y1: y - size - 1, x2: x1 + w + 1, y2: y + size * .3 + 1 };
+}
+export const boxesOverlap = (a: Box, b: Box) => a.x1 < b.x2 && b.x1 < a.x2 && a.y1 < b.y2 && b.y1 < a.y2;
+/** 線分が箱を通るか(Liang–Barsky)。 */
+export function segmentHitsBox(s: Segment, b: Box) {
+  let t0 = 0, t1 = 1;
+  const dx = s.x2 - s.x1, dy = s.y2 - s.y1;
+  for (const [p, q] of [[-dx, s.x1 - b.x1], [dx, b.x2 - s.x1], [-dy, s.y1 - b.y1], [dy, b.y2 - s.y1]]) {
+    if (p === 0) { if (q < 0) return false; continue; }
+    const t = q / p;
+    if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+    else { if (t < t0) return false; if (t < t1) t1 = t; }
+  }
+  return true;
+}
+/** 置いた文字・線・点を覚え、空いている位置だけを返す。 */
+export function labelLayout(plot: Box, segments: Segment[], marks: Box[]) {
+  const placed: Box[] = [];
+  const clipped = (b: Box): Box | null => {
+    const c = { x1: Math.max(b.x1, plot.x1), y1: Math.max(b.y1, plot.y1), x2: Math.min(b.x2, plot.x2), y2: Math.min(b.y2, plot.y2) };
+    return c.x1 < c.x2 && c.y1 < c.y2 ? c : null;
+  };
+  const hitsLine = (b: Box) => {
+    const inner = clipped(b);
+    return segments.some(s => s.clip ? !!inner && segmentHitsBox(s, inner) : segmentHitsBox(s, b));
+  };
+  return {
+    placed,
+    free: (b: Box, within: Box = plot, leader?: Segment) => b.x1 >= within.x1 && b.x2 <= within.x2 && b.y1 >= within.y1 && b.y2 <= within.y2
+      && !placed.some(p => boxesOverlap(p, b)) && !marks.some(m => boxesOverlap(m, b)) && !hitsLine(b)
+      && (!leader || !placed.some(p => segmentHitsBox(leader, p))),
+    place: (b: Box, leader?: Segment) => { placed.push(b); if (leader) segments.push(leader); },
+  };
+}

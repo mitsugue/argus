@@ -45,12 +45,30 @@ assert.equal(points[1].at,(Date.parse('2026-11-21T00:00:00Z')+Date.parse('2026-1
 const currentPeriod={rows:[{id:'current',start:'2026-10-01',end:'2026-10-10',level:{low:69700,high:72000},tag:'天井圏'}]};
 assert.equal(lib.externalPoints(currentPeriod,{...chart,today:'2026-10-07'}).length,1,'中央の日を過ぎても予測期間中は消さない');
 assert.equal(lib.externalPoints(currentPeriod,{...chart,today:'2026-10-11'}).length,0,'期間終了後は最新の参考予測から外す');
+const marks={rows:[{id:'short',start:'2026-10-20',end:'2026-10-24',periodLabel:'10/22前後',level:null,tag:'警戒',view:'見本'},
+ {id:'priced',start:'2026-10-20',end:'2026-10-24',level:{low:60000,high:60000},tag:'価格付き'},
+ {id:'long',start:'2026-10-06',end:'2027-10-05',level:null,tag:'長期'},
+ {id:'ended',start:'2026-09-20',end:'2026-10-01',level:null,tag:'終了'},
+ {id:'past',start:'2026-10-20',end:'2026-10-24',level:null,tag:'済',past:true},
+ {id:'edge',start:'2026-11-01',end:'2026-12-16',level:null,tag:'45日',periodLabel:'11月'},
+ {id:'over',start:'2026-11-01',end:'2026-12-17',level:null,tag:'46日'},
+ {id:'later',start:'2027-03-01',end:'2027-03-10',level:null,tag:'範囲外'},
+ {id:'dash',start:'2026-12-01',end:'2026-12-10',level:null,tag:'―',periodLabel:'12月上旬'}]};
+assert.deepEqual(lib.externalPeriods(marks,chart).map(p=>p.tag),['警戒','45日','12月上旬'],'価格の無い短い見立てだけを時期の印にする');
+const box=lib.textBox(100,50,'撤回','start');
+assert.ok(lib.segmentHitsBox({x1:90,y1:45,x2:140,y2:45},box),'文字の箱を横切る線を見つける');
+assert.ok(!lib.segmentHitsBox({x1:90,y1:60,x2:140,y2:60},box),'下を通る線は当たらない');
+const layout=lib.labelLayout({x1:0,y1:0,x2:300,y2:200},[{x1:0,y1:45,x2:300,y2:45}],[]);
+assert.equal(layout.free(box),false,'線の上には置かない');
+assert.equal(layout.free(lib.textBox(100,80,'撤回','start')),true);
+layout.place(lib.textBox(100,80,'撤回','start'));
+assert.equal(layout.free(lib.textBox(105,82,'目標','start')),false,'置いた文字には重ねない');
 const components=load('src/components/chart/NikkeiResearchChart.tsx',name=>name.endsWith('.css')?{}:
  name.includes('/researchChart')?lib:name.includes('/hooks/')?{}:
  name==='./MaterialReactionLine'?{MaterialReactionLine:()=>null,NoAnalogLine:()=>null}:require(name));
 const html=renderToStaticMarkup(React.createElement(components.NikkeiResearchChartView,{chart,future}));
 assert.ok(html.includes('PER18 70,787円'));
-assert.ok(html.includes('参考予測（未検証）'));
+assert.ok(html.includes('>参考予測<')&&!html.includes('参考予測（未検証）'),'凡例は短く「参考予測」');
 assert.ok(html.includes('決算データから計算したARGUS推計'));
 assert.ok(html.includes('公式は日経の予想利益') && html.includes('公式PERから引いた線ではありません'));
 assert.ok(html.includes('1 谷')&&html.includes('2 底'));

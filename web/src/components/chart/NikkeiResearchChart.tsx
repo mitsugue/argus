@@ -2,12 +2,16 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useJapanMarketComparison } from '../../hooks/useJapanMarketComparison';
 import { useFutureMap, type FutureMapDoc } from '../../hooks/useFutureMap';
 import { MaterialReactionLine, NoAnalogLine } from './MaterialReactionLine';
-import { displayedChartValuation, researchViewport, zoomResearchViewport, dayNumber, externalPoints, perSegments, validResearchChart, type ResearchChart } from '../../lib/researchChart';
+import { displayedChartValuation, researchViewport, zoomResearchViewport, dayNumber, externalPoints, externalPeriods, perSegments, validResearchChart,
+  labelLayout, textBox, textWidth, type Box, type ResearchChart, type Segment } from '../../lib/researchChart';
 import './NikkeiResearchChart.css';
 
 const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
 const md = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
 const multiples = [15, 16, 17, 18, 19, 20, 21];
+const LANE = 19;
+type Label = { key: string; className: string; x: number; y: number; anchor: 'start' | 'middle' | 'end'; text: string; leader?: Segment };
+type Spot = [number, number, Label['anchor'], Segment?];
 export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: { chart: ResearchChart; future: FutureMapDoc | null; hasPriceScale?:boolean }) {
   const layers = { per: true, external: true, candidates: true, pivots: true };
   const ref = useRef<HTMLDivElement>(null);
@@ -25,6 +29,7 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
     observer.observe(el); return () => observer.disconnect();
   }, []);
   const external = externalPoints(future, chart);
+  const periods = externalPeriods(future, chart);
   const last = chart.points.at(-1);
   const valuation = displayedChartValuation(chart);
   const window = researchViewport(chart, (viewport.end - viewport.start) / 86400_000, (viewport.start + viewport.end) / 2);
@@ -50,24 +55,111 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
   const path = (points: Array<{ date: string; value: number }>) => points.map((p, i) => `${i ? 'L' : 'M'}${x(dayNumber(p.date)).toFixed(2)},${y(p.value).toFixed(2)}`).join(' ');
   const ratio = valuation && last ? last.close / valuation.eps : null;
   const strong = ratio === null ? [] : [...multiples.filter(m => m < ratio).slice(-2), ...multiples.filter(m => m > ratio).slice(0, 2), ...multiples.filter(m => m === ratio)];
-  const selectedPoint = visibleExternal.find(p => p.id === selected) ?? visibleExternal[0];
+  const visiblePeriods = periods.filter(p => dayNumber(p.end) >= window.start && dayNumber(p.start) <= window.end);
+  const selectedPeriod = visiblePeriods.find(p => p.id === selected);
+  const selectedPoint = selectedPeriod ? undefined : visibleExternal.find(p => p.id === selected) ?? visibleExternal[0];
   const close = last?.close;
   const closeLabel = last?.date === chart.today ? '当日終値' : '前日終値';
   const position = (value: number) => close ? `${value >= close ? `${closeLabel}より上` : `${closeLabel}より下`} ${value >= close ? '+' : ''}${((value / close - 1) * 100).toFixed(1)}%` : '';
   const dateAt = (at: number) => md(new Date(at).toISOString().slice(0, 10));
-  const pointLabels = new Map<string, { x: number; y: number }>();
+  const clampX = (at: number) => Math.max(left, Math.min(right, x(at)));
+  // 価格の無い見立ては、時間軸の上に重ならない段で並べる。
+  const lanes: number[] = [];
+  const periodMarks = visiblePeriods.map(p => {
+    const x0 = clampX(dayNumber(p.start)), x1 = Math.max(x0 + 4, clampX(dayNumber(p.end)));
+    const w = textWidth(p.tag), tx = Math.max(2, Math.min(x0, width - 4 - w));
+    const from = Math.min(x0, tx), to = Math.max(x1, tx + w) + 6;
+    let lane = lanes.findIndex(end => end <= from);
+    if (lane < 0) { lane = lanes.length; lanes.push(to); } else lanes[lane] = to;
+    return { ...p, x0, x1, tx, from, to: to - 6, lane };
+  });
+  const selectedMark = periodMarks.find(p => p.id === selectedPeriod?.id);
+  const laneTop = bottom + 8, axisY = bottom + 22 + lanes.length * LANE, height = axisY + 8;
+  // 文字は線・点・ほかの文字に重ならない位置へ置く。置けない時は省く(金額は下の一覧にもある)。
+  const plotBox: Box = { x1: left, y1: top, x2: right, y2: bottom };
+  const line = (x1: number, y1: number, x2: number, y2: number, clip = false): Segment => ({ x1, y1, x2, y2, clip });
+  const polyline = (pts: Array<{ x: number; y: number }>) => pts.slice(1).map((p, i) => line(pts[i].x, pts[i].y, p.x, p.y, true));
+  const valuationX = valuation ? clampX(dayNumber(valuation.at)) : right;
+  const perLabels = layers.per && valuation ? multiples.filter(m => valuation.eps * m >= low && valuation.eps * m <= high) : [];
+  const gridPrices = [0, 1, 2, 3, 4].map(i => low + (high - low) * i / 4);
+  const segmentsOut: Segment[] = [
+    ...gridPrices.map(price => line(left, y(price), right, y(price))),
+    ...(close ? [line(left, y(close), right, y(close))] : []),
+    ...(inWindow(chart.today) ? [line(x(dayNumber(chart.today)), top, x(dayNumber(chart.today)), bottom)] : []),
+    ...(valuation ? perLabels.map(m => line(valuationX, y(valuation.eps * m), right + 5, y(valuation.eps * m))) : []),
+    ...(layers.per ? segments.flatMap(l => l.segments.flatMap(s => polyline(s.map(p => ({ x: x(dayNumber(p.date)), y: y(p.value) }))))) : []),
+    ...polyline(chart.points.map(p => ({ x: x(dayNumber(p.date)), y: y(p.close) }))),
+    ...(layers.candidates ? chart.candidates.flatMap(c => [c.target, c.stop].map(v => line(x(dayNumber(c.start)), y(v), x(dayNumber(c.end)), y(v), true))) : []),
+    ...(layers.external ? polyline(external.map(p => ({ x: x(p.at), y: y(p.value) }))) : []),
+  ];
+  const dot = (cx: number, cy: number, r: number): Box => ({ x1: cx - r, y1: cy - r, x2: cx + r, y2: cy + r });
+  const marks: Box[] = [
+    ...(layers.external ? external.map(p => dot(x(p.at), y(p.value), 7)) : []),
+    ...(layers.pivots ? chart.pivots.map(p => dot(x(dayNumber(p.date)), y(p.price), 4)) : []),
+    ...(layers.pivots && chart.pending ? [dot(x(dayNumber(chart.pending.date)), y(chart.pending.price), 6)] : []),
+  ].filter(b => b.x2 > left && b.x1 < right);
+  const layout = labelLayout(plotBox, segmentsOut, marks);
+  if (inWindow(chart.today)) layout.place(textBox(x(dayNumber(chart.today)), 17, `今日 ${md(chart.today)}`, 'middle'));
+  const perTexts = perLabels.map(m => ({ m, text: `PER${m} ${yen(valuation!.eps * m)}円`, y: y(valuation!.eps * m) + 3 }))
+    .filter(l => { const b = textBox(right + 8, l.y, l.text, 'start', 9); if (layout.placed.some(p => p.x1 < b.x2 && b.x1 < p.x2 && p.y1 < b.y2 && b.y1 < p.y2)) return false; layout.place(b); return true; });
+  const labels: Label[] = [];
+  const tryPlace = (key: string, className: string, text: string, options: Spot[], size = 10, within = plotBox) => {
+    const found = options.find(([lx, ly, anchor, leader]) => layout.free(textBox(lx, ly, text, anchor, size), within, leader));
+    if (!found) return false;
+    layout.place(textBox(found[0], found[1], text, found[2], size), found[3]);
+    labels.push({ key, className, x: found[0], y: found[1], anchor: found[2], text, leader: found[3] });
+    return true;
+  };
+  if (layers.candidates) chart.candidates.forEach(c => ([['target', '目標', c.target], ['stop', '撤回', c.stop]] as const).forEach(([kind, text, value]) => {
+    const xa = clampX(dayNumber(c.start)), xb = clampX(dayNumber(c.end)), ly = y(value);
+    if (xb <= xa || ly < top || ly > bottom) return;
+    const along: Spot[] = [];
+    for (let lx = xb - 24; lx > xa; lx -= 20) along.push([lx, ly - 4, 'end'], [lx, ly + 13, 'end']);
+    // 線の近くが混んでいる時は、右端から引き出し線で空いた高さへ出す。
+    const callouts: Spot[] = [16, -16, 28, -28, 40, -40, 52, -52, 64, -64].map(dy => [xb + 6, ly + dy + 3.5, 'start', line(xb + 1, ly, xb + 6, ly + dy + (dy > 0 ? -7.5 : 7.5))]);
+    tryPlace(`${c.id}-${kind}`, `nr-line-label is-${kind}`, text,
+      [[xb + 3, ly + 3.5, 'start'], [xb, ly - 4, 'end'], [xb, ly + 13, 'end'], [xa - 3, ly + 3.5, 'end'], [xa, ly - 4, 'start'], [xa, ly + 13, 'start'], ...along, ...callouts]);
+  }));
+  const pointLabels = new Map<string, { x: number; y: number; text: string; leader: Segment | null }>();
+  const offsets: Array<[number, number]> = [];
+  for (let k = 0; k < 12; k++) for (const dy of [-11 - 12 * k, 19 + 12 * k]) for (const dx of [0, -25, 25, -50, 50, -75, 75]) offsets.push([dx, dy]);
+  offsets.sort((a, b) => Math.abs(a[1]) + Math.abs(a[0]) * .7 - Math.abs(b[1]) - Math.abs(b[0]) * .7);
+  const placePointLabel = (point: typeof external[number], text: string) => {
+    const w = textWidth(text), px = x(point.at), py = y(point.value), r = selectedPoint?.id === point.id ? 6 : 4;
+    for (const [dx, dy] of offsets) {
+      const lx = Math.max(left + w / 2 + 1, Math.min(right - w / 2 - 1, px + dx)), b = textBox(lx, py + dy, text, 'middle');
+      const near = Math.abs(lx - px) < w / 2 && Math.abs(dy) < 20;
+      const leader = near ? null : line(px, dy < 0 ? py - r - 1 : py + r + 1, Math.max(b.x1 + 2, Math.min(b.x2 - 2, px)), dy < 0 ? b.y2 : b.y1);
+      if (!layout.free(b, plotBox, leader ?? undefined)) continue;
+      layout.place(b, leader ?? undefined);
+      pointLabels.set(point.id, { x: lx, y: py + dy, text, leader });
+      return true;
+    }
+    return false;
+  };
+  // 金額の入る場所が無い狭い画面では番号だけを置く(金額は下の一覧にある)。
   for (const point of visibleExternal) {
-    const lx = Math.max(left + 40, Math.min(right - 40, x(point.at)));
-    const slots = [-16, 20, -32, 36, -48, 52, -64, 68].map(offset => y(point.value) + offset)
-      .filter(ly => ly >= top + 12 && ly <= bottom - 4);
-    const ly = slots.find(ly => ![...pointLabels.values()].some(label => Math.abs(label.x - lx) < 80 && Math.abs(label.y - ly) < 14))
-      ?? Math.max(top + 12, Math.min(bottom - 4, y(point.value) - 16));
-    pointLabels.set(point.id, { x: lx, y: ly });
+    const n = external.indexOf(point) + 1;
+    if (!placePointLabel(point, `${n} · ${yen(point.value)}円`)) placePointLabel(point, String(n));
   }
+  if (close) {
+    const text = `${closeLabel} ${yen(close)}円`, along: Spot[] = [];
+    for (let lx = left + 3; lx + textWidth(text) < right; lx += 16) along.push([lx, y(close) - 5, 'start'], [lx, y(close) + 14, 'start']);
+    if (!tryPlace('close', 'nr-close-label', text, [[right + 8, y(close) + 3.5, 'start']], 10, { x1: right, y1: top, x2: width, y2: bottom }))
+      tryPlace('close', 'nr-close-label', text, along);
+  }
+  gridPrices.forEach((price, i) => tryPlace(`grid-${i}`, 'nr-grid-label', yen(price),
+    [[left + 2, y(price) - 4, 'start'], [right - 2, y(price) - 4, 'end']], 9, { x1: left, y1: 0, x2: right, y2: bottom }));
   const selectPoint = (point: typeof external[number]) => {
     setSelected(point.id);
     if (point.at < window.start || point.at > window.end)
       setViewport(researchViewport(chart, (window.end - window.start) / 86400_000, point.at));
+  };
+  const selectPeriod = (period: typeof periods[number]) => {
+    setSelected(period.id);
+    const at = (dayNumber(period.start) + dayNumber(period.end)) / 2;
+    if (dayNumber(period.end) < window.start || dayNumber(period.start) > window.end)
+      setViewport(researchViewport(chart, (window.end - window.start) / 86400_000, at));
   };
   const zoom = (scale: number) => setViewport(zoomResearchViewport(chart, window, scale));
   const move = (direction: number) => setViewport(researchViewport(chart,
@@ -101,6 +193,8 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
   const activePeriod = selectedPoint && selectedPoint.start <= chart.today && selectedPoint.end >= chart.today;
+  const periodNow = selectedPeriod && selectedPeriod.start <= chart.today && selectedPeriod.end >= chart.today;
+  const periodText = (p: typeof periods[number]) => p.periodLabel || `${md(p.start)}〜${md(p.end)}`;
   return <div className="nr-chart" ref={ref} data-argus-contract="nikkei-research-chart-v1">
     <p className="nr-note">日経平均・終値 {last ? `${md(last.date)} ${yen(last.close)}円` : '未取得'}<br />PER線：決算データから計算したARGUS推計</p>
     {layers.external && selectedPoint && <div className="nr-selection" aria-live="polite">
@@ -110,17 +204,21 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
       <p>{position(selectedPoint.value)}{selectedPoint.high > selectedPoint.low && '（価格の幅の中央）'}</p>
       <small>この期間の中央に点を置いています。特定の日の到達予想ではありません。予測の成績は未検証です。</small>
     </div>}
+    {layers.external && selectedPeriod && <div className="nr-selection is-period" aria-live="polite">
+      <small>{periodNow ? 'いま該当する時期' : '選んだ時期'} · FUTURE MAPの参考予測</small>
+      <b>{selectedPeriod.tag} · {periodText(selectedPeriod)}</b>
+      {selectedPeriod.view && <p>{selectedPeriod.view}</p>}
+    </div>}
     {last && last.date < chart.today && <p className="nr-asof">{chart.closePending ? `${md(chart.today)}の終値の更新待ちです。取得済みの${md(last.date)}終値を表示しています。` : `青線は${md(last.date)}までの終値です。今日${md(chart.today)}の現在値は、この図には含まれていません。`}</p>}
     <div className="nr-plot-wrap">
-    <svg viewBox={`0 0 ${width} ${bottom + 30}`} role="group" aria-label="日経平均の終値と参考予測。左右にドラッグ、2本指で拡大縮小できます。"
+    <svg viewBox={`0 0 ${width} ${height}`} role="group" aria-label="日経平均の終値と参考予測。左右にドラッグ、2本指で拡大縮小できます。"
       onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerEnd} onPointerCancel={pointerEnd}>
       <defs><clipPath id="nr-plot"><rect x={left} y={top} width={right - left} height={bottom - top} /></clipPath></defs>
-      {[0, 1, 2, 3, 4].map(i => { const price = low + (high - low) * i / 4; return <g key={i} className="nr-grid">
-        <line x1={left} x2={right} y1={y(price)} y2={y(price)} /><text x={left + 2} y={y(price) - 4}>{yen(price)}</text></g>; })}
+      {selectedMark && <rect className="nr-period-band" x={selectedMark.x0} y={top} width={selectedMark.x1 - selectedMark.x0} height={bottom - top} />}
+      {gridPrices.map((price, i) => <line key={i} className="nr-grid-line" x1={left} x2={right} y1={y(price)} y2={y(price)} />)}
       {inWindow(chart.today) && <><line className="nr-today" x1={x(dayNumber(chart.today))} x2={x(dayNumber(chart.today))} y1={top} y2={bottom} />
         <text className="nr-today-label" x={x(dayNumber(chart.today))} y={17} textAnchor="middle">今日 {md(chart.today)}</text></>}
-      {close && <><line className="nr-close" x1={left} x2={right} y1={y(close)} y2={y(close)} />
-        <text className="nr-close-label" x={left + 3} y={y(close) - 6}>{closeLabel} {yen(close)}円</text></>}
+      {close && <line className="nr-close" x1={left} x2={right} y1={y(close)} y2={y(close)} />}
       <g clipPath="url(#nr-plot)">
         {layers.per && segments.map(line => <g key={line.multiple} className={`nr-per${strong.includes(line.multiple) ? ' is-near' : ''}`}>
           {line.segments.map((s, i) => <path key={i} d={path(s)} />)}</g>)}
@@ -139,17 +237,27 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
             y={y(p.high)} width={Math.max(3, x(Math.min(dayNumber(p.end), dayNumber(chart.end))) - x(Math.max(dayNumber(p.start), dayNumber(chart.today))))} height={Math.max(2, y(p.low) - y(p.high))} />}
           <circle className="nr-point-hit" cx={x(p.at)} cy={y(p.value)} r={18} />
           <circle className="nr-point" cx={x(p.at)} cy={y(p.value)} r={selectedPoint?.id === p.id ? 6 : 4}><title>{`${i + 1} ${p.tag} ${md(p.start)}〜${md(p.end)} ${yen(p.value)}円`}</title></circle>
-          {pointLabels.has(p.id) && <><line className="nr-point-leader" x1={x(p.at)} y1={y(p.value) - 5} x2={pointLabels.get(p.id)!.x} y2={pointLabels.get(p.id)!.y + 3} />
-            <text className="nr-point-label" x={pointLabels.get(p.id)!.x} y={pointLabels.get(p.id)!.y} textAnchor="middle">{i + 1} · {yen(p.value)}円</text></>}
+          {pointLabels.has(p.id) && <>{pointLabels.get(p.id)!.leader && <line className="nr-point-leader" x1={pointLabels.get(p.id)!.leader!.x1} y1={pointLabels.get(p.id)!.leader!.y1}
+            x2={pointLabels.get(p.id)!.leader!.x2} y2={pointLabels.get(p.id)!.leader!.y2} />}
+            <text className="nr-point-label" x={pointLabels.get(p.id)!.x} y={pointLabels.get(p.id)!.y} textAnchor="middle">{pointLabels.get(p.id)!.text}</text></>}
         </g>)}
         {layers.pivots && chart.pivots.map(p => <circle key={`${p.date}-${p.kind}`} className={`nr-pivot ${p.kind === 'TOP' ? 'is-top' : ''}`} cx={x(dayNumber(p.date))} cy={y(p.price)} r={3}>
           <title>{`${md(p.date)} ${p.kind === 'TOP' ? '山' : '谷'}・${md(p.confirmedOn)}に確定`}</title></circle>)}
         {layers.pivots && chart.pending && <circle className="nr-pending" cx={x(dayNumber(chart.pending.date))} cy={y(chart.pending.price)} r={5} />}
       </g>
-      {layers.per && valuation && multiples.filter(m => valuation.eps * m >= low && valuation.eps * m <= high).map(m => <g key={m} className={`nr-per-label${strong.includes(m) ? ' is-near' : ''}`}>
-        <line x1={Math.max(left, Math.min(right, x(dayNumber(valuation!.at))))} x2={right + 5} y1={y(valuation!.eps * m)} y2={y(valuation!.eps * m)} />
-        <text x={right + 8} y={y(valuation!.eps * m) + 3}>PER{m} {yen(valuation!.eps * m)}円</text></g>)}
-      {[window.start, (window.start + window.end) / 2, window.end].map((at, i) => <text className="nr-axis" key={at} x={x(at)} y={bottom + 22}
+      {perTexts.length > 0 && <g className="nr-per-lines">{perLabels.map(m => <line key={m} className={`nr-per-guide${strong.includes(m) ? ' is-near' : ''}`}
+        x1={valuationX} x2={right + 5} y1={y(valuation!.eps * m)} y2={y(valuation!.eps * m)} />)}</g>}
+      {perTexts.map(l => <text key={l.m} className={`nr-per-text${strong.includes(l.m) ? ' is-near' : ''}`} x={right + 8} y={l.y}>{l.text}</text>)}
+      {labels.map(l => <React.Fragment key={l.key}>{l.leader && <line className={`nr-label-leader${l.className.includes('is-stop') ? ' is-stop' : l.className.includes('is-target') ? ' is-target' : ''}`} x1={l.leader.x1} y1={l.leader.y1} x2={l.leader.x2} y2={l.leader.y2} />}
+        <text className={l.className} x={l.x} y={l.y} textAnchor={l.anchor}>{l.text}</text></React.Fragment>)}
+      {periodMarks.map(p => <g key={p.id} className="nr-period" role="button" tabIndex={0} aria-pressed={selectedPeriod?.id === p.id}
+        aria-label={`${p.tag}、${periodText(p)}`} onClick={() => { if (!dragged.current) selectPeriod(p); }}
+        onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectPeriod(p); } }}>
+        <rect className="nr-period-hit" x={p.from - 2} y={laneTop + p.lane * LANE - 3} width={p.to - p.from + 4} height={LANE} />
+        <rect className="nr-period-bar" x={p.x0} y={laneTop + p.lane * LANE} width={p.x1 - p.x0} height={3} rx={1.5} />
+        <text className="nr-period-tag" x={p.tx} y={laneTop + p.lane * LANE + 14}>{p.tag}</text>
+      </g>)}
+      {[window.start, (window.start + window.end) / 2, window.end].map((at, i) => <text className="nr-axis" key={at} x={x(at)} y={axisY}
         textAnchor={i === 0 ? 'start' : i === 2 ? 'end' : 'middle'}>{dateAt(at)}</text>)}
     </svg>
     <div className="nr-controls nr-zoom" role="group" aria-label="チャートの拡大と期間移動">
@@ -163,8 +271,8 @@ export function NikkeiResearchChartView({ chart, future, hasPriceScale=true }: {
     <p className="nr-gesture-note">左右に動かす · 2本指で拡大・縮小</p>
     </div>
     <div className="nr-legend"><span className="nr-key-price">日経平均・終値</span>{layers.per && <span className="nr-key-per">PER15〜21</span>}
-      {layers.external && <span className="nr-key-external">参考予測（未検証）</span>}
-      {chart.candidates.length > 0 && <span>検証中の目標・撤回ライン</span>}
+      {layers.external && <span className="nr-key-external">参考予測</span>}
+      {chart.candidates.length > 0 && <><span className="nr-key-target">目標</span><span className="nr-key-stop">撤回</span></>}
       {layers.pivots && <span>確定した高値・安値</span>}</div>
     <details className="nr-guide"><summary>チャートの線と点の意味</summary>
       <p>PER線：取得した構成銘柄の決算データから推計したEPSに、倍率を掛けた価格です。</p>
