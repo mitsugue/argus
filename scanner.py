@@ -17699,6 +17699,30 @@ def _market_brief_schedule_mark(decision, *, wrote):
         kinds[decision.get("kind") or "NO_PREVIOUS"] = kinds.get(decision.get("kind") or "NO_PREVIOUS", 0) + 1
 
 
+
+def _market_brief_text_complete(previous):
+    return previous.get("unifiedStatus") == "GENERATED"
+
+
+def _market_brief_due(previous):
+    """The schedule decision, plus one layout retry for an edition whose text
+    was accepted but whose presentation was not.
+
+    2026-10-25 (cost, measured): such an edition counted as "no saved
+    edition", so the whole view was rewritten every ten minutes until a
+    layout passed (2-10 extra editions a day, about 45,000 input tokens
+    each). Its text now stands until the next update time; the layout is
+    retried once per edition."""
+    decision = _market_brief_schedule_decision(previous)
+    if decision["due"] or previous.get("presentationStatus") == "GENERATED":
+        return decision
+    edition = (previous.get("aiDiagnostics") or {}).get("completedAt") or previous.get("generatedAt")
+    state = _MARKET_BRIEF_SCHEDULE
+    if state.get("presentationRetryFor") == edition:
+        return {**decision, "reason": "presentation_retry_used"}
+    state["presentationRetryFor"] = edition
+    return {**decision, "due": True, "kind": "PRESENTATION_RETRY", "reason": "presentation_incomplete"}
+
 _MARKET_BRIEF_HISTORY_REMOTE = {"status": "NOT_RUN", "lastVerifiedAt": None,
                                 "lastAttemptAt": None, "headVersion": None}
 _MARKET_BRIEF_HISTORY_SYNC_LOCK = threading.Lock()
@@ -18011,8 +18035,7 @@ def _market_brief_worker_tick():
         last = _MARKET_BRIEF_WORKER["lastAttemptMonotonic"]
         failures = min(5, max(0, int(_MARKET_BRIEF_WORKER.get("consecutiveFailures") or 0)))
         previous = _MARKET_BRIEF.get("lastSuccessful") or {}
-        if _MARKET_BRIEF_WORKER["status"] == "GENERATED" and previous.get("unifiedStatus") == "GENERATED" \
-                and previous.get("presentationStatus") == "GENERATED":
+        if _MARKET_BRIEF_WORKER["status"] == "GENERATED" and _market_brief_text_complete(previous):
             # 2026-10-17: between the owner's update times nothing is composed;
             # the check itself is cheap and runs at most once a minute.
             state = _MARKET_BRIEF_SCHEDULE
@@ -18020,7 +18043,7 @@ def _market_brief_worker_tick():
             if checked is not None and time.monotonic() - checked < 60:
                 return {"status": "NOT_DUE"}
             state["lastCheckMonotonic"] = time.monotonic()
-            if not _market_brief_schedule_decision(previous)["due"]:
+            if not _market_brief_due(previous)["due"]:
                 outcomes = state.get("lastOutcomesMonotonic")
                 if outcomes is None or time.monotonic() - outcomes >= 600:
                     # Scoring of past editions keeps its ten-minute pace.
@@ -18803,8 +18826,8 @@ def _market_brief_refresh(allow_ai=True):
                 and previous.get("presentationStatus") == "GENERATED"
                 and previous.get("unifiedSummary"))
     decision = {"due": True, "kind": "NO_PREVIOUS", "slot": None, "eventIds": [], "reason": "no_saved_edition"}
-    if allow_ai and complete:
-        decision = _market_brief_schedule_decision(previous)
+    if allow_ai and _market_brief_text_complete(previous) and previous.get("unifiedSummary"):
+        decision = _market_brief_due(previous)
         if not decision["due"]:
             # 2026-10-17 (owner): between the fixed update times the saved
             # edition stands; no AI call is made for routine input changes.
@@ -18812,6 +18835,9 @@ def _market_brief_refresh(allow_ai=True):
             retained["generationReuse"] = {"inputsCheckedAt": _ai_now_iso(),
                 "originalGeneratedAt": previous.get("generatedAt"), "newAiCalls": 0,
                 "reason": "NOT_SCHEDULED", "schedule": decision}
+            if retained.get("presentationStatus") != "GENERATED" and _MARKET_BRIEF.get("lastPresentation"):
+                # The screen keeps the last complete edition, as after a failed layout.
+                retained["retainedPresentation"] = copy.deepcopy(_MARKET_BRIEF["lastPresentation"])
             _MARKET_BRIEF_SCHEDULE["reusedNotScheduled"] = int(_MARKET_BRIEF_SCHEDULE.get("reusedNotScheduled") or 0) + 1
             _MARKET_BRIEF.update(data=retained, composedAt=time.time())
             return retained

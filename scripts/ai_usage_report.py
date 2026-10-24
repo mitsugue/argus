@@ -55,7 +55,7 @@ def report(document):
         lines.append(f"| {row.get('dayUtc')} | {row.get('views')} | {with_ai} | {row.get('viewsWithCorrection')} | "
                      f"{row.get('aiCalls')} | {row.get('correctionCalls')} | {_ratio(row.get('viewsWithCorrection') or 0, with_ai)} | "
                      f"{_ratio(row.get('inputTokens') or 0, with_ai)} | {_ratio(row.get('outputTokens') or 0, with_ai)} | {reasons} |")
-    labels = {"SCHEDULED": "定時", "EVENT": "発表直後", "NO_PREVIOUS": "保存版なし", "NOT_RECORDED": "記録前"}
+    labels = {"SCHEDULED": "定時", "EVENT": "発表直後", "NO_PREVIOUS": "保存版なし", "PRESENTATION_RETRY": "表示の再試行", "NOT_RECORDED": "記録前"}
     lines += ["", "### 作り直しの理由と結論の変化（保存された版のみ）", "",
               "| 日 | 版 | 結論が変わった版 | 理由 | 変わった材料 |", "|---|---|---|---|---|"]
     for row in days:
