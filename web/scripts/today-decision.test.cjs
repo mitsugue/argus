@@ -257,3 +257,35 @@ console.log('タイルは1行・終値の日付は下に1行 PASS');
   stripRecorded = null;
 }
 console.log('急落警戒の配信後の実績は20日から同じ1行に PASS');
+
+{
+  // 2026-10-25 (owner): a registered stock's gated decision reads in short Japanese;
+  // the label says "保有数が不明" only when that is the sole reason, and never changes the action.
+  const { webcrypto } = require('node:crypto');
+  if (!globalThis.crypto) globalThis.crypto = webcrypto;
+  const { ownerStockActionJa } = require('../src/domain/ownerStockActionLabel.ts');
+  const sda = require('../src/domain/singleDecisionAuthority.ts');
+  const gated = (missing, conflicts = []) => ({ status: 'DATA_GATED', primaryAction: 'WAIT',
+    missingReasonCodes: missing, conflictReasonCodes: conflicts });
+  assert.equal(ownerStockActionJa(gated(['owner_context_unknown'])), '見送り · 保有数が不明なため保留');
+  assert.equal(ownerStockActionJa(gated(['owner_context_unknown', 'market_truth_missing'])), '見送り · データ待ち');
+  assert.equal(ownerStockActionJa(gated(['owner_context_unknown'], ['market_truth_conflict'])), '見送り · データ待ち');
+  assert.equal(ownerStockActionJa({ status: 'EVALUATED', primaryAction: 'HOLD',
+    missingReasonCodes: [], conflictReasonCodes: [] }), 'HOLD · 最終判断');
+  assert.equal(ownerStockActionJa(null), 'WAIT · 最終判断');
+  const now = '2026-10-25T00:00:00Z';
+  const stub = sda.evaluateSingleDecisionAuthority(sda.buildDataGatedInputV2({
+    subject: { kind: 'ASSET', instrumentId: '3692', market: 'JP', horizon: 'FIVE_DAY' },
+    decisionAt: now, informationCutoffAt: now, authorityPolicy: sda.SINGLE_DECISION_AUTHORITY_V2_POLICY,
+    ownerContext: { schemaVersion: 'owner-decision-context-v1', privacyClass: 'DEVICE_LOCAL', asOf: now,
+      positionState: 'UNKNOWN', positionRiskBand: 'UNKNOWN', concentrationBand: 'UNKNOWN', addPermission: 'UNKNOWN' },
+  }));
+  assert.equal(stub.status, 'DATA_GATED');
+  assert.equal(stub.primaryAction, 'WAIT', 'the decision itself is unchanged');
+  assert(stub.missingReasonCodes.includes('owner_context_unknown'));
+  assert.equal(ownerStockActionJa(stub), '見送り · データ待ち', 'missing evidence is not blamed on holdings');
+  const source = fs.readFileSync(require.resolve('../src/routes/CommandCenter.tsx'), 'utf8');
+  assert(!source.includes("' DATA GATED'"), 'the raw code is no longer shown');
+  assert(source.includes('actionJa: ownerStockActionJa(canonical)'));
+}
+console.log('自分の銘柄の保留は日本語の短い表示・判断は変えない PASS');
