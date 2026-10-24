@@ -110,7 +110,8 @@ def test_brief_uses_the_same_record_and_never_observes_live_orders():
     brief = argus_market_brief.compose_brief(now_iso=RECEIVED, jpy_position=doc)
     facts = [row for row in brief['facts'] if row['source'] == 'official_weekly_position']
     assert len(facts) == 1
-    assert '167995' in facts[0]['text'] and '現在の建玉は未観測' in facts[0]['text']
+    assert '167995' in facts[0]['text'] and '週次の観測' in facts[0]['text']
+    assert '未観測' not in facts[0]['text'] and '売り建玉は残る' not in facts[0]['text']
     assert facts[0]['provenance']['receivedAt'] == RECEIVED
     assert facts[0]['provenance']['publishedAt'] is None
 

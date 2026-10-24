@@ -149,7 +149,7 @@ def dividend_events(today: date, end: date, ex_dividend: Mapping[str, Any] | Non
                     at=last_cum.isoformat(), date_only=True,
                     title_ja=f"権利付き最終日({month}月末の配当・優待)", importance="high" if major else "medium",
                     what_ja=f"この日の大引けまでに買うと{month}月末の配当・株主優待の権利が得られます。" + size_ja,
-                    so_what_ja="配当狙いの買いが入ると言われますが、実績で確かめた傾向ではありません。翌日の権利落ちで指数が配当分だけ下がることは先物価格に織り込まれています。",
+                    so_what_ja="翌日の権利落ちで指数が配当分だけ下がる分は、先物価格に織り込み済み。",
                     watch_ja="翌営業日(権利落ち日)の下げのうち、配当落ち分を除いた実質の値動き。",
                     source="rule:jp-record-date-last-session-t-plus-2", today=today))
             if today <= ex_day <= end:

@@ -32,7 +32,9 @@ def test_facts_name_the_base_rates_and_never_a_probability():
     rising = {**falling, "yoyThreeMonthsEarlierPct": 3.2, "rising": True}
     calm = {**falling, "yoyPct": 2.4}
     text = m.explanation_facts(falling, 18.0)[0]["text"]
-    assert "3.7%" in text and "低下中" in text and "15.7%" in text and "11.8%" in text and "確率ではありません" in text
+    assert "3.7%" in text and "低下中" in text and "15.7%" in text and "11.8%" in text
+    # 2026-10-23 owner policy: the numbers and base rates only, no disclaimer sentence.
+    assert "確率" not in text and "ではありません" not in text
     assert "23.0%" in m.explanation_facts(rising, None)[0]["text"]
     assert "9.4%" in m.explanation_facts(calm, None)[0]["text"]
     assert len(m.explanation_facts(falling, 18.0)) == 1                    # VIX below 25: no VIX line

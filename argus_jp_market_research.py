@@ -124,8 +124,7 @@ def explanation_facts(result):
         text = (f"{subject['labelJa']}: "
             f"{calculation.get('historyStart')}〜{calculation.get('historyEnd')}、"
             f"{calculation.get('historyCount')}営業日。5営業日先の有効標本"
-            f"{row.get('effectiveSampleCount', 0)}件。{validation}。売買根拠への自動昇格なし。"
-            "この検証は別方式の過去局面重ね描きや、その参考経路の検証結果ではありません。")
+            f"{row.get('effectiveSampleCount', 0)}件。{validation}。")
         facts.append({'text': text, 'source': 'jp_market_research', 'priority': 'P2',
             'verification': 'UNCONFIRMED', 'validationSubject': subject, 'provenance': {
                 'scope': 'published_metadata_snapshot', 'eventId': package['packageId'] + '-horizon-5',

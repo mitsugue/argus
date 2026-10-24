@@ -46,6 +46,8 @@ def test_short_recovery_and_longer_decline_are_separate_and_snapshot_id_is_stabl
     assert first['evidenceId']==second['evidenceId']
     facts=internal.explanation_facts(first)
     assert len(facts)==4 and all('営業日' in f['text'] for f in facts)
+    assert not any('未確認' in f['text'] for f in facts)
+    assert all('ではありません' not in text for text in first['limitationsJa'])
 
 
 def test_post_close_publication_gap_keeps_complete_previous_comparison():

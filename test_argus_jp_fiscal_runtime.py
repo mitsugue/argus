@@ -131,6 +131,7 @@ def test_public_and_llm_projection_use_saved_numbers_and_same_evidence(monkeypat
     facts=runtime.explanation_facts(public)
     assert len(facts)==4 and public['selectedCase'] is None
     assert '見通し' in facts[0]['text'] and '-3.09' in facts[0]['text']
+    assert not any('ではありません' in f['text'] or 'とは未確認' in f['text'] for f in facts)
     assert all(f['verification']=='UNCONFIRMED' for f in facts)
     assert public['automaticAiCalls']==public['fetchesDuringRead']==0
     assert public['notificationDelivery']=='EXISTING_WEB_PUSH_NEWS_SETTING'

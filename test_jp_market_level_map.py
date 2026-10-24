@@ -85,7 +85,9 @@ def test_morning_map_uses_only_sessions_and_estimates_before_the_morning():
         assert row["bandJa"] in ("2割前後", "1〜2割", "1割未満") and row["pastFrequencyPct"] < 20
     assert sum(1 for r in first["rows"] if r["side"] == "UP") <= 3
     assert first["actionAuthority"] is False and first["pastFrequencyIsNotProbability"] is True
-    assert any("確率ではありません" in note for note in first["fixedNotesJa"])
+    # 2026-10-23 owner policy: notes keep their numbers, not disclaimer sentences.
+    assert any("24〜29%" in note for note in first["fixedNotesJa"])
+    assert not any("確率" in note or "合図" in note or "ではありません" in note for note in first["fixedNotesJa"])
 
 
 def test_frequency_bands_and_reach_tables_follow_the_versioned_tables():

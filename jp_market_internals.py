@@ -159,11 +159,7 @@ def build_snapshot(*, session_dates, cutoff, prices, symbols, classifications, b
           'comparisonAvailability':{'latestCompletedSessionDate':latest_session,
               'comparedThrough':end,'latestSessionIncluded':end==latest_session},
           'actionAuthority':False,'automaticAiCalls':0,'predictiveProbabilityVerified':False,
-          'limitationsJa':['取得できた監視サンプルを市場全体として扱いません。',
-            '業種はETF価格による比較です。業種指数そのもの、配当再投資リターンや資金流入量ではありません。',
-            '業種分類は取得済みの現行分類です。過去時点の所属・将来の注文を示すものではありません。',
-            '異なる期間を一つの強気度へ合算しません。'+('指数への寄与は、計算した合計が日経平均の値動きと一致した期間だけ表示します。'
-                if index_contributions else '指数寄与は正しい構成・係数の接続待ちです。')]}
+          'limitationsJa':[] if index_contributions else ['指数寄与は接続待ち。']}
     body['evidenceId']=_hash(body);body['informationCutoff']=cutoff;return body
 
 
@@ -176,8 +172,8 @@ def explanation_facts(snapshot):
         text=f"{row['startDate']}から{row['endDate']}の{horizon}営業日: 日経平均{row['index']['returnPct']:+.2f}%。"
         availability=snapshot.get('comparisonAvailability') or {}
         if availability.get('latestSessionIncluded') is False:
-            text+=f"最新完了営業日{availability['latestCompletedSessionDate']}の比較は取得待ちで、取得済みの確定値までの比較です。"
-        if strongest:text+=f"取得業種ETF中の相対上位は{strongest['nameJa']}、TOPIX連動ETF比{strongest['relativeToBenchmarkPct']:+.2f}ポイント。業種全体の資金流入とは未確認。"
+            text+=f"最新営業日{availability['latestCompletedSessionDate']}は取得待ち。"
+        if strongest:text+=f"取得業種ETF中の相対上位は{strongest['nameJa']}、TOPIX連動ETF比{strongest['relativeToBenchmarkPct']:+.2f}ポイント。"
         contribution=row.get('indexContributions') or {}
         if contribution.get('status')=='AVAILABLE':
             # 2026-10-17: the members that moved the index most, in index points.
