@@ -38569,21 +38569,29 @@ def _n225_chart_history(*, fetch):
 
     Right after a restart (the release seed runs before the collection lane)
     neither the saved ten-year history nor the received window is in memory
-    yet. The saved history is a local file and is read once; the producer may
-    then refresh the received window with the same bounded request the
-    collection lane makes (a fresh window is reused, never re-fetched).
+    yet. The saved history is a local file and is read once. Only when held
+    rows end before the latest completed Tokyo session may the producer
+    refresh the received window, with the same bounded request the
+    collection lane makes (an unexpired window is reused, never re-fetched).
+    With no rows at all nothing is requested here; the collection lane owns
+    the first acquisition.
     """
     try:
         _n225_analog_history_restore()
     except Exception:
         pass
-    if fetch:
+    rows = _n225_chart_rows()
+    if fetch and rows:
         try:
-            _yahoo_index_ohlcv("^N225", "NIKKEI_225_INDEX", fetch=True,
-                               available_hour_utc=7)
+            target = argus_market_clock.latest_completed_session_date(
+                argus_market_clock.JP_EQUITY, datetime.now(timezone.utc))
+            if str(rows[-1].get("date") or "")[:10] < target.isoformat():
+                _yahoo_index_ohlcv("^N225", "NIKKEI_225_INDEX", fetch=True,
+                                   available_hour_utc=7)
+                rows = _n225_chart_rows()
         except Exception:
             pass
-    return _n225_chart_rows()
+    return rows
 
 
 def _index_cache_chart_rows(index):

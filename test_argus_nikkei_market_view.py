@@ -99,8 +99,9 @@ def test_nikkei_rows_wait_for_an_acquisition_time(monkeypatch):
 
 def test_producer_restores_saved_history_after_a_restart(monkeypatch):
     """The release seed runs before the collection lane: the producer reads the
-    saved history (local file) and may refresh the received window; a cached
-    read restores the saved history but never requests the provider."""
+    saved history (local file) and, when it ends before the latest completed
+    session, may refresh the received window; a cached read restores the
+    saved history but never requests the provider."""
     rows = [{"instrumentId": "NIKKEI_225_INDEX", "date": f"2026-08-{day:02d}",
              "open": 1.0, "high": 1.0, "low": 1.0, "close": float(day), "volume": 1,
              "availableFrom": f"2026-08-{day:02d}T07:00:00Z", "adjusted": False}
@@ -121,8 +122,13 @@ def test_producer_restores_saved_history_after_a_restart(monkeypatch):
         calls.append(("yahoo", symbol, fetch))
         return []
 
-    monkeypatch.setattr(scanner, "_n225_analog_history_restore", restore)
     monkeypatch.setattr(scanner, "_yahoo_index_ohlcv", yahoo)
+    # Nothing held at all: nothing is requested (the collection lane owns the
+    # first acquisition) and there are no rows to publish.
+    monkeypatch.setattr(scanner, "_n225_analog_history_restore", lambda: None)
+    assert scanner._chart_history("N225", "JP") == []
+    assert calls == []
+    monkeypatch.setattr(scanner, "_n225_analog_history_restore", restore)
     cached = scanner._chart_history_cached("N225", "JP")
     assert calls == ["restore"]
     produced = scanner._chart_history("N225", "JP")
