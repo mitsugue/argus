@@ -160,7 +160,10 @@ _DATASET_SHA = re.compile(r"^[0-9a-f]{64}$")
 # not contain a generic "JP provider" slot and does not grant authority merely
 # because a new adapter is registered.
 REPOSITORY_PROVIDER_PRIORITY: Dict[Tuple[str, str], Tuple[str, ...]] = {
-    ("JP", "QUOTE"): ("moomoo", "jquants"),
+    # 2026-10-23 オーナー承認(本人の言葉:「日経平均の値(立花リアルタイム、無い時はYahooの遅延値)を
+    # 日本の判断の取得元として認めます。現在の判断の対象を日経平均に移してください」):
+    # 日経平均そのものの値として立花(銘柄101)と Yahoo の遅延値を後ろに足す。既存の順番は変えない。
+    ("JP", "QUOTE"): ("moomoo", "jquants", "tachibana", "yahoo"),
     ("JP", "OHLCV_BAR"): ("jquants",),
     ("JP", "INDEX_PROXY"): ("moomoo", "jquants"),
     ("JP", "NAV"): ("toushin_library",),

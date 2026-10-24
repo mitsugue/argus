@@ -35377,23 +35377,6 @@ def _api_argus_admin_missions_tick_impl():
                     "viewSlot": _view_slot,
                 })
         _view_phase_index = len(_view_phase_specs)
-        # The current judgment still names 1321 until its subject moves to
-        # the Nikkei 225 (its own reviewed change). Its verified view keeps
-        # being produced for that judgment's daily-close evidence, without
-        # the market-wide comparisons. A failure here never blocks the four
-        # views above; it is reported as its own publication row.
-        try:
-            _decision_subject_report, _decision_subject_publication = \
-                _precompute_verified_market_view("1321", "JP", market_scope=False)
-            _view_publications.append({
-                "instrument": "1321", "role": "decision_subject",
-                **_decision_subject_publication})
-            del _decision_subject_report
-        except Exception as _decision_subject_exc:
-            _view_publications.append({
-                "instrument": "1321", "role": "decision_subject",
-                "status": "degraded",
-                "reason": type(_decision_subject_exc).__name__})
         _chart_after_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
         _replay_after_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
         _view_after_hash = argus_verified_snapshot.state_hash(
@@ -40026,7 +40009,9 @@ def api_argus_today_headline():
 _DECISION_EVIDENCE_CACHE = {}
 _DECISION_EVIDENCE_TTL_SEC = 120
 _DECISION_EVIDENCE_MAX_SYMBOLS = 8
-_DECISION_EVIDENCE_DEFAULT_SYMBOLS = ("1321", "1306", "SPY", "QQQ")
+# 2026-10-23 (owner): 現在の判断の対象を日経平均に移す. 1321 stays readable
+# for devices that still ask for it by name, but is no longer a default.
+_DECISION_EVIDENCE_DEFAULT_SYMBOLS = ("N225", "1306", "SPY", "QQQ")
 
 # v13.5.60 (production 2026-09-07): the heavier public documents
 # (decision-evidence, events, important-events, dashboard-events) stalled past
@@ -40107,7 +40092,40 @@ def _single_flight_json(route_key, compute):
     return response
 
 
+def _decision_evidence_n225_live_row():
+    """The Nikkei 225 current value for the judgment, or (None, None).
+
+    2026-10-23 (owner): 日経平均の値(立花リアルタイム、無い時はYahooの遅延値)を
+    日本の判断の取得元として認めます. argus_index_live already serves exactly
+    that order (Tachibana code 101 when its trade time is current, else the
+    Yahoo delayed quote); this reads its last result from memory, no request.
+    Without a quote the caller falls back to the Yahoo daily series.
+    """
+    try:
+        quote = (argus_index_live.current_quote_safe() or {}).get("quote")
+    except Exception:
+        return None, None
+    if not isinstance(quote, dict):
+        return None, None
+    price = quote.get("price")
+    if not isinstance(price, (int, float)) or isinstance(price, bool) \
+            or not math.isfinite(float(price)) or float(price) <= 0 \
+            or not quote.get("tradedAt") or not quote.get("receivedAt"):
+        return None, None
+    realtime = quote.get("realtime") is True
+    row = {"symbol": "N225", "status": "live" if realtime else "delayed",
+           "price": float(price), "sourceTimestamp": quote["tradedAt"],
+           "receivedAt": quote["receivedAt"]}
+    change = quote.get("changePct")
+    if isinstance(change, (int, float)) and not isinstance(change, bool) \
+            and math.isfinite(float(change)):
+        row["changePct"] = float(change)
+    return row, ("tachibana" if realtime else "yahoo")
+
+
 def _decision_evidence_watch_row(symbol, market):
+    if symbol == "N225":
+        return _decision_evidence_n225_live_row()
     try:
         # Public GET contract: cache-only, never a provider fetch — a cold
         # cache degrades to the EOD history fallback / MISSING references
@@ -40211,7 +40229,11 @@ def _decision_evidence_history_row(symbol, market):
              "sourceRef": f"history-cache:{symbol}:{str(last['date'])[:10]}"}
     if change_pct is not None:
         quote["changePct"] = change_pct
-    return quote, ("jquants" if market == "JP" else "twelvedata")
+    # The Nikkei 225 daily series is Yahoo's ^N225 (the delayed value the owner
+    # approved when Tachibana has no current value).
+    provider = ("yahoo" if symbol == "N225"
+                else "jquants" if market == "JP" else "twelvedata")
+    return quote, provider
 
 
 def _decision_evidence_market_artifact(symbol, market, cutoff, build_identity):
@@ -44489,7 +44511,7 @@ def _decision_evidence_document(symbols):
         if not re.fullmatch(r"[A-Z0-9.]{1,12}", sym or ""):
             subjects[str(sym)[:24]] = {"status": "unsupported_symbol"}
             continue
-        market = ("JP" if (sym in jp_symbols
+        market = ("JP" if (sym in jp_symbols or sym == "N225"
                            or re.fullmatch(r"\d[0-9A-Z]{3}", sym))
                   else "US" if (sym in us_symbols or sym.isalpha()) else None)
         if market is None:

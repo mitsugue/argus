@@ -193,12 +193,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   // Today has one editorial subject: Nikkei 225 over five sessions. Other
   // indices are a read-only comparison below and never change this judgment.
   // 2026-10-23 (owner): 全て日経平均そのもので見ること. The canonical values
-  // (verified snapshot, headline, projection) are the Nikkei 225 itself. The
-  // current judgment's subject stays 1321 until it moves in its own reviewed
-  // change (step 3); decisionInstrument names it.
+  // (verified snapshot, headline, projection) are the Nikkei 225 itself, and
+  // so is the current judgment's subject (owner approval of the same day).
   const marketMode: MarketSelectionMode = 'JP';
   const selectedInstrument = { JP: 'N225' as const, US: 'SPY' as const };
-  const decisionInstrument = { JP: '1321' as const, US: 'SPY' as const };
+  const decisionInstrument = { JP: 'N225' as const, US: 'SPY' as const };
   const chartHorizon: MarketHorizon = 5;
   const decisionCalendar = !marketLedger.error && !marketLedger.loading
     && !marketLedger.sessionExpired
@@ -355,15 +354,11 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     // visible 30-day window) — labeled via data-projection-source.
     const headlineFallback = (symbol: string) =>
       headlineProjectionInput(headlineEntry(symbol));
-    // The Nikkei 225 verified snapshot is the owner-facing series; the compact
-    // headline of the same snapshot is the fallback while it loads. The
-    // heading still names the current judgment's subject (1321 until step 3)
-    // so a reader can see which instrument the WAIT/HOLD is anchored on.
-    const nikkeiBase = selectedChart.data
+    // The Nikkei 225 verified snapshot is the owner-facing series and the
+    // judgment's subject; the compact headline of the same snapshot is the
+    // fallback while it loads.
+    const selectedJpProjection = selectedChart.data
       ? projectionInput(selectedChart.data) : headlineFallback(selectedInstrument.JP);
-    const selectedJpProjection = nikkeiBase
-      ? { ...nikkeiBase, label: `${nikkeiBase.label}・判断の正本 ${decisionInstrument[effectiveMarket]}` }
-      : null;
     const selectedUsProjection: TodayProjectionInput | null = null;
     const shortState = selectedJpChart?.todayIntelligence?.shortSelling;
     const jpFactors = [
@@ -585,8 +580,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     const basisDate = entry.periodEnd ?? '不明';
     const closeLabel = entry.market === 'JP'
       ? `${basisDate} 終値基準（15:30 JST）` : `${basisDate} 終値基準`;
-    // 日次判断 is the current judgment's eligibility (its subject is 1321
-    // until step 3); the price line above it is the Nikkei 225 headline.
+    // 日次判断 is the current judgment's eligibility; its subject and the
+    // price line above it are both the Nikkei 225.
     const evidenceEntry = decisionEvidence.subjects?.[decisionInstrument[effectiveMarket]] as
       { marketTruth?: { status?: string } } | undefined;
     const truthStatus = evidenceEntry?.marketTruth?.status;

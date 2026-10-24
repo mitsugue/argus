@@ -681,7 +681,7 @@ export function useAssetIntel(opts: {
         symbol: asset.symbol, market: asset.market,
         quantity: null }));
     for (const head of [
-      { symbol: '1321', market: 'JP' }, { symbol: '1306', market: 'JP' },
+      { symbol: 'N225', market: 'JP' }, { symbol: '1306', market: 'JP' },
       { symbol: 'SPY', market: 'US' }, { symbol: 'QQQ', market: 'US' },
     ]) {
       if (!decisionSubjects.some((row) =>

@@ -252,7 +252,7 @@ check('Today never claims an empty calendar it could not read',
 // v13.5.57 / 2026-10-23: the canonical contract attribute names the verified
 // snapshot instrument the screen is bound to — the Nikkei 225 itself
 // (N225/1306/SPY/QQQ) — and the projection heading still names the current
-// judgment's subject (1321 until its subject moves in step 3).
+// judgment's subject (the Nikkei 225 since step 3).
 {
   const commandCenter = fs.readFileSync(path.join(root, 'src/routes/CommandCenter.tsx'), 'utf8');
   check('the canonical contract names the verified snapshot instrument, not the projection symbol',
@@ -262,10 +262,18 @@ check('Today never claims an empty calendar it could not read',
     commandCenter.includes("const selectedInstrument = { JP: 'N225' as const, US: 'SPY' as const };")
     && commandCenter.includes("headlineMove(headlineEntry('N225'), 'nikkei')")
     && !commandCenter.includes("headlineEntry('1321')"));
-  check('the judgment subject stays 1321 until step 3 and the heading names it',
-    commandCenter.includes("const decisionInstrument = { JP: '1321' as const, US: 'SPY' as const };")
+  // Step 3 (owner approval 2026-10-23): the judgment's subject is the Nikkei
+  // 225 too, so the heading no longer names a second instrument.
+  check('the judgment subject is the Nikkei 225 itself',
+    commandCenter.includes("const decisionInstrument = { JP: 'N225' as const, US: 'SPY' as const };")
     && commandCenter.includes('sdaBySymbol.get(decisionSymbol)')
-    && commandCenter.includes('label: `${nikkeiBase.label}・判断の正本 ${decisionInstrument[effectiveMarket]}`'));
+    && !commandCenter.includes('判断の正本')
+    && !commandCenter.includes("JP: '1321'"));
+  const intel = fs.readFileSync(path.join(root, 'src/hooks/useAssetIntel.ts'), 'utf8');
+  const evidenceHook = fs.readFileSync(path.join(root, 'src/hooks/useDecisionEvidence.ts'), 'utf8');
+  check('the device judgment and its evidence ask for the Nikkei 225, not 1321',
+    intel.includes("{ symbol: 'N225', market: 'JP' }") && !intel.includes("{ symbol: '1321', market: 'JP' }")
+    && evidenceHook.includes("const HEADLINE_SYMBOLS = ['N225', '1306', 'SPY', 'QQQ'] as const;"));
 }
 
 // v13.5.59 (owner iPhone review). Reading order top-down, one MARKET SIGNALS
