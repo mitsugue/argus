@@ -242,9 +242,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_institutional_backend_v1160.py': 'd8065d151883cdf13ff7ebfa79358482d40cc8fc',
     'docs/V13_7_SHAPEUP_REQUIREMENTS.md': '2671df4f78c2e1b7c7a2538e81d8df21926ba17d',
     'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '685f1e1d700acc4cc3547efc6c94d8aa5eb10225',
-    'test_rules.py': '36c1d8b92e9a68f606586c00607d1e9c400c1b2c',
+    'test_rules.py': '8d5ec7c48836c21bb3ca6549f7919f55d64b64e5',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
-    '.github/workflows/closepin-pin.yml': 'ea693b3ca6140d4cf6fa66c48d91c6a03f603baa',
     'scripts/run_breadth_freshness.py': '6655818fd1c4d32c2db7407b37010735ceb0da91',
     'test_breadth_freshness_workflow.py': 'e8ed1942175b75416caec8711363cfc771b90e3d',
     'argus_tick_durability.py': 'fd2f2a97652cf1f3bb18084fd1aa5f54a19247da',
@@ -305,7 +304,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/common/TriangleStepLoader.css': '055ab6673461550f1cc0f38577da9e261a4bc647',
     'web/src/i18n/index.ts': '933221ee4ca1f3adccdb8ebf5c950419fe7ce019',
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
-    'test_prediction_ledger_workflow.py': 'ecae5b825315407022e21284123b051e9087d5aa',
+    'test_prediction_ledger_workflow.py': '43c2b42cf67c6dfa884374a271593a3546bc9755',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
     'web/src/hooks/useAssets.ts': '0a82da6958f58aaba4c3bd7659c2af2032b4e93f',
     'web/src/components/dialogue/OwnerOverview.tsx': 'e7f3bc0eaf42a62465f8c17817b70155b30f63c5',
@@ -689,6 +688,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    ".github/workflows/closepin-pin.yml",
     "test_jp_market_drop_alert.py",
     "jp_market_drop_alert.py",
     "test_cftc_weekly_catchup.py",

@@ -94,22 +94,11 @@ def _missing_daily(host: Any, targets: list) -> list:
     return missing
 
 
-def _run(host: Any, *, delay_seconds: float, per_symbol_seconds: float,
-         pause_seconds: float, sleeper: Callable[[float], None],
-         clock: Callable[[], float]) -> None:
+def _chart_pass(host: Any, targets: list, *, per_symbol_seconds: float,
+                pause_seconds: float, sleeper: Callable[[float], None],
+                clock: Callable[[], float]) -> None:
     summary = _STATE["summary"]
-    summary["status"] = "RUNNING"
-    summary["startedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     try:
-        sleeper(delay_seconds)
-        try:
-            host._osint_restore_once()
-        except Exception:
-            pass
-        targets = list(host._asset_chart_targets() or [])
-        summary["targets"] = len(targets)
-        missing = _missing_daily(host, targets)
-        summary["missingBefore"] = len(missing)
         # One full rotation of the tick's own cursor covers every target once.
         for _ in range(len(targets)):
             if not _missing_daily(host, targets):
@@ -132,14 +121,41 @@ def _run(host: Any, *, delay_seconds: float, per_symbol_seconds: float,
             sleeper(pause_seconds)
         summary["missingAfter"] = len(_missing_daily(host, targets))
         summary["status"] = "DONE"
-        # v13.5.44: the boot warm (JP_MARKET_ENGINE inputs, interest history, derived
-        # valuation) follows the chart pass in the same daemon thread.
-        _warm_loop(host, sleeper=sleeper, now=clock, max_cycles=_STATE.get("warmMaxCycles"),
-                   environ=_STATE.get("environ"))
     except Exception as exc:                       # pragma: no cover - defensive
         summary["status"] = "FAILED"
         summary["errorClass"] = type(exc).__name__
     finally:
+        summary["finishedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _run(host: Any, *, delay_seconds: float, per_symbol_seconds: float,
+         pause_seconds: float, sleeper: Callable[[float], None],
+         clock: Callable[[], float]) -> None:
+    summary = _STATE["summary"]
+    summary["status"] = "RUNNING"
+    summary["startedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        sleeper(delay_seconds)
+        try:
+            host._osint_restore_once()
+        except Exception:
+            pass
+        targets = list(host._asset_chart_targets() or [])
+        summary["targets"] = len(targets)
+        missing = _missing_daily(host, targets)
+        summary["missingBefore"] = len(missing)
+        # The market inputs (index histories, JP_MARKET_ENGINE inputs, margin,
+        # statements) are collected first; the full per-asset chart rotation
+        # follows them, so the engine's evidence is not MISSING for the whole
+        # rotation after a restart.  Same calls, same bounds, new order only.
+        _warm_loop(host, sleeper=sleeper, now=clock, max_cycles=_STATE.get("warmMaxCycles"),
+                   environ=_STATE.get("environ"),
+                   after_market_inputs=lambda: _chart_pass(
+                       host, targets, per_symbol_seconds=per_symbol_seconds,
+                       pause_seconds=pause_seconds, sleeper=sleeper, clock=clock))
+    except Exception as exc:                       # pragma: no cover - defensive
+        summary["status"] = "FAILED"
+        summary["errorClass"] = type(exc).__name__
         summary["finishedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
@@ -550,10 +566,19 @@ def _refresh_warm_charts(host: Any, *, clock: Callable[[], float]) -> Dict[str, 
     return result
 
 def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[], float],
-               max_cycles: Optional[int], environ: Optional[Dict[str, str]] = None) -> None:
+               max_cycles: Optional[int], environ: Optional[Dict[str, str]] = None,
+               after_market_inputs: Optional[Callable[[], None]] = None) -> None:
     warm = _STATE["warm"]
+    pending = [after_market_inputs] if after_market_inputs is not None else []
+
+    def run_after_market_inputs() -> None:
+        # Runs once: after the first cycle's market inputs, or on any exit path.
+        while pending:
+            pending.pop()()
+
     if not any(hasattr(host, name) for name in WARM_HOST_ATTRS):
         warm["status"] = "HOST_UNSUPPORTED"
+        run_after_market_inputs()
         return
     warm["status"] = "RUNNING"
     env = dict(os.environ) if environ is None else dict(environ)
@@ -569,6 +594,7 @@ def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[],
                 # full replay and leaves the first comparison cache incomplete.
                 _warm_index_charts(host, warm, sleeper)
             _warm_cycle(host, sleeper=sleeper, now=now, force_jp_market_engine=force)
+            run_after_market_inputs()
             warm["chartRefresh"] = _refresh_warm_charts(host, clock=now)
             if force:
                 last_jp_market_engine = now()
@@ -594,6 +620,7 @@ def _warm_loop(host: Any, *, sleeper: Callable[[float], None], now: Callable[[],
     except Exception as exc:                        # pragma: no cover - defensive
         warm["status"] = "FAILED"
         warm["errorClass"] = type(exc).__name__
+        run_after_market_inputs()
 
 
 def ensure_started(host: Any = None, *, environ: Optional[Dict[str, str]] = None,

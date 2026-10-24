@@ -50301,12 +50301,6 @@ def api_argus_scout_batch():
 _SCOUT_RESEARCH_SYMBOLS_JP = ["8058", "9984", "5801", "5803", "6584", "285A", "9501"]
 _US_TECH_LINKED_JP = {"9984", "285A", "6857", "8035"}
 
-@app.route("/api/argus/closepin-snapshot")
-def api_argus_closepin_snapshot():
-    """Retired endpoint: old clients must not trigger acquisition or scoring."""
-    return jsonify({"status": "RETIRED", "reason": "feature_retired",
-                    "historicalRecordsPreserved": True}), 410
-
 
 def _v4_record_meta(symbol):
     """Calibration Ledger v4 per-record metadata (Phase 3, v10.71).

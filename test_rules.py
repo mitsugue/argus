@@ -767,18 +767,6 @@ def test_vault_relay_roundtrip_and_validation(monkeypatch):
     assert c.get(f"/api/argus/vault-relay?vaultId={vid}").status_code == 200
 
 
-def test_retired_closepin_cannot_acquire_prices(monkeypatch):
-    def forbidden(*args, **kwargs):
-        raise AssertionError("retired feature must not acquire prices")
-    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot", forbidden)
-    monkeypatch.setattr(scanner, "get_rates_snapshot", forbidden)
-    with scanner.app.test_client() as client:
-        response = client.get("/api/argus/closepin-snapshot")
-    assert response.status_code == 410
-    assert response.json == {"status": "RETIRED", "reason": "feature_retired",
-                             "historicalRecordsPreserved": True}
-
-
 # ── Market News feed (news-v2, v10.12) ───────────────────────────────
 def test_news_major_keyword_detection():
     assert scanner._NEWS_MAJOR_RE.search("ECB raises rates by 25 basis points")
