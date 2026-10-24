@@ -135,3 +135,38 @@ def test_producer_restores_saved_history_after_a_restart(monkeypatch):
     assert cached == produced and len(produced) == 30
     assert produced[-1]["close"] == 30.0
     assert {row["knownAt"] for row in produced} == {"2026-08-30T08:00:00.000000Z"}
+
+
+def _browser_portable_number(value):
+    """The browser's portableNumber: Number#toFixed(8) on the exact binary
+    value, a tie resolved to the larger digit (here: positive prices)."""
+    from decimal import Decimal, ROUND_HALF_UP
+    text = format(Decimal(value).quantize(Decimal("1e-8"), rounding=ROUND_HALF_UP), "f")
+    text = text.rstrip("0").rstrip(".")
+    return "0" if text in {"", "-0"} else text
+
+
+def test_nikkei_prices_hash_the_same_in_python_and_the_browser(monkeypatch):
+    """2026-10-24: Yahoo's ^N225 float noise (17278.119140625) sat on an
+    8-decimal rounding tie, so the browser rejected every verified Nikkei view
+    (payload_hash_mismatch). Prices are kept at the index's two decimals."""
+    import argus_verified_snapshot
+    noisy = 17278.119140625
+    assert argus_verified_snapshot._portable_number(noisy) != _browser_portable_number(noisy)
+    rows = [{"instrumentId": "NIKKEI_225_INDEX", "date": f"2026-08-{day:02d}",
+             "open": 17346.390625, "high": 17414.2109375, "low": noisy,
+             "close": 17336.419921875, "volume": 107600000,
+             "availableFrom": f"2026-08-{day:02d}T07:00:00Z", "adjusted": False}
+            for day in range(1, 31)]
+    monkeypatch.setattr(scanner, "_N225_ANALOG_HISTORY", {})
+    monkeypatch.setitem(scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE, "^N225",
+                        {"data": rows, "expires": 0, "acquiredAt": "2026-09-01T07:30:00Z"})
+    monkeypatch.setattr(scanner, "_N225_CHART_KNOWLEDGE", {"contentDigest": None, "knownAt": None})
+    chart = scanner._n225_chart_rows()
+    assert len(chart) == 30
+    for bar in chart:
+        for key in ("open", "high", "low", "close"):
+            assert round(bar[key], 2) == bar[key]
+            assert argus_verified_snapshot._portable_number(bar[key]) == \
+                _browser_portable_number(bar[key])
+        assert bar["low"] <= min(bar["open"], bar["close"]) <= max(bar["open"], bar["close"]) <= bar["high"]

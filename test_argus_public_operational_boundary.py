@@ -1489,7 +1489,8 @@ def test_index_chart_reads_keep_original_provider_revision(monkeypatch):
             scanner._index_chart_calculate("N225", "daily")
     assert inputs[0] == inputs[1]
     assert inputs[0][-1]["knownAt"] == "2026-09-15T10:00:00.000000Z"
-    assert inputs[0][-1]["close"] == rows[-1]["close"]
+    # 2026-10-24: Nikkei prices are kept at the index's two decimals.
+    assert inputs[0][-1]["close"] == round(rows[-1]["close"], 2)
     # 2026-10-23: the Nikkei 225 rows are the verified view's rows. The same
     # bars received again keep their first knowledge time (no re-publication);
     # different bars are a new revision.

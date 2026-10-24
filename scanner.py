@@ -38533,12 +38533,22 @@ def _n225_chart_rows():
         else:
             known_at = latest
             _N225_CHART_KNOWLEDGE.update(contentDigest=content, knownAt=known_at)
+    # The index is published to two decimals. Yahoo's ^N225 carries binary
+    # float noise (17278.119140625) that sits exactly on an 8-decimal rounding
+    # tie, where Python (half-even) and the browser's toFixed (half-up) give
+    # different payload hashes, so the screen rejected every verified Nikkei
+    # view (2026-10-24, payload_hash_mismatch). Rounding is monotone, so the
+    # high/low ordering of each bar is kept.
+    def _index_price(value):
+        return (round(float(value), 2)
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+                else value)
     history = {
         "dates": [str(row.get("date"))[:10] for row in rows],
-        "opens": [row.get("open") for row in rows],
-        "highs": [row.get("high") for row in rows],
-        "lows": [row.get("low") for row in rows],
-        "closes": [row.get("close") for row in rows],
+        "opens": [_index_price(row.get("open")) for row in rows],
+        "highs": [_index_price(row.get("high")) for row in rows],
+        "lows": [_index_price(row.get("low")) for row in rows],
+        "closes": [_index_price(row.get("close")) for row in rows],
         "volumes": [row.get("volume") for row in rows],
         "adjusted": [False] * len(rows),
     }
