@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # 2026-10-23 オーナー承認: 答え合わせのデータの名前に指数(INDEX)を足した正確な内容(日経平均そのものへの置き換え)。
+    # 承認の言葉は argus_market_replay.py の build_context のコメントに記録。次の変更はまた止まる。
+    'argus_market_replay.py': '1f84b6bcec622db9f7e0573aab16f7797b026a7c',
     # 2026-10-23 オーナー承認: 米国の日足(OHLCV_BAR)の優先順の先頭に moomoo の確定足を加えた正確な内容。
     # 承認の言葉は argus_market_data_truth.py の該当行のコメントに記録。次の変更はまた止まる。
     'argus_market_data_truth.py': '399a3811f726232432ecfad50d24b2bd6bac26f0',

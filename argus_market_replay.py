@@ -765,6 +765,9 @@ def build_context(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
         raise ValueError("unsupported_horizon")
     # 2026-10-23: the instrument id names the real kind (the Nikkei 225 is
     # "JP:N225:INDEX"). ETF ids keep their existing form and saved records.
+    # オーナー承認(2026-10-23、本人の言葉):「全て日経平均そのもので見ること」
+    # 「日経平均の値(立花リアルタイム、無い時はYahooの遅延値)を日本の判断の取得元として認めます。
+    # 現在の判断の対象を日経平均に移してください」
     if asset_type not in INSTRUMENT_TYPES:
         raise ValueError("unsupported_instrument_type")
     requested_as_of = now_iso or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
