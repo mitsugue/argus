@@ -133,6 +133,7 @@ import argus_macro_release_watch
 import argus_macro_material
 import argus_brief_schedule  # 2026-10-17: owner-fixed update times of the integrated view
 import argus_market_position_check  # 2026-10-24: N-19 public-source check of the market position
+import argus_presentation_repair  # 2026-10-24: fix rule-fixable layout faults before a second model call
 import argus_macro_release_reaction
 import argus_market_position_memory
 import argus_ex_dividend
@@ -18587,6 +18588,20 @@ def _market_brief_ai_polish(brief):
         try:
             return argus_presentation_intent.validate_plan(value.get("presentation"), presentation_catalog, context)
         except ValueError as exc:
+            # 2026-10-24 (cost, measured): most second calls were layout faults
+            # a rule fixes without touching the model's text. The repaired plan
+            # passes the same full validation or the bounded correction runs.
+            if str(exc) in argus_presentation_repair.REPAIRABLE:
+                repaired, changes = argus_presentation_repair.repair(
+                    value.get("presentation"), presentation_catalog, context)
+                if repaired is not None:
+                    try:
+                        plan = argus_presentation_intent.validate_plan(repaired, presentation_catalog, context)
+                    except ValueError:
+                        plan = None
+                    if plan is not None:
+                        diagnostic["presentationRepair"] = {"from": str(exc), "changes": changes[:12]}
+                        return plan
             diagnostic.update(status="REJECTED", reason="presentation_invalid",
                               section="presentation", detail=str(exc))
             return None
