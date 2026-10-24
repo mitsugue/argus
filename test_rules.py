@@ -1048,32 +1048,6 @@ def test_crypto_event_records_with_long_dedup(monkeypatch):
 
 
 # ── Pro Handoff includes active-event dossier (v10.45.1, GPT #12) ──────
-def test_pro_handoff_events_section(monkeypatch):
-    # Hermetic: _pro_events_section() calls _events_restore_once() which pulls the
-    # LIVE event store over the network — during market hours that refills the
-    # list and broke the == "" assertion (the CI failure at 13:46 JST). Pin the
-    # restore to a no-op so the test only sees what we set here.
-    monkeypatch.setattr(scanner, "_events_restore_once", lambda: None)
-    scanner._EVENTS_ACTIVE.clear(); scanner._EVENTS_LOG.clear()
-    assert scanner._pro_events_section() == ""            # no events -> nothing added
-    scanner._EVENTS_ACTIVE["JP:9999:LIMIT_UP"] = {
-        "eventId": "e1", "eventType": "LIMIT_UP", "severity": 5, "symbol": "9999",
-        "market": "JP", "deduplicationKey": "JP:9999:LIMIT_UP", "expiresAt": "2099-01-01T00:00:00Z",
-        "dossier": {"researchPosture": "LIMIT_UP_RISK", "researchConfidence": 0.6,
-                    "whatHappenedJa": "S高到達", "marketScope": "company_specific",
-                    "probableCause": [{"label": "flow_driven", "probability": 0.5}, {"label": "unknown", "probability": 0.5}],
-                    "nextSessionScenarios": [{"label": "gap_and_fade", "probability": 0.6}, {"label": "large_gap_up", "probability": 0.4}],
-                    "trapRisks": ["squeeze_exhaustion"], "reviewVerdict": "CAUTION",
-                    "reviewObjectionsJa": ["公式材料なし"], "invalidationConditions": ["x"],
-                    "missingData": ["y"], "confirmedFacts": []}}
-    sec = scanner._pro_events_section()
-    assert "9999" in sec and "LIMIT_UP_RISK" in sec               # event + posture
-    assert "公式の確認済み事実なし" in sec                          # facts separated honestly
-    assert "売買指示ではない" in sec                               # no-trade disclaimer
-    scanner._EVENTS_ACTIVE.clear()
-
-
-# ── EDINET official-filing source (v10.48) ────────────────────────────
 def test_edinet_match_symbol():
     results = [{"secCode": "72030", "filerName": "トヨタ自動車", "docDescription": "有価証券報告書", "docID": "S1"},
                {"secCode": "99840", "filerName": "ソフトバンクG", "docDescription": "大量保有報告書", "docID": "S2"},

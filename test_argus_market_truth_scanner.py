@@ -339,38 +339,6 @@ def test_rate_provider_disagreement_survives_every_downstream_adapter(monkeypatc
         assert row["providerEvidence"]["alternates"]
         assert row["providerEvidence"]["disagreement"]["status"] == "PRESENT"
 
-    empty = {"status": "live", "stocks": [], "events": [], "labels": [],
-             "items": [], "sources": []}
-    regime = {
-        "status": "live", "engineVersion": "regime-v1",
-        "regime": {}, "ratesBackdrop": backdrop, "matrix": {},
-        "rotationGroups": [], "topRotations": [],
-        "supportingEvidence": [], "sourceStatuses": {},
-    }
-    monkeypatch.setattr(scanner, "get_rates_snapshot", lambda: rates)
-    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot", lambda: empty)
-    monkeypatch.setattr(scanner, "get_us_watchlist_snapshot", lambda: empty)
-    monkeypatch.setattr(scanner, "get_events_snapshot", lambda: empty)
-    monkeypatch.setattr(scanner, "get_action_labels", lambda: empty)
-    monkeypatch.setattr(scanner, "get_catalysts_snapshot", lambda: empty)
-    monkeypatch.setattr(scanner, "get_market_regime_snapshot", lambda: regime)
-    for name in ("_pro_events_section", "_pro_downside_section"):
-        monkeypatch.setattr(scanner, name, lambda: "")
-    for name in ("_institutional_signals", "_flow_attribution_list",
-                 "_supply_demand_list", "_scenario_list", "_trade_plan_list",
-                 "_action_priority_items", "_watchlist_theme_items"):
-        monkeypatch.setattr(scanner, name, lambda *args, **kwargs: [])
-    monkeypatch.setattr(scanner, "_session_brief_public", lambda: {})
-    handoff = scanner._build_pro_handoff()
-    assert handoff["rateTruthEvidence"] == evidence
-    prompt = handoff["promptText"]
-    assert "Canonical Rate Provider Evidence" in prompt
-    assert "us10y: selectedProvider=yahoo" in prompt
-    assert argus_market_data_truth.AUTHORITY_POLICY_ID in prompt
-    assert "fred:4.2" in prompt
-    assert "disagreement=PRESENT" in prompt
-    assert "delta=[fred." in prompt
-
 
 def test_future_and_missing_rate_observations_fail_before_market_truth():
     received = "2026-08-14T00:59:50Z"

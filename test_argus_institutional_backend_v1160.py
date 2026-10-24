@@ -52,10 +52,9 @@ def test_cause_attribution_carries_institutional_notes(monkeypatch):
     assert len(sigs) <= 2
 
 
-def test_pro_handoff_retired_without_building_or_acquiring(monkeypatch):
-    def forbidden():
-        raise AssertionError("retired prompt construction executed")
-    monkeypatch.setattr(scanner, "_build_pro_handoff", forbidden)
+def test_pro_handoff_retired_without_building_or_acquiring():
+    # 2026-10-24: the prompt builder is deleted; the route is a fixed 410.
+    assert not hasattr(scanner, "_build_pro_handoff")
     with scanner.app.test_client() as c:
         response = c.get("/api/argus/pro-handoff")
     assert response.status_code == 410
