@@ -95,3 +95,38 @@ def test_nikkei_rows_wait_for_an_acquisition_time(monkeypatch):
                          "acquiredAt": "2026-09-02T07:30:00Z"})
     assert {row["knownAt"] for row in scanner._n225_chart_rows()} == {
         "2026-09-02T07:30:00.000000Z"}
+
+
+def test_producer_restores_saved_history_after_a_restart(monkeypatch):
+    """The release seed runs before the collection lane: the producer reads the
+    saved history (local file) and may refresh the received window; a cached
+    read restores the saved history but never requests the provider."""
+    rows = [{"instrumentId": "NIKKEI_225_INDEX", "date": f"2026-08-{day:02d}",
+             "open": 1.0, "high": 1.0, "low": 1.0, "close": float(day), "volume": 1,
+             "availableFrom": f"2026-08-{day:02d}T07:00:00Z", "adjusted": False}
+            for day in range(1, 31)]
+    calls = []
+    monkeypatch.setattr(scanner, "_N225_ANALOG_HISTORY", {})
+    monkeypatch.setattr(scanner, "_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE", {})
+    monkeypatch.setattr(scanner, "_N225_CHART_KNOWLEDGE",
+                        {"contentDigest": None, "knownAt": None})
+
+    def restore():
+        calls.append("restore")
+        scanner._N225_ANALOG_HISTORY.update(
+            data=rows, currentSourceAcquiredAt="2026-08-30T08:00:00Z")
+        return None
+
+    def yahoo(symbol, instrument, *, fetch=False, **kwargs):
+        calls.append(("yahoo", symbol, fetch))
+        return []
+
+    monkeypatch.setattr(scanner, "_n225_analog_history_restore", restore)
+    monkeypatch.setattr(scanner, "_yahoo_index_ohlcv", yahoo)
+    cached = scanner._chart_history_cached("N225", "JP")
+    assert calls == ["restore"]
+    produced = scanner._chart_history("N225", "JP")
+    assert calls == ["restore", "restore", ("yahoo", "^N225", True)]
+    assert cached == produced and len(produced) == 30
+    assert produced[-1]["close"] == 30.0
+    assert {row["knownAt"] for row in produced} == {"2026-08-30T08:00:00.000000Z"}

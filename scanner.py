@@ -38460,7 +38460,7 @@ def _chart_weekly_rows(rows):
 
 def _chart_history(symbol, market):
     if market == "JP" and str(symbol).upper() == "N225":
-        return _n225_chart_rows()
+        return _n225_chart_history(fetch=True)
     if market == "JP":
         history = _jq_price_history(symbol[:4])
         cache = _JQ_HISTORY_CACHE.get(symbol[:4])
@@ -38480,7 +38480,7 @@ def _chart_history(symbol, market):
 def _chart_history_cached(symbol, market):
     """Return only a fresh provider cache entry; scheduled ticks never fetch."""
     if market == "JP" and str(symbol).upper() == "N225":
-        return _n225_chart_rows()
+        return _n225_chart_history(fetch=False)
     now = time.time()
     cache = (_JQ_HISTORY_CACHE.get(symbol[:4]) if market == "JP"
              else _TD_HISTORY_CACHE.get(symbol))
@@ -38562,6 +38562,28 @@ def _n225_chart_rows():
     return _chart_rows_from_history(
         history, market="JP", provider="yahoo_index", known_at=known_at,
         dataset_id=f"yahoo_index:^N225:{known_at}")
+
+
+def _n225_chart_history(*, fetch):
+    """The Nikkei 225 rows for a verified-view producer or a cached read.
+
+    Right after a restart (the release seed runs before the collection lane)
+    neither the saved ten-year history nor the received window is in memory
+    yet. The saved history is a local file and is read once; the producer may
+    then refresh the received window with the same bounded request the
+    collection lane makes (a fresh window is reused, never re-fetched).
+    """
+    try:
+        _n225_analog_history_restore()
+    except Exception:
+        pass
+    if fetch:
+        try:
+            _yahoo_index_ohlcv("^N225", "NIKKEI_225_INDEX", fetch=True,
+                               available_hour_utc=7)
+        except Exception:
+            pass
+    return _n225_chart_rows()
 
 
 def _index_cache_chart_rows(index):
