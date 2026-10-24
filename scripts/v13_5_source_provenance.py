@@ -689,6 +689,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_cftc_weekly_catchup.py",
     "web/src/lib/nikkeiSp500.ts",
     "web/scripts/nikkei-sp500.test.cjs",
     "test_argus_downside_nikkei.py",
