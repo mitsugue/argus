@@ -40120,7 +40120,7 @@ def _decision_evidence_n225_live_row():
     if isinstance(change, (int, float)) and not isinstance(change, bool) \
             and math.isfinite(float(change)):
         row["changePct"] = float(change)
-    return row, ("tachibana" if realtime else "yahoo")
+    return row, ("tachibana_index" if realtime else "yahoo_index")
 
 
 def _decision_evidence_watch_row(symbol, market):
@@ -40231,7 +40231,7 @@ def _decision_evidence_history_row(symbol, market):
         quote["changePct"] = change_pct
     # The Nikkei 225 daily series is Yahoo's ^N225 (the delayed value the owner
     # approved when Tachibana has no current value).
-    provider = ("yahoo" if symbol == "N225"
+    provider = ("yahoo_index" if symbol == "N225"
                 else "jquants" if market == "JP" else "twelvedata")
     return quote, provider
 
@@ -40242,15 +40242,20 @@ def _decision_evidence_market_artifact(symbol, market, cutoff, build_identity):
         row, provider = _decision_evidence_history_row(symbol, market)
     if not isinstance(row, dict):
         return None, "quote_row_unavailable"
+    # The Nikkei 225 is a cash index: its value is an INDEX_LEVEL fact, whose
+    # only sources are the index ones (owner approval 2026-10-23). It never
+    # widens the sources of an individual stock's QUOTE.
+    fact_type = "INDEX_LEVEL" if symbol == "N225" else "QUOTE"
     observations = _canonical_quote_observations(
-        [(market, provider, row)], cutoff, bare_instrument_ids=True)
+        [(market, provider, row)], cutoff, bare_instrument_ids=True,
+        fact_type=fact_type)
     if not observations:
         return None, "no_admissible_quote_observation"
     try:
         artifact = argus_market_data_truth.build_decision_snapshot(
             observations,
             requests=[{"instrumentId": symbol, "market": market,
-                       "factType": "QUOTE",
+                       "factType": fact_type,
                        "currency": "JPY" if market == "JP" else "USD",
                        "required": True}],
             decision_at=cutoff, generated_at=cutoff,
@@ -50653,7 +50658,7 @@ def _daily_close_fresh_until(market, observed_dt, decision_dt):
 
 
 def _canonical_quote_observations(rows, decision_at, *,
-                                  bare_instrument_ids=False):
+                                  bare_instrument_ids=False, fact_type="QUOTE"):
     observations = []
     seen = set()
     try:
@@ -50756,8 +50761,9 @@ def _canonical_quote_observations(rows, decision_at, *,
             try:
                 observation = argus_market_data_truth.build_observation(
                     instrument_id=instrument_id, symbol=symbol, market=market,
-                    asset_type=_canonical_truth_asset_type(symbol, market),
-                    fact_type="QUOTE", values=values, provider=provider,
+                    asset_type=("INDEX" if fact_type == "INDEX_LEVEL"
+                                else _canonical_truth_asset_type(symbol, market)),
+                    fact_type=fact_type, values=values, provider=provider,
                     adapter="scanner_quote_adapter_v1",
                     source_ref=(f"{provider}:{symbol}:{source_raw}"[:256]),
                     observed_at=observed, received_at=received,
