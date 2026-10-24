@@ -36,6 +36,7 @@ import {
 } from '../domain/marketInstruments';
 import { useAssets } from '../hooks/useAssets';
 import { usePublicDiagnostics } from '../hooks/useSystemHealth';
+import { ownerStockActionJa } from '../domain/ownerStockActionLabel';
 import {
   buildDataGatedInputV2, evaluateSingleDecisionAuthority,
   SINGLE_DECISION_AUTHORITY_V2_POLICY,
@@ -505,7 +506,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         isHeld: item.isHeld,
         impact: action === 'BUY' ? 'Good' as const
           : action === 'REDUCE' || action === 'EXIT' ? 'Bad' as const : 'Neutral' as const,
-        actionJa: `${action} · 最終判断${canonical?.status === 'DATA_GATED' ? ' DATA GATED' : ''}`,
+        actionJa: ownerStockActionJa(canonical),
         checkNextJa: item.checkNextJa,
         whatWouldChangeJa: item.whatWouldChangeJa,
       }; });
