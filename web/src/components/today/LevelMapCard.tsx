@@ -65,6 +65,8 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
   if (!state || !map || !state.latest) return null;
   const history = validValuationHistory(state.chart?.valuationHistory)
     && state.chart.valuationHistory.lastDate <= map.epsDate ? state.chart.valuationHistory : null;
+  // During the manual calibration the comparison uses the uncalibrated estimates and its own line.
+  const uncalibrated = history?.beforeManualCalibration === true;
   const perRows = nearestPerRows(map, state.chart?.nearest);
   const above = perRows.filter(r => r.side === 'UP').sort((a, b) => a.price - b.price)[0];
   const below = perRows.filter(r => r.side === 'DOWN').sort((a, b) => b.price - a.price)[0];
@@ -80,10 +82,10 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
     {current && <p className="lm-note">EPS {map.epsDate.slice(5).replace('-', '/')}推計{state.chart?.displayMap?.valuationPending ? '・当日分の入力待ち' : ''}</p>}
     <div className="lm-use">
       <b>過去と比べて、利益に対する株価は高いか</b>
-      {history?.sufficient && above?.multiple === history.upperMultiple ? <>
+      {history?.sufficient && (uncalibrated || above?.multiple === history.upperMultiple) ? <>
         <p><strong>{history.upperMultiple}倍は、この期間の中央値{history.median.toFixed(1)}倍{history.upperMultiple > history.median ? 'より上' : history.upperMultiple < history.median ? 'より下' : 'と同じ位置'}です。</strong></p>
         <p>{history.upperMultiple}倍以上の日は <strong>{history.atOrAboveUpper} / {history.count}営業日</strong>。最高は{history.maximum.toFixed(1)}倍でした。</p>
-        <small>{history.firstDate.replaceAll('-', '/')}〜{history.lastDate.replaceAll('-', '/')} · 同じ方式で再計算{history.missingSessions ? ` · 未集計${history.missingSessions}日` : ''}</small>
+        <small>{history.firstDate.replaceAll('-', '/')}〜{history.lastDate.replaceAll('-', '/')} · {uncalibrated ? '補正前の推計で比較' : '同じ方式で再計算'}{history.missingSessions ? ` · 未集計${history.missingSessions}日` : ''}</small>
       </> : <p>集計中</p>}
     </div>
     <div className="lm-reach" aria-label="同じ距離の過去の到達割合">

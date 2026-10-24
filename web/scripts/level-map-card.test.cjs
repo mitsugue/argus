@@ -59,6 +59,12 @@ for (const invalid of [{...history,basis:'INDEX_WEIGHTED'},{...history,lastDate:
  {...history,atOrAboveUpper:601},{...history,sufficient:false}]) {
  assert.ok(!renderHistory(invalid).includes('210 / 600営業日'));
 }
+// 2026-10-24: during the manual calibration the comparison stays among the uncalibrated estimates, marked.
+assert.ok(renderHistory(history).includes('同じ方式で再計算') && !renderHistory(history).includes('補正前の推計で比較'));
+const uncalibrated = renderHistory({...history,upperMultiple:17,beforeManualCalibration:true});
+assert.ok(uncalibrated.includes('17倍は、この期間の中央値16.9倍より上') && uncalibrated.includes('補正前の推計で比較'), uncalibrated);
+assert.ok(!uncalibrated.includes('同じ方式で再計算'));
+assert.ok(!renderHistory({...history,upperMultiple:17}).includes('中央値16.9倍'), 'an unmarked other line stays hidden');
 
 const closingAtr=latest.atr14;
 const closing = {...latest,displayOnly:true,asOf:'2026-10-05',morningOf:'2026-10-06',

@@ -42157,7 +42157,9 @@ def _level_map_public():
         chart = jp_market_chart_layers.snapshot(chart_rows, eps, chart_morning,
                                                 _CANDIDATES.get("views", []), now_iso=chart_now)
         if calibration and calibration.get('enabled') and chart:
-            chart['valuationHistory'] = None
+            # 2026-10-24: the comparison stays, among the uncalibrated estimates only.
+            chart['valuationHistory'] = jp_market_chart_layers.uncalibrated_valuation_history(
+                chart_rows, _level_map_admitted_eps(), chart_morning, now_iso=chart_now)
     except (ValueError, TypeError, KeyError, OverflowError) as exc:
         chart_error = type(exc).__name__
     return {"schemaVersion": "jp-market-level-map-state-v1", "status": _LEVEL_MAP.get("status"),
