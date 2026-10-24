@@ -902,7 +902,7 @@ def test_stored_event_is_reclassified_once_by_rules_only():
     assert result["reviewed"] == 1 and result["audit"][0]["eventType"] == "CYBER_SECURITY"
     assert result["audit"][0]["aiCalled"] is False
     assert fixed["eventType"] == "CYBER_SECURITY" and fixed["themeTags"] == ["CYBER"]
-    assert fixed["policyVersion"] == ni.NEWS_POLICY_VERSION == "news-policy-v8"
+    assert fixed["policyVersion"] == ni.NEWS_POLICY_VERSION == "news-policy-v9"
     assert set(fixed["impactDirection"]["directionByTarget"].values()) == {"UNCLEAR"}
     # Only the family component leaves; no retroactive alert; history kept.
     assert fixed["severity"] == "WATCH" and fixed["alertEligible"] is False
@@ -1104,8 +1104,8 @@ def test_the_market_summary_rides_in_the_same_request_as_data():
     assert long.count("ゑ") == ni.MARKET_CONTEXT_LIMIT == 300
 
 
-def _war_materiality(ai=None, reaction=None, corroboration=None):
-    subject = "【速報】ロシア軍がポーランドに侵攻"
+def _war_materiality(ai=None, reaction=None, corroboration=None,
+                     subject="【速報】ロシア軍がポーランドを空爆"):
     return ni.evaluate_materiality(taxonomy=ni.classify_event(subject), staleness="FRESH_BREAKING",
                                    source_authenticated=True, ai_analysis=ai,
                                    corroboration=corroboration or {}, subject=subject,
@@ -1135,12 +1135,16 @@ def test_a_market_reaction_after_the_news_adds_one_step():
     assert cpi["severity"] == "HIGH"
 
 
-def test_war_start_with_existing_rules():
-    """Owner 2026-10-23 example. No dedicated rule was added: the existing
-    rules give the invasion headline the conflict family; with the AI's
-    reading and the market's reaction it reaches CRITICAL."""
-    assert ni.classify_event("【速報】ロシア軍がポーランドに侵攻")["eventType"] == "WAR_ESCALATION"
-    assert _war_materiality()["severity"] == "WATCH"                       # rules alone
+def test_war_start_is_critical_by_rule():
+    """Owner 2026-10-23: 「戦争が始まった。これはクリティカル」. v9 makes the
+    start of a war CRITICAL from the headline alone, whatever the AI says
+    about today's focus; an escalation that is not a start still needs the
+    AI's reading and the market's reaction to reach CRITICAL."""
+    invasion = "【速報】ロシア軍がポーランドに侵攻"
+    assert ni.classify_event(invasion)["eventType"] == "WAR_ESCALATION"
+    assert _war_materiality(subject=invasion)["severity"] == "CRITICAL"         # rules alone
+    assert _war_materiality(ai=_ai(0, 0), subject=invasion)["severity"] == "CRITICAL"
+    assert _war_materiality()["severity"] == "WATCH"                            # an airstrike
     assert _war_materiality(ai=_ai(3, 0))["severity"] == "HIGH"
     reacted = {"confirmed": True, "signals": ["vix_spike", "fx_shock"], "measuredAfterNews": True}
     assert _war_materiality(ai=_ai(3, 3), reaction=reacted)["severity"] == "CRITICAL"
@@ -1261,3 +1265,153 @@ def test_calibration_summary_counts_per_severity_and_relevance():
                      for r in rows]
     assert ni.summarize_judgment_calibration(reversed_rows)["monotonic"] is False
     assert ni.summarize_judgment_calibration([])["monotonic"] is None
+
+
+# ── v9 (owner 2026-10-23): the start of a crisis is read as one ────────────
+def _rule_severity(subject, **kw):
+    materiality = ni.evaluate_materiality(
+        taxonomy=ni.classify_event(subject), staleness=kw.pop("staleness", "FRESH_BREAKING"),
+        source_authenticated=kw.pop("authenticated", True), ai_analysis=kw.pop("ai", None),
+        corroboration={}, subject=subject, **kw)
+    return materiality
+
+
+WAR_STARTS = ("戦争が始まった", "【速報】戦争始まる", "米イラン開戦", "ロシア、ウクライナに宣戦布告",
+              "中国軍が台湾に上陸", "ロシア、ウクライナに侵攻", "ロシア軍、ウクライナへの侵攻を開始",
+              "ロシアがウクライナに軍事侵攻", "中国軍、台湾への上陸作戦", "イスラエル軍がイランに全面攻撃",
+              "ついに戦争が始まった", "Russia invades Ukraine", "China declares war on Taiwan",
+              "War breaks out between India and Pakistan")
+
+
+def test_the_start_of_a_war_is_an_armed_conflict_and_critical_by_rule():
+    for subject in WAR_STARTS:
+        taxonomy = ni.classify_event(subject)
+        assert "WAR_ESCALATION" in taxonomy["families"], subject
+        assert taxonomy["eventType"] in ("WAR_ESCALATION", "IRAN"), subject
+        assert ni.outbreak_event(subject)["kind"] == "WAR_OUTBREAK", subject
+        materiality = _rule_severity(subject)
+        assert materiality["severity"] == "CRITICAL", subject
+        assert "outbreak_war_outbreak" in materiality["reasons"], subject
+        direction = ni.evaluate_impact_direction(taxonomy=taxonomy, subject=subject)
+        assert direction["polarity"] == "escalate" and direction["primaryDirection"] == "BEARISH", subject
+    # 「開戦」「宣戦布告」「軍が上陸」 were in no family under v8.
+    assert ni.classify_event("開戦")["eventType"] == "WAR_ESCALATION"
+    assert ni.classify_event("戦争始まる")["eventType"] == "WAR_ESCALATION"
+
+
+CRISIS_STARTS = {
+    "NUCLEAR_USE": ("ロシアがウクライナに核攻撃", "ロシア、戦術核兵器を使用",
+                    "Russia uses tactical nuclear weapon"),
+    "MAJOR_TERROR": ("パリで同時多発テロ", "大規模テロで死者多数", "爆弾テロで300人死亡"),
+    "LEADER_ASSASSINATION": ("米大統領が銃撃され死亡", "首相が銃撃され死亡", "ロシアの大統領が暗殺"),
+    "MAJOR_FINANCIAL_FAILURE": ("米証券大手、破産法申請", "米地銀が経営破綻 2008年以来最大",
+                                "欧州金融大手が経営破綻"),
+    "EMERGENCY_POLICY": ("FRB、緊急利下げ 0.5%", "日銀、臨時会合で利下げを決定",
+                         "Fed announces emergency rate cut"),
+    "TOKYO_EARTHQUAKE": ("首都直下地震が発生", "東京23区で震度6強", "東京都心で震度７"),
+}
+
+
+def test_each_crisis_opening_kind_is_critical_without_ai_or_market():
+    assert set(CRISIS_STARTS) | {"WAR_OUTBREAK"} == set(ni.OUTBREAK_KINDS)
+    for kind, subjects in CRISIS_STARTS.items():
+        for subject in subjects:
+            assert ni.outbreak_event(subject)["kind"] == kind, subject
+            materiality = _rule_severity(subject)
+            assert materiality["severity"] == "CRITICAL", subject
+            assert materiality["outbreakEvent"]["kind"] == kind
+            assert materiality["confirmationState"] == "MARKET_CONFIRMATION_PENDING"
+
+
+NOT_A_START = (
+    # Words that use "war" or a crisis word without one starting.
+    "貿易戦争が始まる", "価格競争が激化", "受験戦争が始まる", "戦争の終結", "ウクライナで停戦合意",
+    "開戦から1年", "ウクライナ侵攻から3年", "日米開戦の日", "開戦の可能性", "米イラン開戦か",
+    "インフレに宣戦布告", "楽天、アマゾンに宣戦布告", "米コーヒー大手、日本上陸作戦",
+    "AI戦争が始まった", "中国EV、日本市場へ侵攻開始", "台風が上陸", "ゴジラ、東京に上陸",
+    "公開戦略を見直し", "海外展開戦略", "Fed declares war on inflation",
+    "テロ対策を強化", "同時多発テロから25年", "テロ計画で3人逮捕", "大規模テロを警戒",
+    "核融合発電の実用化", "核兵器の使用を示唆", "北朝鮮が核実験", "核攻撃の脅威",
+    "大手銀の破綻懸念が後退", "大手銀の破綻を回避", "地銀が経営破綻", "大手証券の破綻から15年",
+    "首相暗殺未遂", "元首相が銃撃され死亡", "副大統領が暗殺", "大統領暗殺の映画が公開",
+    "FRB緊急利下げ観測", "米政権、FRBに緊急利下げを要求", "日銀、臨時の国債買い入れ",
+    "首都直下地震の被害想定見直し", "首都直下地震、30年以内の確率70%", "東京で震度4",
+    "【解説】戦争が始まった理由")
+
+
+def test_look_backs_possibilities_metaphors_and_endings_are_not_a_start():
+    for subject in NOT_A_START:
+        assert ni.outbreak_event(subject) is None, subject
+        assert _rule_severity(subject)["severity"] != "CRITICAL", subject
+    for subject in ("貿易戦争が始まる", "受験戦争が始まる", "戦争の終結", "開戦から1年",
+                    "インフレに宣戦布告", "AI戦争が始まった", "米コーヒー大手、日本上陸作戦"):
+        assert "WAR_ESCALATION" not in ni.classify_event(subject)["families"], subject
+        assert ni._detect_polarity(subject) != "escalate", subject
+    assert "GEOPOLITICS" not in ni.classify_event("受験戦争が始まる")["families"]
+
+
+def test_crisis_rule_keeps_the_existing_caps():
+    subject = "【速報】米イラン開戦"
+    assert _rule_severity(subject, authenticated=False)["severity"] == "WATCH"
+    assert _rule_severity(subject, staleness="STALE")["severity"] == "WATCH"
+    # Read from the headline only: an excerpt that names a war start does not
+    # make an unrelated headline CRITICAL.
+    excerpt_only = ni.evaluate_materiality(
+        taxonomy=ni.classify_event("日経平均、続伸", "米イラン開戦の報道"),
+        staleness="FRESH_BREAKING", source_authenticated=True, ai_analysis=None,
+        corroboration={}, subject="日経平均、続伸", content_text="米イラン開戦の報道")
+    assert excerpt_only["severity"] != "CRITICAL" and excerpt_only["outbreakEvent"] is None
+
+
+def test_geopolitical_escalation_carries_the_risk_off_hypothesis():
+    assert ni.CONFIRMATION_EXPECTATIONS[("GEOPOLITICS", "escalate")] == \
+        ni.CONFIRMATION_EXPECTATIONS[("WAR_ESCALATION", "escalate")] == \
+        {"oil": 1, "vix": 1, "usdJpy": -1}
+    subject, excerpt = "中東情勢が緊迫", "イスラエルとイランが開戦した。"
+    taxonomy = ni.classify_event(subject, excerpt)
+    assert taxonomy["eventType"] == "GEOPOLITICS"
+    direction = ni.evaluate_impact_direction(taxonomy=taxonomy, subject=subject, excerpt=excerpt)
+    assert direction["polarity"] == "escalate" and direction["ruleFamily"] == "GEOPOLITICS"
+    assert direction["directionByTarget"]["broadMarket"] == "BEARISH"
+    assert direction["directionByTarget"]["energy"] == "BULLISH"
+    # A reaction measured afterwards in that direction can now raise it.
+    judgment = ni.start_judgment(
+        materiality={"severity": "HIGH", "score": 2}, ai_analysis=None, family="GEOPOLITICS",
+        decided_at=T0, observation=_obs(0, 18.0, 150.0, 4.30, 40000),
+        expected_directions=ni.CONFIRMATION_EXPECTATIONS[("GEOPOLITICS", "escalate")])
+    ni.update_judgment(judgment, _obs(2, 20.6, 148.0, 4.30, 39000), now_iso=_at(2))
+    assert ni.late_market_reaction(judgment)["confirmed"] is True
+    # An ending stays de-escalation; a war word without a start has no direction.
+    assert ni._detect_polarity("戦争の終結") is None
+    assert ni._detect_polarity("中東で停戦合意") == "deescalate"
+
+
+def test_v9_raises_retained_crisis_headlines_once_without_ai():
+    started = _stored_v6("【速報】戦争始まる", "GEOPOLITICS", "HIGH",
+                         ["family_geopolitics", "ai_materiality_high"], "nie-00000000000000a1")
+    same_family = _stored_v6("ロシア軍がポーランドに侵攻", "WAR_ESCALATION", "WATCH",
+                             ["family_war_escalation"], "nie-00000000000000a2")
+    stale = _stored_v6("米イラン開戦", "IRAN", "WATCH",
+                       ["family_iran", "stale_capped"], "nie-00000000000000a3")
+    look_back = _stored_v6("開戦から1年", "GEOPOLITICS", "WATCH",
+                           ["family_geopolitics"], "nie-00000000000000a4")
+    events = {e["eventId"]: e for e in (started, same_family, stale, look_back)}
+    for event in events.values():
+        event["policyVersion"] = "news-policy-v8"
+    result = ni.reclassify_stored_events(events, at="2026-10-24T00:00:00Z")
+    assert result["reviewed"] == 4
+    fixed = events[started["eventId"]]
+    assert fixed["eventType"] == "WAR_ESCALATION" and fixed["severity"] == "CRITICAL"
+    assert "outbreak_war_outbreak" in fixed["severityReasons"] and fixed["alertEligible"] is False
+    assert fixed["impactDirection"]["primaryDirection"] == "BEARISH"
+    assert fixed["policyReview"]["outbreakEvent"]["kind"] == "WAR_OUTBREAK"
+    raised = events[same_family["eventId"]]
+    assert raised["eventType"] == "WAR_ESCALATION" and raised["severity"] == "CRITICAL"
+    assert raised["revision"] == same_family["revision"] + 1
+    assert raised["classificationPreviousRevision"]["severity"] == "WATCH"
+    assert raised["executionConstraint"] == "CAUTION"
+    # A cap holds; a look-back is not a start.
+    assert events[stale["eventId"]]["severity"] == "WATCH"
+    assert events[look_back["eventId"]]["severity"] != "CRITICAL"
+    assert all(row["aiCalled"] is False for row in result["audit"])
+    assert ni.reclassify_stored_events(events, at="2026-10-24T00:10:00Z")["reviewed"] == 0

@@ -76,7 +76,7 @@ export const Watchlist: React.FC<Props> = ({
   return (
     <PageShell
       className="watchlist-page"
-      title={assetDetail ? '銘柄の見通し' : '登録銘柄'}
+      title={assetDetail ? '銘柄の見通し' : 'Watchlist'}
       subtitle={assetDetail ? assetFocus?.symbol : undefined}
     >
       {assetDetail && <button type="button" className="asset-btn" onClick={onBackToHoldings}>

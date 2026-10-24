@@ -1082,7 +1082,9 @@ def test_intake_cycle_reclassifies_retained_news_once_without_ai(monkeypatch, ne
 
 
 # ── Owner 2026-10-23: judge against the current market, then check it ──────
-WAR_SUBJECT = "【速報】ロシア軍がポーランドに侵攻"
+# An escalation that is not the start of a war (v9 makes an invasion CRITICAL
+# by rule), so the market-reaction step from HIGH stays observable.
+WAR_SUBJECT = "【速報】ロシア軍がポーランドを空爆"
 
 
 def _iso_after(hours):
@@ -1105,7 +1107,7 @@ def test_news_judgment_reads_the_market_summary_and_is_checked_against_the_marke
         if purpose == "news_intel":
             prompts.append(user)
             calls.append(model)
-            return {"facts": ["ロシア軍がポーランドに侵攻したと報じられた。"],
+            return {"facts": ["ロシア軍がポーランドを空爆したと報じられた。"],
                     "eventTypeCandidate": "WAR_ESCALATION", "entities": [],
                     "causalPathJa": None, "uncertaintyJa": None, "secondOrderJa": None,
                     "materialityGuess": 2, "currentRelevance": 3}
@@ -1187,3 +1189,71 @@ def test_market_position_context_failure_does_not_break_analysis(monkeypatch, ne
         raise RuntimeError("memory unavailable")
     monkeypatch.setattr(scanner, "_market_position_memory_locked", broken)
     assert _real_market_position_news_context() is None
+
+
+# ── v9 (owner 2026-10-23): the start of a crisis is CRITICAL by rule ────────
+OUTBREAK_SUBJECT = "【速報】米イラン開戦"
+
+
+def test_a_war_outbreak_mail_is_critical_on_receipt_with_one_analysis_call(monkeypatch, news_env):
+    calls = []
+
+    def fake_prose(user, *a, purpose="prose", diagnostic=None, **k):
+        if purpose == "news_intel":
+            calls.append(user)
+            return {"facts": ["米国とイランが開戦したと報じられた。"], "eventTypeCandidate": None,
+                    "entities": [], "causalPathJa": None, "uncertaintyJa": None,
+                    "secondOrderJa": None, "materialityGuess": 0, "currentRelevance": 0}
+        return None
+
+    polarities = []
+
+    def fake_corroboration(family, polarity=None):
+        polarities.append((family, polarity))
+        return {"confirmed": False, "signals": [], "readings": [], "missing": [],
+                "expectedDirections": scanner.argus_news_intelligence.CONFIRMATION_EXPECTATIONS.get(
+                    (family, polarity))}
+
+    monkeypatch.setattr(scanner, "_openai_prose", fake_prose)
+    monkeypatch.setattr(scanner, "_market_position_news_context", lambda: "今の焦点: 米国の金利")
+    monkeypatch.setattr(scanner, "_news_corroboration", fake_corroboration)
+    monkeypatch.setattr(scanner, "_news_market_observation", lambda: _observation(0, 18.0, 150.0))
+    assert run_cycle(monkeypatch, {"o1": mail("o1", OUTBREAK_SUBJECT)}) == "HEALTHY"
+    (event_id, event), = scanner._NEWS_INTEL["events"].items()
+    # The AI said "off today's focus"; the rule does not depend on it.
+    assert len(calls) == 1
+    assert event["severity"] == "CRITICAL" and event["alertEligible"] is True
+    assert "outbreak_war_outbreak" in event["severityReasons"]
+    # The intake reads the outbreak as an escalation (the causal memory's own
+    # refresh may consult the sensors afterwards, without a polarity).
+    assert polarities[0] == ("IRAN", "escalate")
+    judgment = scanner._NEWS_INTEL["judgmentOpen"][event_id]
+    assert judgment["expectedDirections"] == {"vix": 1, "usdJpy": -1}
+
+
+def test_intake_cycle_raises_a_retained_war_outbreak_once_without_ai(monkeypatch, news_env):
+    import argus_news_intelligence as ni
+    subject = "【速報】戦争始まる"
+    message = {"eventIdentity": "nie-0123456789abcdef", "fingerprint": "e" * 32,
+               "subject": subject, "headlineJa": subject, "url": None,
+               "receivedIso": "2026-10-21T03:00:00Z", "publishedIso": None}
+    stored = ni.build_news_event(
+        message=message, taxonomy={"eventType": "GEOPOLITICS", "families": ["GEOPOLITICS"],
+                                   "themeTags": [], "basis": "headline"},
+        staleness="FRESH_BREAKING",
+        materiality={"severity": "HIGH", "reasons": ["family_geopolitics", "ai_materiality_high"],
+                     "confirmationState": "MARKET_CONFIRMATION_PENDING"},
+        ai_analysis=None, corroboration={}, analysis_state="DETERMINISTIC_ONLY",
+        processed_iso="2026-10-21T03:01:00Z")
+    stored["policyVersion"] = "news-policy-v8"
+    scanner._NEWS_INTEL["events"][stored["eventId"]] = stored
+    scanner._NEWS_INTEL["order"].append(stored["eventId"])
+    monkeypatch.setattr(scanner, "_openai_prose", lambda *a, **kw: pytest.fail("No AI during reclassification"))
+    assert run_cycle(monkeypatch, {}) == "HEALTHY"
+    run_cycle(monkeypatch, {})
+    event = scanner._NEWS_INTEL["events"][stored["eventId"]]
+    assert event["eventType"] == "WAR_ESCALATION" and event["severity"] == "CRITICAL"
+    assert event["revision"] == 2 and event["alertEligible"] is False
+    assert event["impactDirection"]["primaryDirection"] == "BEARISH"
+    audit = [row for row in scanner._NEWS_INTEL["audit"] if row.get("stage") == "policy_reclassified"]
+    assert len(audit) == 1 and audit[0]["previousSeverity"] == "HIGH" and audit[0]["aiCalled"] is False
