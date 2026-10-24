@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # 2026-10-23 オーナー承認: 答え合わせのデータの名前に指数(INDEX)を足した正確な内容(日経平均そのものへの置き換え)。
+    # 承認の言葉は argus_market_replay.py の build_context のコメントに記録。次の変更はまた止まる。
+    'argus_market_replay.py': '1f84b6bcec622db9f7e0573aab16f7797b026a7c',
     # 2026-10-23 オーナー承認: 米国の日足(OHLCV_BAR)の優先順の先頭に moomoo の確定足を加えた正確な内容。
     # 承認の言葉は argus_market_data_truth.py の該当行のコメントに記録。次の変更はまた止まる。
     'argus_market_data_truth.py': '399a3811f726232432ecfad50d24b2bd6bac26f0',
@@ -164,7 +167,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'b6a29485ddcde3337774d35d8874859c93d67f04',
+    'web/scripts/owner-today-https.mjs': '6b170daa15ca27baf8aa9e413d2ac5e5dd0d176c',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -177,10 +180,10 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-auth-reader.test.mjs': '2a3d9e19c3f7fe2ad315bf4372fd6d617e25b828',
     'web/scripts/owner-auth-reader.mjs': 'ba065d9e5b7a336b27e49d0ee965abcb4bde3f81',
     'web/scripts/owner-auth-reader.integration.test.mjs': 'ab2158287b5fb12d7401fac523e605f4116ecd27',
-    'web/scripts/owner-auth-reader-fixture.py': '5372f2d10d28e627546a31adabc22c18afa87547',
+    'web/scripts/owner-auth-reader-fixture.py': '087a683178544247455292c4e1bc7895272a2db4',
     'test_warm_protected_reads.py': 'a98c373cc722b91de8aa129e4abb827d2c4d1deb',
     'test_owner_auth_reader_contract.py': '1d1912635a35ce91e05f720f69b15f861ae5e29f',
-    'scripts/warm_protected_reads.py': 'fecab3a445ba44a1456e7dd59e2f6789ae389502',
+    'scripts/warm_protected_reads.py': '21a94a5a677589ea306e0581134031e0910d8297',
     'docs/OWNER_TODAY_HTTPS_ACCEPTANCE.md': 'b84ae41e534fb84314e8e4f9279ae300803e0fe9',
     'docs/OWNER_BROWSER_CONTINUITY.md': '3c729f6024df2d90c21601cb59b989e51dcc5364',
     'docs/OWNER_AUTH_READER_MIGRATION.md': 'fb99b3d02f98e06a0f0aeb6919f19ca8e764d48f',
@@ -458,8 +461,8 @@ REVIEWED_EXTENSION_BLOBS = {
     "web/src/components/system/BackupStatusOverview.tsx": "522d4d126f581adc054af2543a1c4313850de9a3",
     "web/src/lib/vault.ts": "adfeb98a71f62ea7b368dac2c1becf8e32d144ac",
     "web/scripts/news-history.test.mjs": "ca77521b1d89cf30a278b9cf01f0bf3ccee8a371",
-    "web/scripts/public-market-acceptance.mjs": "f3e54f6b82d50db054519637e63bd1e4dcb62f1c",
-    "web/scripts/canonical-snapshot-selection.mjs": "97b7e601e60a0c8f1e06e249d714e7e12ad76c5b",
+    "web/scripts/public-market-acceptance.mjs": "f0a942794d49bc4c1f3984b9d81efcedc7447bdc",
+    "web/scripts/canonical-snapshot-selection.mjs": "c815eb02a4b36a60000e35f4dc2a833a855fb457",
     "web/scripts/index-chart-isolation.test.mjs": "70672a0958765b555da39f2df553672dd154933b",
     "argus_osint_engine.py": "82c928299eed09004067283d72cc4b67b07753c5",
     "test_argus_v12_1_1.py": "6ccc4c0775d7595c7de34257c7c82dade1ec2819",
@@ -471,7 +474,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # assertions remove the legacy four-index selector and its duplicate
     # outlook without relaxing the underlying research/truth contracts.
     "test_argus_v12_0_6.py": "37500e007f23849436eb4f42d26c28144efc75f0",
-    "test_argus_v13_1_1.py": "0dcfbd099dd00f4e84b89df51da6a03fa96c2e4f",
+    "test_argus_v13_1_1.py": "45f9a9adca9336098d1ee5bd856a0a5900106c15",
     # Owner-authorized v13.7 operating-cost reduction: retire redundant
     # scheduled workflows while retaining manual recovery and product tests.
     ".github/workflows/ai-rejudge.yml": "9674c680ad54973f71bbc03a2dc335eb299c373b",
@@ -688,6 +691,9 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_today_headline.py",
+    "test_argus_nikkei_market_view.py",
+    "release/v13-snapshot-readiness-contract.json",
     ".github/workflows/closepin-pin.yml",
     "test_jp_market_drop_alert.py",
     "jp_market_drop_alert.py",

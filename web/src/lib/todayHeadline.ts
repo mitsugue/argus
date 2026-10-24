@@ -6,7 +6,9 @@ import type { TodayProjectionInput } from '../domain/argusTodayView';
 // validates shape/semantics and maps entries into existing domain inputs. It
 // never computes market facts and never becomes a second decision authority.
 export const TODAY_HEADLINE_SCHEMA = 'argus-today-headline-v1';
-export const HEADLINE_INSTRUMENTS = ['1321', '1306', 'SPY', 'QQQ'] as const;
+// 2026-10-23 (owner): 全て日経平均そのもので見ること. The JP headline is the
+// Nikkei 225 itself; the server keeps a 1321 entry only for older devices.
+export const HEADLINE_INSTRUMENTS = ['N225', '1306', 'SPY', 'QQQ'] as const;
 export type HeadlineInstrument = typeof HEADLINE_INSTRUMENTS[number];
 
 export interface TodayHeadlineEntry {

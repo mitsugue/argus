@@ -211,7 +211,7 @@ const chartRequestMatches = (request) => {
   const url = new URL(request.url());
   return url.pathname === '/api/argus/chart-intelligence'
     && url.searchParams.get('scope') === 'market'
-    && url.searchParams.get('symbol') === '1321'
+    && url.searchParams.get('symbol') === 'N225'
     && url.searchParams.get('horizon') === '5D'
     && url.searchParams.get('snapshot') === 'verified';
 };
@@ -261,12 +261,12 @@ async function readCanonicalResponseBody(page, timeout) {
         `lock=${(document.documentElement.dataset.argusOwnerLock || 'none').replace(/[/]/g, '_').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 90)}`,
       ].join(',').replace(/[^A-Za-z0-9_,=-]/g, '');
     }, CANONICAL_RESPONSE_SELECTOR).catch(() => 'unreadable');
-    throw new Error(`canonical_1321_5d_response_not_published:${state}:`
+    throw new Error(`canonical_n225_5d_response_not_published:${state}:`
       + String(error?.message || '').split('\n')[0].replace(/[^A-Za-z0-9 .]/g, '').slice(0, 60));
   });
   const snapshotId = await page.locator(CANONICAL_RESPONSE_SELECTOR)
     .getAttribute('data-canonical-response-snapshot-id');
-  if (!snapshotId) throw new Error('canonical_1321_5d_response_body_missing');
+  if (!snapshotId) throw new Error('canonical_n225_5d_response_body_missing');
   return {
     body: {
       payload: { automaticAiCalls: 0 },
@@ -411,7 +411,7 @@ export async function openCanonicalEvidence(page, timeout = 30_000) {
   null, { timeout });
 }
 
-export async function selectCanonical1321FiveDay(page, {
+export async function selectCanonicalNikkeiFiveDay(page, {
   expectedSnapshotId = null,
   timeout = CANONICAL_RESULT_TIMEOUT_MS,
   onTransition = () => {},
@@ -425,13 +425,13 @@ export async function selectCanonical1321FiveDay(page, {
   // v13.7.18: Today has one explicit product subject. The old four-index and
   // three-horizon selector matrix was removed from the owner surface; the
   // release proof now verifies that the product itself is immutably bound to
-  // the Nikkei 225 decision proxy (1321) and five sessions.
+  // the Nikkei 225 itself (N225, since 2026-10-23) and five sessions.
   await page.waitForFunction(({ selector }) => {
     const contract = document.querySelector(selector);
-    return contract?.getAttribute('data-canonical-instrument') === '1321'
+    return contract?.getAttribute('data-canonical-instrument') === 'N225'
       && contract?.getAttribute('data-canonical-horizon') === '5D';
   }, { selector: '[data-argus-contract="canonical-market-snapshot-v1"]' }, { timeout });
-  machine.transition('R12_1321_SELECTED', { mode: 'fixed-product-subject' });
+  machine.transition('R12_N225_SELECTED', { mode: 'fixed-product-subject' });
   machine.transition('R13_5D_SELECTED', { mode: 'fixed-product-horizon' });
 
   // Arm observers, then make the fixed product subject perform its normal
@@ -452,11 +452,11 @@ export async function selectCanonical1321FiveDay(page, {
       break;
     }
     if (observedResponse.status() !== 429 || attempt === 3) {
-      throw new Error(`canonical_1321_5d_http:${httpStatuses.join(',')}`);
+      throw new Error(`canonical_n225_5d_http:${httpStatuses.join(',')}`);
     }
     await page.waitForTimeout(retryDelayMs(observedResponse));
   }
-  if (!response) throw new Error('canonical_1321_5d_response_missing');
+  if (!response) throw new Error('canonical_n225_5d_response_missing');
   // 200 carries a fresh verified body. 304 is the conditional-revalidation
   // outcome (v13.5.0 supplies If-None-Match from the intact verified cache):
   // the server thereby attests that the client's cached snapshot IS the
@@ -469,7 +469,7 @@ export async function selectCanonical1321FiveDay(page, {
     const etag = String((await response.allHeaders()).etag ?? '');
     responseSnapshotId = etag.replace(/^W\//i, '').replace(/"/g, '');
     if (!/^vs-[0-9a-f]{32}$/.test(responseSnapshotId)) {
-      throw new Error('canonical_1321_5d_304_etag_invalid');
+      throw new Error('canonical_n225_5d_304_etag_invalid');
     }
     verificationStatus = 'verified';
     responseBodySource = 'not-modified-etag';
@@ -480,14 +480,14 @@ export async function selectCanonical1321FiveDay(page, {
     if (body?.verificationStatus !== 'verified'
         || !body?.snapshotId
         || (view?.automaticAiCalls ?? 0) !== 0) {
-      throw new Error('canonical_1321_5d_response_not_verified');
+      throw new Error('canonical_n225_5d_response_not_verified');
     }
     responseSnapshotId = body.snapshotId;
     verificationStatus = body.verificationStatus;
     responseBodySource = captured.source;
   }
   if (expectedSnapshotId && responseSnapshotId !== expectedSnapshotId) {
-    throw new Error('canonical_1321_5d_response_snapshot_mismatch');
+    throw new Error('canonical_n225_5d_response_snapshot_mismatch');
   }
   machine.transition('R15_VERIFIED_SNAPSHOT_RECEIVED', {
     httpStatus: response.status(), httpStatuses, responseBodySource,
@@ -498,7 +498,7 @@ export async function selectCanonical1321FiveDay(page, {
   await page.waitForFunction(({ selector, snapshotId }) => {
     const contract = document.querySelector(selector);
     return contract?.getAttribute('data-canonical-snapshot-id') === snapshotId
-      && contract?.getAttribute('data-canonical-instrument') === '1321'
+      && contract?.getAttribute('data-canonical-instrument') === 'N225'
       && contract?.getAttribute('data-canonical-horizon') === '5D';
   }, { selector: CANONICAL_SNAPSHOT_SELECTOR, snapshotId: responseSnapshotId },
   { timeout });
@@ -511,7 +511,7 @@ export async function selectCanonical1321FiveDay(page, {
     canonicalHorizon: '5D',
     httpStatus: response.status(),
     httpStatuses,
-    instrument: '1321',
+    instrument: 'N225',
     machine,
     responseSnapshotId,
     uiSnapshotId,

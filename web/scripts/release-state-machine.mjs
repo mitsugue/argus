@@ -44,7 +44,7 @@ export const RELEASE_STATES = Object.freeze([
   'R9_FRONTEND_IDENTITY_CONVERGED',
   'R10_BACKEND_IDENTITY_CONVERGED',
   'R11_PRODUCT_SELECTION_READY',
-  'R12_1321_SELECTED',
+  'R12_N225_SELECTED',
   'R13_5D_SELECTED',
   'R14_CANONICAL_REQUEST_OBSERVED',
   'R15_VERIFIED_SNAPSHOT_RECEIVED',
@@ -731,7 +731,7 @@ export function evaluateFailureScenario(input) {
   if (input.oldFrontend === true) return { pass: false, reason: 'old_frontend' };
   if (input.frontendDeployedBeforeSeed !== true) return { pass: false, reason: 'deploy_seed_order' };
   if (!input.todayLoaded) return { pass: false, reason: 'today_not_loaded' };
-  if (!input.selected1321) return { pass: false, reason: '1321_not_selected' };
+  if (!input.selectedN225) return { pass: false, reason: 'n225_not_selected' };
   if (!input.selected5D) return { pass: false, reason: '5d_not_selected' };
   if (statuses.some((status) => status === 429)
       && statuses.filter((status) => status === 429).length > 2) {

@@ -20,7 +20,7 @@ RUNTIME_PATHS = (
 )
 CHART_PATHS = tuple(
     '/api/argus/chart-intelligence?symbol=' + symbol + '&market=' + market + '&horizon=' + horizon
-    for symbol, market in (('1321', 'JP'), ('1306', 'JP'), ('SPY', 'US'), ('QQQ', 'US'))
+    for symbol, market in (('N225', 'JP'), ('1306', 'JP'), ('SPY', 'US'), ('QQQ', 'US'))
     for horizon in ('1D', '5D', '20D')
 )
 

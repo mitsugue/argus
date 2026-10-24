@@ -190,7 +190,7 @@ def _validate_simulation(path: pathlib.Path, ordinal: int,
         len(value.get("businessSnapshots", {}).get("expectedSet") or []) == 12,
         value.get("businessSnapshots", {}).get("expectedSet")
         == value.get("businessSnapshots", {}).get("observedSet"),
-        value.get("canonical", {}).get("instrument") == "1321",
+        value.get("canonical", {}).get("instrument") == "N225",
         value.get("canonical", {}).get("horizon") == "5D",
         value.get("canonical", {}).get("responseSnapshotId")
         == value.get("canonical", {}).get("uiSnapshotId"),

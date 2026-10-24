@@ -135,19 +135,33 @@ def test_headline_reports_unavailable_truthfully():
 
 
 def test_headline_document_covers_all_instruments_and_is_stable():
-    snapshots = {"1321": _snapshot("1321"), "1306": _snapshot("1306")}
+    snapshots = {"N225": _snapshot("N225"), "1306": _snapshot("1306")}
     document = headline.build_today_headline(
         snapshots, now_iso="2026-08-18T15:10:00Z")
     assert document["schemaVersion"] == headline.HEADLINE_SCHEMA
-    assert set(document["instruments"]) == set(headline.HEADLINE_INSTRUMENTS)
+    assert set(document["instruments"]) == set(headline.HEADLINE_INSTRUMENTS) | set(
+        headline.COMPATIBILITY_INSTRUMENTS)
     assert document["readyCount"] == 2
     assert document["instruments"]["SPY"]["status"] == "unavailable"
     assert document["automaticAiCalls"] == 0
     again = headline.build_today_headline(
         snapshots, now_iso="2026-08-18T15:10:00Z")
     assert again["headlineSetId"] == document["headlineSetId"]
-    assert again["instruments"]["1321"]["headlineHash"] == \
-        document["instruments"]["1321"]["headlineHash"]
+    assert again["instruments"]["N225"]["headlineHash"] == \
+        document["instruments"]["N225"]["headlineHash"]
+    assert document["instruments"]["N225"]["market"] == "JP"
+    # 2026-10-23: the JP headline is the Nikkei 225 itself, not the 1321 ETF.
+    assert headline.HEADLINE_INSTRUMENTS == ("N225", "1306", "SPY", "QQQ")
+    # 1321 stays only as a compatibility entry for older device copies; it is
+    # outside the headline counts and the set identity while it is missing.
+    assert document["compatibilityInstruments"] == ["1321"]
+    assert document["instruments"]["1321"]["status"] == "unavailable"
+    assert document["instrumentCount"] == 4
+    with_compat = headline.build_today_headline(
+        {**snapshots, "1321": _snapshot("1321")}, now_iso="2026-08-18T15:10:00Z")
+    assert with_compat["readyCount"] == 2
+    assert with_compat["instruments"]["1321"]["status"] == "ready"
+    assert with_compat["headlineSetId"] != document["headlineSetId"]
 
 
 def test_headline_does_not_mutate_source_snapshots():

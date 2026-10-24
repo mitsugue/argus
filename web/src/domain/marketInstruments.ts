@@ -1,4 +1,4 @@
-export type MarketInstrumentSymbol = '1321' | '1306' | 'SPY' | 'QQQ';
+export type MarketInstrumentSymbol = 'N225' | '1321' | '1306' | 'SPY' | 'QQQ';
 export type MarketInstrumentMarket = 'JP' | 'US';
 export type MarketHorizon = 1 | 5 | 20;
 
@@ -7,12 +7,18 @@ export interface MarketInstrumentDefinition {
   market: MarketInstrumentMarket;
   shortLabel: string;
   fullLabel: string;
-  instrumentType: 'ETF';
+  instrumentType: 'ETF' | 'INDEX';
   underlying: 'Nikkei 225' | 'TOPIX' | 'S&P 500' | 'Nasdaq-100';
   verifiedDaily: true;
 }
 
+// 2026-10-23 (owner): 全て日経平均そのもので見ること. The Nikkei 225 itself has
+// verified snapshots and is the JP market view. 1321 stays readable because
+// the current judgment still names it until its subject moves (step 3).
 export const MARKET_INSTRUMENTS: readonly MarketInstrumentDefinition[] = [
+  { symbol: 'N225', market: 'JP', shortLabel: '日経平均株価',
+    fullLabel: '日経平均株価(指数)', instrumentType: 'INDEX',
+    underlying: 'Nikkei 225', verifiedDaily: true },
   { symbol: '1321', market: 'JP', shortLabel: '1321 日経225 ETF',
     fullLabel: '1321 日経225 ETF', instrumentType: 'ETF',
     underlying: 'Nikkei 225', verifiedDaily: true },
@@ -34,7 +40,7 @@ export const MARKET_INSTRUMENTS: readonly MarketInstrumentDefinition[] = [
 // panel says so; only the displayed series and its projection move.
 export type IndexChartKey = 'N225' | 'TOPIX' | 'SPX' | 'NDX';
 export const INDEX_FOR_INSTRUMENT: Record<MarketInstrumentSymbol, IndexChartKey> = {
-  '1321': 'N225', '1306': 'TOPIX', SPY: 'SPX', QQQ: 'NDX',
+  N225: 'N225', '1321': 'N225', '1306': 'TOPIX', SPY: 'SPX', QQQ: 'NDX',
 };
 export const INDEX_DISPLAY_JA: Record<IndexChartKey, string> = {
   N225: '日経平均株価', TOPIX: 'TOPIX', SPX: 'S&P 500', NDX: 'NASDAQ-100',
@@ -42,7 +48,7 @@ export const INDEX_DISPLAY_JA: Record<IndexChartKey, string> = {
 
 export const MARKET_HORIZONS: readonly MarketHorizon[] = [1, 5, 20];
 export const DEFAULT_MARKET_INSTRUMENT: Record<MarketInstrumentMarket,
-  MarketInstrumentSymbol> = { JP: '1321', US: 'SPY' };
+  MarketInstrumentSymbol> = { JP: 'N225', US: 'SPY' };
 
 export function marketInstrument(symbol: string | null | undefined) {
   const normalized = String(symbol ?? '').toUpperCase();

@@ -31,7 +31,7 @@ import { nikkeiSp500Change20Pct } from '../lib/nikkeiSp500';
 import type { ChartIntelligencePayload } from '../types/chartIntelligence';
 import type { TodayProjectionInput } from '../domain/argusTodayView';
 import {
-  marketInstrument, INDEX_FOR_INSTRUMENT,
+  marketInstrument,
   type MarketHorizon,
 } from '../domain/marketInstruments';
 import { useAssets } from '../hooks/useAssets';
@@ -59,6 +59,7 @@ const formatDate = (iso: string) => {
 };
 
 function instrumentLabel(payload: ChartIntelligencePayload): string {
+  if (payload.symbol === 'N225') return '日経平均株価';
   if (payload.symbol === '1321') return '日経225 ETF（1321）';
   const name = (payload.displayNameJa || payload.symbol).trim();
   return name.includes(payload.symbol) ? name : `${name}（${payload.symbol}）`;
@@ -191,8 +192,13 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
   const { diagnostics: publicDiagnostics } = usePublicDiagnostics();
   // Today has one editorial subject: Nikkei 225 over five sessions. Other
   // indices are a read-only comparison below and never change this judgment.
+  // 2026-10-23 (owner): 全て日経平均そのもので見ること. The canonical values
+  // (verified snapshot, headline, projection) are the Nikkei 225 itself. The
+  // current judgment's subject stays 1321 until it moves in its own reviewed
+  // change (step 3); decisionInstrument names it.
   const marketMode: MarketSelectionMode = 'JP';
-  const selectedInstrument = { JP: '1321' as const, US: 'SPY' as const };
+  const selectedInstrument = { JP: 'N225' as const, US: 'SPY' as const };
+  const decisionInstrument = { JP: '1321' as const, US: 'SPY' as const };
   const chartHorizon: MarketHorizon = 5;
   const decisionCalendar = !marketLedger.error && !marketLedger.loading
     && !marketLedger.sessionExpired
@@ -205,12 +211,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     timeframe: 'daily', horizon: chartHorizon, enabled: true,
   });
   // v13.5.54 (owner 2026-09-04: 「日経平均などの指数がトップに表示されていない、
-  // まだETF」). JP_MARKET_ENGINE reasons about the Nikkei 225, not the 1321 ETF that tracks
-  // it, so the headline series is the INDEX itself. The verified ETF snapshot
-  // stays the decision anchor — the index carries no licensed quote here — and
-  // the panel says so; only the drawn series and its projection change.
-  const headlineIndex = useIndexChart(
-    INDEX_FOR_INSTRUMENT[selectedSymbol] ?? null, 'daily');
+  // まだETF」). Since 2026-10-23 the verified snapshot above IS the Nikkei 225
+  // itself, so the separate index read is no longer needed here.
   // 日米強弱は日経平均÷S&P500(指数そのもの)で見る(2026-10-23)。
   const sp500Index = useIndexChart('SPX', 'daily');
   // v13.5.0 restoration: selector summaries, index moves, and the four
@@ -353,19 +355,15 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     // visible 30-day window) — labeled via data-projection-source.
     const headlineFallback = (symbol: string) =>
       headlineProjectionInput(headlineEntry(symbol));
-    // The index is the owner-facing series; the ETF snapshot remains the
-    // decision anchor and the fallback when the index cache is still cold.
-    // v13.5.57: the index is DISPLAY; the heading must still name the
-    // decision subject (the verified ETF) so a reader — and the release
-    // acceptance contract — can see which instrument the WAIT/HOLD is
-    // anchored on.
-    const indexProjection = headlineIndex.data
-      ? (() => {
-        const base = projectionInput(headlineIndex.data);
-        return base ? { ...base, label: `${base.label}・判断の正本 ${selectedInstrument[effectiveMarket]}` } : null;
-      })() : null;
-    const selectedJpProjection = indexProjection ?? (selectedChart.data
-      ? projectionInput(selectedChart.data) : headlineFallback(selectedInstrument.JP));
+    // The Nikkei 225 verified snapshot is the owner-facing series; the compact
+    // headline of the same snapshot is the fallback while it loads. The
+    // heading still names the current judgment's subject (1321 until step 3)
+    // so a reader can see which instrument the WAIT/HOLD is anchored on.
+    const nikkeiBase = selectedChart.data
+      ? projectionInput(selectedChart.data) : headlineFallback(selectedInstrument.JP);
+    const selectedJpProjection = nikkeiBase
+      ? { ...nikkeiBase, label: `${nikkeiBase.label}・判断の正本 ${decisionInstrument[effectiveMarket]}` }
+      : null;
     const selectedUsProjection: TodayProjectionInput | null = null;
     const shortState = selectedJpChart?.todayIntelligence?.shortSelling;
     const jpFactors = [
@@ -412,7 +410,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     });
     const indexMoves: TodayMoveInput[] = [];
     for (const move of [
-      headlineMove(headlineEntry('1321'), 'nikkei'),
+      headlineMove(headlineEntry('N225'), 'nikkei'),
       headlineMove(headlineEntry('1306'), 'topix'),
       headlineMove(headlineEntry('SPY'), 'sp500'),
       headlineMove(headlineEntry('QQQ'), 'nasdaq'),
@@ -464,8 +462,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     if (ratio6 != null || ratio25 != null) jpPositioning.push({ key: 'breadth-ratios', label: '騰落比率',
       value: [ratio6 == null ? null : `6日${ratio6.toFixed(0)}`, ratio25 == null ? null : `25日${ratio25.toFixed(0)}`].filter(Boolean).join(' / ') });
     // 日経平均÷S&P500 の20営業日の変化。どちらかの指数が無ければ出さない(1321で埋めない)。
-    const jpRs = headlineIndex.data?.symbol === 'N225' && sp500Index.data?.symbol === 'SPX'
-      ? nikkeiSp500Change20Pct(headlineIndex.data.indicators.bars, sp500Index.data.indicators.bars)
+    const nikkeiIndex = selectedChart.data?.symbol === 'N225' ? selectedChart.data : null;
+    const jpRs = nikkeiIndex && sp500Index.data?.symbol === 'SPX'
+      ? nikkeiSp500Change20Pct(nikkeiIndex.indicators.bars, sp500Index.data.indicators.bars)
       : null;
     if (jpRs != null) jpPositioning.push({ key: 'relative-numeric', label: '日米強弱',
       value: jpRs >= 0 ? 'JP優位' : 'US優位', detail: `${signed(jpRs, 1)}pt`,
@@ -515,9 +514,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         checkNextJa: item.checkNextJa,
         whatWouldChangeJa: item.whatWouldChangeJa,
       }; });
-    const selectedSymbol = selectedInstrument[effectiveMarket];
-    const canonicalDecision = sdaBySymbol.get(selectedSymbol)
-      ?? missingTodayDecision(selectedSymbol, effectiveMarket, assets);
+    const decisionSymbol = decisionInstrument[effectiveMarket];
+    const canonicalDecision = sdaBySymbol.get(decisionSymbol)
+      ?? missingTodayDecision(decisionSymbol, effectiveMarket, assets);
     const now = new Date(calendarNow);
     return buildArgusTodayView({
       now, selectionMode: marketMode,
@@ -551,9 +550,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     regime.data, impEvents, rates.data, events247,
     assets, apItems, marketMode,
     headline.document, marketNews.data,
-    selectedChart.data, headlineIndex.data, sp500Index.data,
+    selectedChart.data, sp500Index.data,
     marketNews.lastChecked, marketNews.failureClass,
-    selectedInstrument, effectiveMarket, selectedChart.decisionData, decisionCalendar,
+    selectedInstrument, decisionInstrument, effectiveMarket, selectedChart.decisionData, decisionCalendar,
     sdaBySymbol, calendarNow]);
 
   // Which canonical source feeds the visible projection right now.
@@ -586,7 +585,9 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     const basisDate = entry.periodEnd ?? '不明';
     const closeLabel = entry.market === 'JP'
       ? `${basisDate} 終値基準（15:30 JST）` : `${basisDate} 終値基準`;
-    const evidenceEntry = decisionEvidence.subjects?.[selectedSymbol] as
+    // 日次判断 is the current judgment's eligibility (its subject is 1321
+    // until step 3); the price line above it is the Nikkei 225 headline.
+    const evidenceEntry = decisionEvidence.subjects?.[decisionInstrument[effectiveMarket]] as
       { marketTruth?: { status?: string } } | undefined;
     const truthStatus = evidenceEntry?.marketTruth?.status;
     const dailyEligible = truthStatus === 'AVAILABLE';
@@ -599,7 +600,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         + '日次判断を保留';
     }
     return `市場終了 · ${closeLabel}`;
-  }, [headline.document, selectedSymbol, argusToday.sessionLamps,
+  }, [headline.document, selectedSymbol, decisionInstrument, effectiveMarket, argusToday.sessionLamps,
     decisionEvidence.subjects]);
 
   return (
@@ -611,8 +612,8 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
       <BootConsole inputs={{
         chart: { snapshotState: selectedChart.snapshotState,
           snapshotId: selectedChart.snapshotId, error: selectedChart.error },
-        index: { data: headlineIndex.data, loading: headlineIndex.loading,
-          error: headlineIndex.error, expectedSkip: headlineIndex.expectedSkip },
+        index: { data: sp500Index.data, loading: sp500Index.loading,
+          error: sp500Index.error, expectedSkip: sp500Index.expectedSkip },
         news: { loading: marketNews.loading, data: marketNews.data,
           failureClass: marketNews.failureClass },
         newsIntel: { status: newsIntel.status },

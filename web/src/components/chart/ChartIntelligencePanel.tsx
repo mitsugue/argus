@@ -160,8 +160,8 @@ export const ChartIntelligencePanel: React.FC<{
 }> = ({ scope, symbol, market, enabled = true }) => {
   const [range, setRange] = useState('1Y');
   // v13.5.50: the owner can switch the market chart to the indices themselves
-  // (日経225/TOPIX/S&P500/ナスダック); the verified 1321 ETF snapshot stays the
-  // decision anchor and the default.
+  // (日経225/TOPIX/S&P500/ナスダック). Since 2026-10-23 the default verified
+  // view is the Nikkei 225 itself (its NS倍率 and rotation map included).
   const [indexKey, setIndexKey] = useState<IndexChartKey | null>(null);
   const indexChart = useIndexChart(scope === 'market' ? indexKey : null, 'daily');
   const [timeframe, setTimeframe] = useState<'daily' | 'weekly'>('daily');
@@ -204,7 +204,7 @@ export const ChartIntelligencePanel: React.FC<{
   return <section id={scope === 'market' ? 'chart-intelligence' : undefined} className="ci-panel">
     {scope === 'market' && <div className="card ci-index-tabs" data-argus-contract="index-chart-selector-v1" role="tablist" aria-label="指数チャート">
       <button type="button" role="tab" aria-selected={indexKey === null} className={indexKey === null ? 'active' : ''}
-        onClick={() => setIndexKey(null)}>1321 ETF(検証済)</button>
+        onClick={() => setIndexKey(null)}>日経平均(検証済)</button>
       {(Object.keys(INDEX_CHART_LABELS) as IndexChartKey[]).map((key) => <button type="button" role="tab" key={key}
         aria-selected={indexKey === key} className={indexKey === key ? 'active' : ''} onClick={() => setIndexKey(key)}>{INDEX_CHART_LABELS[key]}</button>)}
     </div>}

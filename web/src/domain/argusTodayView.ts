@@ -51,7 +51,7 @@ export const COMING_EVENTS_CAP = 12;
  * decision subject in words. Codes stay on the Holdings page.
  */
 export const HEADLINE_SUBJECT_NAME_JA: Record<string, string> = {
-  '1321': '日経225 ETF', '1306': 'TOPIX ETF', SPY: 'S&P500 ETF', QQQ: 'ナスダック100 ETF',
+  N225: '日経平均株価', '1321': '日経225 ETF', '1306': 'TOPIX ETF', SPY: 'S&P500 ETF', QQQ: 'ナスダック100 ETF',
 };
 export function subjectDisplayName(symbol: string | null | undefined, fallbackName?: string | null): string {
   const key = String(symbol ?? '').toUpperCase();

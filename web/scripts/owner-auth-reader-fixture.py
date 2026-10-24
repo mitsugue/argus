@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory(prefix='argus-reader-fixture-') as directory:
         return jsonify({
             'schemaVersion': 'argus-verified-view-snapshot-v1',
             'snapshotId': 'vs-' + hashlib.sha256((symbol + horizon).encode()).hexdigest()[:32],
-            'kind': 'market-chart', 'market': 'JP' if symbol in ('1321', '1306') else 'US',
+            'kind': 'market-chart', 'market': 'JP' if symbol in ('N225', '1321', '1306') else 'US',
             'instrument': symbol, 'horizon': horizon,
             'datasetHash': 'synthetic-dataset', 'payloadHash': 'synthetic-payload',
             'methodVersion': 'synthetic-reader-contract',

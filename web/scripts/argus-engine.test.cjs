@@ -249,17 +249,23 @@ check('Today never claims an empty calendar it could not read',
     intel.includes('const isPartial = partialReasonCodes.length > 0;'));
 }
 
-// v13.5.57: display series = index, decision subject = verified ETF. The
-// canonical contract attribute and the projection heading must both carry the
-// SUBJECT (1321/1306/SPY/QQQ), or the release acceptance — which selects each
-// subject and checks heading/instrument — cannot bind the verified snapshot.
+// v13.5.57 / 2026-10-23: the canonical contract attribute names the verified
+// snapshot instrument the screen is bound to — the Nikkei 225 itself
+// (N225/1306/SPY/QQQ) — and the projection heading still names the current
+// judgment's subject (1321 until its subject moves in step 3).
 {
   const commandCenter = fs.readFileSync(path.join(root, 'src/routes/CommandCenter.tsx'), 'utf8');
-  check('the canonical contract names the decision subject, not the drawn series',
+  check('the canonical contract names the verified snapshot instrument, not the projection symbol',
     panel.includes('data-canonical-instrument={selectedSymbol}')
     && !panel.includes('data-canonical-instrument={projection?.symbol'));
-  check('the index heading still names the decision subject',
-    commandCenter.includes('label: `${base.label}・判断の正本 ${selectedInstrument[effectiveMarket]}`'));
+  check('the Today canonical values are the Nikkei 225 itself',
+    commandCenter.includes("const selectedInstrument = { JP: 'N225' as const, US: 'SPY' as const };")
+    && commandCenter.includes("headlineMove(headlineEntry('N225'), 'nikkei')")
+    && !commandCenter.includes("headlineEntry('1321')"));
+  check('the judgment subject stays 1321 until step 3 and the heading names it',
+    commandCenter.includes("const decisionInstrument = { JP: '1321' as const, US: 'SPY' as const };")
+    && commandCenter.includes('sdaBySymbol.get(decisionSymbol)')
+    && commandCenter.includes('label: `${nikkeiBase.label}・判断の正本 ${decisionInstrument[effectiveMarket]}`'));
 }
 
 // v13.5.59 (owner iPhone review). Reading order top-down, one MARKET SIGNALS

@@ -20,7 +20,12 @@ for (const hook of ['useNewsIntelligence.ts', 'useMarketShock.ts']) {
 }
 const panel = fs.readFileSync(path.join(src, 'components', 'chart', 'ChartIntelligencePanel.tsx'), 'utf8');
 assert.ok(panel.includes('data-argus-contract="index-chart-selector-v1"'), 'index selector rendered on the market chart');
-assert.ok(panel.includes('1321 ETF(検証済)'), 'verified ETF remains the default anchor');
+// 2026-10-23: the default verified view is the Nikkei 225 itself, not the 1321 ETF.
+assert.ok(panel.includes('日経平均(検証済)') && !panel.includes('1321 ETF(検証済)'),
+  'the verified Nikkei 225 is the default view');
+const instruments = fs.readFileSync(path.join(src, 'domain', 'marketInstruments.ts'), 'utf8');
+assert.ok(instruments.includes("MarketInstrumentSymbol> = { JP: 'N225', US: 'SPY' };"),
+  'the market chart defaults to the Nikkei 225 verified snapshot');
 const hookText = fs.readFileSync(path.join(src, 'hooks', 'useChartIntelligence.ts'), 'utf8');
 assert.ok(hookText.includes('/api/argus/index-chart?index='), 'index chart hook calls the cached-only route');
 assert.ok(hookText.includes("N225: '日経225', TOPIX: 'TOPIX', SPX: 'S&P500', NDX: 'ナスダック'"), 'index labels in Japanese');

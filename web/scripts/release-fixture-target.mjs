@@ -79,8 +79,9 @@ const payloadFor = (row, datasetHash, generatedAt) => {
     automaticAiCalls: 0,
     costPolicyMode: 'automatic-ai-zero',
     instrumentMetadata: {
-      instrumentId: `${row.market}:${row.instrument}:ETF`,
-      symbol: row.instrument, market: row.market, assetType: 'ETF',
+      instrumentId: `${row.market}:${row.instrument}:${row.instrument === 'N225' ? 'INDEX' : 'ETF'}`,
+      symbol: row.instrument, market: row.market,
+      assetType: row.instrument === 'N225' ? 'INDEX' : 'ETF',
       displayNameJa: row.instrument, source: 'simulation-provider-cache',
       availableFrom: '2026-08-17', observedAt: generatedAt, revision: 1,
     },
@@ -252,7 +253,7 @@ export async function startFixtureTarget({
     if (url.pathname === '/api/argus/today-headline') {
       // Mirror of argus_today_headline.build_today_headline over the fixture
       // snapshots — same shape the production backend serves.
-      const symbols = ['1321', '1306', 'SPY', 'QQQ'];
+      const symbols = ['N225', '1306', 'SPY', 'QQQ'];
       const instruments = Object.fromEntries(symbols.map((symbol) => {
         const snapshot = fixture.snapshots.get(`market-chart:${symbol}:5D`);
         if (!snapshot) {
@@ -263,7 +264,7 @@ export async function startFixtureTarget({
         const today = payload.todayIntelligence ?? {};
         return [symbol, {
           status: 'ready', instrument: symbol,
-          market: ['1321', '1306'].includes(symbol) ? 'JP' : 'US',
+          market: ['N225', '1306'].includes(symbol) ? 'JP' : 'US',
           parentSnapshotId: snapshot.snapshotId,
           parentPayloadHash: snapshot.payloadHash,
           parentDatasetHash: snapshot.datasetHash,

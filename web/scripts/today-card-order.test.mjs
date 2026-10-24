@@ -11,15 +11,16 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const panel = read('src/components/today/ArgusTodayPanel.tsx');
 const order = read('../docs/TODAY_CARD_ORDER.md');
 
-// 正本の番号・目印・許される表示条件(日経平均1321を選んだ日本市場が前提)。
-const JP_1321 = "{view.selectedMarket === 'JP' && selectedSymbol === '1321' &&";
+// 正本の番号・目印・許される表示条件(日経平均そのもの N225 を選んだ日本市場が前提。
+// 2026-10-23 に 1321 から N225 へ。カードの順番と有無は変えていない)。
+const JP_N225 = "{view.selectedMarket === 'JP' && selectedSymbol === 'N225' &&";
 const JP_ONLY = '{!usSelected &&';
 const ALWAYS = '';
 const cards = [
   [1, '今日の見立て', '<section className="at-view-hero"', ALWAYS],
-  [2, 'FUTURE MAP', '<FutureMapCard />', JP_1321],
+  [2, 'FUTURE MAP', '<FutureMapCard />', JP_N225],
   [3, '日経平均のチャート', '<JapanMarketHorizonComparison />', '&&'],
-  [4, '価格の目盛り', '<LevelMapCard />', JP_1321],
+  [4, '価格の目盛り', '<LevelMapCard />', JP_N225],
   [5, '6サイン', '<article className={`at-decision at-primary-hero', ALWAYS],
   [6, '自分の銘柄への影響', 'aria-label="自分の銘柄への影響"', '{view.holdingsReview.length > 0 && <section className="at-priorities card"'],
   [7, '重大ニュース・市場リスク', '<section id="today-material-news"', ALWAYS],
@@ -42,7 +43,7 @@ for (const [number, name, marker, guard] of cards) {
   const lineStart = panel.lastIndexOf('\n', at) + 1;
   const prefix = panel.slice(lineStart, at).trim();
   assert.equal(prefix, guard, `${number} ${name}: データの有無で消える条件が付いています(${prefix})`);
-  if (number === 3) assert.ok(panel.slice(panel.lastIndexOf('\n', lineStart - 2), lineStart).includes("selectedSymbol === '1321'"), '3 日経平均のチャートの条件');
+  if (number === 3) assert.ok(panel.slice(panel.lastIndexOf('\n', lineStart - 2), lineStart).includes("selectedSymbol === 'N225'"), '3 日経平均のチャートの条件');
   // 正本の表に同じ番号・名前の行があること。
   assert.ok(new RegExp(`^\\| ${number} \\| [^\\n]*${name.split('・')[0]}`, 'm').test(order),
     `${number} ${name}: docs/TODAY_CARD_ORDER.md の表と食い違っています`);

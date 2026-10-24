@@ -114,7 +114,7 @@ try {
   }
   await startAuth();
   report.anonymousStatus = await new Promise((resolve, reject) => {
-    https.get('https://127.0.0.1:4473/api/argus/chart-intelligence?scope=market&symbol=1321&horizon=5D&snapshot=verified', { ca }, res => { res.resume(); resolve(res.statusCode); }).on('error', reject);
+    https.get('https://127.0.0.1:4473/api/argus/chart-intelligence?scope=market&symbol=N225&horizon=5D&snapshot=verified', { ca }, res => { res.resume(); resolve(res.statusCode); }).on('error', reject);
   }); assert.equal(report.anonymousStatus, activeMode === '1' ? 401 : 200);
   const acceptanceEnv = { ...process.env, NODE_EXTRA_CA_CERTS: cert, HTTPS_PROXY: 'http://127.0.0.1:4480', HTTP_PROXY: 'http://127.0.0.1:4480', NO_PROXY: '', https_proxy: '', http_proxy: '', no_proxy: '',
     ARGUS_PUBLIC_URL: 'https://argus-fixture.test/argus/', ARGUS_BACKEND_URL: 'https://argus-fixture.test',

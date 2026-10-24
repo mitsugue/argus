@@ -888,7 +888,7 @@ def _simulation_payload(ordinal):
         "businessSnapshots": {"pass": True,
                               "expectedSet": [f"s{i}" for i in range(12)],
                               "observedSet": [f"s{i}" for i in range(12)]},
-        "canonical": {"instrument": "1321", "horizon": "5D",
+        "canonical": {"instrument": "N225", "horizon": "5D",
                       "responseSnapshotId": "vs-x", "uiSnapshotId": "vs-x"},
         "warmProfileSeal": {"status": "pass",
                             "productVersion": release.PRODUCT_VERSION},
