@@ -226,7 +226,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_sector_heatmap.py': '5a149728db22320a40a0e2d00d7ce3f95dc32035',
     'test_argus_material_translation.py': '80f68a5abad282c920926dbb8b9541d97da016ae',
     'test_argus_queue_v1152_backend.py': 'ec3d8c65c5b48755539e0dfdc0f93ccf6362cfb1',
-    'test_argus_shared_bridge.py': 'bf7b0230c73d5eaa7eb6f4834bce806e3abc9a3e',
+    'test_argus_shared_bridge.py': 'b16f8565e20f2914677ccee7d346fd1f161f4f6c',
     'bridge/README.md': '9bcd2afec193b966d963ad7382c43136ed283e7c',
     'bridge/bridge.env.example': 'b6dbd6d5d7185d2949908ab8699bb3160bd26a31',
     'bridge/moomoo_push.py': '5268c303608bad317a6e47bbe891a64860959674',
