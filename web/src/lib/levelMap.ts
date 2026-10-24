@@ -23,6 +23,8 @@ export type ValuationHistory = {
   basis: 'ARGUS_ESTIMATE_MARKET_CAP_WEIGHTED_FORWARD'; firstDate: string; lastDate: string;
   count: number; missingSessions: number; sufficient: boolean; median: number; minimum: number; maximum: number;
   upperMultiple: number; atOrAboveUpper: number; retrospective: true; actionAuthority: false;
+  /** 2026-10-24: during the manual calibration, a comparison among the uncalibrated estimates. */
+  beforeManualCalibration?: true;
 };
 export function validValuationHistory(value: unknown): value is ValuationHistory {
   const v = value as ValuationHistory | null;

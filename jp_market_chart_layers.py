@@ -95,6 +95,17 @@ def valuation_history(eps_records, morning, price_rows):
             'retrospective': True, 'actionAuthority': False}
 
 
+def uncalibrated_valuation_history(rows, eps_records, morning, *, now_iso):
+    """手入力の補正中も、補正前の推計どうしの位置比較を残す(2026-10-24)。
+
+    補正後の値と混ぜないよう、補正前の推計だけで表示中の地図を作り直して比べ、印を付ける。
+    """
+    if any(isinstance(row, dict) and row.get('manualCalibration') for row in eps_records.values()):
+        return None
+    history = snapshot(rows, eps_records, morning, [], now_iso=now_iso).get('valuationHistory')
+    return {**history, 'beforeManualCalibration': True} if history else None
+
+
 def closing_map(bars, eps_records, morning, *, now_iso):
     """現在表示の投影。朝の事前記録を変更せず、新しい終値を先に出す。"""
     now = datetime.fromisoformat(now_iso.replace('Z', '+00:00'))

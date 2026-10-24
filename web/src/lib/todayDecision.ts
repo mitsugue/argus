@@ -50,6 +50,22 @@ export const ALERT_RAISED_HISTORY = {
   high: { pct: 18.6, hits: 27, days: 145, falls: 13 },
 } as const;
 /**
+ * 2026-10-24: the server records each close's level before the next open and
+ * scores it five sessions later with the same rule (jp_market_drop_alert.py).
+ * A level's record after release is shown once it has 20 scored days.
+ */
+export const ALERT_RULES_VERSION = 'alert-e-forward-2026-10-22';
+export const LIVE_ALERT_MINIMUM = 20;
+export type LiveAlertTally = { matured: number; fell: number };
+export function liveAlertRecord(value: unknown, level: 'low' | 'normal' | 'high', raised: boolean): LiveAlertTally | null {
+  const v = value as { rulesVersion?: unknown; byLevel?: Record<string, unknown> } | null | undefined;
+  if (!v || v.rulesVersion !== ALERT_RULES_VERSION || !v.byLevel) return null;
+  const key = raised && level !== 'low' ? `raised${level[0].toUpperCase()}${level.slice(1)}` : level;
+  const row = v.byLevel[key] as LiveAlertTally | undefined;
+  if (!row || !Number.isInteger(row.matured) || !Number.isInteger(row.fell) || row.fell < 0 || row.fell > row.matured) return null;
+  return row.matured >= LIVE_ALERT_MINIMUM ? row : null;
+}
+/**
  * Measured record of the tone rule itself, 2012-2026 (n=2597 sessions,
  * point-in-time inputs, 1570 ratio taken as above 1): the share of 5-session
  * moves that went up after each tone, against 56.7% on all days. Neither tone

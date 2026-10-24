@@ -198,7 +198,8 @@ def _existing_warm(*, fail_at=None):
              "_LEVEL_MAP_MAP_SINCE": "2026-06-01", "jp_market_level_map": arithmetic,
              "_jq_valuation_for_date": valuation, "_nikkei225_constituent_changes": lambda: [],
              "_JQ_VALUATION_DAY_CACHE": {}, "_level_map_next_session": lambda day: None,
-             "_CANDIDATES": {}, "_candidates_warm": lambda *a: None, "_level_map_remote": lambda: None,
+             "_CANDIDATES": {}, "_candidates_warm": lambda *a: None, "_DROP_ALERT": {}, "_drop_alert_warm": lambda *a: None,
+             "_level_map_remote": lambda: None,
              # 2026-10-21: the backfill position and set-aside dates (fresh, not written here).
              "argus_level_map_backfill": argus_level_map_backfill,
              "_level_map_backfill_state": lambda: backfill_state, "_level_map_backfill_save": lambda: None,

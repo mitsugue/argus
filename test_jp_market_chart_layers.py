@@ -174,3 +174,49 @@ def test_known_partial_eps_is_excluded_from_display_history_and_prior_lines():
     assert after['points'][-1]['eps'] is None
     assert after['current'] is None and after['displayMap'] is None and after['nearest']==[]
     assert morning==saved and eps['2026-10-06']==partial
+
+
+def _calibration_fixture():
+    rows = [bar((date(2026, 8, 24) + timedelta(days=i)).isoformat(), 68000 + i * 10)
+            for i in range(43) if (date(2026, 8, 24) + timedelta(days=i)).weekday() < 5]
+    raw = {'date': '2026-10-05', 'eps': 4000, 'per': 17, 'basis': levels.EPS_BASIS,
+           'recordedAt': '2026-10-05T08:00:00Z', 'coverage': {'members': 225, 'missingMarketCap': 0}}
+    morning = levels.morning_map('2026-10-06', rows, {'2026-10-05': 4000},
+                                 eps_records={'2026-10-05': raw}, created_at='2026-10-05T09:00:00Z')
+    rows.append({**bar('2026-10-06', 70000), 'availableFrom': '2026-10-06T06:31:00Z'})
+    calibrated = {**raw, 'eps': 4400, 'per': 17 / 1.1, 'uncalibratedEps': 4000, 'uncalibratedPer': 17,
+                  'manualCalibration': True, 'calibrationReferenceDate': '2026-10-05'}
+    return rows, raw, calibrated, morning
+
+
+def test_calibration_keeps_the_comparison_among_uncalibrated_estimates_with_a_mark():
+    # 2026-10-24: during the manual calibration the comparison stays, never mixing calibrated values.
+    rows, raw, calibrated, morning = _calibration_fixture()
+    now = '2026-10-06T08:00:00Z'
+    plain = chart.snapshot(rows, {'2026-10-05': raw}, morning, [], now_iso=now)['valuationHistory']
+    kept = chart.uncalibrated_valuation_history(rows, {'2026-10-05': raw}, morning, now_iso=now)
+    assert kept == {**plain, 'beforeManualCalibration': True} and kept['median'] == 17
+    assert chart.uncalibrated_valuation_history(rows, {'2026-10-05': calibrated}, morning, now_iso=now) is None
+
+
+def test_owner_reply_during_calibration_keeps_the_marked_uncalibrated_comparison(monkeypatch):
+    from contextlib import nullcontext
+    from flask import g
+    import argus_weighted_per
+    import scanner
+    rows, raw, calibrated, morning = _calibration_fixture()
+    monkeypatch.setattr(scanner, '_ai_now_iso', lambda: '2026-10-06T08:00:00Z')
+    monkeypatch.setattr(scanner, '_nikkei_chart_rows', lambda: rows)
+    monkeypatch.setattr(scanner, '_level_map_admitted_eps', lambda: {'2026-10-05': raw})
+    monkeypatch.setitem(scanner._LEVEL_MAP, 'mornings', [morning])
+    monkeypatch.setitem(scanner.app.extensions, 'argus_owner_auth',
+                        type('Auth', (), {'enabled': True, 'reader': lambda self: nullcontext()})())
+    monkeypatch.setattr(argus_weighted_per, 'read', lambda conn: {'reference': {'date': '2026-10-05'}})
+    monkeypatch.setattr(argus_weighted_per, 'status', lambda reference, now: {'enabled': True, 'referenceDate': '2026-10-05'})
+    monkeypatch.setattr(argus_weighted_per, 'apply', lambda eps, reference, now: {'2026-10-05': calibrated})
+    with scanner.app.test_request_context('/'):
+        g.owner_session_verified = True
+        public = scanner._level_map_public()
+    assert public['manualCalibration']['enabled'] and public['chart']['displayMap']['eps'] == 4400
+    history = public['chart']['valuationHistory']
+    assert history['beforeManualCalibration'] is True and history['median'] == 17 and history['count'] == 1
