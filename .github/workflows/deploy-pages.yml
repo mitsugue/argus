@@ -469,7 +469,7 @@ jobs:
           expected-backend-sha: ${{ needs.candidate-identity.outputs.backend_sha }}
 
   business-snapshot-acceptance:
-    # R18 is evaluated only after the canonical 1321 / 5D request and warm
+    # R18 is evaluated only after the canonical N225 / 5D request and warm
     # profile seal, using the same engine and exact producer-trigger binding.
     needs: [candidate-identity, business-snapshot-trigger, seed-warm-profile]
     runs-on: ubuntu-latest

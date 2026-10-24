@@ -212,7 +212,8 @@ const dissentReasonJa = (line: string): string =>
 
 type OtherMarketMove = ArgusTodayView['indexMoves'][number];
 const OTHER_MARKET_META = {
-  nikkei: { instrument: '1321', name: '日経平均', product: '1321 日経225 ETF' },
+  // 2026-10-23 (owner): 全て日経平均そのもので見ること — the Nikkei 225 itself.
+  nikkei: { instrument: 'N225', name: '日経平均', product: '日経平均株価' },
   topix: { instrument: '1306', name: 'TOPIX', product: '1306 TOPIX ETF' },
   sp500: { instrument: 'SPY', name: 'S&P 500', product: 'SPY' },
   nasdaq: { instrument: 'QQQ', name: 'NASDAQ-100', product: 'QQQ' },
@@ -224,7 +225,7 @@ const OtherMarketsActuals: React.FC<{ moves: OtherMarketMove[] }> = ({ moves }) 
   const move = moves.find((row) => row.id === selectedId) ?? moves[0];
   const meta = OTHER_MARKET_META[selectedId];
   const snapshot = useChartIntelligence({ scope: 'market', symbol: meta.instrument,
-    market: ['1321', '1306'].includes(meta.instrument) ? 'JP' : 'US',
+    market: ['N225', '1306'].includes(meta.instrument) ? 'JP' : 'US',
     timeframe: 'daily', horizon: sessions });
   const bars = snapshot.data?.indicators.bars ?? [];
   const points = bars.slice(-(sessions + 1)).map((bar) => ({ date: bar.date, value: bar.close }));
@@ -250,7 +251,7 @@ const OtherMarketsActuals: React.FC<{ moves: OtherMarketMove[] }> = ({ moves }) 
     {snapshot.snapshotId && points.length >= 2 ? <figure data-market-snapshot-id={snapshot.snapshotId}>
       <figcaption><b>{meta.name}</b>
       <span>{meta.product} · {sessions}営業日</span></figcaption>
-      <svg viewBox="0 0 300 96" role="img" aria-label={`${meta.name}連動ETFの${sessions}営業日実績`}>
+      <svg viewBox="0 0 300 96" role="img" aria-label={`${meta.name}${meta.instrument === 'N225' ? '' : '連動ETF'}の${sessions}営業日実績`}>
         <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />
       </svg><p><strong>{change == null ? '—' : `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`}</strong>
         <span>（{points.at(-1)?.date ?? move?.asOf ?? '時点不明'} 終値）</span></p></figure>
@@ -586,7 +587,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
   const comparison = useJapanMarketComparison(5);
   const signStudy = comparison.document?.forecast.signEventStudy;
   const { brief: editorialBrief } = useMarketBrief();
-  const editorialScope = view.selectedMarket === 'JP' && selectedSymbol === '1321' && horizon === 5;
+  const editorialScope = view.selectedMarket === 'JP' && selectedSymbol === 'N225' && horizon === 5;
   const [otherMarketsOpen, setOtherMarketsOpen] = React.useState(false);
   const [allNewsOpen, setAllNewsOpen] = React.useState(false);
   const [newsDetailTargetId, setNewsDetailTargetId] = React.useState<string | null>(null);
@@ -597,7 +598,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     window.addEventListener('hashchange', refresh);
     return () => window.removeEventListener('hashchange', refresh);
   }, []);
-  const scopedSubject = view.selectedMarket === 'JP' && selectedSymbol === '1321' ? 'N225' : selectedSymbol;
+  const scopedSubject = selectedSymbol;
   const topSignals = marketSignalsView(decisionEvidence.marketView?.projection ?? null);
   // v13.5.63 (GPT review item 1): the seven signals are Japanese inputs.
   const usSelected = view.selectedMarket === 'US';
@@ -715,10 +716,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
     data-canonical-response-verification={coherentResponseSnapshotId ? 'verified' : 'unverified'}
     data-canonical-snapshot-state={chartLoad.snapshotState}
     data-canonical-verification={chartLoad.snapshotId ? 'verified' : 'unverified'}
-    // v13.5.57: the contract names the DECISION SUBJECT (the verified ETF
-    // snapshot), never the series being drawn. Since the headline draws the
-    // index, projection.symbol reads N225/NDX while the SDA subject and the
-    // release-acceptance contract are 1321/1306/SPY/QQQ.
+    // The contract names the verified snapshot instrument the screen is bound
+    // to. Since 2026-10-23 that is the Nikkei 225 itself (N225/1306/SPY/QQQ
+    // in the release-acceptance contract); the judgment's subject is shown
+    // separately below.
     data-canonical-instrument={selectedSymbol}
     data-canonical-horizon={`${projection?.horizonDays ?? horizon}D`}>
     <span className="at-contract-state" aria-hidden="true"
@@ -746,10 +747,10 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       </button>}
     </section>
     {/* 2026-10-04: external views of the coming weeks, directly above the chart. */}
-    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && <FutureMapCard />}
-    {view.selectedMarket === 'JP' && selectedSymbol === '1321'
+    {view.selectedMarket === 'JP' && selectedSymbol === 'N225' && <FutureMapCard />}
+    {view.selectedMarket === 'JP' && selectedSymbol === 'N225'
       && <JapanMarketHorizonComparison />}
-    {view.selectedMarket === 'JP' && selectedSymbol === '1321' && <LevelMapCard />}
+    {view.selectedMarket === 'JP' && selectedSymbol === 'N225' && <LevelMapCard />}
     {!chartLoad.snapshotId && <div className="at-canonical-load-status" role="status">
       {chartLoad.loaderVisible && <TriangleStepLoader label={chartLoad.slowInitial
         ? '日経平均の根拠を確認しています'

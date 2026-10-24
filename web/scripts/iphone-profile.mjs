@@ -133,7 +133,7 @@ const report = { schemaVersion: 'argus-iphone-profile-v1', label, target, thrott
     await page.waitForTimeout(400);
   }
   const selectorSwitch = [];
-  for (const symbol of ['1306', 'SPY', 'QQQ', '1321']) {
+  for (const symbol of ['1306', 'SPY', 'QQQ', 'N225']) {
     const control = page.locator(`[data-argus-control="market-instrument"][data-instrument="${symbol}"]`);
     if (await control.count()) {
       await control.first().scrollIntoViewIfNeeded().catch(() => {});

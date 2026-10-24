@@ -9,7 +9,7 @@ import {
   openCanonicalEvidence,
   readCanonicalProjectionState,
   readCanonicalWarmRevalidationState,
-  selectCanonical1321FiveDay as selectCanonicalWithReload,
+  selectCanonicalNikkeiFiveDay as selectCanonicalWithReload,
   validateCanonicalWarmRevalidationTransition,
 } from './canonical-snapshot-selection.mjs';
 
@@ -21,11 +21,12 @@ const OUT_DIR = path.resolve(process.env.ARGUS_MOBILE_ACCEPTANCE_OUT
   || '/tmp/argus-mobile-today-acceptance');
 const BACKEND_ORIGIN = (process.env.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com').replace(/\/$/, '');
 const owner = createBrowserOwner({ baseUrl: BACKEND_ORIGIN, publicUrl: PUBLIC_URL });
-const selectCanonical1321FiveDay = page => selectCanonicalWithReload(page, {
+const selectCanonicalNikkeiFiveDay = page => selectCanonicalWithReload(page, {
   beforeReload: owner.logout, afterReload: owner.login,
 });
 const TODAY_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#today`;
-const SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'];
+// 2026-10-23: the JP primary is the Nikkei 225 itself (owner: 全て日経平均そのもので見ること).
+const SYMBOLS = ['N225', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
 const LOADER_THRESHOLD_MS = 225;
 const LOADER_TIMING_TOLERANCE_MS = 1;
@@ -41,7 +42,7 @@ const VIEWPORTS = [
 // list by construction, so no gate can exist that production discovers first.
 const GATE_INVENTORY = [
   { id: 'M01', name: 'shell-identity-version-sha' },
-  { id: 'M02', name: 'canonical-1321-5d-selection' },
+  { id: 'M02', name: 'canonical-n225-5d-selection' },
   { id: 'M03', name: 'today-single-nikkei-outlook' },
   { id: 'M04', name: 'twelve-research-snapshots-retained-off-surface' },
   { id: 'M05', name: 'responsive-geometry-matrix' },
@@ -329,7 +330,7 @@ async function selectCanonicalControls(page, timeout = 30_000) {
     const contract = document.querySelector(
       '[data-argus-contract="canonical-market-snapshot-v1"]',
     );
-    return contract?.getAttribute('data-canonical-instrument') === '1321'
+    return contract?.getAttribute('data-canonical-instrument') === 'N225'
       && contract?.getAttribute('data-canonical-horizon') === '5D'
       && contract?.getAttribute('data-canonical-verification') === 'verified';
   }, null, { timeout });
@@ -532,7 +533,7 @@ async function run() {
   const initialRequestsAt = evidence.network.length;
   await page.goto(TODAY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await waitForShell(page);
-  await selectCanonical1321FiveDay(page);
+  await selectCanonicalNikkeiFiveDay(page);
   const otherMarkets = page.locator('[data-argus-contract="other-markets-actuals-v1"]');
   if (!await otherMarkets.evaluate((element) => element.open)) {
     await otherMarkets.locator('summary').click();
@@ -563,7 +564,7 @@ async function run() {
         return actuals?.getAttribute('data-other-market-symbol') === expectedSymbol
           && actuals?.getAttribute('data-other-market-horizon') === expectedHorizon
           && Boolean(selectedChart?.getAttribute('data-market-snapshot-id'))
-          && contract?.getAttribute('data-canonical-instrument') === '1321'
+          && contract?.getAttribute('data-canonical-instrument') === 'N225'
           && contract?.getAttribute('data-canonical-horizon') === '5D'
           && contract?.getAttribute('data-canonical-verification') === 'verified';
       }, { expectedSymbol: symbol, expectedHorizon: horizon }, { timeout: 30_000 });
@@ -594,7 +595,7 @@ async function run() {
       if (record.horizon !== horizon || !record.snapshotId || !record.selectedSnapshotId
           || record.verification !== 'verified'
           || record.symbol !== symbol
-          || record.canonicalInstrument !== '1321'
+          || record.canonicalInstrument !== 'N225'
           || record.canonicalHorizon !== '5D') {
         evidence.failures.push(`today-combination:${symbol}:${horizon}`);
       }
@@ -814,7 +815,7 @@ async function run() {
     await owner.login(page);
   }
   await page.locator('.nav__mobile').getByRole('button', { name: 'Today', exact: true }).click();
-  await selectCanonical1321FiveDay(page);
+  await selectCanonicalNikkeiFiveDay(page);
   const onlineSnapshotId = await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .getAttribute('data-canonical-snapshot-id');
   const warm = await browser.newContext({

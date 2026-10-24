@@ -10,7 +10,7 @@ const snapshot = fs.readFileSync(new URL('../src/lib/verifiedSnapshot.ts', impor
 const types = fs.readFileSync(new URL('../src/types/chartIntelligence.ts', import.meta.url), 'utf8');
 const instruments = fs.readFileSync(new URL('../src/domain/marketInstruments.ts', import.meta.url), 'utf8');
 
-for (const symbol of ['1321', '1306', 'SPY', 'QQQ']) {
+for (const symbol of ['N225', '1321', '1306', 'SPY', 'QQQ']) {
   assert.match(instruments, new RegExp(symbol));
 }
 assert.match(instruments, /MarketHorizon = 1 \| 5 \| 20/);

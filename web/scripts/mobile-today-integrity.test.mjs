@@ -115,13 +115,16 @@ for (const reportedSafeBottom of [0, 34, 92]) {
     `reported safe-area ${reportedSafeBottom}px must remain bounded`);
 }
 
+// 2026-10-23: the Nikkei 225 itself is the verified JP default; the 1321 view
+// stays readable for the current judgment's subject until step 3.
 assert.deepEqual(instruments.MARKET_INSTRUMENTS.map((item) => item.symbol),
-  ['1321', '1306', 'SPY', 'QQQ']);
-for (const symbol of ['1321', '1306', 'SPY', 'QQQ']) {
+  ['N225', '1321', '1306', 'SPY', 'QQQ']);
+for (const symbol of ['N225', '1321', '1306', 'SPY', 'QQQ']) {
   assert.equal(instruments.isVerifiedMarketInstrument(symbol, 'daily'), true);
 }
-assert.equal(instruments.isVerifiedMarketInstrument('1321', 'weekly'), false);
-assert.equal(instruments.normalizeMarketInstrument('JP', 'bad'), '1321');
+assert.equal(instruments.marketInstrument('N225').instrumentType, 'INDEX');
+assert.equal(instruments.isVerifiedMarketInstrument('N225', 'weekly'), false);
+assert.equal(instruments.normalizeMarketInstrument('JP', 'bad'), 'N225');
 assert.equal(instruments.normalizeMarketInstrument('US', 'bad'), 'SPY');
 assert.match(command, /const marketMode: MarketSelectionMode = 'JP'/);
 assert.match(command, /horizon:\s*chartHorizon/);
@@ -171,7 +174,7 @@ assert.match(acceptance,
   /waitForShell\(coldPage\);[\s\S]*openCanonicalEvidence\(coldPage\);[\s\S]*coldLoaderAppeared/,
   'mobile cold-state assertions must make the collapsed evidence region visible');
 assert.match(acceptance,
-  /state: 'attached'[\s\S]*selectCanonical1321FiveDay\(page\)/,
+  /state: 'attached'[\s\S]*selectCanonicalNikkeiFiveDay\(page\)/,
   'mobile acceptance must open the disclosure through selection before requiring visible controls');
 assert.match(acceptance, /warmRequestStart/);
 assert.match(acceptance, /const warm = await browser\.newContext\(\{[\s\S]*serviceWorkers: 'block'/);

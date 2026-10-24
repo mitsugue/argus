@@ -31,7 +31,7 @@ assert.deepEqual(RELEASE_STATES, Array.from({ length: 21 }, (_, index) =>
     'CANDIDATE_BROWSER_E2E_ACCEPTED', 'REQUIRED_CI_ACCEPTED', 'MAIN_MERGED',
     'BACKEND_DEPLOYING', 'BACKEND_INFRA_READY', 'FRONTEND_DEPLOYING',
     'FRONTEND_IDENTITY_CONVERGED', 'BACKEND_IDENTITY_CONVERGED',
-    'PRODUCT_SELECTION_READY', '1321_SELECTED', '5D_SELECTED',
+    'PRODUCT_SELECTION_READY', 'N225_SELECTED', '5D_SELECTED',
     'CANONICAL_REQUEST_OBSERVED', 'VERIFIED_SNAPSHOT_RECEIVED',
     'UI_SNAPSHOT_ID_MATCHED', 'WARM_PROFILE_SEALED',
     'BUSINESS_SNAPSHOT_SET_ACCEPTED', 'PUBLIC_PRODUCT_ACCEPTED', 'V13_LIVE',
@@ -364,7 +364,7 @@ const accepted = {
   infrastructureHealthy: true,
   frontendIdentity: 'candidate', backendIdentity: 'candidate', oldFrontend: false,
   frontendDeployedBeforeSeed: true,
-  todayLoaded: true, selected1321: true, selected5D: true, httpStatuses: [200],
+  todayLoaded: true, selectedN225: true, selected5D: true, httpStatuses: [200],
   verificationStatus: 'verified', responseSnapshotId: 'mts-a', uiSnapshotId: 'mts-a',
   serviceWorkerReady: true, serviceWorkerStale: false,
   indexedDbInitiallyEmpty: true, indexedDbReady: true, profileValid: true,
@@ -400,7 +400,7 @@ const selection = fs.readFileSync(
   new URL('./canonical-snapshot-selection.mjs', import.meta.url), 'utf8');
 const requestRegistration = selection.indexOf('const requestPromise = page.waitForRequest');
 const responseRegistration = selection.indexOf('const responsePromise = page.waitForResponse');
-const select1321 = selection.indexOf('R12_1321_SELECTED');
+const selectN225 = selection.indexOf('R12_N225_SELECTED');
 const select5D = selection.indexOf('R13_5D_SELECTED');
 const revalidationTrigger = selection.indexOf(
   "await page.reload({ waitUntil: 'domcontentloaded', timeout })",
@@ -411,7 +411,7 @@ const awaitRequestAndResponse = selection.indexOf(
 const retryLoop = selection.indexOf('for (let attempt = 1; attempt <= 3; attempt += 1)');
 const awaitUi = selection.indexOf('await page.waitForFunction(({ selector, snapshotId })');
 assert.ok(requestRegistration >= 0 && responseRegistration > requestRegistration);
-assert.ok(select1321 >= 0 && select5D > select1321);
+assert.ok(selectN225 >= 0 && select5D > selectN225);
 assert.ok(revalidationTrigger > responseRegistration
   && awaitRequestAndResponse > revalidationTrigger
   && retryLoop > select5D && awaitUi > retryLoop,
@@ -422,7 +422,7 @@ assert.match(selection, /observedResponse\.status\(\) !== 429/);
 const acceptance = fs.readFileSync(
   new URL('./public-market-acceptance.mjs', import.meta.url), 'utf8');
 const seedProbe = acceptance.slice(acceptance.indexOf("if (MODE === 'seed')"));
-assert.ok(seedProbe.indexOf('selectCanonical1321FiveDay')
+assert.ok(seedProbe.indexOf('selectCanonicalNikkeiFiveDay')
   < seedProbe.indexOf('probeProfileRuntime'));
 assert.ok(seedProbe.indexOf('writeWarmProfileManifest')
   < seedProbe.indexOf("transition('R17_WARM_PROFILE_SEALED'"));

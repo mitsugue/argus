@@ -13,7 +13,7 @@ import {
   triggerBusinessSnapshots,
   validateSnapshotContract,
 } from './release-state-machine.mjs';
-import { selectCanonical1321FiveDay } from './canonical-snapshot-selection.mjs';
+import { selectCanonicalNikkeiFiveDay } from './canonical-snapshot-selection.mjs';
 import { startFixtureTarget } from './release-fixture-target.mjs';
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((rows, value, index, all) => {
@@ -95,7 +95,7 @@ try {
   });
   assert.equal(fixture.snapshots.size, 12);
 
-  const canonicalResult = await selectCanonical1321FiveDay(page, {
+  const canonicalResult = await selectCanonicalNikkeiFiveDay(page, {
     timeout: 90_000,
     onTransition: (event) => {
       if (!event.detail?.assumed) evidence.stateLog.push(event);
@@ -105,7 +105,7 @@ try {
   evidence.canonical = {
     responseSnapshotId: canonicalResult.responseSnapshotId,
     uiSnapshotId: canonicalResult.uiSnapshotId,
-    instrument: '1321',
+    instrument: 'N225',
     horizon: '5D',
   };
 

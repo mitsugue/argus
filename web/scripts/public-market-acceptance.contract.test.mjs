@@ -33,7 +33,7 @@ const today = fs.readFileSync(
 for (const viewport of ['1440', '1280', '1024', '430', '390']) {
   assert.match(script, new RegExp(`width: ${viewport}`));
 }
-for (const value of ['1321', '1306', 'SPY', 'QQQ', '1D', '5D', '20D']) {
+for (const value of ['N225', '1306', 'SPY', 'QQQ', '1D', '5D', '20D']) {
   assert.match(script, new RegExp(`'${value}'`));
 }
 for (const artifact of ['screenshots', 'acceptance.json', 'console.json',
@@ -114,7 +114,9 @@ assert.doesNotMatch(canonicalSelection, /globalThis\.fetch\s*=/,
   'acceptance must not replace the production fetch implementation');
 assert.doesNotMatch(canonicalSelection, /page\.request\.(?:get|fetch)/,
   'response recovery must not replace the observed UI request with a test-only request');
-assert.match(canonicalSelection, /R12_1321_SELECTED/);
+assert.match(canonicalSelection, /R12_N225_SELECTED/);
+assert.doesNotMatch(canonicalSelection, /'1321'/,
+  'the canonical Today selection is the Nikkei 225 itself, not the 1321 ETF');
 assert.match(canonicalSelection, /R13_5D_SELECTED/);
 assert.match(script, /fillPaintTags\.has\(tag\)/,
   'visual acceptance must ignore default fill values on non-fillable SVG containers');

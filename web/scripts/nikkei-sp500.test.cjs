@@ -26,7 +26,9 @@ assert.equal(nikkeiSp500Change20Pct(nikkei,bars(25,()=>0)),null);
 // 画面: 日米強弱は日経平均とS&P500の指数チャートから計算し、1321 の値で埋めない。
 const page=fs.readFileSync('src/routes/CommandCenter.tsx','utf8');
 assert.match(page,/useIndexChart\('SPX', 'daily'\)/);
-assert.match(page,/nikkeiSp500Change20Pct\(headlineIndex\.data\.indicators\.bars, sp500Index\.data\.indicators\.bars\)/);
+// 2026-10-23: 日経平均は検証済みの日経平均そのもの(N225)から読む。
+assert.match(page,/const nikkeiIndex = selectedChart\.data\?\.symbol === 'N225' \? selectedChart\.data : null;/);
+assert.match(page,/nikkeiSp500Change20Pct\(nikkeiIndex\.indicators\.bars, sp500Index\.data\.indicators\.bars\)/);
 assert.ok(!page.includes("headlineEntry('1321')?.relativeStrengthSummary"),'1321 対 SPY の日米強弱に戻さない');
 assert.ok(!page.includes('relativeStrength?.nikkei_sp500'),'検証済みETFの比を日米強弱に使わない');
 console.log('nikkei-sp500: ok');

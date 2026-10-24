@@ -11,7 +11,7 @@ import { readAcrossNavigation, stabilizeWarmProfileRuntime } from './warm-profil
 import {
   CANONICAL_SNAPSHOT_SELECTOR,
   openCanonicalEvidence,
-  selectCanonical1321FiveDay,
+  selectCanonicalNikkeiFiveDay,
 } from './canonical-snapshot-selection.mjs';
 
 const PUBLIC_URL = process.env.ARGUS_PUBLIC_URL || 'https://mitsugue.github.io/argus/';
@@ -37,7 +37,7 @@ const TODAY_URL = `${PUBLIC_URL.replace(/\/?$/, '/')}#today`;
 // declaring a healthy, eventually-complete transition broken at 5 seconds.
 const DATA_TIMEOUT_MS = 15_000;
 // A combination's chart is computed on demand when its cache is cold; right
-// after a release that took longer than 15 s for 1321/1D while everything
+// after a release that took longer than 15 s for 1321/1D (then the JP primary) while everything
 // else was verified (2026-10-01: selectedChart=no, canonical verified). The
 // check is that the chart arrives and matches, not that it arrives in 15 s.
 const COMBINATION_TIMEOUT_MS = 45_000;
@@ -46,7 +46,8 @@ const BACKEND_READY_TIMEOUT_MS = 8 * 60_000;
 const MARKET_CACHE_READY_TIMEOUT_MS = 30 * 60_000;
 const RUNTIME_PROBE_TIMEOUT_MS = 10_000;
 const COMBINATION_PACE_MS = 1_000;
-const SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'];
+// 2026-10-23: the JP primary is the Nikkei 225 itself (owner: 全て日経平均そのもので見ること).
+const SYMBOLS = ['N225', '1306', 'SPY', 'QQQ'];
 const HORIZONS = ['1D', '5D', '20D'];
 const VIEWPORTS = [
   { width: 1440, height: 900 },
@@ -135,7 +136,7 @@ async function waitForBackendIdentity(request) {
 
 async function waitForMarketCache(request) {
   const query = new URLSearchParams({
-    scope: 'market', symbol: '1321', market: 'JP', timeframe: 'daily',
+    scope: 'market', symbol: 'N225', market: 'JP', timeframe: 'daily',
     horizon: HORIZONS[1], snapshot: 'verified',
   });
   return retryUntil(request,
@@ -263,7 +264,7 @@ async function selectCombination(page, symbol, horizon) {
       && actuals?.getAttribute('data-other-market-horizon') === expectedHorizon
       && Boolean(selectedChart?.getAttribute('data-market-snapshot-id'))
       && contract?.getAttribute('data-canonical-verification') === 'verified'
-      && contract?.getAttribute('data-canonical-instrument') === '1321'
+      && contract?.getAttribute('data-canonical-instrument') === 'N225'
       && contract?.getAttribute('data-canonical-horizon') === '5D'
       && Boolean(contract?.getAttribute('data-canonical-snapshot-id'));
   }, { expectedSymbol: symbol, expectedHorizon: horizon },
@@ -499,12 +500,12 @@ async function run() {
           backendSha: identity.service.buildSha,
         });
       }
-      markPhase('stabilize-today-1321-5D-service-worker-indexeddb');
+      markPhase('stabilize-today-n225-5D-service-worker-indexeddb');
       const stabilized = await stabilizeWarmProfileRuntime({
         probe: async (attempt) => {
           await owner.active(page);
           markPhase('runtime-probe', 'RUNNING', { attempt });
-          const canonical = await selectCanonical1321FiveDay(page, {
+          const canonical = await selectCanonicalNikkeiFiveDay(page, {
         beforeReload: owner.logout, afterReload: owner.login,
             expectedSnapshotId: seeded.snapshotId,
             onTransition: (event) => {
@@ -589,7 +590,7 @@ async function run() {
     }
     await openCanonicalEvidence(page);
     if (MODE === 'profile') {
-      const canonical = await selectCanonical1321FiveDay(page, {
+      const canonical = await selectCanonicalNikkeiFiveDay(page, {
         beforeReload: owner.logout, afterReload: owner.login,
         expectedSnapshotId: warmProfile.source.seededSnapshotId,
         onTransition: (event) => {
@@ -616,7 +617,7 @@ async function run() {
       if (result.verdict !== 'PASS') { printFailureSummary(evidence); process.exitCode = 1; }
       return;
     }
-    const acceptanceCanonical = await selectCanonical1321FiveDay(page, {
+    const acceptanceCanonical = await selectCanonicalNikkeiFiveDay(page, {
         beforeReload: owner.logout, afterReload: owner.login,
       expectedSnapshotId: warmProfile.source.seededSnapshotId,
       onTransition: (event) => {
@@ -644,7 +645,7 @@ async function run() {
         const record = await selectCombination(page, symbol, horizon);
         evidence.combinations.push({ symbol, horizon, ...record });
         if (!record.snapshotId || !record.selectedSnapshotId || record.verification !== 'verified'
-            || record.instrument !== '1321' || record.canonicalHorizon !== '5D'
+            || record.instrument !== 'N225' || record.canonicalHorizon !== '5D'
             || record.displayedSymbol !== symbol || record.horizon !== horizon) {
           evidence.failures.push(`missing-snapshot:${symbol}:${horizon}`);
         }
