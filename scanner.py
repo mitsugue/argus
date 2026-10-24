@@ -43040,6 +43040,24 @@ def _cftc_jpy_document(*, cutoff=None):
                                      if key != "lastAttemptMonotonic"}}
 
 
+def _cftc_jpy_next_report_due(now=None):
+    """持っている最新の建玉の次の週の公表(建玉日の3日後 19:30Z 前後)を過ぎているか。
+
+    CFTC は火曜の建玉を金曜の米国東部 15:30 に公表する(祝日は後ろへずれる)。成功の後は
+    20時間空けて取りに行く作りだったため、公表から最大20時間遅れていた(10/24 は約10時間半)。
+    次の週の公表の時刻を過ぎても次の週を持っていなければ1時間ごとに取りに行く。外部への取得は
+    1時間に1回までのまま。持っている建玉日が分からない時は従来どおり。"""
+    try:
+        latest = jp_market_positioning.latest_from_ledger(_MARKET_LEDGER, cutoff=_ai_now_iso())
+        position = datetime.fromisoformat(str((latest or {}).get("positionDate") or "")[:10])
+    except Exception:
+        return False
+    current = datetime.now(timezone.utc) if now is None else now
+    # 次の週の建玉(建玉日+7日)の公表は、その3日後の 19:30Z。少し余裕を見て 19:45Z から。
+    due = position.replace(tzinfo=timezone.utc) + timedelta(days=10, hours=19, minutes=45)
+    return current >= due
+
+
 def _cftc_jpy_autorefresh():
     """Free, bounded official weekly input on the existing authenticated collect lane."""
     if not _CFTC_JPY_REFRESH_LOCK.acquire(blocking=False):
@@ -43047,6 +43065,8 @@ def _cftc_jpy_autorefresh():
     try:
         last = _CFTC_JPY_STATE["lastAttemptMonotonic"]
         interval = 20 * 3600 if _CFTC_JPY_STATE["status"] == "AVAILABLE" and _CFTC_JPY_STATE.get("persistenceStatus") == "VERIFIED" else 3600
+        if interval > 3600 and _cftc_jpy_next_report_due():
+            interval = 3600       # 2026-10-24: 次の週の公表を過ぎたら1時間ごとに取りに行く
         if last is not None and time.monotonic() - last < interval:
             return {"status": "NOT_DUE"}
         _CFTC_JPY_STATE.update(lastAttemptAt=_ai_now_iso(), lastAttemptMonotonic=time.monotonic(),
