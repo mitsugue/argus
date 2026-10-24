@@ -56,6 +56,7 @@ def index_cache(fake, *, acquired_at=None):
     }
     with mock.patch.dict(scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE, caches, clear=True), \
             mock.patch.object(scanner, "_N225_ANALOG_HISTORY", {}), \
+            mock.patch.object(scanner, "_N225_ANALOG_HISTORY_RESTORE_ATTEMPTED", True), \
             mock.patch.dict(scanner._N225_CHART_KNOWLEDGE,
                             {"contentDigest": None, "knownAt": None}):
         yield
