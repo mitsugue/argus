@@ -151,16 +151,22 @@ def select_questions(view: Mapping[str, Any], *, now: datetime) -> List[Dict[str
     return asked
 
 
+CONFIRMATIONS = ("CONFIRMED", "PARTIAL", "NONE")
+
+
 def build_prompt(questions: List[Mapping[str, Any]], *, now: datetime) -> str:
     """The single search-backed request. The answer is data, never instructions."""
     lines = [
         f"今の時刻(日本時間): {now.astimezone(JST).strftime('%Y-%m-%d %H:%M')}",
         "次の問いに、公開情報を検索して答えてください。",
         "使ってよい出典は、次のドメインの公開ページだけです: " + ", ".join(ALLOWED_DOMAINS),
-        "出典の URL が無い答え、確かめられない答えは unknown を true にしてください。推測で埋めないでください。",
+        "confirmation は次の3つから選んでください: CONFIRMED=出典で問いに答えられた / "
+        "PARTIAL=一部だけ出典で確かめられた(確かめられた事実と、まだ確かめられない点を分けて書く) / "
+        "NONE=何も確かめられなかった。NONE の時だけ unknown を true にしてください。"
+        "出典の URL が無い事実は確かめられたことにしないでください。推測で埋めないでください。",
         "売買の勧め・目標価格・利益の約束は書かないでください。事実と数字だけを短く書いてください。",
         "答えは次の JSON だけで返してください(前後に文章を付けない):",
-        '{"answers":[{"id":"q1","answerJa":"200字以内","unknown":false,'
+        '{"answers":[{"id":"q1","answerJa":"200字以内","confirmation":"CONFIRMED","unknown":false,'
         '"nextEventDate":"YYYY-MM-DD または null",'
         '"sources":[{"url":"https://...","title":"見出し","publishedAt":"YYYY-MM-DD"}]}]}',
         "",
@@ -215,7 +221,12 @@ def parse_answers(text: Any, questions: List[Mapping[str, Any]]) -> Dict[str, An
             reject("unknown_question")
             continue
         question = by_id[raw["id"]]
-        unknown = raw.get("unknown") is True
+        # 2026-10-25: the first answers marked a partly confirmed answer
+        # unknown; "unknown" now means nothing could be confirmed.
+        confirmation = str(raw.get("confirmation") or "").upper()
+        if confirmation not in CONFIRMATIONS:
+            confirmation = "NONE" if raw.get("unknown") is True else "CONFIRMED"
+        unknown = confirmation == "NONE"
         answer = str(raw.get("answerJa") or "").strip()
         sources = []
         for source in raw.get("sources") or []:
@@ -232,7 +243,7 @@ def parse_answers(text: Any, questions: List[Mapping[str, Any]]) -> Dict[str, An
             continue
         next_date = raw.get("nextEventDate")
         result["accepted"].append({
-            "question": question, "unknown": unknown,
+            "question": question, "unknown": unknown, "confirmation": confirmation,
             "answerJa": (answer or "確かめられませんでした")[:ANSWER_TEXT_LIMIT],
             "sources": sources[:MAX_SOURCES_PER_ANSWER],
             "nextEventDate": next_date if isinstance(next_date, str) and _DATE.match(next_date) else None,
@@ -252,7 +263,8 @@ def entries(accepted: Iterable[Mapping[str, Any]], *, checked_at: str, slot: str
             ref={"source": "public_check", "questionId": question["id"],
                  "questionType": question["type"], "questionJa": question["questionJa"],
                  "slot": slot, "sources": list(answer["sources"])},
-            measured={"unknown": bool(answer["unknown"]), "nextEventDate": answer["nextEventDate"]},
+            measured={"unknown": bool(answer["unknown"]), "nextEventDate": answer["nextEventDate"],
+                      "confirmation": answer.get("confirmation") or ("NONE" if answer["unknown"] else "CONFIRMED")},
             text_limit=ANSWER_TEXT_LIMIT))
     return out
 
@@ -264,6 +276,7 @@ def summary(memory: Mapping[str, Any], *, now: datetime, days: int = 7) -> Dict[
     return {"schemaVersion": SCHEMA, "entries": len(rows), "lastDays": days,
             "recent": len(recent),
             "recentUnknown": sum(1 for r in recent if (r.get("measured") or {}).get("unknown")),
+            "recentPartial": sum(1 for r in recent if (r.get("measured") or {}).get("confirmation") == "PARTIAL"),
             "byType": {t: sum(1 for r in recent if (r.get("ref") or {}).get("questionType") == t)
                        for t in QUESTION_TYPES},
             "lastAt": rows[-1]["at"] if rows else None}

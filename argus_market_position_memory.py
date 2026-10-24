@@ -52,6 +52,7 @@ EMERGING_FAMILY_LABELS: Dict[str, str] = {
     "EARNINGS": "企業決算",
     "CORPORATE_ACTION": "買収・再編",
     "REGULATION": "規制・行政処分",
+    "GEOPOLITICS_OTHER": "地政学(中東以外)",
 }
 EMERGING_PREFIX = "EMERGING_"
 # Enter: within EMERGING_WINDOW_DAYS (= the news store's material-history
@@ -101,6 +102,35 @@ def theme_for_family(family: Any) -> Optional[str]:
         if text in spec["families"]:
             return theme_id
     return None
+
+
+# 2026-10-25: the news families carry no country. Japan's CPI or wages
+# (INFLATION/EMPLOYMENT) were filed under the US policy-rate theme, and a
+# North Korea - China summit (GEOPOLITICS) under the Middle East theme. The
+# article's own words now place them; with no clear marker the family's
+# theme stays.
+_JAPAN_RELEASE_MARKERS = ("総務省", "全国消費者物価", "全国CPI", "東京都区部", "日本の消費者物価",
+                          "国内の物価", "厚生労働省", "毎月勤労統計", "実質賃金", "有効求人倍率",
+                          "完全失業率", "日銀", "日本銀行")
+_US_RELEASE_MARKERS = ("米", "FRB", "FOMC", "連邦準備", "パウエル", "BLS", "Fed", "U.S.")
+_MIDDLE_EAST_MARKERS = ("中東", "イラン", "イスラエル", "ホルムズ", "ガザ", "レバノン", "ヒズボラ", "フーシ",
+                        "サウジ", "シリア", "イエメン", "イラク", "カタール", "OPEC", "原油",
+                        "iran", "israel", "gaza", "hormuz", "houthi", "saudi", "middle east", "opec")
+_REGIONAL_GEOPOLITICS = ("GEOPOLITICS", "WAR_ESCALATION", "CEASEFIRE", "SANCTIONS")
+
+
+def placed_theme(family: Any, text: str) -> Optional[str]:
+    """The theme for a news family, placed by the article's own words."""
+    family_text = str(family or "").upper()
+    theme_id = theme_for_family(family_text) or emerging_theme_for_family(family_text)
+    if family_text in ("INFLATION", "EMPLOYMENT"):
+        if any(m in text for m in _JAPAN_RELEASE_MARKERS) and not any(m in text for m in _US_RELEASE_MARKERS):
+            return "BOJ"
+    if family_text in _REGIONAL_GEOPOLITICS:
+        lowered = text.lower()
+        if not any(m.lower() in lowered for m in _MIDDLE_EAST_MARKERS):
+            return EMERGING_PREFIX + "GEOPOLITICS_OTHER"
+    return theme_id
 
 
 def emerging_theme_for_family(family: Any) -> Optional[str]:
@@ -159,9 +189,11 @@ def ingest_news(memory: Dict[str, Any], events: Iterable[Mapping[str, Any]]) -> 
         if not event_id:
             continue
         family = event.get("eventType") or (event.get("taxonomy") or {}).get("eventType")
-        theme_id = theme_for_family(family) or emerging_theme_for_family(family)
         at = event.get("sourceReceivedAt") or event.get("receivedAt")
         headline = str(event.get("headlineJa") or event.get("headline") or event.get("titleOriginal") or "").strip()
+        words = " ".join([headline, str(event.get("titleOriginal") or "")]
+                         + [str(f) for f in (event.get("facts") or []) if isinstance(f, str)][:2])
+        theme_id = placed_theme(family, words)
         usable = (severity in ("WATCH", "HIGH", "CRITICAL") and theme_id is not None
                   and _instant(at) is not None and headline and headline != "翻訳処理中")
         prior = remembered.get(event_id, "")
@@ -305,8 +337,8 @@ def ingest_public_headlines(memory: Dict[str, Any], items: Iterable[Mapping[str,
             taxonomy = classify(title)
         except Exception:
             continue
-        theme_id = theme_for_family((taxonomy or {}).get("eventType"))
-        if theme_id is None:
+        theme_id = placed_theme((taxonomy or {}).get("eventType"), title)
+        if theme_id is None or theme_id.startswith(EMERGING_PREFIX):
             continue
         considered += 1
         entry = _entry(theme_id, "PUBLIC_HEADLINE", at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),

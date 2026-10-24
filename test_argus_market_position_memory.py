@@ -288,7 +288,9 @@ def test_at_most_two_emerging_themes_busiest_first():
 
 def test_reclassified_news_moves_to_its_new_theme_without_rewriting_history():
     memory = mpm.empty()
-    war = _cyber("nie-58ec472f1b292c45", "2026-10-22T12:45:00Z", family="WAR_ESCALATION")
+    # Filed as a war story about Iran, then re-derived as a cyber attack.
+    war = dict(_cyber("nie-58ec472f1b292c45", "2026-10-22T12:45:00Z", family="WAR_ESCALATION"),
+               facts=["イラン系のハッカー集団とされる"])
     assert mpm.ingest_news(memory, [war]) == 1
     view = mpm.snapshot(memory, now_iso="2026-10-23T00:00:00Z")
     assert next(t for t in view["themes"] if t["themeId"] == "MIDDLE_EAST")["entryCount"] == 1
