@@ -381,11 +381,21 @@ def ingest_views(memory: Dict[str, Any], views: Iterable[Mapping[str, Any]], *, 
     return added
 
 
+# N-19 (owner 2026-10-23, argus_market_position_check): answers checked
+# against public sources are stored as PUBLIC_CHECK entries. For the first
+# week they run in shadow — kept and counted, but left out of the snapshot
+# that feeds the screen and the integrated view, so they neither show nor
+# keep a theme ACTIVE until the owner has seen their quality.
+PUBLIC_CHECK_KIND = "PUBLIC_CHECK"
+PUBLIC_CHECK_VISIBLE = False
+
+
 def _theme_entries(memory: Mapping[str, Any], theme_id: str,
                    placement: Optional[Mapping[str, Optional[str]]] = None) -> List[Dict[str, Any]]:
     placement = _news_themes(memory) if placement is None else placement
     rows = [row for row in memory.get("entries") or [] if row.get("themeId") == theme_id
             and row.get("kind") != "NEWS_WITHDRAWN"
+            and (PUBLIC_CHECK_VISIBLE or row.get("kind") != PUBLIC_CHECK_KIND)
             and not (row.get("kind") == "NEWS" and placement.get(
                 str((row.get("ref") or {}).get("eventId") or ""), theme_id) != theme_id)]
     rows.sort(key=lambda row: str(row.get("at") or ""))

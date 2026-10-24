@@ -132,6 +132,7 @@ import argus_index_live
 import argus_macro_release_watch
 import argus_macro_material
 import argus_brief_schedule  # 2026-10-17: owner-fixed update times of the integrated view
+import argus_market_position_check  # 2026-10-24: N-19 public-source check of the market position
 import argus_macro_release_reaction
 import argus_market_position_memory
 import argus_ex_dividend
@@ -18048,6 +18049,12 @@ def _market_brief_worker_tick():
                                       _market_brief_history_restore)
             _memory_operation_run("internal", "brief.history_outcomes",
                                   _market_brief_history_outcomes)
+            # N-19: the public-source check runs before the view at its own times.
+            try:
+                _memory_operation_run("internal", "brief.position_check",
+                                      _market_position_check_run)
+            except Exception as exc:
+                _MARKET_POSITION_CHECK.update(status="FAILED", errorClass=type(exc).__name__)
             result = _memory_operation_run("internal", "brief.refresh",
                                            _market_brief_refresh, allow_ai=True)
             _MARKET_BRIEF_WORKER.update(status=result.get("unifiedStatus", "UNAVAILABLE"),
@@ -18288,6 +18295,90 @@ def _market_position_update(news_events, scheduled_events, released_events=(), r
         view["persistence"] = dict(_MARKET_POSITION["persistence"] or {
             "status": "saved_file_ready" if path_ready else "memory_only"})
         return view
+
+
+_MARKET_POSITION_CHECK = {"lastSlot": None, "status": "NOT_RUN", "lastRunAt": None,
+                          "asked": 0, "accepted": 0, "unknown": 0, "rejected": {},
+                          "errorClass": None, "runs": 0}
+
+
+def _market_position_check_mode():
+    """off | shadow (default). Display needs the owner's review first."""
+    value = str(os.environ.get("ARGUS_POSITION_CHECK", "shadow")).strip().lower()
+    return value if value in ("off", "shadow") else "shadow"
+
+
+def _market_position_check_run():
+    """N-19 (owner 2026-10-23): check the saved market position against public
+    sources at the owner's times (trading days 07:30/11:30/16:30, closed days
+    08:30 JST), before the integrated view. One search-backed model call with
+    at most five questions; answers without an allowed source are dropped.
+    Accepted answers are PUBLIC_CHECK entries of the same memory (shadow:
+    stored and counted, not shown). Runs inside the brief worker, never on a
+    public GET."""
+    state = _MARKET_POSITION_CHECK
+    if _market_position_check_mode() == "off":
+        state["status"] = "OFF"
+        return state
+    now = datetime.fromisoformat(str(_ai_now_iso()).replace("Z", "+00:00"))
+    slot = argus_market_position_check.due(
+        now, state.get("lastSlot"),
+        lambda day: argus_market_clock.is_trading_day(argus_market_clock.JP_EQUITY, day))
+    if slot is None:
+        return state
+    with _MARKET_POSITION_LOCK:
+        memory = _market_position_memory_locked()
+        if any(row.get("kind") == argus_market_position_check.KIND
+               and (row.get("ref") or {}).get("slot") == slot
+               for row in memory.get("entries") or []):
+            state["lastSlot"] = slot      # already answered before a restart
+            return state
+        view = argus_market_position_memory.snapshot(memory, now_iso=_ai_now_iso(),
+                                                     scheduled_events=_position_check_scheduled_events())
+    state.update(lastSlot=slot, lastRunAt=_ai_now_iso(), errorClass=None)
+    questions = argus_market_position_check.select_questions(view, now=now)
+    if not questions:
+        state.update(status="NO_QUESTIONS", asked=0, accepted=0, unknown=0, rejected={})
+        return state
+    skip = _scheduled_ai_skip("openai", "market_position_check")
+    if skip:
+        state.update(status="SKIPPED", asked=len(questions), accepted=0, unknown=0,
+                     rejected={"skipped": 1}, errorClass=str(skip.get("reason") or "")[:60])
+        return state
+    prompt = argus_market_position_check.build_prompt(questions, now=now)
+    text, execution = _openai_research_ex(prompt, role="standard",
+                                          purpose="market_position_check")
+    state["runs"] = int(state.get("runs") or 0) + 1
+    if not text:
+        state.update(status=str((execution or {}).get("status") or "FAILED").upper(),
+                     asked=len(questions), accepted=0, unknown=0, rejected={"no_answer": 1})
+        return state
+    parsed = argus_market_position_check.parse_answers(text, questions)
+    rows = argus_market_position_check.entries(parsed["accepted"], checked_at=_ai_now_iso(), slot=slot)
+    added = 0
+    with _MARKET_POSITION_LOCK:
+        memory = _market_position_memory_locked()
+        for row in rows:
+            if argus_market_position_memory.append(memory, row):
+                added += 1
+        path = _market_position_path()
+        if added and path:
+            try:
+                argus_persistent_storage.atomic_write_json(path, memory, file_mode=0o600)
+            except Exception as exc:
+                state["errorClass"] = type(exc).__name__
+    state.update(status="OK", asked=len(questions), accepted=added,
+                 unknown=sum(1 for a in parsed["accepted"] if a["unknown"]),
+                 rejected=dict(parsed["rejected"]))
+    return state
+
+
+def _position_check_scheduled_events():
+    """The same scheduled events the brief passes to the market position."""
+    try:
+        return _important_events_data().get("events") or []
+    except Exception:
+        return []
 
 
 def _market_position_news_context():
@@ -20965,6 +21056,16 @@ def api_argus_news_intake_health():
         health["judgmentOpenCount"] = len(_NEWS_INTEL.get("judgmentOpen") or {})
         health["judgmentCalibration"] = argus_news_intelligence.summarize_judgment_calibration(
             _NEWS_INTEL.get("judgmentLedger") or [])
+    # N-19 shadow: counts only (no answer text on this public-safe view).
+    try:
+        with _MARKET_POSITION_LOCK:
+            memory = _market_position_memory_locked()
+            check_counts = argus_market_position_check.summary(
+                memory, now=datetime.now(timezone.utc))
+        health["positionCheck"] = {**{k: v for k, v in _MARKET_POSITION_CHECK.items()},
+                                   "mode": _market_position_check_mode(), **check_counts}
+    except Exception as exc:
+        health["positionCheck"] = {"status": "UNAVAILABLE", "errorClass": type(exc).__name__}
     health["configured"] = argus_gmail_intake.is_configured(os.environ)
     if not health["configured"]:
         health["status"] = "MAILBOX_UNCONFIGURED"
@@ -21009,13 +21110,24 @@ def api_argus_admin_news_audit():
     if not ok:
         return jsonify(err), code
     with _NEWS_INTEL_LOCK:
+        audit_rows = _NEWS_INTEL["audit"][-80:]
+        message_rows = [
+            {"messageId": mid, **_NEWS_INTEL["messageStatus"][mid]}
+            for mid in reversed(_NEWS_INTEL.setdefault("messageOrder", [])[-60:])
+            if mid in _NEWS_INTEL.setdefault("messageStatus", {})]
+    # N-19 shadow review (owner-only): the recent public-source checks with
+    # their questions and source URLs, to judge quality before display.
+    with _MARKET_POSITION_LOCK:
+        memory = _market_position_memory_locked()
+        checks = [{k: row.get(k) for k in ("at", "themeId", "textJa", "ref", "measured")}
+                  for row in (memory.get("entries") or [])
+                  if row.get("kind") == argus_market_position_check.KIND][-40:]
+    with _NEWS_INTEL_LOCK:
         return jsonify({
             "schemaVersion": "argus-news-intake-audit-v1",
-            "audit": _NEWS_INTEL["audit"][-80:],
-            "messageStatus": [
-                {"messageId": mid, **_NEWS_INTEL["messageStatus"][mid]}
-                for mid in reversed(_NEWS_INTEL.setdefault("messageOrder", [])[-60:])
-                if mid in _NEWS_INTEL.setdefault("messageStatus", {})],
+            "positionChecks": checks,
+            "audit": audit_rows,
+            "messageStatus": message_rows,
         })
 
 
@@ -22592,7 +22704,7 @@ def _openai_model_for(role):
     return _routine_openai_model(_OPENAI_MODEL_ROLES.get(role) or _OPENAI_MODEL)
 
 
-def _openai_research_ex(user, role="standard", benchmark=False):
+def _openai_research_ex(user, role="standard", benchmark=False, purpose=None):
     """v12.2.0 中央実行: GPT LIVE web調査。(text, AiExecutionResult)を返す。
     - store=False固定・usageは同一応答から取得
     - 価格不明モデルはfail-closed(呼ばない)
@@ -22607,7 +22719,9 @@ def _openai_research_ex(user, role="standard", benchmark=False):
             provider="openai", model=model, role=role, mode="research",
             status="unavailable", started_at=started, completed_at=started,
             failure_reason_redacted=str(exc))
-    purpose = "research_benchmark" if benchmark else "osint_research"
+    # 2026-10-24 (N-19): a scheduled caller may name its own purpose so its
+    # cost is counted on its own line of the usage report.
+    purpose = "research_benchmark" if benchmark else (purpose or "osint_research")
     if not benchmark and (model not in _ROUTINE_OPENAI_MODELS
                           or (model == "gpt-5.6-luna" and not _LUNA_REVIEW_APPROVED)):
         return None, argus_ai_gate.ai_execution_result(
