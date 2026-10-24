@@ -152,8 +152,9 @@ def server(monkeypatch):
     monkeypatch.delenv("ARGUS_POSITION_CHECK", raising=False)
     calls = []
 
-    def fake_research(prompt, role="standard", benchmark=False, purpose=None):
+    def fake_research(prompt, role="standard", benchmark=False, purpose=None, max_output=None):
         calls.append(purpose)
+        assert max_output == scanner._MARKET_POSITION_CHECK_MAX_OUTPUT
         return json.dumps({"answers": [
             {"id": "q1", "answerJa": "FRBの議長が会見で示唆", "sources": [
                 {"url": "https://www.federalreserve.gov/newsevents/speech/x.htm"}]}]}), {"status": "ok"}

@@ -18303,6 +18303,11 @@ _MARKET_POSITION_CHECK = {"lastSlot": None, "status": "NOT_RUN", "lastRunAt": No
                           "errorClass": None, "runs": 0}
 
 
+# Five answers with sources plus the model's search and reasoning; 2,000 was
+# spent before any answer was written (production 2026-10-24 18:48 JST).
+_MARKET_POSITION_CHECK_MAX_OUTPUT = 8000
+
+
 def _market_position_check_mode():
     """off | shadow (default). Display needs the owner's review first."""
     value = str(os.environ.get("ARGUS_POSITION_CHECK", "shadow")).strip().lower()
@@ -18348,7 +18353,8 @@ def _market_position_check_run():
         return state
     prompt = argus_market_position_check.build_prompt(questions, now=now)
     text, execution = _openai_research_ex(prompt, role="standard",
-                                          purpose="market_position_check")
+                                          purpose="market_position_check",
+                                          max_output=_MARKET_POSITION_CHECK_MAX_OUTPUT)
     state["runs"] = int(state.get("runs") or 0) + 1
     if not text:
         state.update(status=str((execution or {}).get("status") or "FAILED").upper(),
@@ -22719,7 +22725,7 @@ def _openai_model_for(role):
     return _routine_openai_model(_OPENAI_MODEL_ROLES.get(role) or _OPENAI_MODEL)
 
 
-def _openai_research_ex(user, role="standard", benchmark=False, purpose=None):
+def _openai_research_ex(user, role="standard", benchmark=False, purpose=None, max_output=None):
     """v12.2.0 中央実行: GPT LIVE web調査。(text, AiExecutionResult)を返す。
     - store=False固定・usageは同一応答から取得
     - 価格不明モデルはfail-closed(呼ばない)
@@ -22743,7 +22749,10 @@ def _openai_research_ex(user, role="standard", benchmark=False, purpose=None):
             provider="openai", model=model, role=role, mode="research",
             status="unavailable", started_at=started, completed_at=started,
             failure_reason_redacted="production_model_not_allowed")
-    input_bound, output_bound = 6000, (_BENCHMARK_MAX_OUTPUT_TOKENS if benchmark else 2000)
+    # 2026-10-24: the first N-19 run spent its whole 2,000-token output on
+    # searching and reasoning and returned no text; a caller may raise it.
+    input_bound, output_bound = 6000, (_BENCHMARK_MAX_OUTPUT_TOKENS if benchmark
+                                       else int(max_output or 2000))
     est = argus_ai_cost.estimate_cost(model, input_bound, output_bound, _AI_PRICING)
     if est is None:
         _AI_INTEGRITY["unknownPriceBlockCount"] += 1
