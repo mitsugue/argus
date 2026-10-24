@@ -261,3 +261,24 @@ def test_a_burst_of_news_never_pushes_a_stock_move_out():
     events = [{'kind': 'news', 'key': f'n{i}'} for i in range(30)] + [{'kind': 'owner_changes', 'key': 's1'}]
     picked = wp._per_kind(events)
     assert sum(e['kind'] == 'news' for e in picked) == 20 and picked[-1]['key'] == 's1'
+
+
+def test_a_bull_and_bear_pair_sends_one_notice_per_index_move(service):
+    # 2026-10-25 (owner): SOX and Nikkei 2x bull/bear are both registered; one move, one notice.
+    value,clock,sent=service
+    subscribe(value,ownerChanges=True)
+    bear=_move(clock,eventId='US:SOXS:PRICE_CRASH:x',symbol='SOXS',eventType='PRICE_CRASH',
+               reasonJa='急落 -8.10%(US_REGULAR閾値5%)')
+    bull=_move(clock)
+    rows=push.proposals({},[],clock[0],owner_events=[bear,bull])
+    assert [r['hash'] for r in rows]==['#asset/SOXL']                 # the bull side is shown
+    value.tick(rows);assert len(sent)==1
+    later=push.proposals({},[],clock[0],owner_events=[bear])          # the bear arrives on its own later
+    value.tick(later);assert len(sent)==1
+    jp_bear=_move(clock,eventId='JP:1360:PRICE_SPIKE:x',symbol='1360',market='JP',nameJa='日経ベア2倍')
+    jp_bull=_move(clock,eventId='JP:1570:PRICE_CRASH:x',symbol='1570',market='JP',eventType='PRICE_CRASH',
+                  nameJa='日経レバ',reasonJa='急落 -6.00%(JP_REGULAR閾値5%)')
+    rows=push.proposals({},[],clock[0],owner_events=[jp_bear,jp_bull])
+    assert [r['hash'] for r in rows]==['#asset/1570'] and ':down:' in rows[0]['key']
+    other=_move(clock,eventId='JP:7203:PRICE_SPIKE:x',symbol='7203',market='JP',nameJa='トヨタ自動車')
+    assert len(push.proposals({},[],clock[0],owner_events=[other,jp_bull]))==2   # unrelated symbols stay separate

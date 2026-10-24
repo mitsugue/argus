@@ -290,6 +290,28 @@ def _subject(item, symbol):
     return symbol
 
 
+# 2026-10-25 (owner): a bull and a bear fund on the same index move together
+# in opposite directions, so both were notified for one market move. One
+# notice per pair, index direction, day and severity; the bull side first.
+INVERSE_PAIRS = {
+    'NIKKEI_2X': (frozenset({'1570', '1579', '1458'}), frozenset({'1357', '1360', '1459'})),
+    'SOX_3X': (frozenset({'SOXL'}), frozenset({'SOXS'})),
+    'NASDAQ100_3X': (frozenset({'TQQQ'}), frozenset({'SQQQ'})),
+    'SP500_3X': (frozenset({'SPXL', 'UPRO'}), frozenset({'SPXS', 'SPXU'})),
+}
+_UP_MOVES = frozenset({'急騰', 'ストップ高', 'ストップ高に接近'})
+
+
+def _inverse_pair(symbol):
+    """(pair name, True for the bull side) or (None, None)."""
+    for name, (bulls, bears) in INVERSE_PAIRS.items():
+        if symbol in bulls:
+            return name, True
+        if symbol in bears:
+            return name, False
+    return None, None
+
+
 def _move_time(item):
     try:
         stamp = datetime.fromisoformat(str(item.get('observedAt')).replace('Z', '+00:00'))
@@ -325,7 +347,9 @@ def proposals(calendar, news, now, owner_events=()):
         result.append({'key':'news:'+event_id+':'+item['severity'],'kind':'news',
             'title':'重大ニュースを確認してください','body':'市場に影響し得る新しい材料があります。記事と確認状況をARGUSで確認してください。',
             'hash':'#notifications/news/'+event_id,'due':due,'expires':due+3600})
-    for item in owner_events:
+    paired_keys = set()
+    ordered = sorted(owner_events, key=lambda item: _inverse_pair(str(item.get('symbol') or '').strip().upper())[1] is False)
+    for item in ordered:
         event_id = item.get('eventId')
         received = item.get('ingestAt') or item.get('observedAt')
         if (not isinstance(event_id, str) or not re.fullmatch(r'[A-Za-z0-9:_#.-]{1,150}', event_id)
@@ -344,7 +368,16 @@ def proposals(calendar, news, now, owner_events=()):
         if not 0 <= now-due <= 3600:
             continue
         title = ' '.join(part for part in ('監視銘柄', _subject(item, symbol), move, _move_pct(item)) if part)
-        result.append({'key':'owner-change:'+event_id+':'+str(item['severity']),
+        key = 'owner-change:'+event_id+':'+str(item['severity'])
+        pair, bull = _inverse_pair(symbol)
+        if pair:
+            index_up = (move in _UP_MOVES) == bull
+            day = datetime.fromtimestamp(due, _JST).strftime('%Y-%m-%d')
+            key = f"owner-change:pair:{pair}:{'up' if index_up else 'down'}:{day}:{item['severity']}"
+            if key in paired_keys:
+                continue
+            paired_keys.add(key)
+        result.append({'key':key,
             'kind':'owner_changes','title':title,'body':_move_time(item),
             'hash':'#asset/'+symbol,'due':due,'expires':due+3600})
     return result
