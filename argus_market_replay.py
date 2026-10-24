@@ -752,13 +752,21 @@ def _change_conditions(chart_report: Dict[str, Any]) -> List[Dict[str, Any]]:
     return result[:3]
 
 
+INSTRUMENT_TYPES = ("ETF", "INDEX", "EQUITY")
+
+
 def build_context(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
                   horizon: int, chart_report: Optional[Dict[str, Any]] = None,
                   ledger: Optional[Dict[str, Any]] = None,
                   calibration: Optional[Dict[str, Any]] = None,
-                  now_iso: Optional[str] = None) -> Dict[str, Any]:
+                  now_iso: Optional[str] = None,
+                  asset_type: str = "ETF") -> Dict[str, Any]:
     if horizon not in HORIZONS:
         raise ValueError("unsupported_horizon")
+    # 2026-10-23: the instrument id names the real kind (the Nikkei 225 is
+    # "JP:N225:INDEX"). ETF ids keep their existing form and saved records.
+    if asset_type not in INSTRUMENT_TYPES:
+        raise ValueError("unsupported_instrument_type")
     requested_as_of = now_iso or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     pit_rows, pit_proof = argus_market_data_truth.point_in_time_rows(
         list(rows or []), requested_as_of)
@@ -825,7 +833,7 @@ def build_context(rows: Iterable[Dict[str, Any]], *, symbol: str, market: str,
     context = {
         "schemaVersion": SCHEMA_VERSION, "methodVersion": METHOD_VERSION,
         "featureVersion": FEATURE_VERSION, "reactionVersion": REACTION_VERSION,
-        "instrumentId": f"{market}:{symbol}:ETF", "symbol": symbol,
+        "instrumentId": f"{market}:{symbol}:{asset_type}", "symbol": symbol,
         "market": market, "horizon": horizon, "asOf": as_of,
         "historyCoverage": {
             "start": bars[0]["date"] if bars else None,

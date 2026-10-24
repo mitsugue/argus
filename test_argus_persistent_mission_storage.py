@@ -1601,7 +1601,7 @@ class ContractRegressionTests(unittest.TestCase):
         self.assertTrue(payload["persistence"]["readBackVerified"])
         self.assertFalse(payload["recoveryAuthorityChanged"])
         self.assertEqual([
-            ("1321", "JP", True), ("1306", "JP", False),
+            ("N225", "JP", True), ("1306", "JP", False),
             ("SPY", "US", False), ("QQQ", "US", False),
         ], producer_calls)
 
@@ -1717,7 +1717,7 @@ class ContractRegressionTests(unittest.TestCase):
                 self.assertEqual(second["triggeredAt"], "2026-09-10T08:02:15Z")
                 self.assertTrue(second["persistence"]["readBackVerified"])
                 persist.assert_called_once()
-                self.assertEqual(calls, ["1321", "1306", "SPY", "SPY", "QQQ"])
+                self.assertEqual(calls, ["N225", "1306", "SPY", "SPY", "QQQ"])
                 for key, snapshot in before.items():
                     self.assertEqual(snapshots[key], snapshot)
 
@@ -1725,7 +1725,7 @@ class ContractRegressionTests(unittest.TestCase):
         expected_sha = "a" * 40
         trigger_id = "v13-release-partial-0002"
         def readback(symbol, horizon):
-            if symbol != "1321":
+            if symbol != "N225":
                 return None
             return {"releaseBinding": {"expectedBuildSha": expected_sha,
                     "producerTriggerId": trigger_id,

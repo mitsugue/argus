@@ -119,7 +119,9 @@ def test_1321_is_explicitly_an_etf_proxy_with_unverified_index_rights():
     source = pathlib.Path("scanner.py").read_text()
     route = pathlib.Path("web/src/routes/CommandCenter.tsx").read_text()
     assert '"proxyFor": "Nikkei 225" if symbol == "1321"' in source
-    assert '"licenseStatus": "license_unverified" if symbol == "1321"' in source
+    assert '"licenseStatus": ("license_unverified" if symbol == "1321"' in source
+    # The Nikkei 225 itself is an index for display reference, never an ETF proxy.
+    assert 'else "display_reference" if _instrument_type == "INDEX"' in source
     assert "日経225 ETF（1321）" in route
     assert "ETF PROXY" in pathlib.Path(
         "web/src/components/today/ArgusTodayPanel.tsx").read_text()

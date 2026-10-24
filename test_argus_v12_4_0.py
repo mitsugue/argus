@@ -32,6 +32,36 @@ def history(count=260, start=100.0, step=0.2):
 
 
 @contextmanager
+def index_cache(fake, *, acquired_at=None):
+    """The Nikkei 225 and S&P 500 cash indexes as the index caches hold them."""
+    acquired_at = acquired_at or f"{max(fake['dates'])}T23:59:59Z"
+    def rows(instrument):
+        return [{"instrumentId": instrument, "date": day,
+                 "open": fake["opens"][i], "high": fake["highs"][i],
+                 "low": fake["lows"][i], "close": fake["closes"][i] * 300,
+                 "volume": fake["volumes"][i],
+                 "availableFrom": f"{day}T07:00:00Z", "adjusted": False}
+                for i, day in sorted(enumerate(fake["dates"]),
+                                     key=lambda item: item[1])]
+    nikkei = rows("NIKKEI_225_INDEX")
+    for row in nikkei:
+        row["open"] = row["low"] = row["high"] = row["close"]
+    sp500 = rows("SP500_INDEX")
+    for row in sp500:
+        row["close"] = row["close"] / 300 * 50
+        row["open"] = row["low"] = row["high"] = row["close"]
+    caches = {
+        "^N225": {"data": nikkei, "acquiredAt": acquired_at, "expires": 9_999_999_999.0},
+        "^GSPC": {"data": sp500, "acquiredAt": acquired_at, "expires": 9_999_999_999.0},
+    }
+    with mock.patch.dict(scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE, caches, clear=True), \
+            mock.patch.object(scanner, "_N225_ANALOG_HISTORY", {}), \
+            mock.patch.dict(scanner._N225_CHART_KNOWLEDGE,
+                            {"contentDigest": None, "knownAt": None}):
+        yield
+
+
+@contextmanager
 def price_cache(fake):
     # A synthetic provider revision needs an explicit acquisition instant.
     # Deriving knowledge from the intentionally-far-future expiry would place
@@ -95,14 +125,69 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
                                   side_effect=AssertionError("provider fetch")), \
                 mock.patch.object(scanner, "get_events_snapshot", return_value={"events": []}):
             body = scanner.app.test_client().get(
+                "/api/argus/chart-intelligence?scope=market&symbol=1321").get_json()
+        # The 1321 ETF view stays readable and still says it is an ETF proxy.
+        self.assertIn("proxyDisclosureJa", body)
+        self.assertEqual(body["displayNameJa"], "日経225 ETF")
+        self.assertEqual("JP:1321:ETF", body["marketReplay"]["instrumentId"])
+
+    def test_default_market_chart_is_the_nikkei_index_with_market_comparisons(self):
+        fake = history()
+        with price_cache(fake), index_cache(fake), \
+                mock.patch.object(scanner, "_jq_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
+                mock.patch.object(scanner, "_td_price_history",
+                                  side_effect=AssertionError("provider fetch")), \
+                mock.patch.object(scanner, "get_events_snapshot", return_value={"events": []}):
+            body = scanner.app.test_client().get(
                 "/api/argus/chart-intelligence?scope=market").get_json()
+        self.assertEqual("N225", body["symbol"])
+        self.assertEqual("日経平均株価(指数)", body["displayNameJa"])
+        self.assertNotIn("proxyDisclosureJa", body)
+        self.assertEqual("JP:N225:INDEX", body["marketReplay"]["instrumentId"])
+        self.assertEqual("INDEX", body["instrumentMetadata"]["assetType"])
+        self.assertEqual("JP:N225:INDEX", body["instrumentMetadata"]["instrumentId"])
+        self.assertIsNone(body["instrumentMetadata"]["proxyFor"])
         self.assertIn("relativeStrength", body)
         self.assertIn("rotationMap", body)
         self.assertIn("ledgerTurningPoints", body)
-        self.assertIn("proxyDisclosureJa", body)
-        self.assertEqual(body["displayNameJa"], "日経225 ETF")
-        self.assertEqual(body["relativeStrength"]["nikkei_sp500"]["classification"],
-                         "argus_heuristic")
+        nikkei_sp500 = body["relativeStrength"]["nikkei_sp500"]
+        self.assertEqual("argus_heuristic", nikkei_sp500["classification"])
+        # 日経平均÷S&P500: both cash indexes (300x vs 50x the same path).
+        self.assertAlmostEqual(6.0, nikkei_sp500["latestValue"], places=6)
+        self.assertTrue(any(row["label"] == "日経平均" for row in body["rotationMap"]))
+
+    def test_nikkei_replay_is_precomputed_and_named_as_an_index(self):
+        fake = history()
+        with price_cache(fake), index_cache(fake), \
+                mock.patch.object(scanner, "_ai_now_iso",
+                                  return_value="2026-07-21T15:00:00+09:00"), \
+                mock.patch.object(scanner, "_jq_price_history",
+                                  return_value=fake), \
+                mock.patch.object(scanner, "_td_price_history",
+                                  return_value=fake), \
+                mock.patch.object(scanner, "get_events_snapshot",
+                                  return_value={"events": []}):
+            # The verified-view producer passes the Nikkei rows it hashed.
+            nikkei_rows = scanner._chart_history("N225", "JP")
+            self.assertEqual(nikkei_rows, scanner._chart_history_cached("N225", "JP"))
+            self.assertEqual("yahoo_index", nikkei_rows[-1]["source"])
+            body = scanner._chart_public_report(
+                "N225", "JP", market_scope=True, cached_only=False,
+                precompute_replay=True, daily_rows_override=nikkei_rows)
+            index_body = scanner._index_chart_calculate("N225", "daily")
+        self.assertEqual("updated", body["marketReplay"]["cacheStatus"])
+        self.assertEqual({"1", "5", "20"}, set(body["marketReplay"]["contexts"]))
+        for context in body["marketReplay"]["contexts"].values():
+            self.assertEqual("JP:N225:INDEX", context["instrumentId"])
+            self.assertEqual("N225", context["symbol"])
+        ids = {row["instrumentId"] for row in scanner._MARKET_REPLAY["contexts"]}
+        self.assertEqual({"JP:N225:INDEX"}, ids)
+        self.assertNotIn("JP:N225:ETF", str(scanner._MARKET_REPLAY))
+        # The index chart reads the same Nikkei rows, so it finds that replay.
+        self.assertEqual("JP:N225:INDEX", index_body["marketReplay"]["instrumentId"])
+        self.assertEqual(body["indicators"]["bars"][-1]["date"],
+                         index_body["indicators"]["bars"][-1]["date"])
 
     def test_asset_chart_reuses_cached_earnings_without_provider_fetch(self):
         fake = history()
@@ -213,6 +298,46 @@ class ArgusV1240IntegrationTests(unittest.TestCase):
                          set(body["marketReplay"]["contexts"]))
         self.assertEqual(0, body["marketReplay"]["automaticAiCalls"])
         self.assertEqual(3, len(scanner._MARKET_REPLAY["contexts"]))
+
+    def test_nikkei_verified_views_feed_the_today_headline(self):
+        import argus_verified_snapshot as vs
+        fake = history()
+        with price_cache(fake), index_cache(fake), \
+                mock.patch.object(scanner, "_VERIFIED_VIEW_SNAPSHOTS", vs.empty_store()), \
+                mock.patch.object(scanner, "_MARKET_PUBLIC_REPORT_CACHE", {}), \
+                mock.patch.object(scanner, "_ai_now_iso",
+                                  return_value="2026-07-21T15:00:00+09:00"), \
+                mock.patch.object(scanner, "_jq_price_history", return_value=fake), \
+                mock.patch.object(scanner, "_td_price_history", return_value=fake), \
+                mock.patch.object(scanner, "get_events_snapshot",
+                                  return_value={"events": []}):
+            report, meta = scanner._precompute_verified_market_view(
+                "N225", "JP", market_scope=True)
+            self.assertEqual("published", meta["status"])
+            self.assertEqual([1, 5, 20], [row["horizon"] for row in meta["horizons"]])
+            for horizon in (1, 5, 20):
+                snapshot = scanner._verified_market_snapshot("N225", horizon)
+                self.assertEqual("verified", snapshot["verificationStatus"])
+                self.assertEqual("N225", snapshot["instrument"])
+                self.assertEqual("JP:N225:INDEX",
+                                 snapshot["payload"]["marketReplay"]["instrumentId"])
+            self.assertIn("nikkei_sp500", report["relativeStrength"])
+            # Unchanged Nikkei bars received again keep the first knowledge
+            # time, so the next tick does not publish the same view again.
+            scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE["^N225"]["acquiredAt"] = \
+                "2026-07-21T05:30:00Z"
+            _, again = scanner._precompute_verified_market_view(
+                "N225", "JP", market_scope=True)
+            self.assertEqual("unchanged", again["status"])
+            headline = scanner.app.test_client().get(
+                "/api/argus/today-headline").get_json()
+        entry = headline["instruments"]["N225"]
+        self.assertEqual("ready", entry["status"])
+        self.assertEqual("JP", entry["market"])
+        self.assertEqual("日経平均株価(指数)", entry["displayNameJa"])
+        self.assertIn("nikkeiSp500Change20Pct", entry["relativeStrengthSummary"])
+        self.assertEqual(["1321"], headline["compatibilityInstruments"])
+        self.assertEqual(4, headline["instrumentCount"])
 
     def test_durable_v3_snapshot_contains_chart_state_and_hash(self):
         old_restored = scanner._OSINT_PERSIST_STATE["restored"]

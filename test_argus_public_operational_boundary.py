@@ -1471,8 +1471,13 @@ def test_index_chart_reads_keep_original_provider_revision(monkeypatch):
     from test_argus_today_intelligence import market_bars
     rows = market_bars(40)
     cache = {"^N225": {"data": rows, "expires": 9e12,
-                        "acquiredAt": "2026-09-15T10:00:00Z"}}
+                        "acquiredAt": "2026-09-15T10:00:00Z"},
+             "^TPX": {"data": rows, "expires": 9e12,
+                      "acquiredAt": "2026-09-15T10:00:00Z"}}
     monkeypatch.setattr(scanner, "_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE", cache)
+    monkeypatch.setattr(scanner, "_N225_ANALOG_HISTORY", {})
+    monkeypatch.setattr(scanner, "_N225_CHART_KNOWLEDGE",
+                        {"contentDigest": None, "knownAt": None})
     inputs = []
     def report(*args, **kwargs):
         inputs.append(kwargs["daily_rows_override"])
@@ -1485,10 +1490,26 @@ def test_index_chart_reads_keep_original_provider_revision(monkeypatch):
     assert inputs[0] == inputs[1]
     assert inputs[0][-1]["knownAt"] == "2026-09-15T10:00:00.000000Z"
     assert inputs[0][-1]["close"] == rows[-1]["close"]
+    # 2026-10-23: the Nikkei 225 rows are the verified view's rows. The same
+    # bars received again keep their first knowledge time (no re-publication);
+    # different bars are a new revision.
     cache["^N225"]["acquiredAt"] = "2026-09-15T12:30:00Z"
     with scanner.app.test_client() as client:
         scanner._index_chart_calculate("N225", "daily")
-    assert inputs[2][-1]["datasetId"] != inputs[1][-1]["datasetId"]
+    assert inputs[2] == inputs[1]
+    cache["^N225"]["data"] = [dict(row) for row in rows]
+    cache["^N225"]["data"][-1]["close"] = rows[-1]["close"] + 1
+    with scanner.app.test_client() as client:
+        scanner._index_chart_calculate("N225", "daily")
+    assert inputs[3][-1]["knownAt"] == "2026-09-15T12:30:00.000000Z"
+    assert inputs[3][-1]["datasetId"] != inputs[1][-1]["datasetId"]
+    # Other indexes keep the received revision of their own cache.
+    with scanner.app.test_client() as client:
+        scanner._index_chart_calculate("TOPIX", "daily")
+        cache["^TPX"]["acquiredAt"] = "2026-09-15T12:30:00Z"
+        scanner._index_chart_calculate("TOPIX", "daily")
+    assert inputs[4][-1]["knownAt"] == "2026-09-15T10:00:00.000000Z"
+    assert inputs[5][-1]["datasetId"] != inputs[4][-1]["datasetId"]
 
 
 def test_us_daily_bar_is_eod_evidence_not_malformed():

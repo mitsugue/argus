@@ -1,7 +1,7 @@
 """Today headline view — the fast canonical bootstrap for the Today surface.
 
 Derives a compact, decision-first document from the already-verified market
-snapshots (1321/1306/SPY/QQQ).  Nothing here computes new market facts: every
+snapshots (N225/1306/SPY/QQQ).  Nothing here computes new market facts: every
 value is copied from the canonical verified snapshot, so the headline cannot
 become a second decision authority.  The heavy verified snapshot remains the
 authority for full history, replay evidence, and decision gating; this view
@@ -18,7 +18,17 @@ import json
 from typing import Any, Dict, Mapping, Optional
 
 HEADLINE_SCHEMA = "argus-today-headline-v1"
-HEADLINE_INSTRUMENTS = ("1321", "1306", "SPY", "QQQ")
+# 2026-10-23 (owner): 全て日経平均そのもので見ること. The JP headline is the
+# Nikkei 225 itself, not the 1321 ETF that tracks it.
+HEADLINE_INSTRUMENTS = ("N225", "1306", "SPY", "QQQ")
+JP_HEADLINE_INSTRUMENTS = frozenset({"N225", "1306", "1321"})
+# Compatibility entry for device copies of the previous screen, which require
+# a "1321" entry and otherwise reject the whole document. Period: from the
+# release that moved the headline to the Nikkei 225 until the judgment's
+# subject also moves to it and the owner's devices are confirmed updated.
+# Removal condition: that confirmation; the entry is never part of the
+# headline set's counts and never replaces the Nikkei 225.
+COMPATIBILITY_INSTRUMENTS = ("1321",)
 HEADLINE_BAR_COUNT = 31
 HEADLINE_BAR_FIELDS = (
     "date", "open", "high", "low", "close", "volume",
@@ -127,7 +137,7 @@ def build_instrument_headline(snapshot: Optional[Mapping[str, Any]],
     entry: Dict[str, Any] = {
         "status": "ready",
         "instrument": symbol,
-        "market": "JP" if symbol in ("1321", "1306") else "US",
+        "market": "JP" if symbol in JP_HEADLINE_INSTRUMENTS else "US",
         "parentSnapshotId": snapshot.get("snapshotId"),
         "parentPayloadHash": snapshot.get("payloadHash"),
         "parentDatasetHash": snapshot.get("datasetHash"),
@@ -170,13 +180,21 @@ def build_today_headline(snapshots: Mapping[str, Optional[Mapping[str, Any]]],
         snapshots.get(symbol), symbol) for symbol in HEADLINE_INSTRUMENTS}
     ready = [entry["parentSnapshotId"] for entry in instruments.values()
              if entry.get("status") == "ready"]
+    compatibility = {symbol: build_instrument_headline(
+        snapshots.get(symbol), symbol) for symbol in COMPATIBILITY_INSTRUMENTS}
     document = {
         "schemaVersion": HEADLINE_SCHEMA,
         "generatedAt": now_iso,
         "automaticAiCalls": 0,
         "readyCount": len(ready),
         "instrumentCount": len(HEADLINE_INSTRUMENTS),
-        "instruments": instruments,
+        "instruments": {**instruments, **compatibility},
+        "compatibilityInstruments": list(COMPATIBILITY_INSTRUMENTS),
     }
-    document["headlineSetId"] = "th-" + _digest(sorted(ready))[:32]
+    # The set identity covers every entry served, so the ETag follows the body.
+    served = ready + [entry["parentSnapshotId"] for entry in compatibility.values()
+                      if entry.get("status") == "ready"]
+    document["headlineSetId"] = "th-" + _digest(
+        sorted(ready) if served == ready else
+        {"headline": sorted(ready), "compatibility": sorted(served[len(ready):])})[:32]
     return document

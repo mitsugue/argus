@@ -35350,8 +35350,10 @@ def _api_argus_admin_missions_tick_impl():
     _memory_attribution_path_capture("M5", "pre_view_hashes_complete")
     _chart_reports = []
     _view_publications = []
+    # 2026-10-23 (owner): 全て日経平均そのもので見ること. The Nikkei 225 itself
+    # is the primary JP view (market-wide comparisons included).
     _view_phase_specs = (
-        ("M6", "jp_primary", "1321", "JP"),
+        ("M6", "jp_primary", "N225", "JP"),
         ("M7", "jp_secondary", "1306", "JP"),
         ("M8", "us_primary", "SPY", "US"),
         ("M9", "us_secondary", "QQQ", "US"),
@@ -35364,7 +35366,7 @@ def _api_argus_admin_missions_tick_impl():
             _chart_report, _view_publication = \
                 _precompute_verified_market_view(
                     _market_symbol, _market_code,
-                    market_scope=_market_symbol == "1321")
+                    market_scope=_market_symbol == "N225")
             _chart_reports.append(_chart_report)
             _view_publications.append({
                 "instrument": _market_symbol, **_view_publication})
@@ -35375,6 +35377,23 @@ def _api_argus_admin_missions_tick_impl():
                     "viewSlot": _view_slot,
                 })
         _view_phase_index = len(_view_phase_specs)
+        # The current judgment still names 1321 until its subject moves to
+        # the Nikkei 225 (its own reviewed change). Its verified view keeps
+        # being produced for that judgment's daily-close evidence, without
+        # the market-wide comparisons. A failure here never blocks the four
+        # views above; it is reported as its own publication row.
+        try:
+            _decision_subject_report, _decision_subject_publication = \
+                _precompute_verified_market_view("1321", "JP", market_scope=False)
+            _view_publications.append({
+                "instrument": "1321", "role": "decision_subject",
+                **_decision_subject_publication})
+            del _decision_subject_report
+        except Exception as _decision_subject_exc:
+            _view_publications.append({
+                "instrument": "1321", "role": "decision_subject",
+                "status": "degraded",
+                "reason": type(_decision_subject_exc).__name__})
         _chart_after_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
         _replay_after_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
         _view_after_hash = argus_verified_snapshot.state_hash(
@@ -35403,7 +35422,7 @@ def _api_argus_admin_missions_tick_impl():
                       "replayStateHash": _replay_after_hash,
                       "verifiedViewsStateHash": _view_after_hash,
                       "methodVersion": argus_market_replay.METHOD_VERSION,
-                      "instrumentCount": 4})
+                      "instrumentCount": len(_view_publications)})
         _memory_attribution_path_capture(
             "M10", "post_view_hashes_and_journal_complete", {
                 "viewCount": len(_view_publications),
@@ -38440,6 +38459,8 @@ def _chart_weekly_rows(rows):
 
 
 def _chart_history(symbol, market):
+    if market == "JP" and str(symbol).upper() == "N225":
+        return _n225_chart_rows()
     if market == "JP":
         history = _jq_price_history(symbol[:4])
         cache = _JQ_HISTORY_CACHE.get(symbol[:4])
@@ -38458,6 +38479,8 @@ def _chart_history(symbol, market):
 
 def _chart_history_cached(symbol, market):
     """Return only a fresh provider cache entry; scheduled ticks never fetch."""
+    if market == "JP" and str(symbol).upper() == "N225":
+        return _n225_chart_rows()
     now = time.time()
     cache = (_JQ_HISTORY_CACHE.get(symbol[:4]) if market == "JP"
              else _TD_HISTORY_CACHE.get(symbol))
@@ -38470,6 +38493,103 @@ def _chart_history_cached(symbol, market):
         cache.get("data"), market=market, provider=provider,
         known_at=known_at,
         dataset_id=f"{provider}:{symbol}:{known_at or 'unknown'}")
+
+
+# 2026-10-23 (owner): 全て日経平均そのもので見ること. The Nikkei 225 chart
+# rows come from the retained ^N225 history (argus_index_history) joined with
+# the newer received window, exactly the series the comparison already reads.
+# Cache-only: no provider request happens here. knownAt is the acquisition of
+# the received revision, never a bar date. A refresh that returns identical
+# bars keeps the first acquisition time of that content, so an unchanged
+# Nikkei series is not re-published every half hour.
+_N225_CHART_KNOWLEDGE = {"contentDigest": None, "knownAt": None}
+_N225_CHART_KNOWLEDGE_LOCK = threading.Lock()
+
+
+def _utc_iso_or_none(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _n225_chart_rows():
+    """Nikkei 225 daily rows for the verified view; [] when not yet received."""
+    rows = [row for row in _nikkei_chart_rows()
+            if isinstance(row, dict) and str(row.get("date") or "")[:10]
+            and isinstance(row.get("close"), (int, float))
+            and not isinstance(row.get("close"), bool)]
+    if len(rows) < 30:
+        return []
+    cache = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225")
+    acquired = [value for value in (
+        _history_cache_known_at(cache, _JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC),
+        _utc_iso_or_none(_N225_ANALOG_HISTORY.get("currentSourceAcquiredAt")),
+        _utc_iso_or_none(_N225_ANALOG_HISTORY.get("backfillAcquiredAt")),
+    ) if value]
+    if not acquired:
+        # Without an acquisition time the bars cannot pass the time check.
+        return []
+    content = hashlib.sha256(json.dumps([
+        [str(row.get("date"))[:10], row.get("open"), row.get("high"),
+         row.get("low"), row.get("close"), row.get("volume")]
+        for row in rows], separators=(",", ":"), allow_nan=False,
+        default=str).encode()).hexdigest()
+    latest = max(acquired)
+    with _N225_CHART_KNOWLEDGE_LOCK:
+        if (_N225_CHART_KNOWLEDGE.get("contentDigest") == content
+                and _N225_CHART_KNOWLEDGE.get("knownAt")
+                and _N225_CHART_KNOWLEDGE["knownAt"] <= latest):
+            known_at = _N225_CHART_KNOWLEDGE["knownAt"]
+        else:
+            known_at = latest
+            _N225_CHART_KNOWLEDGE.update(contentDigest=content, knownAt=known_at)
+    history = {
+        "dates": [str(row.get("date"))[:10] for row in rows],
+        "opens": [row.get("open") for row in rows],
+        "highs": [row.get("high") for row in rows],
+        "lows": [row.get("low") for row in rows],
+        "closes": [row.get("close") for row in rows],
+        "volumes": [row.get("volume") for row in rows],
+        "adjusted": [False] * len(rows),
+    }
+    return _chart_rows_from_history(
+        history, market="JP", provider="yahoo_index", known_at=known_at,
+        dataset_id=f"yahoo_index:^N225:{known_at}")
+
+
+def _index_cache_chart_rows(index):
+    """Cache-only chart rows for one supported index (no provider request)."""
+    spec = _INDEX_CHART_SOURCES[index]
+    for yahoo_symbol in spec["yahoo"]:
+        cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(yahoo_symbol)
+        data = cached.get("data") if isinstance(cached, dict) else None
+        if isinstance(data, list) and len(data) >= 30:
+            # A screen read does not acquire a new price revision. Keep the
+            # provider's original timestamp so PIT identity and stored
+            # calculation reuse agree.
+            known_at = _history_cache_known_at(
+                cached, _JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC)
+            history = {
+                "dates": [str(row.get("date"))[:10] for row in data],
+                "opens": [row.get("open") for row in data],
+                "highs": [row.get("high") for row in data],
+                "lows": [row.get("low") for row in data],
+                "closes": [row.get("close") for row in data],
+                "volumes": [row.get("volume") for row in data],
+                "adjusted": [False] * len(data),
+            }
+            return _chart_rows_from_history(
+                history, market=spec["market"], provider="yahoo_index",
+                known_at=known_at,
+                dataset_id=f"yahoo_index:{yahoo_symbol}:{known_at}"), yahoo_symbol
+    return [], None
 
 
 _JP_DAILY_SHORT_CACHE = {"rows": None, "expires": 0.0,
@@ -38630,8 +38750,10 @@ def _release_seed_verified_market_views(body):
         "producerTriggerId": trigger_id,
         "triggeredAt": triggered_at,
     }
+    # 2026-10-23 (owner): 全て日経平均そのもので見ること. The required matrix
+    # moves its JP primary from 1321 to the Nikkei 225 itself; still 4x3.
     phase_specs = (
-        ("1321", "JP", True),
+        ("N225", "JP", True),
         ("1306", "JP", False),
         ("SPY", "US", False),
         ("QQQ", "US", False),
@@ -39201,6 +39323,25 @@ def _breadth_lag_trading_days():
         return None
 
 
+_MARKET_VIEW_ETFS = frozenset({"1321", "1306", "SPY", "QQQ"})
+
+
+def _market_instrument_type(symbol):
+    """INDEX for the cash indexes, ETF for the four ETFs, else EQUITY."""
+    code = str(symbol or "").upper()
+    if code in _INDEX_CHART_SOURCES:
+        return "INDEX"
+    return "ETF" if code in _MARKET_VIEW_ETFS else "EQUITY"
+
+
+def _market_display_name(symbol):
+    code = str(symbol or "").upper()
+    spec = _INDEX_CHART_SOURCES.get(code)
+    if spec:
+        return spec["displayNameJa"]
+    return argus_calibration.DISPLAY_NAMES.get(code, code)
+
+
 def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                          cached_only=False, precompute_replay=False,
                          daily_rows_override=None):
@@ -39300,8 +39441,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                                  if str(symbol).upper() == "N225" else None))
     # Canonical instrument metadata comes from the existing calibrated universe.
     # The UI must never relabel an ETF proxy as the cash index it follows.
-    report["displayNameJa"] = argus_calibration.DISPLAY_NAMES.get(
-        str(symbol).upper(), str(symbol).upper())
+    report["displayNameJa"] = _market_display_name(symbol)
     report["eventMarkers"] = [{
         "id": str(e.get("eventId") or e.get("id") or e.get("eventCode") or ""),
         "date": str(e.get("availableFrom") or e.get("date") or e.get("eventDate") or "")[:10],
@@ -39367,7 +39507,10 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
                 f"{symbol.lower()}_{_comparison_symbol.lower()}",
                 daily_rows, _comparison_rows, classification="derived")
     }
-    _instrument_id = f"{market}:{symbol}:ETF"
+    # 2026-10-23: the Nikkei 225 itself is an INDEX, never "JP:N225:ETF".
+    # The ETF ids (JP:1321:ETF, ...) and their saved Replay records stay.
+    _instrument_type = _market_instrument_type(symbol)
+    _instrument_id = f"{market}:{symbol}:{_instrument_type}"
     _replay_dataset_hash = argus_market_replay.dataset_hash(daily_rows)
     _existing_replay = argus_market_replay.latest_contexts(
         _MARKET_REPLAY, _instrument_id)
@@ -39427,6 +39570,7 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
         for _replay_horizon in argus_market_replay.HORIZONS:
             _replay_context = argus_market_replay.build_context(
                 daily_rows, symbol=symbol, market=market,
+                asset_type=_instrument_type,
                 horizon=_replay_horizon, chart_report=_replay_chart_input,
                 ledger=_replay_ledger,
                 calibration=_replay_calibration_input,
@@ -39453,16 +39597,17 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
         _today_intel.get("shortSelling") or {},
         "available_per_symbol_via_jpx_disclosure" if market == "JP" else
         "not_connected_for_us")
-    _instrument_type = "ETF" if symbol in {"1321", "1306", "SPY", "QQQ"} else "EQUITY"
     report["instrumentMetadata"] = {
-        "instrumentId": f"{market}:{symbol}:{_instrument_type}",
+        "instrumentId": _instrument_id,
         "symbol": symbol, "market": market, "assetType": _instrument_type,
         "displayNameJa": report["displayNameJa"],
         "source": report.get("source"),
         "availableFrom": (daily_rows[0].get("date") if daily_rows else None),
         "observedAt": now_iso, "revision": 0,
         "proxyFor": "Nikkei 225" if symbol == "1321" else None,
-        "licenseStatus": "license_unverified" if symbol == "1321" else "not_applicable",
+        "licenseStatus": ("license_unverified" if symbol == "1321"
+                          else "display_reference" if _instrument_type == "INDEX"
+                          else "not_applicable"),
     }
     if symbol == "1321":
         report["displayNameJa"] = "日経225 ETF"
@@ -39485,12 +39630,17 @@ def _chart_public_report(symbol, market, timeframe="daily", market_scope=False,
     }
     report["ledgerTurningPoints"] = []
     if market_scope:
+        # 2026-10-23 (owner): 全て日経平均そのもので見ること. With the Nikkei 225
+        # itself as the primary view, 日米強弱 is 日経平均÷S&P500 (both cash
+        # indexes, cache-only); a missing S&P 500 stays missing, never SPY.
         histories = {
             "nikkei": rows,
             "topix": history("1306", "JP"),
             "semiconductor": history("2644", "JP"),
             "growth": history("2516", "JP"),
-            "sp500": history("SPY", "US"),
+            "sp500": (_index_cache_chart_rows("SPX")[0]
+                      if str(symbol).upper() == "N225"
+                      else history("SPY", "US")),
         }
         # 2026-10-17 (owner): the dollar-based Nikkei was the 1321 ETF divided
         # by a US-evening daily USD/JPY joined on the date only (about ten
@@ -39578,10 +39728,12 @@ def api_argus_chart_intelligence():
     if timeframe not in ("daily", "weekly"):
         return jsonify({"error": "invalid_timeframe"}), 400
     if scope == "market":
-        symbol = (request.args.get("symbol") or "1321").strip().upper()
-        if symbol not in {"1321", "1306", "SPY", "QQQ"}:
+        # 2026-10-23: the Nikkei 225 itself is the default market view; the
+        # 1321 ETF view stays readable for the current judgment's subject.
+        symbol = (request.args.get("symbol") or "N225").strip().upper()
+        if symbol not in {"N225", "1321", "1306", "SPY", "QQQ"}:
             return jsonify({"error": "unsupported_market_instrument"}), 400
-        market = "JP" if symbol in {"1321", "1306"} else "US"
+        market = "JP" if symbol in {"N225", "1321", "1306"} else "US"
         horizon = (request.args.get("horizon") or "5D").strip().upper()
         if horizon not in {"1D", "5D", "20D"}:
             return jsonify({"error": "invalid_horizon"}), 400
@@ -39647,13 +39799,13 @@ def api_argus_chart_intelligence():
                   # invoke this deterministic legacy assembler.
                   else _chart_public_report(
                       symbol, market, timeframe,
-                      market_scope=symbol == "1321", cached_only=True))
+                      market_scope=symbol == "N225", cached_only=True))
         # The cached report records how the scheduler produced its replay
         # ("updated").  At this GET boundary the contract is instead whether
         # the immutable scheduled report was reused without recomputation.
         if isinstance(report.get("marketReplay"), dict):
             report["marketReplay"]["cacheStatus"] = "hit"
-        report["displayNameJa"] = argus_calibration.DISPLAY_NAMES.get(symbol, symbol)
+        report["displayNameJa"] = _market_display_name(symbol)
         if symbol == "1321":
             report["proxyDisclosureJa"] = (
                 "現物日経平均そのものではなく、既存の公式日足経路で取得する連動ETFを使用。")
@@ -39704,8 +39856,9 @@ def api_argus_chart_intelligence():
 
 # v13.5.50: the owner asked for the indices themselves (JP_MARKET_ENGINE reasons about
 # the Nikkei 225, not the 1321 ETF).  Cached-only public GET over the Yahoo
-# index OHLCV cache the JP_MARKET_ENGINE warm already fills; the verified snapshots
-# (1321/1306/SPY/QQQ) remain the decision anchor.  Never fetches here.
+# index OHLCV cache the JP_MARKET_ENGINE warm already fills.  Since 2026-10-23
+# the Nikkei 225 also has its own verified snapshots (N225/1306/SPY/QQQ).
+# Never fetches here.
 _INDEX_CHART_SOURCES = {
     "N225": {"yahoo": ("^N225",), "market": "JP", "instrumentId": "NIKKEI_225_INDEX",
              "displayNameJa": "日経平均株価(指数)"},
@@ -39716,8 +39869,8 @@ _INDEX_CHART_SOURCES = {
     "NDX": {"yahoo": ("^IXIC",), "market": "US", "instrumentId": "NASDAQ_COMPOSITE_INDEX",
             "displayNameJa": "ナスダック総合(指数)"},
 }
-_INDEX_CHART_DISCLOSURE_JA = ("指数そのもの(Yahoo Finance 日足・参考表示)。売買判断の正本は"
-                              "検証済みスナップショット(1321/1306/SPY/QQQ)のままです。")
+_INDEX_CHART_DISCLOSURE_JA = ("指数そのもの(Yahoo Finance 日足・参考表示)。検証済みスナップショットは"
+                              "日経平均・1306・SPY・QQQです。")
 
 
 @app.route("/api/argus/index-chart")
@@ -39760,35 +39913,19 @@ def api_argus_index_chart():
 def _index_chart_calculate(index, timeframe):
     """Existing numerical calculation, called only by the collection lane."""
     spec = _INDEX_CHART_SOURCES[index]
-    rows, yahoo_used = None, None
-    for yahoo_symbol in spec["yahoo"]:
-        cached = _JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get(yahoo_symbol)
-        data = cached.get("data") if isinstance(cached, dict) else None
-        if isinstance(data, list) and len(data) >= 30:
-            rows, yahoo_used = data, yahoo_symbol
-            break
-    if not rows:
+    if index == "N225":
+        # The same Nikkei 225 rows as its verified view, so one symbol never
+        # carries two datasets (and calculation reuse holds for both).
+        chart_rows, yahoo_used = _n225_chart_rows(), "^N225"
+    else:
+        chart_rows, yahoo_used = _index_cache_chart_rows(index)
+    if not chart_rows:
         return {
             "reportId": None, "status": "expected_skip", "automaticAiCalls": 0,
             "index": index, "displayNameJa": spec["displayNameJa"],
             "stateUpdate": {"status": "expected_skip", "reason": "index_cache_cold"},
             "noteJa": "指数日足はまだ取得されていません(起動後の巡回で自動取得されます)。",
         }
-    # A screen read does not acquire a new price revision. Keep the provider's
-    # original timestamp so PIT identity and stored calculation reuse agree.
-    known_at = _history_cache_known_at(cached, _JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC)
-    history = {
-        "dates": [str(row.get("date"))[:10] for row in rows],
-        "opens": [row.get("open") for row in rows],
-        "highs": [row.get("high") for row in rows],
-        "lows": [row.get("low") for row in rows],
-        "closes": [row.get("close") for row in rows],
-        "volumes": [row.get("volume") for row in rows],
-        "adjusted": [False] * len(rows),
-    }
-    chart_rows = _chart_rows_from_history(
-        history, market=spec["market"], provider="yahoo_index",
-        known_at=known_at, dataset_id=f"yahoo_index:{yahoo_used}:{known_at}")
     report = _chart_public_report(
         index, spec["market"], timeframe, market_scope=False,
         cached_only=True, daily_rows_override=chart_rows)
@@ -39819,7 +39956,8 @@ def api_argus_today_headline():
     """
     snapshots = {
         symbol: _verified_market_snapshot(symbol, 5)
-        for symbol in argus_today_headline.HEADLINE_INSTRUMENTS
+        for symbol in (argus_today_headline.HEADLINE_INSTRUMENTS
+                       + argus_today_headline.COMPATIBILITY_INSTRUMENTS)
     }
     document = argus_today_headline.build_today_headline(
         snapshots, now_iso=datetime.now(pytz.utc).strftime(
