@@ -100,12 +100,14 @@ const wordingCode = ts.transpileModule(fs.readFileSync('src/lib/marketWording.ts
   {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 const wordingContext = {exports:{},require,Date}; vm.runInNewContext(wordingCode,wordingContext);
 let stripLive={quote:null,futures:null};
+let stripRecorded=null;
 const stripContext = {exports:{},localStorage:{getItem:()=>null},require(name){
   if(name.endsWith('.css')) return {};
   if(name.includes('/todayDecision')) return d;
   if(name.includes('/marketWording')) return wordingContext.exports;
   if(name.includes('/todayJump')) return {jumpTo:()=>{}};
-  if(name.includes('/hooks/')) return {useNikkeiLive:()=>stripLive,nikkeiLiveCurrent:q=>!!q};
+  if(name.includes('/hooks/')) return {useNikkeiLive:()=>stripLive,nikkeiLiveCurrent:q=>!!q,
+    useJapanMarketComparison:()=>({levelMap:stripRecorded?{dropAlert:stripRecorded}:null})};
   if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>React.createElement('section',{'data-market-position':'slot'})};
   return require(name);
 }};
@@ -199,7 +201,8 @@ assert(unavailableStrip.includes('データ待ち'));
 // Stored inputs: the close date travels with them and agrees with the "shown as of" notice.
 const stripWith = (storage, hook) => {
   const ctx = { ...stripContext, exports: {}, localStorage: { getItem: () => storage, setItem() {} }, require(name) {
-    if (name.includes('/hooks/')) return { useNikkeiLive: hook, nikkeiLiveCurrent: (q) => !q.realtime }; return stripContext.require(name); } };
+    if (name.includes('/hooks/')) return { useNikkeiLive: hook, nikkeiLiveCurrent: (q) => !q.realtime,
+      useJapanMarketComparison: () => ({ levelMap: null }) }; return stripContext.require(name); } };
   vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/today/TodayDecisionStrip.tsx', 'utf8'),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText, ctx);
   return ctx.exports.TodayDecisionStrip;
@@ -231,3 +234,26 @@ assert.equal(noteOf(liveHtml), '上の3つは10/2終値で計算・値幅の円�
   assert(tileOf(normalStrip, 'alert-').includes('過去の同じ状態で'), 'no fall, no raise wording');
 }
 console.log('タイルは1行・終値の日付は下に1行 PASS');
+
+// 2026-10-24: the record after release (recorded before the next open, scored five sessions later)
+// joins the same line only once the shown level has 20 scored days; the line stays one line.
+{
+  const tally = (matured, fell) => ({ matured, fell });
+  const recorded = (byLevel, rulesVersion = d.ALERT_RULES_VERSION) => ({ rulesVersion, byLevel });
+  const empty = { low: tally(0, 0), normal: tally(0, 0), high: tally(0, 0), raisedHigh: tally(0, 0), raisedNormal: tally(0, 0) };
+  assert.equal(d.liveAlertRecord(recorded({ ...empty, normal: tally(19, 2) }), 'normal', false), null, 'under 20 days: not shown');
+  assert.deepEqual(d.liveAlertRecord(recorded({ ...empty, normal: tally(20, 2) }), 'normal', false), tally(20, 2));
+  assert.equal(d.liveAlertRecord(recorded({ ...empty, normal: tally(20, 2) }, 'other-rule'), 'normal', false), null, 'another definition is never mixed in');
+  assert.equal(d.liveAlertRecord(recorded({ ...empty, normal: tally(20, 21) }), 'normal', false), null);
+  assert.deepEqual(d.liveAlertRecord(recorded({ ...empty, high: tally(30, 9), raisedHigh: tally(22, 7) }), 'high', true), tally(22, 7), 'raised days have their own count');
+  assert.equal(d.liveAlertRecord(null, 'high', false), null);
+  const level = s.alert;
+  stripRecorded = recorded({ ...empty, [level]: tally(19, 1) });
+  assert(tileOf(renderStrip([]), 'alert-').includes(`過去の同じ状態で${d.ALERT_HISTORY[level]}%`), 'too few days keep the past line');
+  stripRecorded = recorded({ ...empty, [level]: tally(23, 2) });
+  const liveTile = tileOf(renderStrip([]), 'alert-');
+  assert(liveTile.includes(`過去${d.ALERT_HISTORY[level]}%・配信後23日中2日`), liveTile);
+  assert.equal((liveTile.match(/<span/g) || []).length, 1, 'still one line');
+  stripRecorded = null;
+}
+console.log('急落警戒の配信後の実績は20日から同じ1行に PASS');

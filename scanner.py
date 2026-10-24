@@ -165,6 +165,7 @@ import math
 import argus_future_map
 import argus_future_lines
 import jp_market_candidates
+import jp_market_drop_alert
 import argus_analyst_targets
 import argus_asset_earnings
 import argus_level_map_backup
@@ -41324,6 +41325,10 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
             _candidates_warm(path, nikkei_rows, eps_series, now)
         except Exception as exc:
             _CANDIDATES["lastError"] = type(exc).__name__
+        try:
+            _drop_alert_warm(path, nikkei_rows, now)
+        except Exception as exc:
+            _DROP_ALERT["lastError"] = type(exc).__name__
         # Remote copy over the existing private store (2026-10-04).
         remote = _level_map_remote()
         if remote is None:
@@ -41981,7 +41986,8 @@ def _candidate_breadth():
 
 def _candidates_warm(path, nikkei_rows, eps_series, now):
     if not _CANDIDATES["loaded"]:
-        _CANDIDATES.update(records=argus_analysis_history.read_candidate_records(path), loaded=True)
+        _CANDIDATES.update(records=[r for r in argus_analysis_history.read_candidate_records(path)
+                                    if not jp_market_drop_alert.is_record(r)], loaded=True)
     bars = jp_market_candidates._bars_with_open(
         [r for r in nikkei_rows or () if not r.get("availableFrom") or str(r["availableFrom"]) <= now])
     if len(bars) < 40:
@@ -42032,6 +42038,41 @@ def _candidates_warm(path, nikkei_rows, eps_series, now):
         if row["candidate"] == "S5" and len(breadth) < 25:
             row["dataStatus"] = "DATA_SHORT"
     _CANDIDATES.update(views=views, scoreboard=board, lastError=None)
+
+
+# 2026-10-24: plan E's level is fixed after each close, before the next open,
+# in the same candidate records, and scored on the five later sessions' lows.
+_DROP_ALERT = {"loaded": False, "records": [], "summary": None, "missed": [], "lastSkip": None, "lastError": None}
+
+
+def _drop_alert_trading_day(day):
+    return argus_market_clock.is_trading_day(argus_market_clock.JP_EQUITY, datetime.strptime(day, "%Y-%m-%d").date())
+
+
+def _drop_alert_warm(path, nikkei_rows, now):
+    if not _DROP_ALERT["loaded"]:
+        _DROP_ALERT.update(records=[r for r in argus_analysis_history.read_candidate_records(path)
+                                    if jp_market_drop_alert.is_record(r)], loaded=True)
+    rows = _level_map_completed_bars(nikkei_rows, now)
+    day = rows[-1]["date"] if rows else None
+    if day and now >= day + "T07:00:00Z" and day not in {r["signalDate"] for r in _DROP_ALERT["records"]}:
+        following = _level_map_next_session(day)
+        if not following or now >= following + "T00:00:00Z":
+            if day not in _DROP_ALERT["missed"]:
+                _DROP_ALERT["missed"] = (_DROP_ALERT["missed"] + [day])[-20:]
+        else:
+            vix = (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^VIX") or {}).get("data") or []
+            row = jp_market_drop_alert.level_on(rows, vix, day, _drop_alert_trading_day)
+            if row["status"] == "AVAILABLE":
+                record = jp_market_drop_alert.pre_record(row, recorded_at=now)
+                argus_product_naming.require_allowed(record)
+                if argus_analysis_history.append_candidate_record(path, record)["inserted"]:
+                    _DROP_ALERT["records"].append(record)
+            else:
+                _DROP_ALERT["lastSkip"] = {"date": day, "status": row["status"]}
+    outcomes = {r["recordId"]: jp_market_drop_alert.score(r, rows, _drop_alert_trading_day)
+                for r in _DROP_ALERT["records"]}
+    _DROP_ALERT.update(summary=jp_market_drop_alert.summarize(_DROP_ALERT["records"], outcomes), lastError=None)
 
 
 def _level_map_score_summary(score):
@@ -42143,6 +42184,8 @@ def _level_map_public():
                            "missedSignals": _CANDIDATES.get("missed", []), "breadthDays": _CANDIDATES.get("breadthDays"),
                            "since": _CANDIDATE_START, "lastError": _CANDIDATES.get("lastError"),
                            "tradingSignal": False, "noteJa": "記録中の候補(未検証)。売買の合図ではありません。"},
+            "dropAlert": {**(_DROP_ALERT.get("summary") or {}), "missed": list(_DROP_ALERT.get("missed") or []),
+                          "lastSkip": _DROP_ALERT.get("lastSkip"), "lastError": _DROP_ALERT.get("lastError")},
             "storage": "LOCAL_DURABLE_APPEND_ONLY", "remoteBackup": _LEVEL_MAP.get("remoteBackup"),
             "remoteRestore": _LEVEL_MAP.get("remoteRestore"),
             "actionAuthority": False, "automaticAiCalls": 0}
