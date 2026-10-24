@@ -40260,10 +40260,21 @@ def _decision_evidence_n225_live_row():
             or not math.isfinite(float(price)) or float(price) <= 0 \
             or not quote.get("tradedAt") or not quote.get("receivedAt"):
         return None, None
+    # The browser accepts decision times only as whole UTC seconds; the live
+    # quote carries microseconds, so every Nikkei reference was rejected and
+    # Today's decision stayed "データ待ち" (2026-10-25). Truncation keeps the
+    # traded <= received <= cutoff order.
+    def _whole_second(value):
+        text = _utc_iso_or_none(value)
+        return text[:19] + "Z" if text else None
+    traded_at = _whole_second(quote["tradedAt"])
+    received_at = _whole_second(quote["receivedAt"])
+    if not traded_at or not received_at:
+        return None, None
     realtime = quote.get("realtime") is True
     row = {"symbol": "N225", "status": "live" if realtime else "delayed",
-           "price": float(price), "sourceTimestamp": quote["tradedAt"],
-           "receivedAt": quote["receivedAt"]}
+           "price": float(price), "sourceTimestamp": traded_at,
+           "receivedAt": received_at}
     change = quote.get("changePct")
     if isinstance(change, (int, float)) and not isinstance(change, bool) \
             and math.isfinite(float(change)):

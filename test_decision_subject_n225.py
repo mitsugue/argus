@@ -123,3 +123,24 @@ def test_the_nikkei_value_is_an_index_level_fact_never_a_stock_quote(monkeypatch
                           "currency": "JPY", "required": True}],
         decision_at=_iso(now), generated_at=_iso(now), build_identity="a" * 40)
     assert snapshot["selections"][0]["selected"] is None
+
+
+def test_the_live_quote_times_reach_the_screen_as_whole_seconds(monkeypatch):
+    # 2026-10-25: the live quote carries microseconds (…T15:00:08.198528Z) and
+    # the browser accepts only whole UTC seconds, so Today's decision stayed
+    # "データ待ち" although the server reported every reference AVAILABLE.
+    import re
+    now = datetime.now(timezone.utc)
+    quote = _quote(now, realtime=True)
+    quote["quote"]["tradedAt"] = (now - timedelta(seconds=40)).isoformat().replace("+00:00", "Z")
+    quote["quote"]["receivedAt"] = (now - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%S.198528Z")
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
+    monkeypatch.setattr(scanner.argus_index_live, "current_quote_safe", lambda: quote)
+    row, _ = scanner._decision_evidence_watch_row("N225", "JP")
+    whole = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+    assert whole.match(row["sourceTimestamp"]) and whole.match(row["receivedAt"])
+    assert row["receivedAt"] == quote["quote"]["receivedAt"][:19] + "Z"
+    entry = _client().get("/api/argus/decision-evidence?symbols=N225").get_json()["subjects"]["N225"]
+    truth = entry["marketTruth"]
+    assert truth["status"] == "AVAILABLE"
+    assert whole.match(truth["observedAt"]) and whole.match(truth["knownAt"])
