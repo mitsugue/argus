@@ -40,6 +40,19 @@ for p in 11111 22222; do
   fi
 done
 
+# 3b) スワップ(2026-10-24: 手で有効にしただけで fstab に無く、再起動で消えて
+#     メモリ 0.5GB だけになり SSH も応答しなくなった)
+if [ -n "$(swapon --noheadings --show=NAME 2>/dev/null)" ]; then
+  pass "スワップ: 有効"
+else
+  fail "スワップ: 無効(メモリ不足で固まるおそれ)"
+fi
+if grep -Eq '^[^#].*[[:space:]]swap[[:space:]]' /etc/fstab 2>/dev/null; then
+  pass "スワップ: /etc/fstab に登録あり(再起動しても有効)"
+else
+  fail "スワップ: /etc/fstab に登録なし(再起動で消える)"
+fi
+
 # 4) OS再起動要求
 if [ -f /var/run/reboot-required ]; then
   say "  ⚠️ System restart required: あり(ただし下の判定がOKになるまで再起動しない)"
@@ -54,5 +67,5 @@ if [ "$warn" -eq 0 ]; then
   say "     (OpenD再ログインでSMS/図形認証が要る可能性に備え、受信手段を手元に。)"
 else
   say "判定: まだ再起動しないでください。上の❌/❓を解消してから再実行。"
-  say "     OpenD自動起動が未デプロイの間は、再起動=OpenD手動ログイン作業が必ず発生します。"
+  say "     OpenD自動起動が未デプロイ、またはスワップが再起動で消える間は、再起動しないでください。"
 fi

@@ -111,7 +111,13 @@ def test_opend_service_example_no_secret_env():
     assert re.search(r"^Environment=", src, re.M) is None, "no Environment= lines at all"
     assert "127.0.0.1" in src                     # localhost-only guidance
     assert "残存リスク" in src                      # honest residual-risk note
-    assert "10.8.6818" in src
+    assert "10.8.6818" in src                     # history of the manual-start era
+    # 2026-10-24: the deployed unit — remembered-password login, ID from a
+    # root-only EnvironmentFile, never a password argument.
+    assert "10.11.7108" in src
+    assert "-login_by_remember=1" in src
+    assert "EnvironmentFile=/etc/opend.env" in src
+    assert "StartLimitBurst=" in src              # no unbounded login retries
 
 
 def test_runbook_covers_required_topics():
@@ -120,7 +126,10 @@ def test_runbook_covers_required_topics():
                    "input_pic_verify_code", "req_phone_verify_code", "input_phone_verify_code",
                    "US Stocks LV3", "JPN Stocks 権限なし", "US-onlyモードは意図的",
                    "moomoo_OpenD_latest.tar.gz", "残存リスク", "絶対に貼らない",
-                   "check_opend_status.sh", "telnet_ip", "22222"):
+                   "check_opend_status.sh", "telnet_ip", "22222",
+                   # 2026-10-24: systemd autostart, remembered password, swap
+                   "10.11.7108", "opend.service", "login_by_remember", "/etc/fstab",
+                   "screen -r opend"):
         assert needle in src, f"runbook missing: {needle}"
     # graphic-code staleness warning
     assert "失効" in src
@@ -167,3 +176,11 @@ def test_us_only_reported_and_not_a_failure(monkeypatch):
     blob = json.dumps(d, ensure_ascii=False).lower()
     for bad in ('"token":', '"secret":', '"password":', '"login_pwd', '"login_account'):
         assert bad not in blob, bad
+
+
+def test_reboot_readiness_checks_swap_survives_reboot():
+    """2026-10-24: swap was enabled by hand only; a reboot dropped it and the
+    0.5 GB host stopped answering SSH. Readiness must check it is active and
+    registered in /etc/fstab."""
+    src = _read("bridge/scripts/check_reboot_readiness.sh")
+    assert "swapon" in src and "/etc/fstab" in src

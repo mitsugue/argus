@@ -154,18 +154,25 @@ sudo systemctl restart argus-bridge
 
 ---
 
-## OpenD 10.8.6818 運用ランブック (v11.5.9 — 7/3-4障害からの復旧を運用化)
+## OpenD 運用ランブック(2026-10-24 から 10.11.7108・systemd で自動起動)
 
-### 現在の本番構成(2026-07-04時点)
-- EC2: `ubuntu@52.195.168.61` / ディスク 48GB(使用 ~16%)
-- OpenD: **10.8.6818**(旧 10.7.6718 からアップグレード済み)
-  - 実行ディレクトリ: `/home/ubuntu/moomoo_OpenD_new/moomoo_OpenD_10.8.6818_Ubuntu18.04/`
-  - API: `127.0.0.1:11111` / telnet: `127.0.0.1:22222`(**どちらもlocalhostのみ**)
+### 現在の本番構成(2026-10-24時点)
+- EC2: `ubuntu@52.195.168.61`(t3.nano・メモリ 0.5GB・Ubuntu 26.04)/ ディスク 48GB(使用 ~21%)
+- スワップ: `/swapfile` 1GB。**`/etc/fstab` に登録済み**(再起動しても有効)。
+- OpenD: **10.11.7108**(2026-09-17 公開。10.8.6818 から 2026-10-24 に更新)
+  - 実行ディレクトリ: `/home/ubuntu/opend_10.11.7108/moomoo_OpenD_10.11.7108_Ubuntu18.04/moomoo_OpenD_10.11.7108_Ubuntu18.04/`
+  - 起動: `opend.service`(systemd・`bridge/opend.service.example` と同じ内容)。
+    記憶したパスワードで自動ログイン(`-login_by_remember=1`)。ログインID は `/etc/opend.env`(600)。
+  - API: `127.0.0.1:11111` / telnet: `127.0.0.1:22222`(**どちらもlocalhostのみ**。
+    配布時の `OpenD.xml` では telnet_ip / telnet_port の2行が `<!-- -->` で無効なので、有効にする)
+  - 中の様子: `screen -r opend`(抜ける時は **Ctrl+A → D**。OpenD の画面では Ctrl+C が効かない)
 - 権限: **US Stocks LV3(Normal)/ JPN Stocks 権限なし** → **US-onlyモードは意図的**
   (`ARGUS_DISABLE_JP_QUOTES=1`)。日本株はJ-Quants/Yahoo代替で判定(アプリに明示)。
   moomoo側でJPN Stocksが Normal/LV1+ になるまでJPは無効のまま維持する。
 - HMAC秘密はローテーション済み・`/etc/argus-bridge.env`(root:root, 600)のみ。
   `systemctl cat argus-bridge` に秘密は出ない。
+- SSH: セキュリティグループは **EC2 Instance Connect(ブラウザー・3.112.23.0/29)だけ**許可が基本。
+  Mac から `ssh -i <鍵>` で入る時だけ、AWS のコンソールで「マイIP」の行を一時的に足し、終わったら消す。
 
 ### 安全な確認コマンド(このリポジトリの bridge/scripts/ を使う)
 ```bash
@@ -174,18 +181,37 @@ bridge/scripts/check_opend_status.sh      # OpenDバージョン/ポート/プ�
 bridge/scripts/check_bridge_status.sh     # argus-bridge状態+直近ログ(マスク済み)
 bridge/scripts/safe_opend_process_view.sh # プロセス表示(資格情報を必ずマスク)
 bridge/scripts/safe_public_bridge_status.sh  # 公開ステータス(どこからでも可)
+bridge/scripts/check_reboot_readiness.sh  # 再起動してよいか(自動起動・ポート・スワップ)
+systemctl is-active opend argus-bridge    # 2行とも active
 ```
 **生の `ps aux | grep OpenD` をドキュメントやチャットに貼らないこと** —
-OpenDは `-login_pwd` 引数を持つため、マスク無しの出力はパスワードを含み得る。
+ログインID などの起動引数が見られるため、マスク無しの出力は使わない。
+
+### 記憶したパスワードが切れた時(自動ログインに失敗する時)
+moomoo の公式 FAQ のとおり、記憶したパスワードには期限がある。切れると OpenD はログインできず、
+ブリッジの状態の `openDStatus` が connected でなくなる。その時は手で一度ログインし直す。
+1. 市場時間外を選ぶ。`sudo systemctl stop opend`
+2. `screen -S opend_login` → 実行ディレクトリで `./OpenD`
+3. アカウント → パスワード → 「記憶するか」に **Y**(入力は日本語入力を切って英数で。パスワードは画面に出ない)
+4. 図形/SMS認証が出たら下の手順。`Login successful` が出たら、別の窓から
+   `pkill -f '\./OpenD'` で止め(Ctrl+C は効かない)、`exit` で screen を出る
+5. `sudo systemctl start opend` → `bridge/scripts/check_opend_status.sh`
+6. 「Login failed ... N chances remained」は残りの回数。ID の打ち間違い(例 `.com`)を先に疑う
 
 ### 図形認証(graphic verification)の手順
-1. `bridge/scripts/request_pic_verify_code.sh` — `req_pic_verify_code` を送信。
-   画像はOpenDディレクトリ直下の `PicVerifyCode.png` に生成される
-2. Mac側で取得して開く:
-   `scp ubuntu@52.195.168.61:/home/ubuntu/moomoo_OpenD_new/moomoo_OpenD_10.8.6818_Ubuntu18.04/PicVerifyCode.png ~/Desktop/`
-3. `bridge/scripts/submit_pic_verify_code.sh` — コードは**サイレント入力**
-   (`input_pic_verify_code -code=...` を内部送信・画面/履歴に残さない)
-4. **間違えたら古い画像は失効** — 必ず手順1から画像を取り直す
+- 画像の場所: `/home/ubuntu/.com.moomoo.OpenD/F3CNN/PicVerifyCode.png`(中身は JPEG)
+- **画像は短い時間で失効する。** 2026-10-24 に、ブラウザーの画面 → 文字(base64)→ チャット経由で
+  数分かけて開いたら、10回続けて「incorrect」になった。**数秒で開ける方法を使う。**
+1. (Mac から入る許可を足した上で)OpenD の画面で `req_pic_verify_code`
+   (または `bridge/scripts/request_pic_verify_code.sh`)
+2. Mac のターミナルで、すぐに取って拡大して開く:
+   `ssh -i <鍵> ubuntu@52.195.168.61 'cat /home/ubuntu/.com.moomoo.OpenD/F3CNN/PicVerifyCode.png' > ~/Desktop/pic.jpg && sips -s format png -z 204 510 ~/Desktop/pic.jpg --out ~/Desktop/pic.png >/dev/null && open ~/Desktop/pic.png`
+3. 大文字と小文字で形が同じ字(C・S・W・X・Z・O・V など)が入っていたら、**入力せずに**
+   `req_pic_verify_code` で取り替える(入力しなければ失敗の回数は増えない)
+4. 見分けやすければ、すぐに `input_pic_verify_code -code=...`(最後に空白を入れない)。
+   スクリプトなら `bridge/scripts/submit_pic_verify_code.sh`(サイレント入力)
+5. **間違えたら古い画像は失効** — OpenD が自動で新しい画像を作るので、2から取り直す
+6. 続けて何度も間違えたら止めて、30分〜1時間おく(moomoo の側で止められないように)
 
 ### SMS認証の手順
 1. `bridge/scripts/request_sms_verify_code.sh`(`req_phone_verify_code`)
@@ -193,21 +219,22 @@ OpenDは `-login_pwd` 引数を持つため、マスク無しの出力はパス�
    (`input_phone_verify_code -code=...`)
 3. **SMSコード/図形コード/パスワードをチャットやドキュメントに絶対に貼らない**
 
-### OpenDアップグレード・チェックリスト(10.8.6818で実証済みの経路)
-1. Macで公式Ubuntu版OpenDをダウンロード
-2. `scp <パッケージ> ubuntu@52.195.168.61:/home/ubuntu/moomoo_OpenD_latest.tar.gz`
-3. `sudo systemctl stop argus-bridge`
-4. OpenD停止(safe_opend_process_view.sh でPID確認 → kill。**重複プロセス厳禁**)
-5. 旧ディレクトリをバックアップ(例: `mv moomoo_OpenD_new moomoo_OpenD_backup_$(date +%F)`)
-6. 新パッケージを展開
-7. `OpenD.xml` で `telnet_ip=127.0.0.1 / telnet_port=22222` と `api_ip=127.0.0.1` を維持
-8. 新しいmoomooパスワードでOpenD起動 → 図形/SMS認証(上記手順)
+### OpenDアップグレード・チェックリスト(10.11.7108で実証済みの経路・2026-10-24)
+1. 最新版を公式の配布ページ(moomoo.com/download/OpenAPI)で確かめる
+2. EC2 で直接取る: `wget https://softwaredownload.futunn.com/moomoo_OpenD_<版>_Ubuntu18.04.tar.gz`
+3. `md5sum` が配布元の値(`curl -sI <URL>` の etag)と一致することを確かめる。違えば先へ進まない
+4. 新しいディレクトリに展開する(古い版は消さずに残す)
+5. `OpenD.xml` で ip=127.0.0.1 / api_port=11111 / `telnet_ip=127.0.0.1` / `telnet_port=22222` /
+   auto_hold_quote_right=1(telnet の2行の `<!-- -->` を外す)
+6. 市場時間外に、`sudo systemctl stop opend`(重複プロセス厳禁 — safe_opend_process_view.sh で確認)
+7. 上の「記憶したパスワードが切れた時」の2〜4で、新しい版に手でログインして記憶させる
+8. `/etc/systemd/system/opend.service` の WorkingDirectory を新しいディレクトリに替える →
+   `sudo systemctl daemon-reload && sudo systemctl start opend`
 9. USスナップショット手動テスト(下記) → `ret=0` を確認
-10. `bridge/scripts/restart_argus_bridge.sh` → `pushed http=200 accepted=N mode=us_only`
-11. `safe_public_bridge_status.sh` で bridgeProcess=ok / usRealtimeStatus=ok を確認
-12. **JPN Stocks権限が Normal/LV1+ になるまで `ARGUS_DISABLE_JP_QUOTES=1` を外さない**
+10. `safe_public_bridge_status.sh` で bridgeProcess=ok / usRealtimeStatus=ok を確認
+11. **JPN Stocks権限が Normal/LV1+ になるまで `ARGUS_DISABLE_JP_QUOTES=1` を外さない**
 
-USスナップショット手動テスト:
+USスナップショット手動テスト(再起動の直後は重いので5分ほどおいてから):
 ```bash
 python3 - <<'PY'
 from moomoo import OpenQuoteContext
@@ -218,50 +245,47 @@ qc.close()
 PY
 ```
 
-### OpenDのsystemd化(提案・未デプロイ)と残存リスク
-`bridge/opend.service.example` を用意した(引数なし起動・localhost限定・
-Restart=on-failure・**Environment=に秘密なし**)。ただし前提として
-**OpenD.xmlが資格情報欄をサポートするかをEC2上で実際に確認**すること
-(リポジトリからは断定できない — example内の検証手順参照)。
-確認できるまでは現行の手動起動を継続してよい。
-
-**残存リスク(正直に):** `-login_pwd` 引数で起動する限り、このホストの
-ローカルユーザー(root/ubuntu)は `ps` でパスワードを閲覧できる。
-完全な隠蔽は未確認 — 「隠れている」と思い込まないこと。緩和策:
-シェル履歴に残さない(起動コマンドは先頭スペース or `history -d`)、
-ログへ流さない、資格情報ファイルは600、そして万一チャット等へ露出したら
-**即パスワード変更+ARGUSトークン/HMACローテーション**(7/3-4で実施済みの手順)。
+### 残存リスク(正直に)
+- 記憶したパスワード(ログインの鍵)は `~/.com.moomoo.OpenD/` の中にある。このホストの
+  ubuntu / root ユーザーはそれでログインできる。SSH の入口が境界。
+- 記憶には期限がある。切れたら手でのログインが要る(上の手順)。
+- 万一パスワードや認証コードがチャット等へ露出したら、**即パスワード変更+ARGUSトークン/HMACローテーション**
+  (7/3-4 で実施済みの手順)。2026-10-24 にもパスワードを変更済み。
 
 ### 過去バージョンの記録(履歴)
 - 10.7.6718: 7/3障害時の旧バージョン(ディスク満杯+SMS要求+JP権限喪失が複合)
-- 10.8.6818: 2026-07-04アップグレード・図形認証→ログイン成功→US LV3確認
+- 10.8.6818: 2026-07-04アップグレード(Mac から `moomoo_OpenD_latest.tar.gz` を scp)・図形認証→ログイン成功→US LV3確認。
+  screen の中で手で起動し、パスワードを起動の引数で渡していた(10.10 から設定ファイルにパスワードを書けない)
+- 10.11.7108: 2026-10-24 更新・systemd(opend.service)で自動起動・記憶したパスワードで自動ログイン
 
-## 再起動(リブート)安全ランブック — v12.0.2
+## 再起動(リブート)安全ランブック — 2026-10-24 改訂
 
-**現状の結論: EC2の再起動はまだ推奨しない。** bridgeはsystemd常駐だが、
-OpenDのsystemd化は「提案のみ・未検証」。再起動するとOpenDが手動ログイン
-(場合によりSMS/図形認証)待ちになり、USリアルタイムが停止する可能性がある。
-「System restart required」表示だけを理由に再起動しないこと。
+**現状の結論: 準備の確認が「準備OK」なら、市場時間外に再起動してよい。** 2026-10-24 に
+opend.service を入れて再起動し、OpenD とブリッジが自動で戻ることを確かめた。
+「System restart required」表示だけを理由に急いで再起動しないこと(市場時間外を選ぶ)。
+
+**2026-10-24 の教訓:** スワップ(`/swapfile`)が手で有効にされていただけで `/etc/fstab` に無く、
+再起動で消えた。メモリ 0.5GB だけで OpenD のログインと読み込みが重なり、SSH も応答しなくなった
+(AWS のコンソールから再起動し、`/etc/fstab` に登録して解消)。準備の確認でスワップも見る。
 
 ### 再起動前チェックリスト(全て満たすまで再起動しない)
-0. `bridge/scripts/check_reboot_readiness.sh` の判定が「準備OK」(v12.0.3・秘密ゼロ)
-1. OpenD自動起動+自動ログインの検証が完了している(未検証なら再起動しない)
-2. 市場時間外である(US場中の再起動はリアルタイム停止に直結)
-3. `bridge/scripts/check_opend_status.sh` が connected
-4. `bridge/scripts/check_bridge_status.sh` が active
-5. 認証コード受信手段(SMS/アプリ)が手元にある(再ログインに備える)
-6. アプリのBackupページでバックアップ保護済み(最低でもJSONエクスポート済み)
-7. US-only設定(no-jp-quotes.conf)がそのまま — 再起動をJP有効化の機会にしない
+0. `bridge/scripts/check_reboot_readiness.sh` の判定が「準備OK」(自動起動・ポート・スワップ・秘密ゼロ)
+1. 市場時間外である(US場中の再起動はリアルタイム停止に直結)
+2. `bridge/scripts/check_opend_status.sh` が connected
+3. `bridge/scripts/check_bridge_status.sh` が active
+4. 認証コード受信手段(SMS/アプリ)が手元にある(記憶したパスワードが切れていた時に備える)
+5. US-only設定(no-jp-quotes.conf)がそのまま — 再起動をJP有効化の機会にしない
 
 ### 再起動後チェックリスト
-1. OpenDポート確認: `bridge/scripts/check_opend_status.sh`
+1. **5分ほど待ってから**入る(起動の直後は OpenD のログインと読み込みで重い)
+2. 軽い確認から: `free -m`(Swap が 1023 前後)・`systemctl is-active opend argus-bridge`(2行とも active)
+3. OpenDポート確認: `bridge/scripts/check_opend_status.sh`
    (127.0.0.1:11111 / 22222 がLISTENか — 生のps/pgrepは使わない: 引数に資格情報が乗るため)
-2. OpenDが未起動/ログイン待ちなら手動起動(既存手順・SMS/図形認証はチャットに貼らない)
-3. bridge再開: `bridge/scripts/restart_argus_bridge.sh`
-4. push確認: `bridge/scripts/check_bridge_status.sh`(pushed http=200 / mode=us_only)
+4. ログインの確認: USスナップショット手動テストで `ret=0`。入れていなければ `screen -r opend` で様子を見て、
+   上の「記憶したパスワードが切れた時」の手順(SMS/図形認証はチャットに貼らない)
 5. 公開状態: `bridge/scripts/safe_public_bridge_status.sh`
-   (bridgeProcess=ok / usRealtimeStatus=ok / jpRealtimeStatus=disabled)
-6. アプリのData Qualityページで us-realtime-bridge=fresh を確認
+   (bridgeProcess=ok / usRealtimeStatus=ok / jpRealtimeStatus=disabled。週末は openDStatus=unknown が正常)
+6. SSH が応答しない時は、AWS のコンソールの「インスタンスを再起動」(「停止」「終了」は押さない)
 
 ## JPメンテナンス復旧ランブック — v12.0.5(サポート確認済みメンテナンスからの復旧)
 
