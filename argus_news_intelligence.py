@@ -33,7 +33,10 @@ NEWS_EVENT_SCHEMA = "argus-news-event-v1"
 # CRITICAL from the headline by rule (``outbreak_event``); a geopolitical
 # escalation carries the same risk-off hypothesis as WAR_ESCALATION, so a
 # market reaction measured afterwards can confirm it.
-NEWS_POLICY_VERSION = "news-policy-v9"
+# v10 (2026-10-25): a system-failure story's "攻撃" (「PHP脆弱性、狙う攻撃やまず」)
+# was read as an armed conflict and got "追い風: エネルギー". Next to a system
+# failure, as next to a digital attack, only kinetic military words make a war.
+NEWS_POLICY_VERSION = "news-policy-v10"
 # Headline cues a v8/v9 rule retired, per family. A stored record whose
 # headline carries one of these (and no current cue) was typed by the headline
 # under the old rules, so the headline alone re-derives it. Remove this table
@@ -494,7 +497,7 @@ def _match_families(haystack: str) -> List[str]:
             hit = attack or outage
         elif family == "WAR_ESCALATION":
             hit = any(phrase in military_text for phrase in (
-                _KINETIC_MILITARY_PHRASES if attack else _WAR_ESCALATION_PHRASES)) \
+                _KINETIC_MILITARY_PHRASES if attack or outage else _WAR_ESCALATION_PHRASES)) \
                 or _war_outbreak_match(military_text) is not None
         elif family == "GEOPOLITICS":
             hit = _geopolitics_cue(haystack)
