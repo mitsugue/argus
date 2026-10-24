@@ -22,8 +22,11 @@ SCHEDULED_PURPOSES = ("headline_translation", "news_intel", "market_brief")
 # scenarios may ALSO run automatically under SCHEDULED_AI, but only when the
 # owner has opted in (ARGUS_EVENT_AI_OPT_IN=1 / eventOptIn), inside the same
 # daily budget, and never more than this many runs per UTC day.
+# 2026-10-24 (N-19, owner): market_position_check — the search-backed check of
+# the market position against public sources, at most four runs a day.
 SCHEDULED_MAIN_PURPOSES = ("ai_judgment", "entity_profiles", "candidate_research",
-                           "mover_explanation", "osint_research", "owner_dialogue")
+                           "mover_explanation", "osint_research", "owner_dialogue",
+                           "market_position_check")
 SCHEDULED_EVENT_PURPOSE = "event_analysis"
 SCHEDULED_EVENT_RUNS_PER_DAY = 6
 # v13.7 cost-first policy (owner directive 2026-09-21).  These are production
