@@ -4153,7 +4153,8 @@ def _us_price_targets(now=None):
     The warm universe cache is cleared on every watchlist read (hints), so the
     price lamp builds the same universe from the curated list, the owner's
     registrations already held in memory and the trusted hints, without any
-    external read. None while the registrations are not loaded yet."""
+    external read. None while the registrations are not loaded yet.
+    2026-10-24: the eight regime ETFs read by the market tone are targets too."""
     now = time.time() if now is None else now
     with _OWNER_OVERVIEW_MEMBERSHIP_LOCK:
         members = _OWNER_OVERVIEW_MEMBERSHIP.get("members")
@@ -4167,9 +4168,10 @@ def _us_price_targets(now=None):
     with _US_WARM_HINT_LOCK:
         hints = [sym for sym, stamp in _US_WARM_HINTS.items()
                  if 0 <= now - stamp <= _US_WARM_HINT_TTL]
-    return argus_td_warm.build_universe(
+    symbols = argus_td_warm.build_universe(
         curated=[s["symbol"] for s in _US_WATCHLIST], owner_members=owner,
         hints=hints, universe_cap=_US_UNIVERSE_CAP)["symbols"]
+    return list(dict.fromkeys(symbols + _REGIME_ETFS))
 
 
 def _td_warm_universe(now=None):

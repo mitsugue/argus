@@ -59,9 +59,28 @@ def test_the_lamp_is_wired_and_names_no_symbol(monkeypatch):
                         lambda sym, market: row(60) if sym == "NVDA" else None)
     lamps = {l["key"]: l for l in scanner._system_health(allow_provider_fetch=False)["lamps"]}
     lamp = lamps["prices_us"]
-    assert lamp["status"] == "warning" and "1/2銘柄" in lamp["detailJa"]
+    assert lamp["status"] == "warning" and "1/10銘柄" in lamp["detailJa"]   # + the 8 regime ETFs
     assert "NVDA" not in lamp["detailJa"] and "AAPL" not in lamp["detailJa"]
     assert "設定済" not in lamp["detailJa"]           # a configured key is not a receipt
+
+
+def test_the_regime_etfs_are_targets_once_and_the_lamp_rule_is_unchanged(monkeypatch):
+    # 2026-10-24: the eight ETFs the market tone reads (SPY QQQ IWM XLK XLU GLD TLT HYG) are
+    # counted by the lamp too, once each; missing ones stay amber (never red).
+    etfs = ["SPY", "QQQ", "IWM", "XLK", "XLU", "GLD", "TLT", "HYG"]
+    assert scanner._REGIME_ETFS == etfs
+    monkeypatch.setattr(scanner, "_US_WATCHLIST", [{"symbol": "NVDA"}, {"symbol": "SPY"}])
+    monkeypatch.setattr(scanner, "_OWNER_OVERVIEW_MEMBERSHIP", {"checkedAt": 1.0, "members": []})
+    monkeypatch.setattr(scanner, "_US_WARM_HINTS", {})
+    targets = scanner._us_price_targets()
+    assert targets == ["NVDA", "SPY"] + etfs[1:]
+    monkeypatch.setattr(scanner, "_us_market_open", lambda: True)
+    monkeypatch.setattr(scanner, "_quote_cached_only", lambda sym, market: None if sym in etfs else row(60))
+    lamps = {l["key"]: l for l in scanner._system_health(allow_provider_fetch=False)["lamps"]}
+    assert lamps["prices_us"]["status"] == "warning" and "価格なし 8" in lamps["prices_us"]["detailJa"]
+    monkeypatch.setattr(scanner, "_quote_cached_only", lambda sym, market: row(60))
+    lamps = {l["key"]: l for l in scanner._system_health(allow_provider_fetch=False)["lamps"]}
+    assert lamps["prices_us"]["status"] == "ok" and "9/9銘柄" in lamps["prices_us"]["detailJa"]
 
 
 def test_targets_wait_for_the_registrations_instead_of_guessing(monkeypatch):
