@@ -149,7 +149,6 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/cause-attribution", ("GET",), "api_argus_cause_attribution", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/cause-attribution-batch", ("GET",), "api_argus_cause_attribution_batch", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/chart-intelligence", ("GET",), "api_argus_chart_intelligence", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
-    RouteCatalogEntry("/api/argus/closepin-snapshot", ("GET",), "api_argus_closepin_snapshot", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/cost-policy", ("GET",), "api_argus_cost_policy_status", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/crypto-scan", ("POST",), "api_argus_crypto_scan", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/crypto-watchlist", ("GET",), "api_argus_crypto_watchlist", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),

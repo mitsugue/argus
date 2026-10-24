@@ -101,7 +101,9 @@ Routes that no current screen, bridge, schedule, acceptance check or operating
 tool called, and that production route usage did not record from 2026-10-22,
 were removed on 2026-10-23. The exact set is pinned by
 `test_retired_unused_routes_are_absent_for_every_caller`; every caller,
-including an authenticated operator, now receives 404.
+including an authenticated operator, now receives 404. The retired stub
+`/api/argus/closepin-snapshot`, which only answered 410 and had no remaining
+caller, joined that set on 2026-10-24.
 
 ## Non-authority guarantee
 

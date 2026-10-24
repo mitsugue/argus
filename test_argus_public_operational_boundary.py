@@ -214,9 +214,9 @@ def test_route_catalog_matches_every_flask_rule_and_is_fail_closed():
     )
     assert catalog.ROUTE_CATALOG_VALIDATION_ERRORS == ()
     assert catalog.route_contract_keys() == actual
-    assert len(catalog.ROUTE_CATALOG) == len(actual) == 154
+    assert len(catalog.ROUTE_CATALOG) == len(actual) == 153
     assert Counter(row.trustDomain for row in catalog.ROUTE_CATALOG) == {
-        "PUBLIC": 72,
+        "PUBLIC": 71,
         "AUTH_OPERATIONAL": 72,
         "OWNER_SYNC": 6,
         "RECOVERY_PROOF": 3,
@@ -1039,12 +1039,14 @@ RETIRED_UNUSED_ROUTES_2026_10_23 = (
     ("/api/argus/admin/mover-causes/refresh-queue/run", ("POST",)),
     ("/api/argus/admin/market-confirmation/refresh", ("POST",)),
     ("/api/argus/jp-fiscal-environment", ("GET",)),
+    # A retired stub that only answered 410 to callers that no longer exist.
+    ("/api/argus/closepin-snapshot", ("GET",)),
 )
 
 
 def test_retired_unused_routes_are_absent_for_every_caller(monkeypatch):
     retired = {route for route, _ in RETIRED_UNUSED_ROUTES_2026_10_23}
-    assert len(retired) == 20
+    assert len(retired) == 21
     assert retired.isdisjoint(row.route for row in catalog.ROUTE_CATALOG)
     assert retired.isdisjoint(
         rule.rule for rule in scanner.app.url_map.iter_rules())

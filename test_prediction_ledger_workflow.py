@@ -110,11 +110,9 @@ def test_scout_remains_explicit_shadow_derived_only():
     assert "entry-scout (calibration)" not in derived
 
 
-def test_retired_pin_has_no_schedule_acquisition_score_or_notification():
-    source = CLOSEPIN_WORKFLOW.read_text(encoding="utf-8")
-    assert "schedule:" not in source
-    assert "curl " not in source and "requests." not in source
-    assert "contents: write" not in source and "ntfy.sh" not in source
+def test_retired_pin_has_no_workflow_acquisition_score_or_notification():
+    # The manual-only workflow that echoed "retired" was removed on 2026-10-24.
+    assert not CLOSEPIN_WORKFLOW.exists()
     assert "ledger/closepin" not in _source()
     bridge = (ROOT / "bridge" / "trigger_closepin.sh").read_text()
     assert "curl " not in bridge and "source " not in bridge
