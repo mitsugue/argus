@@ -38,9 +38,10 @@ REVIEWED_EXTENSION_BLOBS = {
     # 2026-10-23 オーナー承認: 答え合わせのデータの名前に指数(INDEX)を足した正確な内容(日経平均そのものへの置き換え)。
     # 承認の言葉は argus_market_replay.py の build_context のコメントに記録。次の変更はまた止まる。
     'argus_market_replay.py': '1f84b6bcec622db9f7e0573aab16f7797b026a7c',
-    # 2026-10-23 オーナー承認: 米国の日足(OHLCV_BAR)の優先順の先頭に moomoo の確定足を加えた正確な内容。
+    # 2026-10-23 オーナー承認: 米国の日足(OHLCV_BAR)の優先順の先頭に moomoo の確定足を加え、
+    # 日経平均そのものの値(INDEX_LEVEL)の取得元に立花・Yahoo の遅延値を置いた正確な内容。
     # 承認の言葉は argus_market_data_truth.py の該当行のコメントに記録。次の変更はまた止まる。
-    'argus_market_data_truth.py': '399a3811f726232432ecfad50d24b2bd6bac26f0',
+    'argus_market_data_truth.py': '484a2bf19ef2f104e114f412b0de3b2e47b1a610',
     # 受領済みの公式結果を既存の見立てとニュースへ渡す正確な内容。
     'argus_macro_material.py': 'fdabb0863e0df5de12e4dd6c835e232ce7c65bc2',
     'test_argus_macro_material.py': 'b5e68b9722079359a1f74f72a21c527e80d94332',
@@ -691,6 +692,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_decision_subject_n225.py",
     "test_argus_today_headline.py",
     "test_argus_nikkei_market_view.py",
     "release/v13-snapshot-readiness-contract.json",

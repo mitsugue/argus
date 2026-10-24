@@ -4,8 +4,10 @@ A daemon thread reads the public Yahoo v8 chart endpoint at most once a minute
 while the Tokyo cash session can be open, and once more after the close; the
 web route only reads the last result. The quote carries its own trade time and
 the measured delay, so the page can say "10:25時点・約20分遅れ" instead of
-implying real time. Display only: it never enters engine evidence, history or
-any decision.
+implying real time. It never enters engine evidence or history. Since
+2026-10-23 (owner approval: 日経平均の値(立花リアルタイム、無い時はYahooの遅延値)を
+日本の判断の取得元として認めます) the current judgment reads this quote as the
+Nikkei 225 value; it still carries no action authority of its own.
 
 Outside the cash session the CME Nikkei future is read every 15 minutes
 (owner check 2026-10-03: after a night when the future closed 2% or more above

@@ -15,7 +15,7 @@ import type { TachibanaLiveDocument } from '../domain/tachibanaLive';
 // SDA input may use them. This hook only transports the document.
 
 const REFRESH_INTERVAL_MS = FEED_VISIBLE_MS;   // visible-page cadence (was 120s = backend evidence TTL)
-const HEADLINE_SYMBOLS = ['1321', '1306', 'SPY', 'QQQ'] as const;
+const HEADLINE_SYMBOLS = ['N225', '1306', 'SPY', 'QQQ'] as const;
 
 // v13.5.61 (owner iPhone review 2026-09-07: MARKET SIGNALS read 「— / 7」 and the
 // decision 「判断データ確認中」 the moment one fetch failed). The last good

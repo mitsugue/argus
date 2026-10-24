@@ -821,8 +821,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         {/* v13.5.54: name the instrument the DECISION is anchored on, not the
             series being drawn. Since the headline chart switched to the index,
             view.selectedInstrument follows the projection — reading
-            「PRIMARY ACTION · JP N225」 while the SDA subject is 1321 is exactly
-            the confusion the index disclosure exists to prevent. */}
+            「PRIMARY ACTION · JP N225」 while the SDA subject was 1321 was exactly
+            the confusion the index disclosure existed to prevent. Since
+            2026-10-23 both are the Nikkei 225 itself. */}
         {/* v13.5.61 (owner: 「数字の表示は止めること」): the subject is named in
             words on Today; its code stays on the Holdings page and in the
             data-canonical-instrument contract attribute. */}

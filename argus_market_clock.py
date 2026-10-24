@@ -49,6 +49,10 @@ def asset_market(symbol: str) -> str:
         return CRYPTO
     if s in _US_TICKERS:
         return US_EQUITY
+    # 2026-10-23 (owner): the Nikkei 225 itself is the JP judgment subject; it
+    # trades on the Tokyo session calendar, not the US fallback below.
+    if s in ("N225", "^N225"):
+        return JP_EQUITY
     # JP listing codes: 4 digits, or 4-char alnum like "285A"
     if len(s) == 4 and (s.isdigit() or (s[:3].isdigit() and s[3].isalpha())):
         return JP_EQUITY

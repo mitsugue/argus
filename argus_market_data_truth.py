@@ -47,9 +47,12 @@ MISSING = "MISSING"
 COMPLETENESS_VALUES = frozenset({COMPLETE, PARTIAL, MISSING})
 
 MARKETS = frozenset({"JP", "US", "FX", "CRYPTO"})
-FACT_TYPES = frozenset({"QUOTE", "OHLCV_BAR", "RATE", "INDEX_PROXY", "NAV"})
+# INDEX_LEVEL: the value of a cash index itself (2026-10-23 owner approval below).
+FACT_TYPES = frozenset({"QUOTE", "OHLCV_BAR", "RATE", "INDEX_PROXY", "NAV",
+                        "INDEX_LEVEL"})
 ASSET_TYPES = frozenset({
     "EQUITY", "ETF", "ETF_PROXY", "CRYPTO", "FX_PAIR", "RATE", "FUND",
+    "INDEX",
 })
 
 MAX_VALUE_FIELDS = 16
@@ -106,6 +109,7 @@ _FACT_VALUE_FIELDS = {
         "price", "previousClose", "changeAbs", "changePct", "volume",
     }),
     "NAV": frozenset({"nav", "previousNav", "changeAbs", "changePct"}),
+    "INDEX_LEVEL": frozenset({"price", "previousClose", "changeAbs", "changePct"}),
 }
 # A COMPLETE fact must contain its semantic core, not merely some allowed
 # member.  Optional comparison/change fields do not define completeness.
@@ -115,6 +119,7 @@ _FACT_REQUIRED_VALUE_FIELDS = {
     "RATE": frozenset({"rate"}),
     "INDEX_PROXY": frozenset({"price"}),
     "NAV": frozenset({"nav"}),
+    "INDEX_LEVEL": frozenset({"price"}),
 }
 _SNAPSHOT_FIELDS = frozenset({
     "schemaVersion", "authorityPolicyId", "qualityPolicyId", "pitPolicyId",
@@ -164,6 +169,10 @@ REPOSITORY_PROVIDER_PRIORITY: Dict[Tuple[str, str], Tuple[str, ...]] = {
     ("JP", "OHLCV_BAR"): ("jquants",),
     ("JP", "INDEX_PROXY"): ("moomoo", "jquants"),
     ("JP", "NAV"): ("toushin_library",),
+    # 2026-10-23 オーナー承認(本人の言葉:「日経平均の値(立花リアルタイム、無い時はYahooの遅延値)を
+    # 日本の判断の取得元として認めます。現在の判断の対象を日経平均に移してください」):
+    # 指数そのものの値(INDEX_LEVEL)だけの取得元。個別株の QUOTE の取得元には加えない。
+    ("JP", "INDEX_LEVEL"): ("tachibana_index", "yahoo_index"),
     ("US", "QUOTE"): ("moomoo", "twelvedata", "finnhub"),
     # 2026-10-23 オーナー承認(本人の言葉:「米国の判断用の終値と日足の取得元にmoomooを加えてください」
     # 「この3つ(終値の取得元・日足の優先順と承認の記録・VWAPを当日の足で計算)を、私の作業として進めてよい」):
@@ -619,7 +628,8 @@ def build_observation(
 
     currency_value = _currency(
         currency,
-        required=fact_type in {"QUOTE", "OHLCV_BAR", "INDEX_PROXY", "NAV"})
+        required=fact_type in {"QUOTE", "OHLCV_BAR", "INDEX_PROXY", "NAV",
+                               "INDEX_LEVEL"})
 
     provider_display = _safe_text(provider, "provider", maximum=80)
     provider_normalized = provider_key(provider_display)
@@ -706,7 +716,7 @@ def validate_observation(value: Any) -> Tuple[bool, str]:
             return False, "invalid_observation_scope"
         currency = instrument.get("currency")
         required_currency = fact_type in {
-            "QUOTE", "OHLCV_BAR", "INDEX_PROXY", "NAV"}
+            "QUOTE", "OHLCV_BAR", "INDEX_PROXY", "NAV", "INDEX_LEVEL"}
         if _currency(currency, required=required_currency) != currency:
             return False, "invalid_currency"
         completeness = _safe_text(

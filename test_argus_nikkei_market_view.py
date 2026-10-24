@@ -34,15 +34,14 @@ def test_replay_rejects_an_unknown_instrument_type():
         raise AssertionError("unknown instrument type accepted")
 
 
-def test_natural_tick_makes_the_nikkei_primary_and_keeps_1321_for_the_judgment():
+def test_natural_tick_makes_the_nikkei_primary_and_no_longer_builds_1321():
     mission = inspect.getsource(scanner._api_argus_admin_missions_tick_impl)
     assert '("M6", "jp_primary", "N225", "JP")' in mission
     assert 'market_scope=_market_symbol == "N225"' in mission
     assert '"1321", "jp_primary"' not in mission
-    # 1321 is produced after the four views, never as one of them.
-    support = mission.index('_precompute_verified_market_view("1321", "JP", market_scope=False)')
-    assert mission.index("_view_phase_index = len(_view_phase_specs)") < support
-    assert support < mission.index("_chart_after_hash = argus_chart_intelligence.state_hash")
+    # Step 3 (owner approval 2026-10-23): the judgment's subject is the Nikkei
+    # 225 too, so the separate 1321 view for the judgment is no longer built.
+    assert '_precompute_verified_market_view("1321"' not in mission
 
 
 def test_release_matrix_moves_its_jp_primary_to_the_nikkei():
