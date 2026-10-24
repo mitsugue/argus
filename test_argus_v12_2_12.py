@@ -191,7 +191,8 @@ def test_migrated_features_present():
 def test_portfolio_wide_features_moved_to_core():
     wl = _read("routes", "Watchlist.tsx")
     assert "WhatIfPanel" not in wl and "ExposureCard" not in wl
-    assert "登録銘柄" in wl
+    # 2026-10-24 オーナー指示: ページの見出しはボタンと同じ Watchlist。
+    assert "'Watchlist'" in wl and "'登録銘柄'" not in wl
     # 2026-10-23 オーナー指示(画面の言葉の基本方針): 案内の文は出さない。
     assert "価格と変化を確認し、銘柄をタップして見通しへ。" not in wl
     asset_list = _read("components", "assetDesk", "AssetDeskList.tsx")
