@@ -303,8 +303,7 @@ def explanation_facts(document):
         kind={'ACTUAL':'実績','ESTIMATE':'推計','FORECAST':'見通し'}.get(definition.get('estimateType'),'未確認')
         facts.append({'text':f"日本・国地方・{definition.get('year')}年度{kind}・{labels[case]}："
             f"名目成長率{values['growthPct']:g}%、政府実効金利{values['effectiveRatePct']:g}%、"
-            f"PB{values['primarySurplusPct']:g}%GDP。機械的債務比率圧力{values['pressurePoints']:+.2f}ポイント。"
-            '株価確率・財政危機の判定ではありません。',
+            f"PB{values['primarySurplusPct']:g}%GDP。機械的債務比率圧力{values['pressurePoints']:+.2f}ポイント。",
             'priority':'P1' if row.get('warningLevel') in ('WATCH','WARNING') else 'P2',
             'source':'jp_fiscal_environment','verification':'UNCONFIRMED',
             'provenance':{'eventId':row['id'],'asOf':(row['sources'][0] if row['sources'] else {}).get('knownAt'),
@@ -318,7 +317,7 @@ def explanation_facts(document):
         if group not in adverse:
             continue
         facts.append({'text':'日本の市場監視：'+label+
-            'に継続的な変化。財政不安が原因とは未確認。',
+            'に継続的な変化。',
             'priority':'P1','source':'jp_fiscal_environment','verification':'UNCONFIRMED',
             'provenance':{'eventId':market.get('id')+':'+group,'asOf':document.get('expectedMarketSession'),
                 'sourceLabelJa':source_label,'url':url}})
@@ -419,5 +418,5 @@ def notification_proposals(state, *, now):
         '日本の財政・金利に注視する変化があります' if 'NEW_WATCH' in kinds else
         '日本の財政・金利の警戒根拠が変わりました')
     return [{'key':'news:fiscal:'+packet['id'],'kind':'news','title':title,
-        'body':'比較できる統計と市場の変化に基づくお知らせです。Todayで理由と確認条件をご覧ください。売買や危機の判定ではありません。',
+        'body':'理由と確認条件はTodayへ。',
         'hash':'#today','due':due,'expires':due+6*3600}]

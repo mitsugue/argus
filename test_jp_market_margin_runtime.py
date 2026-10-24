@@ -134,7 +134,8 @@ def test_same_runtime_balances_reach_unified_ai_with_provenance(feed, monkeypatc
     assert raw["provenance"]["receivedAt"] == "2026-09-12T01:12:11+00:00"
     assert len(raw["provenance"]["sourceResponseSha256"]) == 64
     assert derived["verification"] == "UNCONFIRMED"
-    assert "買い戻し注文は未観測" in derived["text"]
+    assert "倍率差" in derived["text"] and "寄与" in derived["text"]
+    assert "未観測" not in derived["text"] and "サイン" not in derived["text"]
     context = scanner.argus_market_brief.unified_context(result)
     assert any(r["text"] == raw["text"] for r in context["facts"])
     changed = copy.deepcopy(result)

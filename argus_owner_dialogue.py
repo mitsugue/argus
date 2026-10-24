@@ -192,7 +192,6 @@ def subject_fact(brief, symbol, horizon, subject_comparison=None):
     for key,label in [('relativeToNikkeiPct','日経平均比'),('relativeToSectorPct','業種ETF比')]:
         if row.get(key) is not None:parts.append(f"{label}{row[key]:+.2f}ポイント。")
     if row.get('sectorNameJa'):parts.append('現在の業種区分: '+row['sectorNameJa']+'。')
-    parts.append('売買注文の観測や将来の予測ではありません。')
     result=fact(''.join(parts),'subject_market_comparison',verification='VERIFIED')
     result['marketInput']=deepcopy(row)
     result['evidenceId']='dialogue-fact-'+digest({k:v for k,v in result.items() if k!='evidenceId'})

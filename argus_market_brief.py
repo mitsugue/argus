@@ -245,8 +245,7 @@ def _margin_facts(document: Optional[Mapping[str, Any]]) -> List[Dict[str, Any]]
         previous = document.get("previous") or {}
         rows.append(_fact(
             f"{previous.get('periodEnd')}からの倍率差{change['ratioChange']:+.4f}倍: "
-            f"買残変化の寄与{change['longContribution']:+.4f}、売残変化の寄与{change['shortContribution']:+.4f}。"
-            "実際の買い戻し注文は未観測。買いサインではない。",
+            f"買残変化の寄与{change['longContribution']:+.4f}、売残変化の寄与{change['shortContribution']:+.4f}。",
             "P1", "derived_margin_change", "UNCONFIRMED", origin))
     return rows
 
@@ -268,8 +267,7 @@ def _jpy_position_facts(document):
               "asOf": document["positionDate"], "sourceResponseSha256": document["sourceResponseSha256"]}
     return [_fact(
         f"CFTC円先物・非商業（{prefix}、{document['positionDate']}）: 買{current['longContracts']}・売{current['shortContracts']}・"
-        f"差引{current['netContracts']:+}枚。前週差は買{change['longContracts']:+}・売{change['shortContracts']:+}枚。"
-        "現在の建玉は未観測。買い越しでも売り建玉は残る。",
+        f"差引{current['netContracts']:+}枚。前週差は買{change['longContracts']:+}・売{change['shortContracts']:+}枚。",
         "P1", "official_weekly_position", "UNCONFIRMED" if failed or document["status"] == "STALE" else "VERIFIED", origin)]
 
 
@@ -337,7 +335,7 @@ def compose_brief(*, now_iso: str,
                       "sourceRowSha256": hashlib.sha256(json.dumps(
                           {"label": view_label[:70], "informationCutoff": cutoff},
                           sort_keys=True, ensure_ascii=False).encode()).hexdigest()}
-        facts.append(_fact(f"市場観（検証前の参考）: {view_label[:70]}",
+        facts.append(_fact(f"市場観: {view_label[:70]}",
                            "P1", "market_view", "VERIFIED", origin))
     news_line = _news_direction_summary(material_news or news_events)
     facts.append(_fact(f"ニュース方向: {news_line}", "P1",
@@ -418,7 +416,7 @@ def compose_brief(*, now_iso: str,
 
     nearest = (list(imminent_events) or list(next_events) or [None])[0]
     chips = {
-        "chart": view_label[:40] or "市場観 取得中（検証前・参考）",
+        "chart": view_label[:40] or "市場観 取得中",
         "news": news_line,
         "nextEvent": (f"{str(nearest.get('title') or '')[:26]}"
                       f"（{_event_when_ja(nearest)}） · {nearest.get('countdown') or '近日'}"
@@ -485,7 +483,7 @@ def calculation_facts(calculations):
         label = labels.get(row.get("seriesId")); value = row.get("value")
         if not label or type(value) not in (int, float) or not math.isfinite(value):
             continue
-        facts.append(_fact(f"{row['date']}時点、{label}: {value:.4f}。観測値からの記述計算であり、予測力は未検証。",
+        facts.append(_fact(f"{row['date']}時点、{label}: {value:.4f}。",
             "P1", "market_feature_calculation", "UNCONFIRMED", {
                 "eventId": "market-feature-" + row["seriesId"], "asOf": row["date"],
                 "sourceLabelJa": "日本株分析エンジン・市場条件計算",
@@ -513,8 +511,7 @@ def calculation_facts(calculations):
         scale_note = ""
         if valuation.get("status") == "AVAILABLE" and all(
                 type(valuation.get(k)) in (int, float) and math.isfinite(valuation[k]) for k in ("eps", "per")):
-            scale_note = (f"指数ベースPER{valuation['per']:.2f}倍、同日終値から逆算したEPS{valuation['eps']:.2f}円を固定した換算。"
-                          "独立した公表EPSや利益成長の予測ではない。")
+            scale_note = f"指数ベースPER{valuation['per']:.2f}倍・同日終値から逆算したEPS{valuation['eps']:.2f}円で換算。"
         has_states = bool(((chart.get("marketEvidence") or {}).get("currentCounts") or {}).get("states"))
         scope = "価格形状と取得済み市場条件による部分比較" if has_states else "価格形状による部分比較"
         facts.append(_fact(f"日経平均・{chart['anchorDate']}基準の{horizon}営業日先: "

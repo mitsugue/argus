@@ -42187,7 +42187,7 @@ def _level_map_public():
             "candidates": {"scoreboard": _CANDIDATES.get("scoreboard"), "records": _CANDIDATES.get("views", [])[-30:],
                            "missedSignals": _CANDIDATES.get("missed", []), "breadthDays": _CANDIDATES.get("breadthDays"),
                            "since": _CANDIDATE_START, "lastError": _CANDIDATES.get("lastError"),
-                           "tradingSignal": False, "noteJa": "記録中の候補(未検証)。売買の合図ではありません。"},
+                           "tradingSignal": False, "noteJa": "記録中の候補。"},
             "dropAlert": {**(_DROP_ALERT.get("summary") or {}), "missed": list(_DROP_ALERT.get("missed") or []),
                           "lastSkip": _DROP_ALERT.get("lastSkip"), "lastError": _DROP_ALERT.get("lastError")},
             "storage": "LOCAL_DURABLE_APPEND_ONLY", "remoteBackup": _LEVEL_MAP.get("remoteBackup"),

@@ -87,6 +87,8 @@ def test_context_contains_bounded_calculated_references(snapshot):
     assert len(json.dumps(refs).encode()) < 8192
     assert 'readReceipt' not in context
     assert any(f['source'] == 'jp_market_research' for f in context['facts'])
+    text = next(f['text'] for f in context['facts'] if f['source'] == 'jp_market_research')
+    assert '有効標本' in text and 'ではありません' not in text and '自動昇格' not in text
 
 
 def test_snapshot_admission_bounds(snapshot):

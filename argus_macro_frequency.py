@@ -89,7 +89,7 @@ def explanation_facts(cpi: Optional[Mapping[str, Any]], vix_level: Optional[floa
             frequency = f"3.5%以下の月は、1年以内にS&P500が20%下落した過去の頻度が{CPI_TABLE['atOrBelow']}%"
         facts.append(_fact(
             f"米CPI(前年比)は{label}で{cpi['yoyPct']:.1f}%、{trend}。{frequency}"
-            f"(全月の基準は{CPI_TABLE['allMonths']}%、1950年以降)。過去の頻度であり確率ではありません。",
+            f"(全月の基準は{CPI_TABLE['allMonths']}%、1950年以降)。",
             "us-cpi", cpi.get("knownFrom")))
     if isinstance(vix_level, (int, float)) and vix_level >= VIX_THRESHOLD:
         high09, base09 = VIX_TABLE["since2009"]["high"], VIX_TABLE["since2009"]["base"]
@@ -97,6 +97,6 @@ def explanation_facts(cpi: Optional[Mapping[str, Any]], vix_level: Optional[floa
         facts.append(_fact(
             f"VIXは{vix_level:.1f}で25以上。25以上の日にS&P500が1年後に上がっていた過去の頻度は、"
             f"2009年以降{high09}%(全日{base09}%)、2000年以降{high00}%(全日{base00}%)。"
-            "期間で逆転し、日経平均には当てはまりません。過去の頻度であり確率ではありません。",
+            "期間で逆転し、日経平均には当てはまりません。",
             "vix-band", None))
     return facts
