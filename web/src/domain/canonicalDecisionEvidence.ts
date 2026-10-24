@@ -30,11 +30,11 @@ export const DECISION_EVIDENCE_SCHEMA_VERSION = 'argus-decision-evidence-v1';
 // to the data-gated path).
 const MARKET_TRUTH_POLICY = Object.freeze({
   policyId: 'repo-market-provider-priority-v1',
-  policySha256: 'c848e2537828a74ecb0914d374d5755ac5b79a3e99e4791b496e514ee8103bf3',
+  policySha256: '549a55b1d363bddb39f9b28215ae725cc69963e1795ac6c623b072e312752d90',
 });
 const JP_MARKET_ENGINE_POLICY = Object.freeze({
   policyId: 'jp-market-engine-jp-canonical-2026.08-round2-v1',
-  policySha256: '0ddae6123f70dd858d5135528768fa9b6cea561f31f47201b8e882c978cbf532',
+  policySha256: 'f5771b1d1b4ca86f88aef02da91194078983f72b6ee4939acd38607494c6870b',
 });
 const PREDICTION_POLICY = Object.freeze({
   policyId: 'argus-calibration-three-class-v1',

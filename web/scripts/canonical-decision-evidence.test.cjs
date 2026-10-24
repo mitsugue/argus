@@ -45,7 +45,7 @@ function evidenceEntry() {
       observedAt: '2026-08-22T04:59:30Z',
       knownAt: '2026-08-22T04:59:40Z',
       policyId: 'repo-market-provider-priority-v1',
-      policySha256: 'c848e2537828a74ecb0914d374d5755ac5b79a3e99e4791b496e514ee8103bf3',
+      policySha256: '549a55b1d363bddb39f9b28215ae725cc69963e1795ac6c623b072e312752d90',
     },
     predictionLedger: {
       status: 'AVAILABLE',
@@ -62,7 +62,7 @@ function evidenceEntry() {
       artifactId: 'jp-market-engine-reversal-' + 'd'.repeat(32),
       asOf: CUTOFF,
       policyId: 'jp-market-engine-jp-canonical-2026.08-round2-v1',
-      policySha256: '0ddae6123f70dd858d5135528768fa9b6cea561f31f47201b8e882c978cbf532',
+      policySha256: 'f5771b1d1b4ca86f88aef02da91194078983f72b6ee4939acd38607494c6870b',
       state: 'MIXED',
       validationStatus: 'UNVALIDATED',
       primitiveFactorIds: [],
