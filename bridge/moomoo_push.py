@@ -37,7 +37,7 @@ except ImportError:
     OpenQuoteContext = None
     RET_OK = 0
 
-BRIDGE_VERSION = "13.8.160"
+BRIDGE_VERSION = "13.8.166"
 
 BACKEND  = os.environ.get("ARGUS_BACKEND", "https://argus-backend-3j2m.onrender.com").rstrip("/")
 TOKEN    = os.environ.get("ARGUS_ADMIN_TOKEN", "")
@@ -239,6 +239,12 @@ def build_heartbeat(state=None, disable_jp=None, now_iso=None):
         "symbolListStatus": state.get("symbolListStatus"),
         "symbolListCount": state.get("symbolListCount"),
         "symbolListCheckedAt": state.get("symbolListCheckedAt"),
+        # 2026-10-24: VWAP 用の当日の5分足の取得(数だけ・銘柄名なし)。
+        "vwapStatus": state.get("vwapStatus"),
+        "vwapCheckedAt": state.get("vwapCheckedAt"),
+        "vwapSent": state.get("vwapSent"),
+        "vwapSkipped": state.get("vwapSkipped"),
+        "vwapFailed": state.get("vwapFailed"),
     }
 
 

@@ -16560,7 +16560,9 @@ _HB_ALLOWED_KEYS = ("at", "bridgeVersion", "bridgeMode", "openDStatus",
                     "dailyKlineStatus", "dailyKlineCheckedAt", "dailyKlineRequested",
                     "dailyKlineSent", "dailyKlineSkippedQuota", "dailyKlineFailed",
                     "dailyKlineQuotaUsed", "dailyKlineQuotaRemain",
-                    "symbolListStatus", "symbolListCount", "symbolListCheckedAt")
+                    "symbolListStatus", "symbolListCount", "symbolListCheckedAt",
+                    # 2026-10-24: VWAP 用の当日の5分足の取得(数だけ)。
+                    "vwapStatus", "vwapCheckedAt", "vwapSent", "vwapSkipped", "vwapFailed")
 
 
 @app.route("/api/argus/bridge/heartbeat", methods=["POST"])
@@ -16634,6 +16636,11 @@ def _bridge_status_doc():
         doc["usDailyBars"] = _moomoo_daily_status()
     except Exception:
         doc["usDailyBars"] = None
+    # 2026-10-24: VWAP の5分足の受け取りと計算(数だけ・銘柄名なし)。
+    try:
+        doc["usVwap"] = _moomoo_vwap_status()
+    except Exception:
+        doc["usVwap"] = None
     doc["usSymbolList"] = {"count": _US_SYMBOLS.get("count"),
                            "receivedAt": _US_SYMBOLS.get("receivedAt"),
                            "lastSaveError": _US_SYMBOLS.get("lastSaveError")}
@@ -48406,6 +48413,23 @@ def _moomoo_intraday_receive(sym, session_date, bars, now_epoch=None):
         _MOOMOO_INTRADAY5M[sym] = {"sessionDate": session_date, "bars": kept,
                                    "lastBarAt": last_key, "receivedAt": now}
     return {"symbol": sym, "bars": len(kept)}
+
+
+def _moomoo_vwap_status(now_epoch=None):
+    """当日の5分足を受け取った銘柄の数・計算できた数・最後の受け取り時刻(外部への取得なし)。"""
+    now = time.time() if now_epoch is None else float(now_epoch)
+    today = _us_session_date(now)
+    with _MOOMOO_INTRADAY_LOCK:
+        entries = [dict(v) for v in _MOOMOO_INTRADAY5M.values()]
+    current = [e for e in entries if e.get("sessionDate") == today]
+    fresh = [e for e in current if now - float(e.get("receivedAt") or 0) <= _VWAP_BARS_MAX_AGE_SEC]
+    computed = sum(1 for e in fresh if argus_market_depth.compute_vwap(e.get("bars") or []) is not None)
+    last = max((float(e.get("receivedAt") or 0) for e in current), default=0.0)
+    return {"sessionDate": today, "requestedSymbols": len(_vwap_symbols()),
+            "receivedSymbols": len(current), "freshSymbols": len(fresh), "computedSymbols": computed,
+            "bars": sum(len(e.get("bars") or []) for e in current),
+            "lastReceivedAt": (datetime.fromtimestamp(last, pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                               if last else None)}
 
 
 def _vwap_probe():

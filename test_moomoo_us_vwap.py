@@ -158,3 +158,21 @@ def test_bridge_vwap_job_runs_only_in_the_regular_session(monkeypatch):
     assert bridge.vwap_job_due(10, 0) is False
     monkeypatch.setattr(bridge, "us_quote_session", lambda now=None: "POST")
     assert bridge.vwap_job_due(10_000, 0) is False
+
+
+def test_bridge_status_counts_received_and_computed_vwap(server):
+    client, _ = server
+    _push(client, "AAPL", _bars())
+    status = scanner._moomoo_vwap_status()
+    assert status == {"sessionDate": DAY, "requestedSymbols": 2, "receivedSymbols": 1, "freshSymbols": 1,
+                      "computedSymbols": 1, "bars": 12, "lastReceivedAt": "2026-10-22T15:00:00Z"}
+    later = scanner._moomoo_vwap_status(now_epoch=NOW + scanner._VWAP_BARS_MAX_AGE_SEC + 1)
+    assert later["receivedSymbols"] == 1 and later["computedSymbols"] == 0
+
+
+def test_heartbeat_carries_the_vwap_counts():
+    bridge = _bridge()
+    state = {"vwapStatus": "ok", "vwapSent": 4, "vwapSkipped": 0, "vwapFailed": 0, "vwapCheckedAt": "x"}
+    hb = bridge.build_heartbeat(state=state, disable_jp=True, now_iso="2026-10-22T15:00:00Z")
+    assert hb["vwapStatus"] == "ok" and hb["vwapSent"] == 4
+    assert all(key in scanner._HB_ALLOWED_KEYS for key in ("vwapStatus", "vwapSent", "vwapSkipped", "vwapFailed", "vwapCheckedAt"))
