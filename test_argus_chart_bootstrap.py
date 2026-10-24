@@ -655,3 +655,67 @@ def test_shared_index_inputs_precede_single_feature_replay(monkeypatch, sp500_fa
     actual = {row['seriesId']: row for row in computed[0]['latest']['features']}
     assert ('relative_jp_us.return20' in actual) is (not sp500_fails)
     assert boot.warm_status()['marketFeatures'] == 'AVAILABLE'
+
+
+def test_boot_collects_market_inputs_before_the_full_chart_rotation(monkeypatch):
+    """After a restart the engine inputs must not wait for every asset chart."""
+    targets = [("5803", "JP"), ("9984", "JP"), ("NVDA", "US")]
+    host = _host(targets, set(targets))
+    order = []
+    tick = host._precompute_asset_chart_tick
+
+    def _tick(deadline_monotonic=None):
+        order.append(("chart", host.calls and host.calls[-1][0]))
+        return tick(deadline_monotonic=deadline_monotonic)
+
+    def _index(symbol, instrument_id, **kwargs):
+        order.append(("index", symbol))
+        return [{"date": "2026-10-23", "close": 1.0}]
+
+    def _inputs(warm=False):
+        order.append(("inputs", warm))
+        return {"sourceStatus": {}}
+
+    host._precompute_asset_chart_tick = _tick
+    host._yahoo_index_ohlcv = _index
+    host._jp_market_engine_pit_inputs = _inputs
+    monkeypatch.setattr(boot, "_refresh_warm_charts",
+                        lambda *a, **k: order.append(("refresh", None)) or {"status": "unchanged"})
+    monkeypatch.setattr(boot, "_drain_translations", lambda *a: None)
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    kinds = [kind for kind, _ in order]
+    first_chart = kinds.index("chart")
+    assert ("index", "^GSPC") in order[:first_chart]
+    assert ("inputs", True) in order[:first_chart]
+    # The chart rotation runs once, in full, before the cached chart refresh.
+    assert kinds.count("chart") == len(targets)
+    assert kinds.index("refresh") > max(i for i, kind in enumerate(kinds) if kind == "chart")
+    # Same acquisition volume: one index pass and one forced engine warm.
+    assert kinds.count("inputs") == 1
+    assert order.count(("index", "^GSPC")) == 1
+    summary = boot.status()
+    assert summary["status"] == "DONE" and summary["missingAfter"] == 0
+    assert summary["finishedAt"] is not None
+    assert boot.warm_status()["status"] == "DONE"
+
+
+def test_chart_rotation_still_runs_when_the_market_warm_fails(monkeypatch):
+    targets = [("5803", "JP")]
+    host = _host(targets, set(targets))
+    host._jp_market_engine_pit_inputs = lambda warm=False: {"sourceStatus": {}}
+
+    def _cycle(*_args, **_kwargs):
+        raise RuntimeError("warm broke")
+
+    monkeypatch.setattr(boot, "_warm_cycle", _cycle)
+    boot._STATE["warmMaxCycles"] = 1
+    boot.ensure_started(host, environ={}, delay_seconds=0.0, pause_seconds=0.0,
+                        sleeper=lambda s: None, clock=lambda: 0.0)
+    boot._STATE["thread"].join(timeout=5)
+    assert boot.warm_status()["status"] == "FAILED"
+    summary = boot.status()
+    assert summary["status"] == "DONE" and summary["published"] == 1
+    assert len(host.calls) == 1
