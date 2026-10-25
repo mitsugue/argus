@@ -75,3 +75,33 @@ def test_the_worker_waits_instead_of_rewriting_every_ten_minutes(monkeypatch):
         assert scanner._market_brief_worker_tick()["status"] == "NOT_DUE"
         clock[0] += 60
     assert refreshed == []
+
+
+def test_a_failing_update_time_is_tried_twice_then_waits(monkeypatch):
+    # 2026-10-25: a failed generation kept its update time due and was retried
+    # every 2-30 minutes without end.
+    due = {"due": True, "kind": "SCHEDULED", "slot": "2026-10-26 10:00", "eventIds": [], "reason": "slot_due"}
+    state = _state(monkeypatch, COMPLETE, due)
+    monkeypatch.setattr(scanner, "_compose_market_brief", lambda: {"facts": []})
+    monkeypatch.setattr(scanner, "_jp_market_internals_cached", lambda: {})
+    monkeypatch.setattr(scanner, "_market_brief_generation_input_digest", lambda brief, internals: "changed")
+    monkeypatch.setattr(scanner.argus_index_research_cache, "comparison_availability_improved", lambda *a, **k: False)
+    monkeypatch.setattr(scanner, "_jp_market_comparison_cached", lambda horizon: {})
+    monkeypatch.setattr(scanner.argus_market_brief, "calculation_facts", lambda calculations: [])
+    monkeypatch.setattr(scanner.jp_market_internals, "explanation_facts", lambda internals: [])
+    monkeypatch.setattr(scanner.argus_market_brief, "bound_facts", lambda facts: facts)
+    monkeypatch.setattr(scanner.argus_market_brief, "unified_context", lambda brief, previous=None: {})
+    calls = []
+
+    def failing(brief):
+        calls.append(1)
+        return {**brief, "unifiedStatus": "REJECTED"}
+    monkeypatch.setattr(scanner, "_market_brief_ai_polish", failing)
+    for _ in range(4):
+        scanner._market_brief_refresh(allow_ai=True)
+    assert len(calls) == scanner._MARKET_BRIEF_ATTEMPTS_PER_DUE == 2
+    assert scanner._market_brief_due(COMPLETE)["reason"] == "attempts_exhausted"
+    later = {**due, "slot": "2026-10-26 11:00"}                 # the next update time is tried again
+    monkeypatch.setattr(scanner, "_market_brief_schedule_decision", lambda prev: dict(later))
+    assert scanner._market_brief_due(COMPLETE)["due"] is True
+    assert state["lastSuccessful"] == COMPLETE
