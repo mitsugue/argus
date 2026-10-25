@@ -121,8 +121,9 @@ def test_fe_no_duplicate_investigate_button_in_card():
     # Round 1: 旧グローバル原因カードは削除し、OSINT証拠はAsset Detail内だけに残す。
     assert not os.path.exists(os.path.join(
         WEB, "components", "dashboard", "CauseStackCard.tsx"))
-    research = _read("components", "assetDesk", "AssetResearchPanel.tsx")
-    assert research.count("<OsintDeepDive") == 1
+    # 2026-10-25 (owner): the research button sits at the top of the stock page.
+    card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
+    assert card.count("<OsintDeepDive") == 1
 
 
 def test_fire_core_stale_days_synced_at_ten():

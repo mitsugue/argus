@@ -69,7 +69,9 @@ def test_runner_saves_the_public_result_and_failed_runs_return_the_turn(owner, m
         sym = syms[0]
         scanner._OSINT_AGENT_QUEUE.pop(sym, None)
         scanner._OSINT_STORE[sym] = {"symbol": sym, "asOf": "2026-10-25T00:00:00Z",
-                                     "ownerNote": "private", "verifiedSources": []}
+                                     "ownerNote": "private", "verifiedSources": [],
+                                     "agentRuns": [{"provider": "gpt", "status": "failed",
+                                                    "failureReasonRedacted": "empty_output"}]}
         scanner._OSINT_PROGRESS[sym] = {"stage": "complete" if sym == "5803" else "partial"}
 
     monkeypatch.setattr(scanner, "_osint_agents_worker", worker)
@@ -82,6 +84,8 @@ def test_runner_saves_the_public_result_and_failed_runs_return_the_turn(owner, m
     saved = scanner._OSINT_OWNER["results"]["5803"]
     assert saved["complete"] is True and "ownerNote" not in json.dumps(saved)
     assert scanner._OSINT_OWNER["results"]["6965"]["complete"] is False
+    assert scanner._OSINT_OWNER["results"]["6965"]["failureReason"] == "empty_output"
+    assert scanner._osint_owner_status("6965")["failureReason"] == "empty_output"
     # Restored after a restart, and served when the in-memory store is empty.
     scanner._OSINT_OWNER.update(restored=False, results={})
     scanner._OSINT_STORE.pop("5803", None)
@@ -89,3 +93,30 @@ def test_runner_saves_the_public_result_and_failed_runs_return_the_turn(owner, m
         body = c.get("/api/argus/osint/investigation?symbol=5803").get_json()
     assert body["status"] == "live" and body["investigation"]["symbol"] == "5803"
     assert body["ownerRequest"]["requestedToday"] is True
+
+
+def test_the_screen_name_reaches_the_search(owner, monkeypatch):
+    monkeypatch.setattr(scanner, "_OSINT_NAME_HINTS", {})
+    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot", lambda: {"stocks": []})
+    monkeypatch.setattr(scanner, "_jq_name_for", lambda code, **kw: "")
+    with scanner.app.test_client() as c:
+        c.post("/api/argus/osint/research-request",
+               json={"symbol": "4493", "market": "JP", "ownerToken": TOKEN,
+                     "name": "サイバーセキュリティクラウド<script>"})
+    assert scanner._osint_profile("4493", "JP")["nameJa"] == "サイバーセキュリティクラウドscript"
+
+
+def test_a_stock_without_a_theme_does_not_take_market_headlines(monkeypatch):
+    pool = [{"title": "President Trump Just Proclaimed Tariffs"},
+            {"title": "Prediction: Amazon Stock Will Skyrocket"},
+            {"title": "New AI chip orders lift suppliers"},
+            {"titleJa": "サイバーセキュリティクラウド 上方修正"}]
+    monkeypatch.setattr(scanner, "_osint_pool_items", lambda: pool)
+    monkeypatch.setattr(scanner, "get_cause_attribution", lambda sym, market: {})
+    bare = {"valueChain": [], "sector": [],
+            "globalCatalyst": ["4493 stock news", "custom silicon", "AI chip", "AI capex"]}
+    cands, _counts, _flow = scanner._osint_retrieve("4493", "JP", bare)
+    assert cands == []
+    themed = {"valueChain": ["AI chip"], "sector": [], "globalCatalyst": ["AI capex"]}
+    titles = [c["titleJa"] for c in scanner._osint_retrieve("6965", "JP", themed)[0]]
+    assert titles == ["New AI chip orders lift suppliers"]

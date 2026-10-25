@@ -15,6 +15,13 @@ const ERROR_JA: Record<OsintRequestError, string> = {
   failed: '受け付けられませんでした。',
 };
 
+// Headlines arrive with HTML entities from some feeds (&quot; and the like).
+const ENTITY: Record<string, string> = { quot: '"', amp: '&', apos: "'", lt: '<', gt: '>', '#39': "'" };
+const plain = (text: string) => text.replace(/&(quot|amp|apos|lt|gt|#39);/g, (_, key: string) => ENTITY[key]);
+
+// A source the check could not tie to the stock is not shown as its material.
+const RELATED = new Set(['direct_company', 'sector_theme', 'value_chain']);
+
 const stamp = (iso?: string | null) => {
   if (!iso) return '';
   const at = new Date(iso);
@@ -30,14 +37,17 @@ const day = (iso?: string | null) => {
     { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' });
 };
 
-export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: boolean }>
-  = ({ symbol, market }) => {
-  const { inv, owner, loading, error, requestError, research, reload } = useOsintInvestigation(symbol, market);
+export const OsintDeepDive: React.FC<{ symbol: string; market: string; name?: string }>
+  = ({ symbol, market, name }) => {
+  const { inv, owner, loading, error, requestError, research, reload } = useOsintInvestigation(symbol, market, name);
   const running = !!owner?.running;
   const doneToday = !!owner?.requestedToday && !running;
   const verdict = inv?.catalystVerdict;
-  const sources = inv ? [...inv.verifiedSources]
+  const failed = owner?.complete === false;
+  const sources = inv ? inv.verifiedSources.filter((source) => RELATED.has(source.directness ?? ''))
     .sort((a, b) => Number(!!b.primaryEligible) - Number(!!a.primaryEligible)).slice(0, 3) : [];
+  const headline = failed ? '調べられませんでした'
+    : verdict && verdict.verdict !== 'unknown' ? verdict.verdictJa : '材料は見つかりませんでした';
 
   React.useEffect(() => {
     if (!inv) return;
@@ -55,16 +65,16 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; held?: bo
       {inv && (
         <>
           <p className="osint-deep__verdict">
-            <b>{verdict && verdict.verdict !== 'unknown' ? verdict.verdictJa : '材料は見つかりませんでした'}</b>
-            {verdict?.primaryCauseJa && <span> · {verdict.primaryCauseJa}</span>}
+            <b>{headline}</b>
+            {!failed && verdict?.primaryCauseJa && <span> · {plain(verdict.primaryCauseJa)}</span>}
           </p>
           {sources.length > 0 && (
             <ul className="osint-deep__sources">
               {sources.map((source) => (
                 <li key={`${source.url ?? ''}${source.titleJa}`}>
                   {source.url
-                    ? <a href={source.url} target="_blank" rel="noopener noreferrer">{source.titleJa}</a>
-                    : source.titleJa}
+                    ? <a href={source.url} target="_blank" rel="noopener noreferrer">{plain(source.titleJa)}</a>
+                    : plain(source.titleJa)}
                   <span className="osint-deep__meta">
                     {[source.sourceName, day(source.publishedAt)].filter(Boolean).join(' · ')}
                   </span>

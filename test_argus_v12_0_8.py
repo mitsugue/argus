@@ -211,8 +211,8 @@ def test_fe_osint_pack_and_ui():
     assert "'osint'" in rp or "| 'osint'" in rp
     assert "公式開示・主要ニュース・セクター連想を分けて検証してください" in rp
     assert "候補であり断定ではない" in rp
-    research = _read("components", "assetDesk", "AssetResearchPanel.tsx")
-    assert "OsintDeepDive" in research
+    card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
+    assert "OsintDeepDive" in card
     deep = _read("components", "dashboard", "OsintDeepDive.tsx")
     assert "publishOsintDeep" in deep
     assert not os.path.exists(os.path.join(

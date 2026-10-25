@@ -264,9 +264,9 @@ def test_fe_osint_deep_dive_ui():
     for removed in ("深掘りOSINTを実行", "Gemini/GPT結果を貼り戻す",
                     "このニュースが抜けている", "このURLを検証"):
         assert removed not in src, removed
-    # v12.2.12: 銘柄カードはAsset Desk(AssetResearchPanel)へ移設 — ガード意図は不変。
-    card = _read("components", "assetDesk", "AssetResearchPanel.tsx")
-    assert "OsintDeepDive" in card
+    # 2026-10-25 (owner): the panel sits at the top of the stock page.
+    card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
+    assert "<OsintDeepDive" in card
 
 
 def test_fe_public_osint_is_cached_and_local_only():
