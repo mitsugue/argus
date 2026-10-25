@@ -74,7 +74,9 @@ export function FutureLinesChartView({ doc }: { doc: FutureLinesDoc }) {
     </svg></div>
     <div className="nr-legend"><span className="nr-key-price">日経平均</span>
       {ids.map(id => <span key={id} className={`fl-key fl-${id}`}>{LINE_LABEL[id]}</span>)}
-      {wave && <span>波動の目標・崩れ</span>}</div>
+      {wave && <span>波動の目標・崩れ</span>}
+      {/* 2026-10-25 (owner): the line styles are read without opening the details. */}
+      <span className="fl-key-style">実線＝今週・点線＝前の週</span></div>
     {latest.length > 0 && <div className="fl-next" data-argus-contract="future-lines-next-v1">
       <p className="nr-note">次の転換点（{md(latest[0].line.rec)}の終値まで・毎週土曜に更新）</p>
       <table><thead><tr><th>線</th><th>次</th><th>目安</th><th>成績</th></tr></thead>
@@ -87,7 +89,7 @@ export function FutureLinesChartView({ doc }: { doc: FutureLinesDoc }) {
     <details className="fl-details"><summary>線の全部の点・成績の詳しい見方</summary>
       <div className="fl-points">{latest.map(s => <p key={s.id}><b className={`fl-${s.id}`}>{LINE_LABEL[s.id]}</b>（{md(s.line.rec)}の大引けまでで記録）：
         {s.line.points.map(p => `${KIND[p.kind]} ${md(p.date)} ${yen(p.price)}円`).join(' → ')}</p>)}</div>
-      <p className="nr-note">動画の線＝動画で示された予想の線・2018年の暦＝2018年の同じ月日の山谷・山谷の間隔＝直近の山谷の間隔。太線が最新、細線が前の週。</p>
+      <p className="nr-note">動画の線＝動画で示された予想の線・2018年の暦＝2018年の同じ月日の山谷・山谷の間隔＝直近の山谷の間隔。実線が今週、点線が前の週。</p>
       {ids.map(id => <RecordTable key={id} id={id} record={doc.record[id]} retro={doc.retroRecord[id]} />)}
       <p className="nr-note">{doc.record.wave && doc.record.wave.records
         ? `波動の公開予想の成績（目標に崩れより先に届いたか）：届いた ${doc.record.wave.reach}/${doc.record.wave.n}・判定待ち ${doc.record.wave.pending}（記録 ${doc.record.wave.records}件）`

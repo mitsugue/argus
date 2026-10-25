@@ -28,3 +28,4 @@
 .fl-next .fl-score { color: var(--text-sub); font-size: 12px; white-space: normal; }
 .fl-details { margin-top: 8px; font-size: 12px; }
 .fl-details > summary { cursor: pointer; color: var(--text-sub); padding: 6px 0; }
+.fl-key-style { display: block; color: var(--text-sub); }
