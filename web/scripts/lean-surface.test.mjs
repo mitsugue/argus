@@ -98,7 +98,8 @@ assert.match(
 );
 assert.match(layer2bSync, /assets: AssetItem\[\]/);
 assert.doesNotMatch(layer2bSync, /useAssets|useEffect|setInterval/);
-assert.match(assetDecision, /\{supportOpen && <div className="ad-research-drawer__body">/);
+// 2026-10-25 (owner): folded details mount only once opened.
+assert.match(assetDecision, /\{isOpen && <div className="ad-fold__body">\{children\}<\/div>\}/);
 assert.match(assetDecision, /interactive=\{collapsible\}/);
 assert.match(assetSummary, /interactive \? \(/);
 assert.match(backupPage, /\{actionsOpen && <div className="backup-actions__body">/);

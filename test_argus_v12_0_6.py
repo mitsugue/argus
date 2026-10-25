@@ -173,11 +173,11 @@ def test_fe_collapse_persistence_local_only():
 
 
 def test_fe_investigate_button_outside_details():
-    # v12.2.12: 銘柄カードはAsset Desk(AssetWhyPanel)へ移設 — ガード意図は不変。
-    src = _read("components", "assetDesk", "AssetWhyPanel.tsx")
-    btn = src.index("AiExplanationBlock symbol=")
-    details = src.index("保存した経緯・分析の内訳")
-    assert btn < details, "保存された原因の説明は、経緯・内訳の折りたたみより先に出す"
+    # 2026-10-25 (owner): the empty cause panel is gone; the cause candidate
+    # leads the stock's material, above the research button.
+    assert not os.path.exists(os.path.join(WEB, "components", "assetDesk", "AssetWhyPanel.tsx"))
+    src = _read("components", "assetDesk", "AssetDecisionCard.tsx")
+    assert src.index("moverCause?.bestLeadJa") < src.index("<OsintDeepDive")
 
 
 def test_fe_institutional_view_japanese_first():

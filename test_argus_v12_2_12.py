@@ -56,11 +56,8 @@ def test_ai_honesty_vocabulary():
     assert "取得できません" in dec                  # mock/取得不能=約束しない
     # AI理由欠落時にルール理由をAI文章として見せない(source追跡)
     assert "aiReasonJa" in dec
-    review = _read("components", "assetDesk", "AssetAIReview.tsx")
-    assert "reasonMissing" in review
-    assert "ルール理由で代用はしません" in review
-    # AI欄は無言で消えない(unavailable時の理由+次回)
-    assert "unavailableReasonJa" in review and "nextRunJa" in review
+    # The unused AI review card was removed with the 2026-10-25 stock page.
+    assert not os.path.exists(os.path.join(WEB, "components", "assetDesk", "AssetAIReview.tsx"))
 
 
 def test_publish_side_effects_gated_to_active_pipeline():
@@ -145,20 +142,19 @@ def test_migration_matrix_doc_exists():
 
 def test_desk_sections_fixed_order():
     card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
-    order = ["'decision'", "'chart'", "'evidence'"]
-    idx = [card.index(f"id: {tab}") for tab in order]
-    assert idx == sorted(idx), "決定優先タブは固定順"
-    assert card.count("id: '") == 3
-    # Owner surfaceには判断に必要な詳細だけを残す。AIレビュー長文は
-    # 正本判断を増やさず視認性を落とすため、カードからは外す。
-    for panel in ("AssetDecisionDetails", "AssetWhyPanel",
-                  "AssetFlowPanel", "AssetScenarioPanel",
-                  "AssetResearchPanel", "AssetDataQuality"):
+    # 2026-10-25 (owner): one page without tabs, read from the top.
+    order = ["結論", "数字", "材料", "決算の内訳", "需給の数値", "条件・目標", "メモ・記録"]
+    idx = [card.index(label) for label in order]
+    assert idx == sorted(idx), "結論 → 数字 → 材料 → 畳んだ詳細の順"
+    assert 'role="tab"' not in card and "ad-tabs" not in card
+    for panel in ("AssetNumbers", "OsintDeepDive", "AssetFlowPanel", "AssetScenarioPanel",
+                  "AssetResearchPanel", "AssetEarningsDetails", "AssetTargetDetails"):
         assert f"<{panel}" in card
-    # 2026-10-01 (owner): individual-stock charts are retired; the chart tab
-    # states so instead of mounting the asset-scope chart.
+    # Market-wide views stay on Today; empty or repeated panels are gone.
+    for gone in ("AssetMarketContext", "MarketBriefCard", "SharedMarketContext", "AssetDataQuality",
+                 "AssetWhyPanel", "AssetEvidenceSummary", "AssetDecisionDetails"):
+        assert gone not in card
     assert "<ChartIntelligencePanel" not in card
-    assert 'data-asset-chart="retired"' in card
     assert "<AssetPositionPanel" not in card
     assert "<AssetAIReview" not in card
 
@@ -175,18 +171,14 @@ def test_migrated_features_present():
     # Quantity entry was retired with holdings management (2026-10-02).
     assert not os.path.exists(os.path.join(WEB, "components", "assetDesk", "AssetPositionPanel.tsx"))
     # 旧Todayカードのセクション
-    why = _read("components", "assetDesk", "AssetWhyPanel.tsx")
-    assert "値動きの経緯" in why and "c.timeline.map" in why and why.count("<AiExplanationBlock") == 1
-    assert "CauseStackCard" not in why
+    assert not os.path.exists(os.path.join(WEB, "components", "assetDesk", "AssetWhyPanel.tsx"))
     flow = _read("components", "assetDesk", "AssetFlowPanel.tsx")
     assert "InstitutionalView" in flow and "逆日歩 未取得" in flow
-    # 免責はカードごとに繰り返さず、ページのDownside Watchで一度だけ示す。
+    # 2026-10-25 (owner): a drop shows on the stock's own row; the page-level
+    # Downside Watch block is no longer mounted on the Watchlist.
     card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
-    downside = _read("components", "dashboard", "DownsideIncidentCard.tsx")
     assert "判断支援のみ" not in card
-    assert downside.count(
-        "EVIDENCE ONLY · 最終判断（PRIMARY ACTION）を上書きしません。自動売買なし。"
-    ) == 1
+    assert "DownsideIncidentQueue" not in _read("components", "assetDesk", "AssetDeskList.tsx")
 
 
 def test_portfolio_wide_features_moved_to_core():
@@ -226,7 +218,7 @@ def test_desk_default_sort_deterministic():
     assert "deskRank" in dom and "sortDesk" in dom
     assert "symbol" in dom                            # 同順位はsymbolで決定論
     # 執行語なし(新規UI)
-    for f in ("AssetDecisionSummary.tsx", "AssetDecisionDetails.tsx", "AssetAIReview.tsx"):
+    for f in ("AssetDecisionSummary.tsx", "AssetDecisionCard.tsx", "AssetNumbers.tsx"):
         src = _read("components", "assetDesk", f)
         for banned in ("今すぐ買", "今すぐ売", "注文を出"):
             assert banned not in src, (f, banned)

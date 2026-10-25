@@ -6,7 +6,7 @@ const read = (relative) => fs.readFileSync(new URL(`../${relative}`, import.meta
 const list = read('src/components/assetDesk/AssetDeskList.tsx');
 const genres = read('src/types/assetItem.ts');
 const summary = read('src/components/assetDesk/AssetDecisionSummary.tsx');
-const details = read('src/components/assetDesk/AssetDecisionDetails.tsx');
+const details = read('src/components/assetDesk/AssetDecisionCard.tsx');
 const today = read('src/components/today/ArgusTodayPanel.tsx');
 const editorial = read('src/components/today/ArgusEditorialSurface.tsx');
 const chart = read('src/components/chart/ChartIntelligencePanel.tsx');
@@ -29,9 +29,11 @@ assert.doesNotMatch(summary, /ad-prio|Calibration pending|\/7/);
 assert.doesNotMatch(summary, /ownerActionJa|entryActionJa|currentActionJa|ad-cmd/);
 assert.match(summary, /d\.decisionFirst/);
 assert.match(summary, /view\.priceText/);
-assert.match(summary, /AssetEarningsDate/);
-assert.match(summary, /AssetOutlookSummary/);
-assert.match(details, /理由|次に確認すること|判断が変わる条件/);
+// 2026-10-25 (owner): two-line row; the stock page leads with the conclusion
+// and the condition that would change it.
+assert.match(summary, /earningsShortDate/);
+assert.match(details, /view\.whyJa/);
+assert.match(details, /view\.whatChangesJa/);
 assert.doesNotMatch(details, /検証済み目標なし|検証済み無効化条件なし/);
 assert.match(today, /NEXT_REVIEW_REASON_JA/);
 assert.match(today, /'resolve.freshness_unknown': 'データの更新時刻'/);

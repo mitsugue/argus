@@ -61,7 +61,6 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; name?: st
   const label = running ? '調査中…' : inv ? 'もう一度調べる' : '調べる';
   return (
     <div className="uac-sec osint-deep">
-      <div className="uac-sec-t">OSINT DEEP DIVE</div>
       {inv && (
         <>
           <p className="osint-deep__verdict">

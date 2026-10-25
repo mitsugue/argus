@@ -75,9 +75,10 @@ const render = patch => {
   finally { Date.now = original; }
 };
 const html = render({});
-for (const fact of ['$70,002', 'Coinbase', '価格時刻不明', '受信', '時刻未確認']) assert.ok(html.includes(fact), fact);
-for (const fact of ['価格未取得', 'リアルタイム']) assert.ok(!html.includes(fact), fact);
-assert.ok(render({ cryptoRefreshFailed: true }).includes('更新失敗・保存価格'));
+// 2026-10-25 (owner): the row says the price state in one word; no source name.
+for (const fact of ['$70,002', '時刻未確認']) assert.ok(html.includes(fact), fact);
+for (const fact of ['価格未取得', 'リアルタイム', 'Coinbase']) assert.ok(!html.includes(fact), fact);
+assert.ok(render({ cryptoRefreshFailed: true }).includes('更新失敗'));
 assert.ok(render({ cryptoDisplayQuote: undefined }).includes('価格未取得'));
 assert.equal(JSON.stringify(d), before, 'render cannot renew decision evidence');
 

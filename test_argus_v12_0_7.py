@@ -115,9 +115,7 @@ def test_fe_collapsible_risk_escalation_effect():
 
 def test_fe_no_duplicate_investigate_button_in_card():
     # Asset DeskのEvidenceは再調査操作を1系統だけ持つ。
-    card = _read("components", "assetDesk", "AssetWhyPanel.tsx")
-    assert card.count("<AiExplanationBlock") == 1
-    assert "CauseStackCard" not in card
+    assert not os.path.exists(os.path.join(WEB, "components", "assetDesk", "AssetWhyPanel.tsx"))
     # Round 1: 旧グローバル原因カードは削除し、OSINT証拠はAsset Detail内だけに残す。
     assert not os.path.exists(os.path.join(
         WEB, "components", "dashboard", "CauseStackCard.tsx"))

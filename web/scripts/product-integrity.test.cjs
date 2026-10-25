@@ -125,9 +125,6 @@ const scenarioSource = fs.readFileSync(path.join(
 ), 'utf8');
 check('S11 scenario percent is gated by provenance',
   scenarioSource.includes('display.showPercent') && !scenarioSource.includes('{s.probability}%'));
-const aiReviewSource = fs.readFileSync(path.join(
-  __dirname, '..', 'src', 'components', 'assetDesk', 'AssetAIReview.tsx',
-), 'utf8');
 const incidentSource = fs.readFileSync(path.join(
   __dirname, '..', 'src', 'components', 'dashboard', 'DownsideIncidentCard.tsx',
 ), 'utf8');
@@ -140,7 +137,7 @@ const notificationSource = fs.readFileSync(path.join(
 ), 'utf8');
 const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'Settings.tsx'), 'utf8');
 check('S12 uncalibrated AI and cause confidence never renders percent',
-  aiReviewSource.includes('confidenceJa') && !aiReviewSource.includes('confidencePct')
+  !fs.existsSync(path.join(__dirname, '..', 'src', 'components', 'assetDesk', 'AssetAIReview.tsx'))
   && incidentSource.includes('probabilityDisplay(b.probability * 100).qualitative')
   && !incidentSource.includes('Math.round(b.probability * 100)')
   && !researchSource.includes('Math.round(p.newLongAccumulation * 100)'));

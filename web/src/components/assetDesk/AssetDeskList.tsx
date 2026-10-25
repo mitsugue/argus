@@ -27,7 +27,6 @@ import { sectionAnchorId, DESK_SECTIONS } from './types';
 import { AssetDecisionCard } from './AssetDecisionCard';
 import { fmtPrice, freshnessOf } from './deskFormat';
 import { bestAssetName } from '../../lib/assetStrategy';
-import { DownsideIncidentQueue } from '../dashboard/DownsideIncidentCard';
 import { t } from '../../i18n';
 import { normalizeLiveQuote } from '../../domain/liveQuote';
 import './AssetDesk.css';
@@ -357,17 +356,6 @@ export const AssetDeskList: React.FC<Props> = ({
 
   return (
     <div className="asset-groups">
-      <DownsideIncidentQueue
-        data={intel.downside}
-        maxItems={4}
-        onFocus={(symbol) => {
-          if (onOpenAsset) { onOpenAsset(symbol, 'why-downside'); return; }
-          const row = rows.find((item) =>
-            item.d.asset.symbol.toUpperCase() === symbol.toUpperCase());
-          if (!row) return;
-          setLocalFocus({ symbol, section: 'why-downside', nonce: Date.now() });
-        }}
-      />
       {toolbar}
       {connecting && <div className="asset-empty asset-empty--card"><TriangleStepLoader label="読み込み中" /></div>}
       <div className="asset-filter">
