@@ -146,8 +146,11 @@ def test_existing_get_requires_auth_and_explicit_opt_in_without_collection():
     assert calls == [] and state == before
 
 
-def forbidden_supply(*args, **kwargs):
-    raise AssertionError("no blank member: the supply lane must not request")
+def forbidden_supply(codes, day, budget, kinds=("bars", "disclosures")):
+    # 2026-10-25: a member without a row asks for its last trading day's row
+    # (none here, so nothing is filled); no other supply may be requested.
+    assert kinds == ("valuation",), "no blank member: the supply lane must not request"
+    return None
 
 
 def _existing_warm(*, fail_at=None):
@@ -181,7 +184,8 @@ def _existing_warm(*, fail_at=None):
         raise level_map.LevelMapError("synthetic_no_morning")
     arithmetic = SimpleNamespace(**{k: getattr(level_map, k) for k in (
         "pending_eps_sessions", "weighted_eps", "estimate_input_usable", "daily_close_repairable", "LevelMapError",
-        "blank_members", "valuation_with_supplied_members", "SUPPLY_MAX_MEMBERS")})
+        "blank_members", "valuation_with_supplied_members", "SUPPLY_MAX_MEMBERS", "PREDECESSORS",
+        "earnings_missing_members", "valuation_with_earnings_stand_ins", "valuation_with_carried_rows")})
     arithmetic.zigzag = lambda rows: []
     arithmetic.constituents_on = lambda day, constituents, as_of, changes: (members, day)
     arithmetic.score_records = lambda *a: {}
@@ -193,6 +197,8 @@ def _existing_warm(*, fail_at=None):
                                                        append_level_map_eps_correction=correction),
              "_level_map_admitted_eps": lambda: dict(state["eps"]),
              "_level_map_completed_bars": lambda rows, now: bars, "_N225_ANALOG_HISTORY": {"data": history},
+             "argus_market_clock": SimpleNamespace(JP_EQUITY="JP", CalendarUnavailableError=LookupError,
+                                                   canonical_trading_day=lambda market, day: True),
              "_JP_INDEX_PROXY": {"factors": {"factors": dict.fromkeys(members, 1)}, "weightsAsOf": bars[-1]["date"]},
              "_JQUANTS_API_KEY": "synthetic-api", "_LEVEL_MAP_EPS_SINCE": "2016-10-03", "_LEVEL_MAP_EPS_PER_WARM": 20,
              "_LEVEL_MAP_MAP_SINCE": "2026-06-01", "jp_market_level_map": arithmetic,
@@ -203,7 +209,7 @@ def _existing_warm(*, fail_at=None):
              # 2026-10-21: the backfill position and set-aside dates (fresh, not written here).
              "argus_level_map_backfill": argus_level_map_backfill,
              "_level_map_backfill_state": lambda: backfill_state, "_level_map_backfill_save": lambda: None,
-             # 2026-10-21: no member here is blank, so the supply lane must not request.
+             # 2026-10-21: no member here is blank, so only the absent-row lane may ask.
              "_LEVEL_MAP_SUPPLY": {"suppliedDays": 0, "lastSuppliedDate": None},
              "_LEVEL_MAP_SUPPLY_REQUESTS_PER_WARM": 2, "_level_map_supply_inputs": forbidden_supply}
     exec(compile(ast.Module(body=[function], type_ignores=[]), "scanner.py", "exec"), scope)

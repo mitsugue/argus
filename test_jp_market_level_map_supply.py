@@ -133,7 +133,8 @@ def _warm_scope(blank_days):
         raise m.LevelMapError("synthetic_no_morning")
     arithmetic = SimpleNamespace(**{k: getattr(m, k) for k in (
         "pending_eps_sessions", "weighted_eps", "estimate_input_usable", "daily_close_repairable", "LevelMapError",
-        "blank_members", "valuation_with_supplied_members", "SUPPLY_MAX_MEMBERS")})
+        "blank_members", "valuation_with_supplied_members", "SUPPLY_MAX_MEMBERS", "PREDECESSORS",
+        "earnings_missing_members", "valuation_with_earnings_stand_ins", "valuation_with_carried_rows")})
     arithmetic.zigzag = lambda rows: []
     arithmetic.constituents_on = lambda day, constituents, as_of, changes: (members, day)
     arithmetic.score_records = lambda *a: {}
@@ -160,7 +161,9 @@ def _warm_scope(blank_days):
              "_LEVEL_MAP_SUPPLY_REFRESH_SECONDS": 6 * 3600,
              "_LEVEL_MAP_SUPPLY_FIELDS": {"bars": ("Date", "Code", "MktCap"),
                                           "disclosures": ("Code", "DiscDate", "DiscTime", "DiscNo", "DocType", "FNP", "NxFNp", "FNCNP", "NxFNCNP")},
-             "_LEVEL_MAP_SUPPLY_PATHS": {"bars": "/equities/bars/daily", "disclosures": "/fins/summary"}}
+             "_LEVEL_MAP_SUPPLY_PATHS": {"bars": "/equities/bars/daily", "disclosures": "/fins/summary"},
+             "argus_market_clock": SimpleNamespace(JP_EQUITY="JP", CalendarUnavailableError=LookupError,
+                                                   canonical_trading_day=lambda market, day: True)}
     scope["datetime"] = SimpleNamespace(now=lambda tz=None: datetime(2026, 10, 21, 18, 0))
     exec(compile(ast.Module(body=functions, type_ignores=[]), "scanner.py", "exec"), scope)
     return scope, requests, writes, provider, supply
