@@ -87,3 +87,19 @@ const breakingHtml=render({...base,marketPosition:{...position,themes:[...positi
 assert.ok(breakingHtml.includes('重大な速報の話題')&&breakingHtml.includes('新しい話題'));
 assert.ok(!breakingHtml.includes('7日間で重要なニュースが続いた話題'));
 assert.ok(emergingHtml.includes('3テーマ中 2件に更新'));
+// 2026-10-25 (owner, docs/TODAY_CARD_ORDER.md 1-3): today's themes, one line each, at most three.
+{
+  const {MarketPositionHighlights}=context.exports;
+  const now=new Date('2026-10-02T14:00:00Z');   // 23:00 JST, the same Tokyo day as the 12:35Z entry
+  const show=themes=>renderToStaticMarkup(React.createElement(MarketPositionHighlights,{brief:{...base,marketPosition:{...position,themes}},now}));
+  const today=show([theme(),theme({themeId:'JPY',labelJa:'円相場',lastUpdatedAt:'2026-09-30T01:00:00Z'})]);
+  assert.ok(today.includes('今日動いたテーマ')&&today.includes('米国の利上げ・利下げ観測')&&!today.includes('円相場'),today);
+  assert.equal((today.match(/<p /g)||[]).length,1);
+  const many=show(['A','B','C','D'].map((id,i)=>theme({themeId:id,labelJa:`テーマ${id}`,lastUpdatedAt:`2026-10-02T0${i+1}:00:00Z`})));
+  assert.equal((many.match(/<p /g)||[]).length,3,'at most three');
+  assert.ok(many.indexOf('テーマD')<many.indexOf('テーマC'),'newest first');
+  const long=show([theme({recent:[{entryId:'x',kind:'NEWS',at:'2026-10-02T12:35:00Z',textJa:'あ'.repeat(80)+'。続き',severity:'HIGH'}],lastReaction:null})]);
+  assert.ok(long.includes('…')&&!long.includes('続き'),'one short line');
+  assert.equal(show([theme({lastUpdatedAt:'2026-09-30T01:00:00Z'})]),'','nothing recorded today: no block');
+  console.log("今日動いたテーマ(今日の記録だけ・1行・最大3つ) PASS");
+}

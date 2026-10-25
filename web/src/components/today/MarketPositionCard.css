@@ -37,3 +37,7 @@
 .mp-view { grid-template-columns: 1fr; gap: 4px; padding: 12px; background: var(--surface-soft); border-radius: 8px; }
 .mp-view dt:not(:first-child) { margin-top: 8px; }
 .mp-theme > summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+.mp-highlights{margin:12px 0 0}
+.mp-highlights h2{margin:0 0 6px;font-size:12px;font-weight:500;color:var(--text-faint)}
+.mp-highlights p{margin:0 0 4px;font-size:14px;line-height:1.55;color:var(--text-main)}
+.mp-highlights b{margin-right:8px;font-weight:600}

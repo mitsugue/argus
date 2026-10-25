@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.181"
+PRODUCT_VERSION = "v13.8.182"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -168,7 +168,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '8d3235bce61dd64bb80b177b1c819361149762d3',
+    'web/scripts/owner-today-https.mjs': 'a790dd8a87ce024008c2a6fd4b96a030eba04143',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -315,8 +315,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dialogue/OwnerOverview.css': 'abbeb648911495be4ef4a62248d40c925ebffa8a',
     'web/scripts/product-integrity.test.cjs': '12ab62a39972e106fc7dde2e1c9c5709c5940c69',
     'web/src/lib/presentationIntent.ts': '19e8431fe6b6063988a387584f53ea6b3c75726b',
-    'web/src/components/today/ArgusEditorialSurface.tsx': 'ffb95e6d77a4884d62664165352a18d13fa0626d',
-    'web/src/components/today/ArgusEditorialSurface.css': 'ee1fe180b9319d6db8e54cf2829b1738c9e26fa2',
+    'web/src/components/today/ArgusEditorialSurface.tsx': '640e0cf8af234abc99eab3ecd9ce455650140730',
+    'web/src/components/today/ArgusEditorialSurface.css': '97dca89b41a2b445440392c04b5ed49309545d24',
     'test_argus_presentation_intent.py': 'e79beae902a1382fae9e5ea3359e09301abf9733',
     'docs/V13_6_PRESENTATION_INTENT.md': '88d35d6f5f603628e7e89bae56308e16b7c76ea6',
     'argus_presentation_intent.py': '9ac401c4ea52103cb0efeedcf5774d25b78cda7d',

@@ -67,3 +67,6 @@
 .today-strip__tile .today-strip__news-preview { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; line-height:1.6; }
 /* Owner request 2026-10-22: one quiet line under the tiles says which close the numbers use. */
 .today-strip__basis { margin: -2px 2px 0; color: var(--text-muted); font-size: 11px; }
+.today-strip__fold{border-top:1px solid var(--line);margin-top:10px}
+.today-strip__fold>summary{min-height:44px;display:flex;align-items:center;font-size:13px;color:var(--text-sub);cursor:pointer}
+.today-strip__fold[open]>summary{color:var(--text-main)}

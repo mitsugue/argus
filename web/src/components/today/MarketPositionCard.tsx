@@ -71,3 +71,34 @@ export function MarketPositionCard({ brief }: { brief: MarketBrief }) {
     {themes.map(theme => <ThemeRow key={theme.themeId} theme={theme} />)}
   </section>;
 }
+
+// 2026-10-25 (owner, docs/TODAY_CARD_ORDER.md 1-3): the themes recorded today,
+// one line each and at most three; every theme stays in the folded card below.
+const jstDay = (iso?: string | null) => iso && Number.isFinite(Date.parse(iso))
+  ? new Date(iso).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }) : '';
+const oneLine = (text: string, max = 44) => {
+  const cut = text.indexOf('。');
+  const sentence = cut > 0 ? text.slice(0, cut) : text;
+  return sentence.length > max ? `${sentence.slice(0, max - 1)}…` : sentence;
+};
+
+export function MarketPositionHighlights({ brief, now = new Date() }: { brief: MarketBrief; now?: Date }) {
+  const raw = brief.marketPosition as MarketPosition | undefined;
+  if (!raw || !Array.isArray(raw.themes)) return null;
+  const today = jstDay(now.toISOString());
+  const rows = raw.themes
+    .filter(theme => jstDay(theme.lastUpdatedAt) === today)
+    .sort((a, b) => String(b.lastUpdatedAt).localeCompare(String(a.lastUpdatedAt)))
+    .map(theme => {
+      const expectation = hasSubstantiveView(theme.view?.expectationJa) ? theme.view!.expectationJa : '';
+      const lead = expectation || theme.recent.find(row => row.kind !== 'AI_VIEW')?.textJa || theme.lastReaction?.textJa || '';
+      return lead ? { id: theme.themeId, label: theme.labelJa, text: oneLine(marketWording(lead)) } : null;
+    })
+    .filter((row): row is { id: string; label: string; text: string } => row !== null)
+    .slice(0, 3);
+  if (!rows.length) return null;
+  return <section className="mp-highlights" aria-label="今日動いたテーマ" data-argus-contract="market-position-highlights-v1">
+    <h2>今日動いたテーマ</h2>
+    {rows.map(row => <p key={row.id} data-theme={row.id}><b>{row.label}</b>{row.text}</p>)}
+  </section>;
+}
