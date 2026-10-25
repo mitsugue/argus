@@ -14,6 +14,8 @@ export interface OsintInvestigation {
   symbol: string; asOf: string;
   ownerReadableSummaryJa?: string;
   verifiedSources: OsintVerifiedSource[];
+  /** 2026-10-26: what the web search found (title, outlet, date, link). */
+  searchFindings?: OsintVerifiedSource[];
   catalystVerdict?: { verdict: string; verdictJa: string; primaryCauseJa: string | null;
     ownerReadableJa?: string } | null;
 }

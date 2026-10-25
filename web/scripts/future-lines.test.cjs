@@ -39,29 +39,31 @@ const chartModule = load('src/components/chart/FutureLinesChart.tsx', name => {
 const html = renderToStaticMarkup(React.createElement(chartModule.FutureLinesChartView, {doc}));
 // 2026-10-25 (owner, simplified view): short names, a next-turn table with a one-line score,
 // everything else behind one fold.
-assert.match(html, />動画の線</); assert.match(html, />2018年の暦</); assert.match(html, />山谷の間隔</, '3本の線を1つのチャートに');
+// 2026-10-26 (owner): only the video's line is drawn and tabled; the machine lines are yardsticks in the fold.
+assert.match(html, /動画の線（毎週の山・谷の予想）/);
+assert.doesNotMatch(html.slice(0, html.indexOf('fl-details')), /2018年の暦|山谷の間隔/, '線は1本');
 assert.doesNotMatch(html, /機械1|機械2|動画解説の線|白＝動画の予想線/, '長い説明と古い名前は出さない');
 assert.match(html, /次の転換点（10\/16の終値まで・毎週土曜に更新）/);
 const next = html.slice(html.indexOf('future-lines-next-v1'), html.indexOf('fl-details'));
 assert.match(next, /谷 10\/30<\/td><td>61,230円/, '動画の線の次は10/23より後の最初の点');
-assert.match(next, /山 11\/11<\/td><td>68,883円/, '過ぎた点(10/23)は飛ばす');
+assert.equal(lib.nextTurn(doc.lines.machine2, '2026-10-23').date, '2026-11-11', '過ぎた点(10/23)は飛ばす');
 const later = renderToStaticMarkup(React.createElement(chartModule.FutureLinesChartView, {doc:{...doc, dataEnd:'2026-10-22', closes:[...doc.closes, {date:'2026-10-23', close:62693}]}}));
 assert.doesNotMatch(later.slice(later.indexOf('future-lines-next-v1')), /谷 10\/23<\/td>/, '手元の終値の日までの点は次に出さない');
 assert.match(next, /当たり 1\/2（偶然なら0.6）|判定前/);
 assert.match(next, /判定前/, '標準の物差しで判定が無ければ判定前');
-assert.match(next, /記録なし/, '成績の記録が無い線');
 assert.equal(lib.scoreJa({records:2, standard:{hit:3,n:5,pending:1,randomMean:1.6}}), '当たり 3/5（偶然なら1.6）');
 assert.match(next, /波動の公開予想（10\/22）：上向き・目標 71,540円・崩れ 64,946円 → 判定待ち/);
 const fold = html.slice(html.indexOf('fl-details'));
 assert.match(fold, /<summary>線の全部の点・成績の詳しい見方<\/summary>/);
 assert.match(fold, /谷 10\/30 61,230円/); assert.match(fold, /20\/28/, '後から読み取った分の参考の成績');
-assert.match(fold, /日付の当たりは2018年の暦・山谷の間隔ともでたらめと同じ/); assert.match(fold, /波動の公開予想：記録なし/);
+assert.match(fold, /比べる物差し（2018年の暦・山谷の間隔）は、2010〜2025年の検証で日付の当たりがでたらめと同じ/); assert.match(fold, /波動の公開予想：記録なし/);
 assert.match(html, /波動の公開予想の目標 71,540円/); assert.match(html, />11月</, '月の目盛り');
 assert.doesNotMatch(html, /src_[abc]/, '出どころの記号を出さない(名前は配信前の命名の検査で確かめる)');
 assert.equal((html.match(/class="fl-point-label"/g) || []).length, 2, '点の文字は動画の線だけ');
 const panel = fs.readFileSync('src/components/chart/JapanMarketComparisonPanel.tsx','utf8');
-for (const label of ['価格の目盛りと<wbr />参考予測','未来の線']) assert.ok(panel.includes(`>${label}</button>`), label);
-assert.ok(!panel.includes('>従来の過去比較</button>'), '2026-10-25 オーナー: 従来の過去比較は出さない');
+// 2026-10-26 (owner): the past similar periods chart is offered again.
+for (const label of ['価格の目盛りと<wbr />参考予測','過去の似た局面','未来の線']) assert.ok(panel.includes(`>${label}</button>`), label);
+assert.ok(panel.includes('<JapanMarketComparisonPanel key={horizon} horizon={horizon} />'));
 assert.ok(panel.includes('jp-comparison-periods jp-comparison-views'), '切り替えは1行に並べる');
-assert.equal((panel.match(/onClick=\{\(\) => setMode\(/g) || []).length, 2, '日経のチャートの切り替えは2つ');
+assert.equal((panel.match(/onClick=\{\(\) => setMode\(/g) || []).length, 3, '日経のチャートの切り替えは3つ(2026-10-26 オーナー)');
 console.log('future lines: ok');

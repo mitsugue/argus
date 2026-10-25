@@ -29,9 +29,10 @@ assert.doesNotMatch(summary, /ad-prio|Calibration pending|\/7/);
 assert.doesNotMatch(summary, /ownerActionJa|entryActionJa|currentActionJa|ad-cmd/);
 assert.match(summary, /d\.decisionFirst/);
 assert.match(summary, /view\.priceText/);
-// 2026-10-25 (owner): two-line row; the stock page leads with the conclusion
-// and the condition that would change it.
-assert.match(summary, /earningsShortDate/);
+// 2026-10-26 (owner): the first card keeps results, target and supply; the
+// stock page leads with the conclusion and the condition that would change it.
+assert.match(summary, /AssetEarningsDate/);
+assert.match(summary, /AssetOutlookSummary/);
 assert.match(details, /view\.whyJa/);
 assert.match(details, /view\.whatChangesJa/);
 assert.doesNotMatch(details, /検証済み目標なし|検証済み無効化条件なし/);

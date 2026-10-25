@@ -143,11 +143,11 @@ def test_migration_matrix_doc_exists():
 def test_desk_sections_fixed_order():
     card = _read("components", "assetDesk", "AssetDecisionCard.tsx")
     # 2026-10-25 (owner): one page without tabs, read from the top.
-    order = ["結論", "数字", "材料", "決算の内訳", "需給の数値", "条件・目標", "メモ・記録"]
+    order = ["結論", "材料", "決算の内訳", "需給の数値", "条件・目標", "メモ・記録"]
     idx = [card.index(label) for label in order]
     assert idx == sorted(idx), "結論 → 数字 → 材料 → 畳んだ詳細の順"
     assert 'role="tab"' not in card and "ad-tabs" not in card
-    for panel in ("AssetNumbers", "OsintDeepDive", "AssetFlowPanel", "AssetScenarioPanel",
+    for panel in ("AssetNikkeiGap", "OsintDeepDive", "AssetFlowPanel", "AssetScenarioPanel",
                   "AssetResearchPanel", "AssetEarningsDetails", "AssetTargetDetails"):
         assert f"<{panel}" in card
     # Market-wide views stay on Today; empty or repeated panels are gone.

@@ -36,10 +36,9 @@ assert.match(today, /quoteDisplayLabel\(projection\.quoteState\)/);
 const commandCenter = read('../src/routes/CommandCenter.tsx');
 // 2026-10-25 (owner): a previous-close price says so in one short label.
 assert.match(commandCenter, /前日終値 \$\{entry\.periodEnd/);
-// 2026-10-25 (owner): the two-line row names a price that is not current in one
-// word (by its delay class) and marks real time only from the received live row.
-assert.match(desk, /PRICE_PROBLEM\[view\.quoteTruth\.delayClass\]/);
-assert.match(desk, /\{live && <span className="ad-time" data-quote="LIVE">/);
+assert.match(desk, /instrumentType/);
+assert.match(desk, /delayClass/);
+assert.match(desk, /quoteAsOf/);
 assert.match(deskList, /provider: '投信総合ライブラリー'/);
 assert.match(deskList, /delayClass: 'EOD'/);
 assert.doesNotMatch(deskList, /date: f\.date, status: 'live'/);

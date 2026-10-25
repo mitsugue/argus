@@ -38,8 +38,3 @@
 .argus-editorial__vault { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin: 0 0 18px; }
 .argus-editorial__vault > summary { color: var(--text-main); font-size: 14px; font-weight: 600; cursor: pointer; }
 .argus-editorial__vault[open] > summary { margin-bottom: 8px; }
-/* 2026-10-25 (owner): the reason and the change condition, one sentence each. */
-.argus-editorial__brief{margin:12px 0 0}
-.argus-editorial__reason{margin:0;font-size:14px;line-height:1.6;color:var(--text-main)}
-.argus-editorial__change{margin:4px 0 0;font-size:13px;line-height:1.55;color:var(--text-sub)}
-details.argus-editorial__digest>summary{min-height:44px;display:flex;align-items:center;font-size:13px;color:var(--text-sub);cursor:pointer;border-top:1px solid var(--line)}

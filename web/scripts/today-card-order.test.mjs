@@ -53,13 +53,12 @@ assert.equal((order.match(/^\| \d+ \|/gm) || []).length, cards.length, '正本�
 // 見立ての上に独立した公式結果の枠を置かない(2026-10-15 オーナー承認・イベント欄の先頭へ統合)。
 assert.ok(!panel.includes('<OfficialMacroResults'), '見立ての上に公式結果の枠があります');
 
-// 見立ての中(2026-10-25 オーナー承認): 値と見立て → タイル → 今日動いたテーマ → 理由と変わる条件
-// → 畳み(全テーマ → 材料の向き → 見通しを詳しく → 根拠)。3か所とも同じ見立ての帯を先頭に使う。
+// 見立ての中: 値 → 見立て → タイル → 市場の現在位置 → 材料の向き(today-decision.test.cjs)、
+// その後に「見通しを詳しく」と根拠。3か所とも同じ見立ての帯を先頭に使う。
 const surface = read('src/components/today/ArgusEditorialSurface.tsx');
 const live = surface.slice(surface.indexOf('argus-editorial--live'));
-assert.ok(live.indexOf('<TodayDecisionStrip') < live.indexOf('<summary>見通しを詳しく</summary>')
-  && live.indexOf('<summary>見通しを詳しく</summary>') < live.indexOf('この見通しの根拠・過去の記録'), '最新の版の順番');
-assert.ok(surface.indexOf('aria-label="理由と変わる条件"') < surface.indexOf('middle={middle}'), '理由と変わる条件は帯の中へ渡す');
+assert.ok(live.indexOf('<TodayDecisionStrip') < live.indexOf('見通しを詳しく')
+  && live.indexOf('見通しを詳しく') < live.indexOf('この見通しの根拠・過去の記録'), '最新の版の順番');
 const retained = surface.slice(surface.lastIndexOf('<TodayDecisionStrip'));
 assert.ok(retained.indexOf('<TodayDecisionStrip') < retained.indexOf('plan.elements.map'), '保存版の順番');
 const brief = read('src/components/today/MarketBriefCard.tsx');
@@ -68,8 +67,8 @@ for (const [file, text] of [['ArgusEditorialSurface', surface], ['MarketBriefCar
   assert.ok(!text.includes('<MarketPositionCard'), `${file}: 市場の現在位置は見立ての帯の中に1回だけ`);
 }
 const strip = read('src/components/today/TodayDecisionStrip.tsx');
-// 2026-10-25 オーナー承認: 見立て → タイル4つ → 今日動いたテーマ → 理由と変わる条件 → 全テーマ(畳み) → 材料ごとの向き(畳み)。
-const viewOrder = ['today-strip__verdict', 'today-strip__tiles', '<MarketPositionHighlights', '{middle}',
-  '<summary>全テーマ</summary>', '<MarketPositionCard brief', '<summary>材料ごとの向き</summary>'].map(key => strip.indexOf(key));
-assert.ok(viewOrder.every(i => i >= 0) && viewOrder.every((v, i) => i === 0 || viewOrder[i - 1] < v), `見立ての中の順番: ${viewOrder}`);
+// 2026-10-20 オーナー承認: 見立て → タイル4つ → 市場の現在位置 → 材料ごとの向き。
+assert.ok(strip.indexOf('today-strip__verdict') < strip.indexOf('today-strip__tiles')
+  && strip.indexOf('today-strip__tiles') < strip.indexOf('<MarketPositionCard')
+  && strip.indexOf('<MarketPositionCard') < strip.indexOf('today-strip__rows'), 'タイル4つの下に市場の現在位置');
 console.log('Today のカードの順番と有無が正本どおり PASS');

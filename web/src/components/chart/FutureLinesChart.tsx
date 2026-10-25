@@ -14,7 +14,9 @@ function months(start: number, end: number) {
   while (d.getTime() <= end && out.length < 12) { out.push(d.toISOString().slice(0, 10)); d.setUTCMonth(d.getUTCMonth() + 1); }
   return out;
 }
-const IDS: LineId[] = ['commentator', 'machine', 'machine2'];
+// 2026-10-26 (owner): the chart shows the video's line only. The two machine
+// lines stay in the weekly record as yardsticks (one line in the fold).
+const IDS: LineId[] = ['commentator'];
 
 function RecordTable({ id, record, retro }: { id: LineId; record?: LineRecord; retro?: LineRecord }) {
   const rows = (['strict', 'standard', 'loose', 'timing'] as const);
@@ -73,7 +75,7 @@ export function FutureLinesChartView({ doc }: { doc: FutureLinesDoc }) {
         <text className="nr-today-label" x={x(lastClose.date)} y={bottom + 24} textAnchor="middle">{md(lastClose.date)}の終値まで</text></>}
     </svg></div>
     <div className="nr-legend"><span className="nr-key-price">日経平均</span>
-      {ids.map(id => <span key={id} className={`fl-key fl-${id}`}>{LINE_LABEL[id]}</span>)}
+      {ids.map(id => <span key={id} className={`fl-key fl-${id}`}>{LINE_LABEL[id]}（毎週の山・谷の予想）</span>)}
       {wave && <span>波動の目標・崩れ</span>}
       {/* 2026-10-25 (owner): the line styles are read without opening the details. */}
       <span className="fl-key-style">実線＝今週・点線＝前の週</span></div>
@@ -94,7 +96,7 @@ export function FutureLinesChartView({ doc }: { doc: FutureLinesDoc }) {
       <p className="nr-note">{doc.record.wave && doc.record.wave.records
         ? `波動の公開予想の成績（目標に崩れより先に届いたか）：届いた ${doc.record.wave.reach}/${doc.record.wave.n}・判定待ち ${doc.record.wave.pending}（記録 ${doc.record.wave.records}件）`
         : '波動の公開予想：記録なし'}</p>
-      <p className="nr-note">2010〜2025年の検証：日付の当たりは2018年の暦・山谷の間隔ともでたらめと同じ</p>
+      <p className="nr-note">比べる物差し（2018年の暦・山谷の間隔）は、2010〜2025年の検証で日付の当たりがでたらめと同じ</p>
       <p className="nr-note">記録 {doc.updatedAt.slice(0, 16).replace('T', ' ')}・価格 {md(doc.dataEnd)}まで</p>
     </details>
   </div>;

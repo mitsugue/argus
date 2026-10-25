@@ -44,10 +44,14 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; name?: st
   const doneToday = !!owner?.requestedToday && !running;
   const verdict = inv?.catalystVerdict;
   const failed = owner?.complete === false;
-  const sources = inv ? inv.verifiedSources.filter((source) => RELATED.has(source.directness ?? ''))
-    .sort((a, b) => Number(!!b.primaryEligible) - Number(!!a.primaryEligible)).slice(0, 3) : [];
+  const related = inv ? inv.verifiedSources.filter((source) => RELATED.has(source.directness ?? ''))
+    .sort((a, b) => Number(!!b.primaryEligible) - Number(!!a.primaryEligible)) : [];
+  // 2026-10-26 (owner): when nothing was tied to the stock, show what the
+  // search found rather than an empty verdict.
+  const sources = (related.length ? related : inv?.searchFindings ?? []).slice(0, 3);
   const headline = failed ? '調べられませんでした'
-    : verdict && verdict.verdict !== 'unknown' ? verdict.verdictJa : '材料は見つかりませんでした';
+    : verdict && verdict.verdict !== 'unknown' ? verdict.verdictJa
+      : sources.length ? '見つかった材料' : '材料は見つかりませんでした';
 
   React.useEffect(() => {
     if (!inv) return;
