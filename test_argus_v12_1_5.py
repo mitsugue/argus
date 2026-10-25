@@ -303,10 +303,11 @@ def test_dq_exposes_primary_strength_and_causal():
 
 
 def test_fe_shows_conclusion_and_causal():
+    # 2026-10-25 (owner): the panel shows the verdict, its primary cause and
+    # verified sources only; the server keeps the other fields.
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    assert "ownerConclusion" in src
-    assert "causalRelevanceSummary" in src
-    assert "primarySourceChecks" in src
+    assert "catalystVerdict" in src and "primaryCauseJa" in src
+    assert "causalRelevanceSummary" not in src
 
 
 def test_pack_includes_conclusion():
