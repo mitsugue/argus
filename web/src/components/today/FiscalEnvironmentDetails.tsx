@@ -5,7 +5,7 @@ import './FiscalEnvironmentDetails.css';
 const cases = { baseline: '現状投影', growth_1: '成長戦略実現①', growth_2: '成長戦略実現②' };
 const reasons: Record<string, string> = {
   'MARKET:JGB': '長期・超長期国債の複数年限で金利上昇が続いています。',
-  'MARKET:FX': 'ドル円の上昇が続いています。原因の特定はしていません。',
+  'MARKET:FX': 'ドル円の上昇が続いています。',
   'FISCAL:POSITIVE_MECHANICAL_PRESSURE': '財政収支を含む計算で、債務GDP比を押し上げる方向です。',
   'FISCAL:GROWTH_RATE_GAP_NARROWED': '成長率と実効金利の差が縮小しました。',
   'FISCAL:GROWTH_RATE_GAP_REVERSED': '成長率と実効金利の差が逆転しました。',

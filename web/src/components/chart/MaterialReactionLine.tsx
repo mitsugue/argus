@@ -46,6 +46,6 @@ export function YardstickLine({ research }: { research: unknown }) {
   return <p className="jmc-yardstick" data-yardstick={r.adopted ? 'adopted' : 'not-adopted'}>
     日本10年金利の物差し（直近3年で測る見直し）：{r.adopted
       ? `採用（5営業日後の方向の一致率 ${pct(without)} → ${pct(withIt)}）`
-      : `不採用（一致率 ${pct(without)} → ${pct(withIt)} で、良くなると言えないため）`}
+      : `不採用（一致率 ${pct(without)} → ${pct(withIt)}）`}
   </p>;
 }

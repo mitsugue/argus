@@ -34,8 +34,8 @@ assert.match(usHook, /normalizeUSWatchSnapshot\([\s\S]*s\.data/);
 assert.match(today, /at-freshness-note/);
 assert.match(today, /quoteDisplayLabel\(projection\.quoteState\)/);
 const commandCenter = read('../src/routes/CommandCenter.tsx');
-assert.match(commandCenter, /表示価格は前日終値/);
-assert.match(commandCenter, /リアルタイム価格ではありません/);
+// 2026-10-25 (owner): a previous-close price says so in one short label.
+assert.match(commandCenter, /前日終値 \$\{entry\.periodEnd/);
 // 2026-10-25 (owner): the two-line row names a price that is not current in one
 // word (by its delay class) and marks real time only from the received live row.
 assert.match(desk, /PRICE_PROBLEM\[view\.quoteTruth\.delayClass\]/);

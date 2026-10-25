@@ -86,7 +86,6 @@ const en = {
   'ie.previous': 'PREVIOUS',
   'ie.actual': 'ACTUAL',
   'ie.unavailable': 'UNAVAILABLE',
-  'ie.impactNote': 'Event impact = how strongly markets may move, not whether the result will be positive or negative.',
 };
 
 type Dict = typeof en;
@@ -165,7 +164,6 @@ const ja: Record<DictKey, string> = {
   'ie.previous': '前回',
   'ie.actual': '結果',
   'ie.unavailable': '取得不可',
-  'ie.impactNote': 'イベントの「影響」は市場がどれだけ動きうるかを示すもので、結果が良い/悪いを示すものではありません。',
 };
 
 export const DICT: Record<Locale, Dict> = { en, ja };

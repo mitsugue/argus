@@ -10,8 +10,6 @@ import { withoutScreenNotes } from '../../lib/screenNotes';
 // same accuracy as "previous close ± 2 ATR"; never a trading signal.
 const yen = (v: number) => Math.round(v).toLocaleString('ja-JP');
 const signed = (v: number, digits = 1) => `${v > 0 ? '+' : ''}${v.toFixed(digits)}`;
-const jst = (iso?: string | null) => iso && Number.isFinite(Date.parse(iso))
-  ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
 function Row({ row }: { row: LevelMapRow }) {
   return <tr data-side={row.side} data-kinds={row.kinds.join(',')}>
@@ -38,11 +36,10 @@ function Calculations({ map, current, suppliedDays, notes = true }: { map: NonNu
   const cov = map.epsCoverage;
   const supplied = cov?.suppliedEarnings ?? 0;
   return <>
-    <p className="lm-note">{current ? `${map.previousSession} 終値の表示用計算` : `${map.morningOf} 朝 · 寄付前に固定保存`}（{jst(map.createdAt)}）</p>
+    {/* 2026-10-25 (owner): no notes on how or when this was saved. */}
+    {!current && <p className="lm-note">{map.morningOf} 朝</p>}
     <p className="lm-note">{current ? '最新終値' : '前日終値'} {yen(map.previousClose)}（{map.previousSession}）· ATR14 {yen(map.atr14)} ·
       EPS {map.eps.toFixed(1)}（{map.epsDate}）· PER {map.per.toFixed(2)}倍</p>
-    <p className="lm-note lm-eps">{map.epsLabelJa}{cov ? `。予想が無く実績で補った社 ${cov.filledFromTrailing ?? 0}・赤字予想 ${cov.negativeForecast ?? 0}` : ''}
-      {map.constituentsAsOf ? `。構成銘柄は ${map.constituentsAsOf} 時点` : ''}</p>
     {supplied > 0 && <p className="lm-note lm-supplied" data-supplied={supplied}>この日は補った推計（{supplied}社）</p>}
     {suppliedDays > 0 && <p className="lm-small lm-supplied-days" data-supplied-days={suppliedDays}>過去の推計のうち{suppliedDays}日は補った推計</p>}
     {map.epsJumped && <p className="lm-note lm-jump">EPSが前の推計から3%以上変化</p>}
@@ -85,7 +82,7 @@ export function LevelMapView({ state }: { state: LevelMapState | null | undefine
       {history?.sufficient && (uncalibrated || above?.multiple === history.upperMultiple) ? <>
         <p><strong>{history.upperMultiple}倍は、この期間の中央値{history.median.toFixed(1)}倍{history.upperMultiple > history.median ? 'より上' : history.upperMultiple < history.median ? 'より下' : 'と同じ位置'}です。</strong></p>
         <p>{history.upperMultiple}倍以上の日は <strong>{history.atOrAboveUpper} / {history.count}営業日</strong>。最高は{history.maximum.toFixed(1)}倍でした。</p>
-        <small>{history.firstDate.replaceAll('-', '/')}〜{history.lastDate.replaceAll('-', '/')} · {uncalibrated ? '補正前の推計で比較' : '同じ方式で再計算'}{history.missingSessions ? ` · 未集計${history.missingSessions}日` : ''}</small>
+        <small>{history.firstDate.replaceAll('-', '/')}〜{history.lastDate.replaceAll('-', '/')} {history.missingSessions ? ` · 未集計${history.missingSessions}日` : ''}</small>
       </> : <p>集計中</p>}
     </div>
     <div className="lm-reach" aria-label="同じ距離の過去の到達割合">

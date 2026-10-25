@@ -129,10 +129,10 @@ export function learningSummary(metrics: LearningMetric[]): LearningSummary {
 export function pastPatternLineJa(symbol: string): string | null {
   const recs = listDQ().filter((r) => r.symbol.toUpperCase() === symbol.toUpperCase());
   if (!recs.length) return null;
-  if (recs.length < MIN_SAMPLE) return `過去記録${recs.length}件 — 履歴不足のため傾向判定は保留(貯まると表示されます)。`;
+  if (recs.length < MIN_SAMPLE) return `過去記録${recs.length}件`;
   const sup = recs.filter((r) => r.outcome?.outcomeInterpretation === 'supported').length;
   const con = recs.filter((r) => r.outcome?.outcomeInterpretation === 'contradicted').length;
-  return `過去記録${recs.length}件: ラベル支持${sup}/反証${con}(初期傾向・成績ではありません)。`;
+  return `過去記録${recs.length}件: 支持${sup}/反証${con}`;
 }
 
 /** Pro Handoff / AI Review 用の学習サマリ行。 */

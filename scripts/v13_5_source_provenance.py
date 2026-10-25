@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.180"
+PRODUCT_VERSION = "v13.8.181"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -168,7 +168,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '83584c864b497ce20bfc6115d652ff52a2245021',
+    'web/scripts/owner-today-https.mjs': '8d3235bce61dd64bb80b177b1c819361149762d3',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -261,7 +261,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_jp_fiscal_runtime.py': '947869d77381314f4bd213995381b597d4821393',
     'test_argus_jp_fiscal_sources.py': 'd0fb62aef16b6a14705ab67ba99c15f924f5d4c8',
     'web/src/components/today/FiscalEnvironmentDetails.css': 'c5830b9d9414c8b7fafb69b5fa4f7d4a0db83700',
-    'web/src/components/today/FiscalEnvironmentDetails.tsx': '7bc8da8f6dda4e747f1259a8bfd9e3a8913ae5a4',
+    'web/src/components/today/FiscalEnvironmentDetails.tsx': '50dcd662a46242f1ea1ba9f073bd4d1e5a73155d',
     'web/src/lib/revealNewsArticle.ts': '807735f5bd95556ed64af7019cf0b3f26608a07c',
     'web/scripts/news-delivery-grouping.test.cjs': '739f9a1820dc6fe269c59bd8bf5e1bb3229620d9',
     'docs/V13_7_INDEX_ANALOG_COVERAGE.md': '905dca1b82c5c24ed1e7e11ce6278e8503221564',
@@ -297,7 +297,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
     'docs/V13_7_REQUIREMENTS.md': '4531b8a7f358a4f14dbb5d3d6e86c481f9c3ac07',
     'web/src/hooks/useOsintInvestigation.ts': '93a21a776cfe8829107f8c6c17bd5ba7740a8ba6',
-    'web/src/components/guide/Layer2BSyncCard.tsx': '121a14868ff0d4e129fd1ddd2e0645229249b4c2',
+    'web/src/components/guide/Layer2BSyncCard.tsx': 'fb0cd82fd3bafb05cff13ec4119bfb0f6d713961',
     'web/src/components/dashboard/OsintDeepDive.tsx': 'bec4e13dadf34e59b70a7e82727f9635eb1189a6',
     'web/src/components/dashboard/AddAssetModal.tsx': '1bffa7862c536eb0f84fdcdb3971d472cc94ba6c',
     'web/src/components/assetDesk/AssetResearchPanel.tsx': '69d8e0ab11ff66008cfe0b76049e6699a08afe54',
@@ -337,7 +337,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/settings/WebPushPanel.tsx': '222263138cd7b4843de7a5eec31b80c12dea8463',
     'web/src/components/settings/WebPushPanel.css': '00b2bef993a8eca959afedbf2015796b5746e724',
     'web/src/components/settings/OwnerVaultPanel.tsx': '4d58dcdafe16f850afb8590550a926855fe6402a',
-    'web/src/components/settings/AiUsagePanel.tsx': 'bae2bacbc21c0183b9bdca904a4d60136f04f78e',
+    'web/src/components/settings/AiUsagePanel.tsx': 'def889bdf64a269ed340a1aac1fd4f927abff278',
     'web/src/components/settings/AiUsagePanel.css': 'eb215c910039c200f8b5fb01287672f3f4eb6376',
     'web/src/components/dashboard/PortfolioSyncCard.tsx': '2f1caeac828a2044ab1c54c5d062683f69b57bf4',
     'web/scripts/web-push.test.mjs': 'f821d07cc76bf1a527af7ee496530918cf7f633c',
@@ -385,9 +385,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/pwa-recovery.test.mjs': 'd2fc2ff86480cb685328e1341e61d4415285d8a6',
     'web/scripts/shared-market-context.test.cjs': '4f838a348ff036356ba3257f78c2be35d63a7588',
     'web/src/components/dialogue/OwnerDialogue.css': '99f542e0fc1391a58a1cb60ac1c5bec249fe9a28',
-    'web/src/components/dialogue/OwnerDialogue.tsx': 'ee84e0b33570373650bb69c2208bafae960eae8e',
+    'web/src/components/dialogue/OwnerDialogue.tsx': '3e67e5f0d1489e72c999b5fd17dba36b50836246',
     'web/src/components/today/MarketBriefCard.tsx': '72795ead710525383353eb8f25f0e57a9d8b78a4',
-    'web/src/components/today/MarketInternalsCard.tsx': '46b791d3c01cf6e25cbf46c30a112740b5cadc01',
+    'web/src/components/today/MarketInternalsCard.tsx': 'e3b6462e6754210984cf1d7fc09ccc34a9eee6e6',
     'web/src/components/today/SharedMarketContext.tsx': '68e73cbc85765157bd5d09d773bbd83abc994ab0',
     'web/src/lib/marketInternals.ts': 'c9df9fe130a956dc08285542e0118c34938eb164',
     'web/src/lib/pwaRecovery.ts': '038fe1dc3e55433a0f72e8a06ca1701176155438',
@@ -398,7 +398,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_positioning.py': 'c0f090d16b77a8aa180560088d0da1060e0e1c20',
     'test_jp_market_positioning.py': 'e0e9dd7b5e75ca2a11f6494c6a08d2e7bf269703',
     'web/scripts/jpy-position.test.cjs': '42d72fc2c3ce1909bbe4db0e17138b7739b531c7',
-    'web/src/components/today/JpyPositionCard.tsx': 'abe7297f0230d081a1ffcdb8f232addcfd110a9f',
+    'web/src/components/today/JpyPositionCard.tsx': '14658ba8ad18608492a1778c342922d17c120a16',
     # Owner-authorized staged analysis delivery; exact tested file contents only.
     'argus_ai_usage_receipt.py': '272e2a780d26a65917210df416e6546eb1c441dc',
     'argus_ai_usage_store.py': 'bc0ccd94eeb2b601da72ecb4a847c8ba3bbf07e1',
@@ -435,7 +435,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/margin-dynamics.test.cjs': '52f4a8dbd70faada9c31f80446594dbebb68a9da',
     'web/scripts/market-brief-response.test.cjs': '64be553e97cb0820761dfd7aafd3db1799586735',
     'web/src/components/chart/JapanMarketComparisonChart.css': '82ec2764075ee45b629725c14cd344945bc83b1a',
-    'web/src/components/chart/JapanMarketComparisonChart.tsx': 'bbe7754e5cc7a099fb5a60f5d2f7343f268d6530',
+    'web/src/components/chart/JapanMarketComparisonChart.tsx': 'f8b3bea94952961a73e6ec2c358d5bb10583c2d7',
     'web/src/components/chart/JapanMarketComparisonPanel.tsx': 'ec4a2b7473985bd18e20db325130173b080fce75',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': 'bf645a5a2e4ef7c48b9391df5a8f8d645f3ea64d',
@@ -691,6 +691,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/lib/learningReview.ts",
+    "web/src/i18n/locales.ts",
     "web/src/components/assetDesk/AssetPortfolioCommand.tsx",
     "web/src/components/assetDesk/AssetNumbers.tsx",
     "web/src/components/assetDesk/AssetMarketContext.tsx",

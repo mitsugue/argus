@@ -90,7 +90,7 @@ export const Layer2BSyncCard: React.FC<Props> = ({ assets }) => {
         body: JSON.stringify({ ownerToken: token.trim() }), signal: AbortSignal.timeout(12000),
       });
       const d = await r.json().catch(() => null);
-      if (!r.ok || !['ok', 'empty'].includes(d?.status)) { setResult('同期状態を取得できませんでした。未登録とは判定しません'); return; }
+      if (!r.ok || !['ok', 'empty'].includes(d?.status)) { setResult('同期状態を取得できませんでした'); return; }
       const members: any[] = d?.membership?.members || [];
       const registeredServer = new Set(members.filter(m => m.enabled !== false)
         .map(m => `${m.market}:${m.symbol}`));

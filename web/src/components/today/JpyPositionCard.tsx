@@ -49,7 +49,7 @@ export function JpyPositionCard({ document }: { document: unknown }) {
     <div className="at-context-metrics"><article><span>円買い − 円売り</span><strong>{signed(current.netContracts)}<small>枚</small></strong></article>
       <article><span>{document.previousPositionDate}からの差</span><strong>{signed(change.netContracts)}<small>枚</small></strong></article></div>
     <div className="at-context-use">
-      <p>{current.netContracts>0?'円買いに偏っています。円が下がると円買いの手じまいが、円安を強める可能性があります。':current.netContracts<0?'円売りに偏っています。円が上がると円売りの買い戻しが、円高を強める可能性があります。':'買い・売りの差はゼロです。偏りによる巻き戻しの方向は、この残高からは読み取れません。'}</p>
+      <p>{current.netContracts>0?'円買いに偏っています。円が下がると円買いの手じまいが、円安を強める可能性があります。':current.netContracts<0?'円売りに偏っています。円が上がると円売りの買い戻しが、円高を強める可能性があります。':'買い・売りの差はゼロです。'}</p>
 </div>
     {document.acquisition?.status === 'FAILED' && <p role="status">更新失敗・前回取得分</p>}
     {document.status === 'STALE' && <p role="status">古い値・次の報告待ち</p>}

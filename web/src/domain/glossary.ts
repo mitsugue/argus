@@ -126,27 +126,27 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   },
   signal_clear: {
     term: '消灯',
-    explanationJa: 'データはそろっていますが、このシグナルの条件は成立していません。数には入りません。',
+    explanationJa: 'このシグナルの条件は成立していません。',
   },
   signal_data_gated: {
     term: '判定不能',
-    explanationJa: 'データはあるものの、条件を判定できる状態ではありません（検証前・不足など）。数には入りません。',
+    explanationJa: '条件を判定できる状態ではありません。',
   },
   signal_stale: {
     term: '古い',
-    explanationJa: 'このシグナルのデータが古く、現在の判定には使えません。数には入りません。',
+    explanationJa: 'このシグナルのデータが古い状態です。',
   },
   signal_license: {
     term: '要ライセンス',
-    explanationJa: 'このシグナルの正式データはライセンス上まだ取り込めません。代替データがない間は数に入りません。',
+    explanationJa: 'このシグナルの正式データはまだ取り込めません。',
   },
   signal_not_applicable: {
     term: '該当なし',
-    explanationJa: 'データは読めていて、いまは対象となる出来事（例: 直近の決算開示）が期間内にない状態。欠測とは区別します。',
+    explanationJa: '期間内に対象となる出来事（例: 直近の決算開示）がない状態です。',
   },
   signal_unavailable: {
     term: '欠測',
-    explanationJa: 'このシグナルのデータ提供元から現在データが得られていません。ゼロ扱いではなく「欠測」として表示します。',
+    explanationJa: 'このシグナルの現在のデータが得られていません。',
   },
   // v13.5.38 TACHIBANA LIVE statuses
   tachibana_live: {

@@ -266,7 +266,7 @@ const UnifiedEventRow: React.FC<{ ev: DashboardEvent; open: boolean; lastRefresh
                 vColor={vColor} showAnswerCheck={ds.showAnswerCheck} /> : <p>結果待ち</p>}
             </section>
             <details className="ie-phase ie-phase--pre-folded">
-              <summary><b>発表前の見立て(参考)</b></summary>
+              <summary><b>発表前の見立て</b></summary>
               <p>{preScenario || (ds.released ? '事前予測未保存' : aiNote)}</p>
               {c.marketPricingJa && <small>織り込み：{c.marketPricingJa}</small>}
               {c.whatWouldSurpriseJa && <small>サプライズ：{c.whatWouldSurpriseJa}</small>}
@@ -378,7 +378,6 @@ export const ImportantEventsCard: React.FC<Props> = ({ embedded, sectionId = 'im
             </div>
           );
         })()}
-        <p className="ie-note">{t('ie.impactNote')}</p>
       </section>
     );
   }
@@ -405,7 +404,6 @@ export const ImportantEventsCard: React.FC<Props> = ({ embedded, sectionId = 'im
                     ai={analysis[e.eventId] || analysis[e.eventCode]} />
         ))}
       </div>
-      <p className="ie-note">{t('ie.impactNote')}</p>
     </section>
   );
 };
