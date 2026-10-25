@@ -118,7 +118,7 @@ def test_accepted_answers_become_public_check_entries():
     assert row["kind"] == "PUBLIC_CHECK" and row["themeId"] == "US_POLICY_RATE"
     assert row["ref"]["sources"][0]["url"].startswith("https://www.cmegroup.com/")
     assert row["ref"]["slot"] == "2026-10-26 11:30"
-    assert row["measured"] == {"unknown": False, "nextEventDate": "2026-10-29"}
+    assert row["measured"] == {"unknown": False, "nextEventDate": "2026-10-29", "confirmation": "CONFIRMED"}
 
 
 def test_shadow_entries_are_kept_but_not_shown():
@@ -199,3 +199,37 @@ def test_health_shows_counts_only_and_the_admin_audit_shows_the_answers(server, 
     audit = client.get("/api/argus/admin/news-intake/audit").get_json()
     assert audit["positionChecks"][0]["textJa"] == "FRBの議長が会見で示唆"
     assert audit["positionChecks"][0]["ref"]["sources"][0]["url"].startswith("https://www.federalreserve.gov/")
+
+
+# ── 2026-10-25: what the first week showed ─────────────────────────────────
+
+def test_a_partly_confirmed_answer_is_not_counted_unknown():
+    questions = [{"id": "q1", "themeId": "BOJ", "type": "CONFIRM", "questionJa": "確認できますか"},
+                 {"id": "q2", "themeId": "BOJ", "type": "STALE", "questionJa": "新しい事実は"}]
+    parsed = check.parse_answers(json.dumps({"answers": [
+        {"id": "q1", "answerJa": "確認：9月の全国CPIは公表済み。未確認：主因は確認できない。",
+         "confirmation": "PARTIAL", "unknown": True,
+         "sources": [{"url": "https://www.stat.go.jp/data/cpi/"}]},
+        {"id": "q2", "answerJa": "", "confirmation": "NONE", "sources": []}]}), questions)
+    partial, none = parsed["accepted"]
+    assert partial["confirmation"] == "PARTIAL" and partial["unknown"] is False
+    assert none["confirmation"] == "NONE" and none["unknown"] is True
+    memory = mpm.empty()
+    for row in check.entries(parsed["accepted"], checked_at=NOW_ISO, slot="s"):
+        mpm.append(memory, row)
+    counts = check.summary(memory, now=NOW)
+    assert counts["recentUnknown"] == 1 and counts["recentPartial"] == 1
+    assert "PARTIAL" in check.build_prompt(questions, now=NOW)
+
+
+def test_japanese_releases_and_non_middle_east_geopolitics_find_their_theme():
+    memory = mpm.empty()
+    mpm.ingest_news(memory, [
+        {**_news(theme_family="INFLATION", event_id="jp-cpi"), "headlineJa": "9月の全国消費者物価、2.1%上昇 総務省"},
+        {**_news(theme_family="INFLATION", event_id="us-cpi"), "headlineJa": "米CPI、9月は前年比3.1%上昇"},
+        {**_news(theme_family="GEOPOLITICS", event_id="nk"), "headlineJa": "北朝鮮の金正恩総書記が中国訪問"},
+        {**_news(theme_family="GEOPOLITICS", event_id="me"), "headlineJa": "イラン、ホルムズ海峡で演習"}])
+    placed = {r["ref"]["eventId"]: r["themeId"] for r in memory["entries"]}
+    assert placed == {"jp-cpi": "BOJ", "us-cpi": "US_POLICY_RATE",
+                      "nk": "EMERGING_GEOPOLITICS_OTHER", "me": "MIDDLE_EAST"}
+    assert mpm.THEMES["EMERGING_GEOPOLITICS_OTHER"]["labelJa"] == "地政学(中東以外)"

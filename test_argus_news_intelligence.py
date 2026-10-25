@@ -902,7 +902,7 @@ def test_stored_event_is_reclassified_once_by_rules_only():
     assert result["reviewed"] == 1 and result["audit"][0]["eventType"] == "CYBER_SECURITY"
     assert result["audit"][0]["aiCalled"] is False
     assert fixed["eventType"] == "CYBER_SECURITY" and fixed["themeTags"] == ["CYBER"]
-    assert fixed["policyVersion"] == ni.NEWS_POLICY_VERSION == "news-policy-v9"
+    assert fixed["policyVersion"] == ni.NEWS_POLICY_VERSION == "news-policy-v10"
     assert set(fixed["impactDirection"]["directionByTarget"].values()) == {"UNCLEAR"}
     # Only the family component leaves; no retroactive alert; history kept.
     assert fixed["severity"] == "WATCH" and fixed["alertEligible"] is False
@@ -1415,3 +1415,12 @@ def test_v9_raises_retained_crisis_headlines_once_without_ai():
     assert events[look_back["eventId"]]["severity"] != "CRITICAL"
     assert all(row["aiCalled"] is False for row in result["audit"])
     assert ni.reclassify_stored_events(events, at="2026-10-24T00:10:00Z")["reviewed"] == 0
+
+
+def test_a_system_failure_attack_is_not_a_war():
+    # 2026-10-25: 「攻撃」 next to a system failure got the war chain (追い風: エネルギー).
+    php = ni.classify_event("PHP脆弱性、狙う攻撃やまず 米クラウドフレアCEO「1分で100万回」")
+    assert php["eventType"] == "CYBER_SECURITY" and "WAR_ESCALATION" not in php["families"]
+    strike = ni.classify_event("システム障害の最中にミサイル攻撃、施設が停止")
+    assert strike["eventType"] == "WAR_ESCALATION"
+    assert "WAR_ESCALATION" in ni.classify_event("イスラエルがイランを攻撃")["families"]

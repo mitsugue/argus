@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.170"
+PRODUCT_VERSION = "v13.8.171"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -168,7 +168,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '4eeb51813012a3a2ab7bcd6c6eff151a6943838b',
+    'web/scripts/owner-today-https.mjs': '6917f1c6c223463a2047d61829f0d057a969558c',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -349,13 +349,13 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/lean-surface.test.mjs': '0727e21aad761fbd7f9c856e7dce7e474ce984bf',
     'web/scripts/ai-usage-view.test.cjs': '558e8ef36130e5a59e26f8973176ee2ce741db8a',
     'web/public/push-worker.js': '8f6d750dfa8555f9c70a523970b84f535cfb6c23',
-    'test_argus_web_push.py': '3d7388114b739b29075b0087b33ab24c4f999e35',
+    'test_argus_web_push.py': 'b379420d8405ced024bb78adbc8a5e604dbe6c17',
     'test_argus_owner_vault.py': '64c3c8bec19581962309873e1b93fb31cdc2cbe2',
     'test_argus_ai_usage_view.py': '729a3e9155a2106069ad68d8b9efb590ab10f3a9',
     'requirements.txt': '4b5fc10866dbd75f13ade0c2281b97800c2add05',
     'jp_market_valuation.py': '8813012bcab02e9269007a8850870da2ef050565',
     'docs/V13_6_INDEX_VALUATION.md': '86f949af07f9cee61e570dc11d3062542c832269',
-    'argus_web_push.py': '3a09eab8d8e7cea425523694fe201252a9ff6b01',
+    'argus_web_push.py': 'a32e60ff11dca122fdd9bd56ecb6e9db0271380a',
     'argus_owner_vault.py': '9c3d105716b1115a205bc69dbbbd18e3a7356457',
     'argus_ai_usage_view.py': 'cd86138feaaa5f61a305b2eaa4e74f2b8de3b163',
     'argus_ai_usage_runtime.py': 'a547929955acabfd3ae74d3cbd9224f1448d2862',
