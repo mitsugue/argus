@@ -109,7 +109,8 @@ const stripContext = {exports:{},localStorage:{getItem:()=>null},require(name){
   if(name.includes('/todayJump')) return {jumpTo:()=>{}};
   if(name.includes('/hooks/')) return {useNikkeiLive:()=>stripLive,nikkeiLiveCurrent:q=>!!q,
     useJapanMarketComparison:()=>({levelMap:stripRecorded?{dropAlert:stripRecorded}:null})};
-  if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>React.createElement('section',{'data-market-position':'slot'})};
+  if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>React.createElement('section',{'data-market-position':'slot'}),
+    MarketPositionHighlights:()=>React.createElement('section',{'data-market-highlights':'slot'})};
   return require(name);
 }};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/today/TodayDecisionStrip.tsx','utf8'),
@@ -138,15 +139,19 @@ assert.equal((unavailableStrip.split('today-strip__tiles')[1].split('</div>')[0]
 assert.ok(unavailableStrip.includes('確認中'));
 assert.ok(!unavailableStrip.includes('過去の同じ状態で'),'missing data never gets a calculated alert');
 console.log('欠測中も４カードを維持し数字を捏造しない PASS');
-// docs/TODAY_CARD_ORDER.md 1-1〜1-5 (owner order 2026-10-20): value → verdict → four tiles → market position → inputs.
+// docs/TODAY_CARD_ORDER.md (owner order 2026-10-25): value and verdict → four tiles →
+// today's themes → (reason and change) → folded: all themes → inputs.
 for (const html of [normalStrip, unavailableStrip]) {
-  const at = ['today-strip__verdict', 'today-strip__tiles', 'data-market-position'].map(key => html.indexOf(key));
-  assert.ok(at.every(i => i >= 0) && at[0] < at[1] && at[1] < at[2], `market position sits under the four tiles: ${at}`);
+  const at = ['today-strip__verdict', 'today-strip__tiles', 'data-market-highlights', 'data-fold="themes"', 'data-market-position']
+    .map(key => html.indexOf(key));
+  assert.ok(at.every(i => i >= 0) && at.every((v, i) => i === 0 || at[i - 1] < v), `order: ${at}`);
   assert.equal(html.split('data-market-position').length, 2, 'the market position appears once');
 }
 assert.ok(normalStrip.indexOf('today-strip__close') < normalStrip.indexOf('today-strip__verdict'));
 assert.ok(normalStrip.indexOf('data-market-position') < normalStrip.indexOf('today-strip__rows'));
-console.log('タイル4つの下に市場の現在位置 PASS');
+assert.ok(/<details class="today-strip__fold today-strip__rows"/.test(normalStrip), 'the inputs fold');
+assert.ok(!normalStrip.includes('today-strip__overnight'), 'the overnight line lives in the inputs');
+console.log('タイル4つ・今日動いたテーマ・畳んだ全テーマと材料 PASS');
 // Owner policy 2026-10-23: the price line carries no source/precision text; only a delayed value says 「遅延」.
 const priceLine=html=>html.split('today-strip__close')[1].split('</p>')[0];
 const liveQuote={price:48000,changePct:0.5,tradedAt:'2026-10-05T00:48:00Z',sessionOpen:true,realtime:true,tradedAtPrecision:'MINUTE',delaySeconds:0};
@@ -185,10 +190,9 @@ console.log('日経平均の右はリアルタイムなら無し・遅延だけ�
   assert.equal(trend.lean, 'tail', 'the 5-session reading itself is unchanged');
 }
 const tileOf = (html, cls) => html.split(`today-strip__tile ${cls}`)[1].split('</button>')[0];
-const tilesOf = html => html.split('today-strip__tiles')[1].split('today-strip__basis')[0];
-const noteOf = html => (html.match(/<p class="today-strip__basis"[^>]*>([^<]*)<\/p>/) || [])[1];
-assert.equal(normalStrip.split('data-close-basis="2026-10-02"').length - 1, 1, 'one line names the close');
-assert.equal(noteOf(normalStrip), '上の3つは10/2終値で計算');
+const tilesOf = html => html.split('today-strip__tiles')[1].split('data-market-highlights')[0];
+// 2026-10-25 (owner): no basis line under the tiles; old numbers say 準備中.
+assert(!normalStrip.includes('today-strip__basis'), 'no basis line');
 assert(!tilesOf(normalStrip).includes('終値'), 'no tile repeats the date');
 const alertTile = tileOf(normalStrip, 'alert-');
 assert(alertTile.includes('この先5日の急落(-5%以上)') && /過去の同じ状態で\d+(\.\d)?%/.test(alertTile), alertTile);
@@ -212,7 +216,7 @@ const noLive = () => ({ quote: null, futures: null });
 const storedHtml = renderToStaticMarkup(React.createElement(stripWith(JSON.stringify({ actual: path, anchorDate: '2026-10-01',
   features: brief.calculationSnapshots['5'].marketFeatureSnapshot.features, savedAt: '2026-10-01T07:00:00Z' }), noLive),
   { brief: { chips: { nextEvent: '' } } }));
-assert(storedHtml.includes('時点の数字') && noteOf(storedHtml) === '上の3つは10/1終値で計算', storedHtml);
+assert(storedHtml.includes('時点の数字') && !storedHtml.includes('today-strip__basis'), storedHtml);
 const storedNoDate = renderToStaticMarkup(React.createElement(stripWith(JSON.stringify({ actual: path,
   features: [], savedAt: '2026-10-01T07:00:00Z' }), noLive), { brief: { chips: { nextEvent: '' } } }));
 assert(!storedNoDate.includes('today-strip__basis'), 'an older saved copy without a date shows none');
@@ -220,7 +224,7 @@ assert(!storedNoDate.includes('today-strip__basis'), 'an older saved copy withou
 const liveHook = () => ({ quote: { price: 105, changePct: 1, tradedAt: '2026-10-05T01:00:00Z', receivedAt: '2026-10-05T01:00:05Z',
   realtime: false, delaySeconds: 1200, sessionOpen: true }, futures: null });
 const liveHtml = renderToStaticMarkup(React.createElement(stripWith(null, liveHook), { brief }));
-assert.equal(noteOf(liveHtml), '上の3つは10/2終値で計算・値幅の円は現在値で換算');
+assert(!liveHtml.includes('today-strip__basis'));
 // A fall raises the tile and shows the raised days' own record with the count.
 {
   const fallPath = path.map(p => p.offsetSessions === 0 ? { ...p, value: 101 * 0.97 } : p);
@@ -234,7 +238,7 @@ assert.equal(noteOf(liveHtml), '上の3つは10/2終値で計算・値幅の円�
   assert(tile.includes(base === 'low' ? '直近の下げで一段上げ・過去の例は3日のみ' : '直近の下げで一段上げ・過去18.6%(145日中27日)'), tile);
   assert(tileOf(normalStrip, 'alert-').includes('過去の同じ状態で'), 'no fall, no raise wording');
 }
-console.log('タイルは1行・終値の日付は下に1行 PASS');
+console.log('タイルは1行・計算日の行なし PASS');
 
 // 2026-10-24: the record after release (recorded before the next open, scored five sessions later)
 // joins the same line only once the shown level has 20 scored days; the line stays one line.

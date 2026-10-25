@@ -11,13 +11,14 @@ import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import { TodayDecisionStrip, type CriticalTodayNews } from './TodayDecisionStrip';
 import { friendlyFactText } from '../../lib/todayDecision';
 import { withoutScreenNotes } from '../../lib/screenNotes';
-import { marketChanges, marketWording } from '../../lib/marketWording';
+import { marketChanges, marketHeadline, marketWording } from '../../lib/marketWording';
 import './ArgusEditorialSurface.css';
 
 const labels = { view: 'ARGUSの今日の見立て', reasons: '見立ての理由', changes: '前回から確認できた変化',
   impact: '自分の銘柄への影響', next: '次に確かめたいこと', invalidation: '見方を変える条件' };
 type Section = keyof typeof labels;
 /** One date per fact: when it was observed, else published, else received (date only). */
+const firstSentence = (text: string) => { const cut = text.indexOf('。'); return cut > 0 ? text.slice(0, cut + 1) : text; };
 const factDate = (p?: { observedAt?: string | null; publishedAt?: string | null; receivedAt?: string | null } | null) =>
   (p?.observedAt ?? p?.publishedAt ?? p?.receivedAt ?? '').slice(0, 10);
 
@@ -47,18 +48,29 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
     const readable = [...plan.elements.filter(choice => digestOrder.includes(choice.id))
       .sort((a, b) => digestOrder.indexOf(a.id) - digestOrder.indexOf(b.id)),
       ...plan.elements.filter(choice => /^evidence-news-/.test(choice.id) && choice.placement !== 'detail').slice(0, 1)];
+    // 2026-10-25 (owner, docs/TODAY_CARD_ORDER.md 1-4): one sentence of the reason
+    // and one of what would change the view; the full text folds below. A reason
+    // the headline already shows is not repeated.
+    const headline = marketHeadline(summary.sections.view, summary.sections.reasons);
+    const reason = summary.sections.reasons?.textJa ? marketWording(firstSentence(summary.sections.reasons.textJa)) : '';
+    const change = summary.sections.invalidation?.textJa ? marketWording(firstSentence(summary.sections.invalidation.textJa)) : '';
+    const shownReason = reason && !(headline && (headline.includes(reason.replace(/。$/, '')) || reason.includes(headline.replace(/。$/, '')))) ? reason : '';
+    const middle = (shownReason || change) ? <section className="argus-editorial__brief" aria-label="理由と変わる条件">
+      {shownReason && <p className="argus-editorial__reason">{shownReason}</p>}
+      {change && <p className="argus-editorial__change">変わる条件：{change}</p>}
+    </section> : null;
     return <section className="argus-editorial argus-editorial--live" aria-label="ARGUSの今日の見立て"
       data-argus-contract="presentation-intent-v1" data-presentation-id={plan.planId} data-context-id={plan.contextId}>
       <header className="argus-editorial__edition"><span>MARKET VIEW</span>
         <time dateTime={at}>{new Date(at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 更新</time>
         {updateState ?? (retained && <span role="status">{generationStatus === 'RUNNING' ? '作成中・保存版' : '保存版'}</span>)}</header>
-      <TodayDecisionStrip brief={brief} criticalNews={criticalNews} />
+      <TodayDecisionStrip brief={brief} criticalNews={criticalNews} middle={middle} />
       {/* 2026-10-04: saving failed for 15 hours with no sign on the screen. */}
       {brief.analysisHistory?.status === 'SAVE_FAILED' && <p role="status" className="argus-editorial__retained"
         data-argus-contract="analysis-history-save-failed-v1">
         履歴に保存できませんでした</p>}
-      {readable.length > 0 && <section className="argus-editorial__digest" aria-label="見通しを詳しく">
-        <h2>見通しを詳しく</h2>
+      {readable.length > 0 && <details className="argus-editorial__digest" aria-label="見通しを詳しく">
+        <summary>見通しを詳しく</summary>
         {readable.map(choice => {
           const source = brief.presentationCatalog!.elements.find(row => row.id === choice.id)!;
           const evidenceLabel = editorialElementLabel(choice.id);
@@ -67,7 +79,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
           return text ? <div key={choice.id} className="argus-editorial__digest-row" data-payload-id={source.payloadId}>
             <small>{label}</small><p>{choice.id === 'changes' ? marketChanges(text) : marketWording(text)}</p></div> : null;
         })}
-      </section>}
+      </details>}
       <details className="argus-editorial__vault">
         <summary>この見通しの根拠・過去の記録</summary>
         {plan.elements.map(choice => {
