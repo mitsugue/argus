@@ -315,6 +315,10 @@ class TenYearIndexHistoryTest(unittest.TestCase):
     def setUp(self):
         self.saved = dict(scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE)
         scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.clear()
+        # 取り直しの合否は壁時計に依存する。ここでは結合の形だけを見る。
+        settle = mock.patch.object(scanner, "_index_history_settled", return_value=False)
+        settle.start()
+        self.addCleanup(settle.stop)
 
     def tearDown(self):
         scanner._JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.clear()

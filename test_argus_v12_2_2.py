@@ -70,7 +70,7 @@ def test_research_ratio_excludes_decision_and_reliability():
 
 # ── Phase 2: プリフライト+ウォームアップ ────────────────────────────────────
 
-def test_cold_store_queues_warmup_not_forecast(monkeypatch):
+def test_cold_store_issues_nothing_and_queues_no_ai(monkeypatch):
     class FixedBusinessDateTime(RealDateTime):
         @classmethod
         def now(cls, tz=None):
@@ -94,10 +94,10 @@ def test_cold_store_queues_warmup_not_forecast(monkeypatch):
     with scanner.app.test_client() as c:
         c.post("/api/argus/admin/missions/tick", json={})
     assert len(scanner._FORECAST_LEDGER) == 0      # コールドから発行しない
-    assert scanner._OSINT_AGENT_QUEUE               # ウォームアップをキュー済み
+    assert not scanner._OSINT_AGENT_QUEUE           # 固定銘柄のGPT調査を予約しない
     wm = [m for m in scanner._MISSIONS
-          if m.get("checkpoint") == "warmup_queued"]
-    assert wm, "warmupチェックポイントが記録される"
+          if m.get("checkpoint") == "cold_store_no_forecast"]
+    assert wm, "コールドのチェックポイントが記録される"
 
 
 def test_dq_forecast_readiness_blocker():
@@ -106,7 +106,7 @@ def test_dq_forecast_readiness_blocker():
         d = scanner._data_quality_console()
         fr = d.get("forecastReadiness") or {}
         assert fr.get("readiness") == "insufficient_data"
-        assert "ウォームアップ" in (fr.get("blockerJa") or "")
+        assert "手動実行のみ" in (fr.get("blockerJa") or "")
 
 
 # ── Phase 4/9: replay分離+soak ──────────────────────────────────────────────

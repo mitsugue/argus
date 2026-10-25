@@ -182,7 +182,8 @@ def test_public_stdout_does_not_contain_authenticated_ledger_or_original_rows(mo
 def test_workflow_retries_publication_day_and_does_not_upload_protected_readback():
     from pathlib import Path
     text = Path(".github/workflows/jpx-credit-weekly.yml").read_text()
-    assert "cron: '45 7-14 * * 1-5'" in text
+    assert "cron: '50 7 * * 2-4'" in text and "cron: '50 10 * * 2-5'" in text
+    assert text.count("- cron:") == 2
     assert "cancel-in-progress: false" in text
     assert "actions/upload-artifact" not in text and "$RUNNER_TEMP/jpx-credit-summary.json" in text
 

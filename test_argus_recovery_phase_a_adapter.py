@@ -1188,7 +1188,7 @@ def test_post_session_sampling_marks_only_normal_success_not_warmup(
 
     source = inspect.getsource(scanner._api_argus_admin_missions_tick_impl)
     assert source.count("_recovery_phase_a_mark_post_session(m)") == 1
-    warmup_index = source.index('m["checkpoint"] = "warmup_queued"')
+    warmup_index = source.index('m["checkpoint"] = "cold_store_no_forecast"')
     warmup_continue = source.index("continue", warmup_index)
     assert "_recovery_phase_a_mark_post_session" not in \
         source[warmup_index:warmup_continue]

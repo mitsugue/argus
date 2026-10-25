@@ -5,8 +5,8 @@
 #   - a high-impact event entering its D-1 / D window
 # Quiet by design: no change → no notification. State is carried between runs
 # via the Actions cache. Both jobs use the same NTFY_TOPIC secret
-# (no-ops gracefully when unset). Side bonus: the hourly poll keeps the Render
-# free dyno warm through market hours.
+# (no-ops gracefully when unset). The overnight polls stay: an edition made
+# right after a US release (FOMC 03:00 JST) changes the view at night.
 
 name: market-alerts
 
