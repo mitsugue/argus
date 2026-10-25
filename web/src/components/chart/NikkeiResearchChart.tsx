@@ -302,7 +302,7 @@ export function NikkeiResearchChart() {
   const raw = map?.chart;
   return <div aria-busy={state.loading}>
     {state.levelMapError && <p role="status">チャートの更新を確認できません。取得済みの表示には古い値が含まれます。<button type="button" onClick={state.retry}>再取得</button></p>}
-    {validResearchChart(raw) ? <NikkeiResearchChartView chart={raw} future={future} hasPriceScale={!!state.levelMap?.latest} /> : <p role="status">{map?.chartError ? 'チャートのデータを作成できませんでした。従来の過去比較は切り替えて確認できます。' : 'チャートの価格・PER履歴を準備しています。'}<button type="button" onClick={state.retry}>再取得</button></p>}
+    {validResearchChart(raw) ? <NikkeiResearchChartView chart={raw} future={future} hasPriceScale={!!state.levelMap?.latest} /> : <p role="status">{map?.chartError ? 'チャートのデータを作成できませんでした。' : 'チャートの価格・PER履歴を準備しています。'}<button type="button" onClick={state.retry}>再取得</button></p>}
     <NoAnalogLine document={state.document} />
     <MaterialReactionLine research={state.document?.forecast.materialReactionResearch} />
   </div>;

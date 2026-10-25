@@ -15,7 +15,8 @@ export type FutureLinesDoc = {
   actionAuthority: false; argusValidated: false;
 };
 export type LineId = 'commentator' | 'machine' | 'machine2';
-export const LINE_LABEL: Record<LineId, string> = { commentator: '動画解説の線', machine: '機械1（2018年の暦）', machine2: '機械2（直近の間隔）' };
+// 2026-10-25 (owner): shorter names on the simplified view.
+export const LINE_LABEL: Record<LineId, string> = { commentator: '動画の線', machine: '2018年の暦', machine2: '山谷の間隔' };
 export const MEASURE_LABEL: Record<'strict' | 'standard' | 'loose' | 'timing', string> = {
   strict: '厳しい（5%の山谷・±5営業日・±2%）', standard: '標準（4%・±7営業日・±3%）', loose: 'ゆるい（3%・±10営業日・±4%）', timing: '時期だけ（4%・±5営業日）' };
 
@@ -65,4 +66,17 @@ export function linesFrame(doc: FutureLinesDoc, ids: LineId[], historyCount = 3)
 export function pathPoints(line: FutureLine, closes: { date: string; close: number }[]) {
   const base = closes.find(c => c.date === line.rec);
   return [...(base ? [{ date: base.date, price: base.close }] : []), ...line.points.map(p => ({ date: p.date, price: p.price }))];
+}
+
+/** The first point after the last close: the line's next turning point. */
+export function nextTurn(line: FutureLine | null | undefined, after: string): FuturePoint | null {
+  return line?.points.find(p => p.date > after) ?? null;
+}
+
+/** One-line score on the standard measure, or where it stands before that. */
+export function scoreJa(record: LineRecord | undefined): string {
+  if (!record || !record.records) return '記録なし';
+  const m = record.standard;
+  if (!m || !m.n) return '判定前';
+  return `当たり ${m.hit}/${m.n}` + (m.randomMean !== null ? `（偶然なら${m.randomMean}）` : '');
 }
