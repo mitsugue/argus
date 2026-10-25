@@ -19,7 +19,9 @@ SCHEMA = 'level-map-eps-backfill-v1'
 # example the 2026-10-21 supplement of blank members) starts the position and
 # the set-aside dates afresh, so dates the old method could not fill are
 # tried again at once instead of after thirty days.
-METHOD = 'blank-member-supplement-2026-10-21'
+# 2026-10-25: undecided forecasts, predecessors and carried rows are now filled,
+# so every set-aside date is tried again.
+METHOD = 'earnings-stand-in-2026-10-25'
 EXHAUST_AFTER = 3
 RETRY_AFTER = timedelta(days=30)
 MAX_ENTRIES = 4000

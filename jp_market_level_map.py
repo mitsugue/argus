@@ -242,14 +242,131 @@ def valuation_with_supplied_members(valuation, constituents, bars_by_code, discl
             return {c: dict(r) for c, r in valuation.items()}, {}
         cap = _finite(bars[0].get('MktCap'))
         forecast = forecast_net_income(disclosures_by_code.get(code), before=date)
+        predecessor = None
+        if forecast is None and code in PREDECESSORS:
+            # 2026-10-25 (owner): before the holding company's first forecast,
+            # the forecast of the company it replaced one for one.
+            predecessor = PREDECESSORS[code]
+            forecast = forecast_net_income(disclosures_by_code.get(predecessor), before=date)
         if cap is None or cap <= 0 or forecast is None:
             return {c: dict(r) for c, r in valuation.items()}, {}
         supplied[code] = {'marketCap': cap, 'barDate': date, 'forecastNetIncome': forecast[0],
                           'disclosure': forecast[1]}
+        if predecessor:
+            supplied[code]['predecessorCode'] = predecessor
     result = {code: dict(row) for code, row in valuation.items()}
     for code, row in supplied.items():
         result[code].update(MktCap=row['marketCap'], suppliedForecastNetIncome=row['forecastNetIncome'])
     return result, supplied
+
+
+# 2026-10-25 (owner decision, docs/PER_CURRENT_AUTHORITY.md): the remaining
+# incomplete days were (production 2026-10-25) 323 with one to three members
+# whose forecast was "undecided" (no forecast or trailing figure in the
+# valuation row), 79 with a new holding company before its first forecast,
+# 2 with Hino Motors after its last trading day and 1 holiday row from the
+# price history. The owner allowed computing them from received data.
+PREDECESSORS = {'9147': '9062', '5831': '8355'}
+CARRY_FORWARD_MAX_DAYS = 7
+
+
+def earnings_missing_members(valuation, constituents):
+    """Members with a market cap but no forecast, trailing figure or EPS at all."""
+    out = []
+    for code in sorted(set(constituents)):
+        row = valuation.get(code)
+        if not isinstance(row, dict) or _finite(row.get('suppliedForecastNetIncome')) is not None:
+            continue
+        cap = _finite(row.get('MktCap'))
+        if cap is None or cap <= 0:
+            continue
+        if any(_finite(row.get(key)) is not None for key in ('FwdPER', 'PER', 'FwdEPS', 'EPS')):
+            continue
+        out.append(code)
+    return out
+
+
+def earnings_stand_in(disclosures, *, before):
+    """(million yen, provenance) for a member whose forecast is undecided.
+
+    The newest statement disclosed before the day gives its forecast (next
+    year's on a full-year statement). When that statement has none, the
+    latest full-year actual net income stands in; a loss counts as zero
+    (measured 2026-10-25 against the official weighted series: median
+    difference to neighbouring complete days 0.1-1.3 % per company).
+    """
+    rows = [row for row in disclosures or ()
+            if isinstance(row, dict) and len(str(row.get('DiscDate') or '')) == 10
+            and str(row['DiscDate']) < before]
+    if not rows:
+        return None
+    order = lambda row: (str(row['DiscDate']), str(row.get('DiscTime') or ''), str(row.get('DiscNo') or ''))
+    newest = max(rows, key=order)
+    full_year = str(newest.get('DocType') or '').startswith('FY')
+    value = _finite(newest.get('NxFNp') if full_year else newest.get('FNP'))
+    if value is None:
+        value = _finite(newest.get('NxFNCNP') if full_year else newest.get('FNCNP'))
+    source, method = newest, 'forecast'
+    if value is None:
+        actual = [row for row in rows if str(row.get('DocType') or '').startswith('FY')
+                  and (_finite(row.get('NP')) is not None or _finite(row.get('NCNP')) is not None)]
+        if not actual:
+            return None
+        source = max(actual, key=order)
+        value = _finite(source.get('NP'))
+        if value is None:
+            value = _finite(source.get('NCNP'))
+        method = 'prior_actual' if value > 0 else 'prior_actual_loss_as_zero'
+        value = max(value, 0.0)
+    return value / 1e6, {'method': method, 'discDate': source['DiscDate'],
+                         'discNo': str(source.get('DiscNo') or '') or None,
+                         'docType': str(source.get('DocType') or '') or None, 'netIncomeYen': value}
+
+
+def valuation_with_earnings_stand_ins(valuation, constituents, disclosures_by_code, *, date):
+    """Copy rows, filling every earnings-missing member or none of them."""
+    missing = earnings_missing_members(valuation, constituents)
+    if not missing or len(missing) > SUPPLY_MAX_MEMBERS:
+        return {code: dict(row) for code, row in valuation.items()}, {}
+    supplied = {}
+    for code in missing:
+        found = earnings_stand_in(disclosures_by_code.get(code), before=date)
+        if found is None:
+            return {code: dict(row) for code, row in valuation.items()}, {}
+        supplied[code] = {'forecastNetIncome': found[0], 'disclosure': found[1]}
+    result = {code: dict(row) for code, row in valuation.items()}
+    for code, row in supplied.items():
+        result[code].update(suppliedForecastNetIncome=row['forecastNetIncome'], earningsStandIn=True)
+    return result, supplied
+
+
+def valuation_with_carried_rows(valuation, constituents, rows_by_code, *, date):
+    """Members without a row: their last trading day's row, as the index does.
+
+    The index computes a delisted member at its last traded price until its
+    removal (Hino Motors on 2026-03-30/31). Only a row from at most seven
+    calendar days before is carried; otherwise nothing is filled.
+    """
+    from datetime import date as calendar_date
+    absent = sorted(code for code in set(constituents) if code not in valuation)
+    if not absent or len(absent) > SUPPLY_MAX_MEMBERS:
+        return {code: dict(row) for code, row in valuation.items()}, {}
+    day = calendar_date.fromisoformat(date)
+    carried = {}
+    for code in absent:
+        earlier = [row for row in (rows_by_code.get(code) or ())
+                   if isinstance(row, dict) and str(row.get('Code') or '')[:4] == code
+                   and len(str(row.get('Date') or '')) == 10 and str(row['Date']) < date]
+        if not earlier:
+            return {c: dict(r) for c, r in valuation.items()}, {}
+        last = max(earlier, key=lambda row: str(row['Date']))
+        if (day - calendar_date.fromisoformat(str(last['Date']))).days > CARRY_FORWARD_MAX_DAYS:
+            return {c: dict(r) for c, r in valuation.items()}, {}
+        carried[code] = dict(last)
+    result = {code: dict(row) for code, row in valuation.items()}
+    for code, row in carried.items():
+        result[code] = {**row, 'carriedFrom': row['Date']}
+    return result, {code: row['Date'] for code, row in carried.items()}
 
 
 def daily_close_repairable(valuation, constituents):
@@ -267,6 +384,8 @@ def daily_close_repairable(valuation, constituents):
         cap = _finite(row.get('MktCap'))
         if cap is None or cap <= 0:
             return False
+        if _finite(row.get('suppliedForecastNetIncome')) is not None:
+            continue
         forward_per, trailing_per = _finite(row.get('FwdPER')), _finite(row.get('PER'))
         forward_eps, trailing_eps = _finite(row.get('FwdEPS')), _finite(row.get('EPS'))
         if (forward_per or trailing_per or
@@ -329,13 +448,16 @@ def weighted_eps(valuation: Mapping[str, Mapping[str, Any]], constituents: Itera
         forward_per = _finite(row.get("FwdPER"))
         forward_eps = _finite(row.get("FwdEPS"))
         supplied = _finite(row.get("suppliedForecastNetIncome"))
-        if supplied:
+        if supplied is not None:
             income = supplied
-            counts["supplied"] = counts.get("supplied", 0) + 1
+            kind = "standIn" if row.get("earningsStandIn") else "supplied"
+            counts[kind] = counts.get(kind, 0) + 1
         elif forward_per:
             income = cap / forward_per
         elif forward_eps is not None and _price(row):
             income = cap * forward_eps / _price(row)
+        if row.get("carriedFrom"):
+            counts["carriedForward"] = counts.get("carriedForward", 0) + 1
         if income is not None:
             counts["forward"] += 1
             if income < 0:
@@ -357,8 +479,10 @@ def weighted_eps(valuation: Mapping[str, Mapping[str, Any]], constituents: Itera
         raise LevelMapError("aggregate_earnings_not_positive")
     # Only supplied days carry these counts, so every other record is unchanged.
     supplied_count = counts.pop("supplied", 0)
-    if supplied_count:
-        counts.update(suppliedMarketCap=supplied_count, suppliedEarnings=supplied_count)
+    stand_in_count = counts.pop("standIn", 0)
+    if supplied_count or stand_in_count:
+        counts.update(suppliedMarketCap=supplied_count,
+                      suppliedEarnings=supplied_count + stand_in_count)
     per = cap_total / income_total
     # The same aggregate over members with a forecast only, kept beside the
     # chosen estimate so the effect of filling from trailing figures is

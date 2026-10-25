@@ -41794,23 +41794,27 @@ def _level_map_backfill_save():
 # (market cap) and the forecast net income it disclosed before that day.
 # Each code's bars and disclosures are read once per kind and kept in memory;
 # at most two such requests a warm. Only the fields the supplement uses are kept.
-_LEVEL_MAP_SUPPLY = {"bars": {}, "disclosures": {}, "requests": 0, "lastError": None,
+_LEVEL_MAP_SUPPLY = {"bars": {}, "disclosures": {}, "valuation": {}, "requests": 0, "lastError": None,
                      "suppliedDays": 0, "lastSuppliedDate": None}
 _LEVEL_MAP_SUPPLY_REQUESTS_PER_WARM = 2
 _LEVEL_MAP_SUPPLY_REFRESH_SECONDS = 6 * 3600
 _LEVEL_MAP_SUPPLY_FIELDS = {
     "bars": ("Date", "Code", "MktCap"),
-    "disclosures": ("Code", "DiscDate", "DiscTime", "DiscNo", "DocType", "FNP", "NxFNp", "FNCNP", "NxFNCNP"),
+    "disclosures": ("Code", "DiscDate", "DiscTime", "DiscNo", "DocType", "FNP", "NxFNp", "FNCNP", "NxFNCNP",
+                    "NP", "NCNP"),
+    # 2026-10-25: a member's last trading day's row (Hino Motors after delisting).
+    "valuation": ("Date", "Code", "MktCap", "FwdPER", "PER", "FwdEPS", "EPS", "PBR", "BPS"),
 }
-_LEVEL_MAP_SUPPLY_PATHS = {"bars": "/equities/bars/daily", "disclosures": "/fins/summary"}
+_LEVEL_MAP_SUPPLY_PATHS = {"bars": "/equities/bars/daily", "disclosures": "/fins/summary",
+                           "valuation": "/equities/valuation"}
 
 
-def _level_map_supply_inputs(codes, day, budget):
-    """({code: bars}, {code: disclosures}, {kind:code: receipt}) or None when not all known yet."""
-    found = {"bars": {}, "disclosures": {}}
+def _level_map_supply_inputs(codes, day, budget, kinds=("bars", "disclosures")):
+    """({code: rows} per kind..., {kind:code: receipt}) or None when not all known yet."""
+    found = {kind: {} for kind in kinds}
     receipts = {}
     today = datetime.now(TZ_JST).date().isoformat()
-    for kind in ("bars", "disclosures"):
+    for kind in kinds:
         store = _LEVEL_MAP_SUPPLY[kind]
         for code in codes:
             entry = store.get(code)
@@ -41833,7 +41837,7 @@ def _level_map_supply_inputs(codes, day, budget):
                                            kept, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()}
             found[kind][code] = entry["rows"]
             receipts[kind + ":" + code] = {"receivedAt": entry["receivedAt"], "rowsSha256": entry["rowsSha256"]}
-    return found["bars"], found["disclosures"], receipts
+    return tuple(found[kind] for kind in kinds) + (receipts,)
 
 
 def _level_map_supply_summary():
@@ -41891,7 +41895,21 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
             if len(day) == 10 and isinstance(close, (int, float)) and day not in close_by_day \
                     and day < (bars[0]["date"] if bars else day):
                 close_by_day[day] = close
-        estimate_sessions = sorted(close_by_day)
+        # 2026-10-25: the ten-year price history carries a row on 2018-07-16
+        # (a holiday). A day the exchange calendar says was closed has no
+        # index valuation and is not an estimate to collect.
+        holidays = {row["Date"]: row["HolDiv"] for row in _N225_ANALOG_HISTORY.get("calendar") or ()
+                    if isinstance(row, dict) and row.get("Date")}
+        def _closed(day):
+            from datetime import date as calendar_date
+            if day in holidays:
+                return holidays[day] != "1"
+            try:
+                return not argus_market_clock.canonical_trading_day(
+                    argus_market_clock.JP_EQUITY, calendar_date.fromisoformat(day))
+            except argus_market_clock.CalendarUnavailableError:
+                return False
+        estimate_sessions = sorted(day for day in close_by_day if not _closed(day))
         sessions = [bar["date"] for bar in bars]
         constituents = sorted(((_JP_INDEX_PROXY.get("factors") or {}).get("factors") or {}))
         as_of = _JP_INDEX_PROXY.get("weightsAsOf")
@@ -41928,15 +41946,41 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                 members, members_label = jp_market_level_map.constituents_on(
                     day, constituents, as_of, _nikkei225_constituent_changes())
                 try:
+                    carried = None
+                    # A supply request still waiting for this warm's budget is
+                    # not a result: the day is not counted toward setting aside.
+                    supply_waiting = False
+                    absent = [code for code in members if code not in values]
+                    if absent and len(absent) <= jp_market_level_map.SUPPLY_MAX_MEMBERS:
+                        inputs = _level_map_supply_inputs(absent, day, supply_budget, kinds=("valuation",))
+                        supply_waiting |= inputs is None
+                        if inputs is not None:
+                            joined, carried_from = jp_market_level_map.valuation_with_carried_rows(
+                                {code: values[code] for code in members if code in values}, members,
+                                inputs[0], date=day)
+                            if carried_from:
+                                values = joined
+                                carried = {'date': day, 'members': carried_from,
+                                           'sourceRef': 'jquants:v2:equities/valuation',
+                                           'receipts': inputs[1]}
                     estimate = jp_market_level_map.weighted_eps(
                         values, members, index_close=float(close_by_day[day]), date=day,
                         constituents_as_of=members_label)
                     supplement = None
+                    stand_in = None
                     blanks = (jp_market_level_map.blank_members(values, members)
                               if estimate['coverage']['missingMarketCap'] > 0 else [])
                     if (blanks and len(blanks) == estimate['coverage']['missingMarketCap']
                             and len(blanks) <= jp_market_level_map.SUPPLY_MAX_MEMBERS):
                         inputs = _level_map_supply_inputs(blanks, day, supply_budget)
+                        predecessors = sorted({jp_market_level_map.PREDECESSORS[code] for code in blanks
+                                               if code in jp_market_level_map.PREDECESSORS})
+                        if inputs is not None and predecessors:
+                            earlier = _level_map_supply_inputs(predecessors, day, supply_budget,
+                                                               kinds=("disclosures",))
+                            inputs = None if earlier is None else (
+                                inputs[0], {**inputs[1], **earlier[0]}, {**inputs[2], **earlier[1]})
+                        supply_waiting |= inputs is None
                         if inputs is not None:
                             joined, supplied = jp_market_level_map.valuation_with_supplied_members(
                                 {code: values[code] for code in members if code in values}, members,
@@ -41955,6 +41999,32 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                                         supplied, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest(),
                                     'receipts': {key: value for key, value in inputs[2].items()
                                                  if key.split(':', 1)[1] in supplied},
+                                    'historicalPublicationTimeVerified': False}
+                    missing = (jp_market_level_map.earnings_missing_members(values, members)
+                               if estimate['coverage']['missingEarnings'] > 0
+                               and estimate['coverage']['missingMarketCap'] == 0 else [])
+                    if missing and len(missing) <= jp_market_level_map.SUPPLY_MAX_MEMBERS:
+                        # 2026-10-25 (owner): a member whose forecast is undecided
+                        # takes its newest forecast or last full-year actual.
+                        inputs = _level_map_supply_inputs(missing, day, supply_budget, kinds=("disclosures",))
+                        supply_waiting |= inputs is None
+                        if inputs is not None:
+                            joined, stood = jp_market_level_map.valuation_with_earnings_stand_ins(
+                                {code: values[code] for code in members if code in values}, members,
+                                inputs[0], date=day)
+                            if stood:
+                                values = joined
+                                estimate = jp_market_level_map.weighted_eps(
+                                    values, members, index_close=float(close_by_day[day]), date=day,
+                                    constituents_as_of=members_label)
+                                stand_in = {
+                                    'date': day, 'members': sorted(stood),
+                                    'methods': {code: row['disclosure']['method'] for code, row in stood.items()},
+                                    'disclosures': {code: row['disclosure']['discNo'] for code, row in stood.items()},
+                                    'sourceRef': 'jquants:v2:fins/summary:FNP/NxFNp/NP',
+                                    'normalizedInputsSha256': hashlib.sha256(json.dumps(
+                                        stood, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest(),
+                                    'receipts': inputs[1],
                                     'historicalPublicationTimeVerified': False}
                     if (estimate['coverage']['missingEarnings'] > 0
                             and estimate['coverage']['missingMarketCap'] == 0
@@ -41979,10 +42049,14 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                                 'historicalPublicationTimeVerified': False}
                     if supplement:
                         estimate['memberSupplement'] = supplement
+                    if stand_in:
+                        estimate['earningsStandIn'] = stand_in
+                    if carried:
+                        estimate['carriedForward'] = carried
                     if not jp_market_level_map.estimate_input_usable(estimate, strict=True):
                         argus_level_map_acquisition.outcome(
                             acquisition, day, 'INPUT_INCOMPLETE', estimate.get('coverage'))
-                        if not current_only and day != sessions[-1]:
+                        if not current_only and day != sessions[-1] and not supply_waiting:
                             argus_level_map_backfill.note(backfill, day, argus_level_map_backfill.signature(
                                 'INPUT_INCOMPLETE', estimate.get('coverage')), _ai_now_iso())
                         _JQ_VALUATION_DAY_CACHE.pop(day, None)
