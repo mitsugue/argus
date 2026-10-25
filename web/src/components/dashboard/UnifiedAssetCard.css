@@ -78,3 +78,12 @@
 .uac-jsrc { font-size: 9px; font-weight: 800; letter-spacing: .04em; padding: 0 5px; border-radius: 5px; line-height: 1.5; }
 .uac-jsrc--ai { color: var(--signal-enter, #34d399); border: 1px solid currentColor; }
 .uac-jsrc--rule { color: var(--text-muted); border: 1px solid var(--border-subtle, rgba(255,255,255,.18)); }
+
+/* 2026-10-25: 「調べる」で作る銘柄の調査(結論・根拠3件・調査時刻だけ) */
+.osint-deep__verdict { margin: 0 0 4px; font-size: 12.5px; line-height: 1.5; }
+.osint-deep__sources { margin: 0 0 4px; padding-left: 16px; font-size: 12px; line-height: 1.5; }
+.osint-deep__sources li { margin-bottom: 2px; overflow-wrap: anywhere; }
+.osint-deep__sources a { color: var(--accent); text-decoration: none; }
+.osint-deep__meta { display: inline-block; margin: 0 0 0 6px; font-size: 10.5px; color: var(--text-faint); }
+p.osint-deep__meta { display: block; margin: 0 0 4px; }
+.osint-deep__actions { display: flex; align-items: center; gap: 4px; margin: 2px 0 0; }

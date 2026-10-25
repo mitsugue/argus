@@ -216,11 +216,10 @@ def test_redacted_scout_prompt_has_no_private_data():
 
 def test_full_private_prompt_requires_warning_in_ui():
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    # B2a public UI is read-only: it carries neither a private prompt mode nor
-    # an external-AI execution affordance.
+    # No private prompt mode; the only execution affordance is the owner-key
+    # 「調べる」 request (2026-10-25), never the admin credential.
     assert "full_private" not in src
-    assert "公開画面から起動しません" in src
-    assert "検証されるまで証拠として扱いません" in src
+    assert "X-ARGUS-ADMIN-TOKEN" not in src and "privacyMode" not in src
 
 
 # ── 公開経路: 外部AI不発火・非漏洩 ──────────────────────────────────────────
@@ -258,10 +257,10 @@ def test_dq_shows_osint_health(monkeypatch):
 
 def test_fe_osint_deep_dive_ui():
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    for needle in ("OSINT DEEP DIVE", "キャッシュ済み調査のカバレッジが不十分です",
-                   "ギャップ台帳を見る", "argus.osintGapDismiss.v1",
-                   "公開画面から起動しません", "検証されるまで証拠として扱いません"):
+    for needle in ("OSINT DEEP DIVE", "調べる", "材料は見つかりませんでした",
+                   "今日の上限(5回)に達しました。"):
         assert needle in src, needle
+    assert "キャッシュ済み調査のカバレッジが不十分です" not in src
     for removed in ("深掘りOSINTを実行", "Gemini/GPT結果を貼り戻す",
                     "このニュースが抜けている", "このURLを検証"):
         assert removed not in src, removed
@@ -272,13 +271,12 @@ def test_fe_osint_deep_dive_ui():
 
 def test_fe_public_osint_is_cached_and_local_only():
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    # The only browser-side write is the local gap-dismiss preference. Server
-    # mutation helpers and admin credentials are absent from the static hook.
-    assert "localStorage" in src
+    # 2026-10-25: the only server write is the owner-key research request.
     assert "postTerms" not in src
     hook = _read("hooks", "useOsintInvestigation.ts")
-    assert "method: 'POST'" not in hook and 'method: "POST"' not in hook
-    assert "X-ARGUS-ADMIN-TOKEN" not in hook
+    assert hook.count("method: 'POST'") == 1
+    assert "/api/argus/osint/research-request" in hook and "ownerToken" in hook
+    assert "X-ARGUS-ADMIN-TOKEN" not in hook and "ADMIN" not in hook
 
 
 def test_fe_dq_page_osint_section():

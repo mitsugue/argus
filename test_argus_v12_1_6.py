@@ -149,9 +149,9 @@ def test_prompt_version_recorded():
 # ── Part G: UI/DQ/Pack ──────────────────────────────────────────────────────
 
 def test_ui_shows_provisional_label():
+    # 2026-10-25 (owner): the research ratio left the stock page.
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    assert "ratioLabelJa" in src
-    assert "publicResearchRatio" in src
+    assert "ratioLabelJa" not in src and "publicResearchRatio" not in src
 
 
 def test_dq_shows_baseline_and_2x_allowance():

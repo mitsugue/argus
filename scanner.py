@@ -32700,8 +32700,11 @@ def api_argus_osint_investigation():
     sym = str(request.args.get("symbol") or "").strip().upper()
     _osint_restore_once()
     inv = _OSINT_STORE.get(sym)
-    return jsonify({"status": "live" if inv else "none", "symbol": sym or None,
-                    "investigation": _public_osint_investigation(inv),
+    public_inv = _public_osint_investigation(inv) if inv else \
+        _osint_owner_saved_investigation(sym)
+    return jsonify({"status": "live" if public_inv else "none", "symbol": sym or None,
+                    "investigation": public_inv,
+                    "ownerRequest": _osint_owner_status(sym) if sym else None,
                     "progress": _public_osint_progress(_OSINT_PROGRESS.get(sym)),
                     "queuePosition": (list(_OSINT_AGENT_QUEUE.keys()).index(sym) + 1
                                       if sym in _OSINT_AGENT_QUEUE else None),
@@ -32939,6 +32942,171 @@ def api_argus_admin_osint_agents_run():
                         "noteJa": "バックグラウンドで実行中(結果は/osint/investigationに反映)。"}), 202
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}), 200
+
+
+# 2026-10-25 (owner): 個別銘柄ページの「調べる」ボタン。押した銘柄だけを
+# 調べる(1回約5万トークン)。同じ銘柄は東京の1日1回、全体で1日5回まで。
+# 本人の接続キーで受け付け、処理は裏の1本の糸で順に行う。結果は公開用の形に
+# 絞って手元の保存先に残し、再起動の後も読み直せる。
+_OSINT_OWNER_DAILY_MAX = 5
+_OSINT_OWNER_RESULTS_MAX = 40
+_OSINT_OWNER_FILE_MAX_BYTES = 8 * 1024 * 1024
+_OSINT_OWNER = {"restored": False, "day": None, "symbols": [], "results": {},
+                "pending": [], "running": None}
+_OSINT_OWNER_LOCK = threading.Lock()
+_OSINT_OWNER_SYMBOL_RE = re.compile(r"^(?:[0-9][0-9A-Z]{3}|[A-Z][A-Z0-9.-]{0,9})$")
+
+
+def _osint_owner_path():
+    root = _DURABILITY_PATHS.get("root") if _cost_policy_durable_enabled() else None
+    return os.path.join(root, "osint_owner_requests.json") if root else None
+
+
+def _osint_owner_restore_once():
+    if _OSINT_OWNER["restored"]:
+        return
+    _OSINT_OWNER["restored"] = True
+    path = _osint_owner_path()
+    if not path or not os.path.isfile(path):
+        return
+    try:
+        with open(path, "rb") as handle:
+            blob = json.loads(handle.read(_OSINT_OWNER_FILE_MAX_BYTES)) or {}
+        _OSINT_OWNER["day"] = blob.get("day")
+        _OSINT_OWNER["symbols"] = [str(sym) for sym in (blob.get("symbols") or [])][
+            :_OSINT_OWNER_DAILY_MAX]
+        _OSINT_OWNER["results"] = {
+            str(sym): row for sym, row in (blob.get("results") or {}).items()
+            if isinstance(row, dict)}
+    except (OSError, ValueError):
+        pass
+
+
+def _osint_owner_persist():
+    path = _osint_owner_path()
+    if not path:
+        return
+    try:
+        argus_persistent_storage.atomic_write_json(path, {
+            "schemaVersion": "argus-osint-owner-requests-v1",
+            "day": _OSINT_OWNER["day"], "symbols": list(_OSINT_OWNER["symbols"]),
+            "results": dict(_OSINT_OWNER["results"])},
+            maximum_bytes=_OSINT_OWNER_FILE_MAX_BYTES, file_mode=0o600)
+    except Exception:
+        pass
+
+
+def _osint_owner_roll_day():
+    day = datetime.now(TZ_JST).date().isoformat()
+    if _OSINT_OWNER["day"] != day:
+        _OSINT_OWNER["day"] = day
+        _OSINT_OWNER["symbols"] = []
+
+
+def _osint_owner_status(sym):
+    """Small public state for one symbol's button (no owner data)."""
+    with _OSINT_OWNER_LOCK:
+        _osint_owner_restore_once()
+        _osint_owner_roll_day()
+        busy = sym == _OSINT_OWNER["running"] or any(
+            row[0] == sym for row in _OSINT_OWNER["pending"])
+        row = _OSINT_OWNER["results"].get(sym) or {}
+        return {"running": busy,
+                "requestedToday": sym in _OSINT_OWNER["symbols"],
+                "remainingToday": max(0, _OSINT_OWNER_DAILY_MAX - len(_OSINT_OWNER["symbols"])),
+                "completedAt": row.get("completedAt"),
+                "complete": row.get("complete")}
+
+
+def _osint_owner_saved_investigation(sym):
+    with _OSINT_OWNER_LOCK:
+        _osint_owner_restore_once()
+        row = _OSINT_OWNER["results"].get(sym) or {}
+    return row.get("investigation")
+
+
+def _osint_owner_runner():
+    while True:
+        with _OSINT_OWNER_LOCK:
+            if not _OSINT_OWNER["pending"]:
+                _OSINT_OWNER["running"] = None
+                return
+            sym, market = _OSINT_OWNER["pending"].pop(0)
+            _OSINT_OWNER["running"] = sym
+        requested_at = _ai_now_iso()
+        try:
+            _OSINT_AGENT_QUEUE[sym] = {"market": market, "mode": "deep",
+                                       "privacyMode": "redacted", "queuedAt": requested_at}
+            _osint_agents_worker([sym])
+            complete = (_OSINT_PROGRESS.get(sym) or {}).get("stage") == "complete"
+        except Exception as exc:
+            add_log(f"[osint] owner request failed: {type(exc).__name__}")
+            complete = False
+        with _OSINT_OWNER_LOCK:
+            inv = _OSINT_STORE.get(sym)
+            if inv is not None:
+                _OSINT_OWNER["results"][sym] = {
+                    "investigation": _public_osint_investigation(inv),
+                    "requestedAt": requested_at, "completedAt": _ai_now_iso(),
+                    "complete": complete}
+                while len(_OSINT_OWNER["results"]) > _OSINT_OWNER_RESULTS_MAX:
+                    oldest = min(_OSINT_OWNER["results"], key=lambda key: str(
+                        _OSINT_OWNER["results"][key].get("completedAt") or ""))
+                    _OSINT_OWNER["results"].pop(oldest, None)
+            if not complete and sym in _OSINT_OWNER["symbols"]:
+                # A failed search does not use the symbol's daily turn.
+                _OSINT_OWNER["symbols"].remove(sym)
+            _osint_owner_persist()
+
+
+def _osint_owner_start_runner():
+    threading.Thread(target=_memory_operation_run,
+                     args=("background", "osint_owner_request", _osint_owner_runner),
+                     daemon=True, name="osint-owner-request").start()
+
+
+@app.route("/api/argus/osint/research-request", methods=["POST"])
+def api_argus_osint_research_request():
+    """Owner: research one registered symbol now (owner-sync token)."""
+    body = request.get_json(silent=True) or {}
+    ok, err, code = _require_owner_sync(body_token=body.get("ownerToken"))
+    if not ok:
+        return jsonify(err), code
+    sym = str(body.get("symbol") or "").strip().upper()[:12]
+    market = str(body.get("market") or "").strip().upper()
+    if market not in ("JP", "US") or not _OSINT_OWNER_SYMBOL_RE.match(sym) \
+            or (market == "JP") != sym[:1].isdigit():
+        return jsonify({"ok": False, "status": "invalid"}), 400
+    skipped = _scheduled_ai_skip("openai", "osint_research")
+    if skipped:
+        return jsonify({"ok": False, "status": "ai_stopped",
+                        **_osint_owner_status(sym)})
+    start = False
+    with _OSINT_OWNER_LOCK:
+        _osint_owner_restore_once()
+        _osint_owner_roll_day()
+        busy = sym == _OSINT_OWNER["running"] or any(
+            row[0] == sym for row in _OSINT_OWNER["pending"])
+        if busy:
+            status = "running"
+        elif sym in _OSINT_OWNER["symbols"]:
+            status = "already_today"
+        elif len(_OSINT_OWNER["symbols"]) >= _OSINT_OWNER_DAILY_MAX:
+            status = "daily_limit"
+        else:
+            status = "started"
+            _OSINT_OWNER["symbols"].append(sym)
+            _OSINT_OWNER["pending"].append((sym, market))
+            _OSINT_PROGRESS[sym] = {"stage": "queued_for_agents", "loop": 0,
+                                    "maxLoops": 0, "notesJa": [], "at": _ai_now_iso()}
+            start = _OSINT_OWNER["running"] is None and len(_OSINT_OWNER["pending"]) == 1
+            if start:
+                _OSINT_OWNER["running"] = "__starting__"
+            _osint_owner_persist()
+    if start:
+        _osint_owner_start_runner()
+    return jsonify({"ok": status in ("started", "running"), "status": status,
+                    **_osint_owner_status(sym)}), (202 if status == "started" else 200)
 
 
 _FORECAST_LEDGER = []                  # v12.2.0 不変予測台帳(append-only・有界200)

@@ -276,9 +276,10 @@ def test_autopilot_wired_in_worker_progress():
 # ── Phase 8: FE(Research Powerチップ+比率表示) ─────────────────────────────
 
 def test_fe_shows_research_power_ratio():
+    # 2026-10-25 (owner): the panel became the 「調べる」 button; see test_osint_owner_request.py.
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    assert "researchPower" in src
-    assert "displayJa" in src
+    # The research-power chip left the stock page; the server value remains.
+    assert "researchPower" not in src
 
 
 def test_fe_dq_shows_source_universe():

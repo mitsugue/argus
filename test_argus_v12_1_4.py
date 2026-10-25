@@ -272,10 +272,10 @@ def test_osint_build_separates_hypotheses(monkeypatch):
 
 
 def test_fe_shows_hypothesis_separation():
+    # 2026-10-25 (owner): the panel became the 「調べる」 button; see test_osint_owner_request.py.
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    assert "未検証仮説" in src
-    assert "探索方向" in src
-    assert "freshCandidateAlertJa" in src
+    # Only verified sources are listed; hypotheses never reach the page.
+    assert "verifiedSources" in src and "未検証仮説" not in src
 
 
 def test_dq_exposes_recovery_and_hypothesis_counts():

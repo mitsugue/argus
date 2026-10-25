@@ -246,11 +246,9 @@ def test_dq_benchmark_verdict_below(monkeypatch):
 
 
 def test_fe_gap_workflow_ui():
+    # 2026-10-25 (owner): the panel became the 「調べる」 button; see test_osint_owner_request.py.
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    for needle in ("ギャップ台帳を見る", "重要でないとして除外",
-                   "argus.osintGapDismiss.v1", "管理側の定期実行のみ"):
-        assert needle in src, needle
-    for removed in ("未回収を再探索", "このURLを検証"):
+    for removed in ("ギャップ台帳を見る", "未回収を再探索", "このURLを検証"):
         assert removed not in src, removed
     dq = _read("routes", "DataQualityPage.tsx")
     diagnostics = _read("hooks", "useSystemHealth.ts")
