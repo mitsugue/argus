@@ -120,3 +120,29 @@ def test_a_stock_without_a_theme_does_not_take_market_headlines(monkeypatch):
     themed = {"valueChain": ["AI chip"], "sector": [], "globalCatalyst": ["AI capex"]}
     titles = [c["titleJa"] for c in scanner._osint_retrieve("6965", "JP", themed)[0]]
     assert titles == ["New AI chip orders lift suppliers"]
+
+
+def test_notes_about_unverified_or_stale_items_are_not_a_conflict():
+    import argus_osint_engine as engine
+    notes = ["古いソース8件は主因から除外(背景参考のみ)", "外部AIの主張8件が未検証(証拠として扱わない)",
+             "外部AIが直接材料を主張したが検証できず — テーマ連想として扱う"]
+    verdict = engine.synthesize_verdict([], {"totalCoverage": "medium"}, notes)
+    assert verdict["verdict"] != "conflicting_evidence"
+    direct = {"titleJa": "決算上方修正", "primaryEligible": True, "directness": "direct_company", "labelJa": "直接"}
+    macro = {"titleJa": "米金利上昇", "primaryEligible": True, "directness": "macro", "labelJa": "マクロ"}
+    both = engine.synthesize_verdict([direct, macro], {"totalCoverage": "medium"}, [])
+    assert both["verdict"] == "conflicting_evidence"
+
+
+def test_search_findings_reach_the_public_result():
+    inv = {"symbol": "6965", "asOf": "2026-10-25T16:00:00Z", "verifiedSources": [],
+           "agentRuns": [{"provider": "gpt", "status": "ok", "claims": [
+               {"titleJa": "浜松ホトニクス、光半導体の受注が増加", "url": "https://example.com/a",
+                "sourceName": "日経", "publishedAt": "2026-10-24"},
+               {"titleJa": "同じ記事", "url": "https://example.com/a"},
+               {"titleJa": "URLなし", "url": ""},
+               {"titleJa": "http は出さない", "url": "http://example.com/b"}]},
+               {"provider": "gpt", "status": "failed", "claims": [{"titleJa": "x", "url": "https://example.com/c"}]}]}
+    out = scanner._public_osint_investigation(inv)
+    assert out["searchFindings"] == [{"titleJa": "浜松ホトニクス、光半導体の受注が増加", "url": "https://example.com/a",
+                                      "sourceName": "日経", "publishedAt": "2026-10-24"}]

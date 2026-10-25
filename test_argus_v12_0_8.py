@@ -227,7 +227,8 @@ def test_fe_registered_asset_facts_preserve_internal_stance_authority():
     # 2026-10-25 (owner): the stock page reads the same canonical view for its
     # conclusion when there is no AI answer; the row shows facts only.
     assert "d.decisionFirst" in details and "view.whyJa" in details and "view.whatChangesJa" in details
-    assert "d.decisionFirst" in summary and "view.priceText" in summary and "earningsShortDate" in summary
+    assert "d.decisionFirst" in summary and "view.priceText" in summary
+    assert "AssetEarningsDate" in summary and "AssetOutlookSummary" in summary
     assert "view.currentActionJa" not in summary and "ad-cmd" not in summary
     assert "view.currentActionJa" not in details
     intel = _read("hooks", "useAssetIntel.ts")

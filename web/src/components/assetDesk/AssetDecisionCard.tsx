@@ -8,7 +8,7 @@ import { AssetFlowPanel } from './AssetFlowPanel';
 import { AssetEventsPanel } from './AssetEventsPanel';
 import { AssetScenarioPanel } from './AssetScenarioPanel';
 import { AssetResearchPanel } from './AssetResearchPanel';
-import { AssetNumbers } from './AssetNumbers';
+import { AssetNikkeiGap } from './AssetNumbers';
 import { OwnerOverview } from '../dialogue/OwnerOverview';
 import { OsintDeepDive } from '../dashboard/OsintDeepDive';
 import '../dashboard/UnifiedAssetCard.css';
@@ -27,9 +27,10 @@ interface Props {
   collapsible?: boolean;
 }
 
-// 2026-10-25 (owner): one page read from the top — the conclusion, four
-// numbers, the material, then folded details. Market-wide views stay on
-// Today; nothing here repeats them.
+// 2026-10-25 (owner): one page read from the top — the conclusion, the
+// material, then folded details. Market-wide views stay on Today.
+// 2026-10-26 (owner): the first card keeps the stock's facts (price, results,
+// target, supply); the page below does not repeat them.
 
 const first = (text?: string | null) => {
   const value = (text ?? '').trim();
@@ -71,8 +72,8 @@ export const AssetDecisionCard: React.FC<Props> = ({
               ? <OwnerOverview key={`${market}:${sym}`} symbol={sym} market={market} horizon={5} asset={d.asset}
                   line={{ fallback: first(view.whyJa) || '見立てなし', fallbackChange: first(view.whatChangesJa) || undefined }} />
               : <div className="ad-conclusion"><p className="ad-conclusion__view">{first(view.whyJa) || '見立てなし'}</p></div>}
+            <AssetNikkeiGap d={d} />
           </section>
-          {stock && <section className="ad-block"><h4 className="ad-block__label">数字</h4><AssetNumbers d={d} /></section>}
           {stock && <section className="ad-block" id={sectionAnchorId(sym, 'why-downside')}>
             <h4 className="ad-block__label">材料</h4>
             {lead && <p className="ad-material__lead">{lead}</p>}

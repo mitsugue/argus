@@ -354,34 +354,31 @@ try {
   const cardData={genre:'jp',asset:{market:'JP'},strat:{status:'delayed',price:100},decisionFirst:{
     held:false,symbol:'8058',name:'合成検査銘柄',priceText:'100円',changePct:-1,dataStatus:'前日'}};
   const renderedQuote=quoteCardModule.exports.render(referenceDoc,cardData);
-  // 2026-10-25 (owner): two-line row. A real-time price shows its time beside
-  // the change (data-quote="LIVE"); a received price that is not current says
-  // 参考価格 / 引け後 / 受信停止 with its time. Never a false LIVE.
-  assert.match(renderedQuote,/123\.4円/);assert.match(renderedQuote,/参考価格 10:47/);
-  assert.doesNotMatch(renderedQuote,/分精度|立花証券|受信 10:47:44/);
-  assert.doesNotMatch(renderedQuote,/data-quote="LIVE"|100円/);
+  assert.match(renderedQuote,/123\.4円/);assert.match(renderedQuote,/受信価格・参考/);
+  assert.match(renderedQuote,/価格 10:47/);assert.doesNotMatch(renderedQuote,/分精度|立花証券|受信 10:47:44/);
+  assert.doesNotMatch(renderedQuote,/リアルタイム|100円/);
   const freshPoint=Date.parse('2026-10-14T01:47:10Z');
   const freshReference={...referenceDoc,status:'LIVE',readAt:new Date(freshPoint).toISOString(),symbols:{'8058':{
     ...referenceDoc.symbols['8058'],freshness:'FRESH',receivedAt:'2026-10-14T01:47:09Z'}}};
   Date.now=()=>freshPoint;
-  assert.match(quoteCardModule.exports.render(freshReference,cardData),/data-quote="LIVE"/);
+  assert.match(quoteCardModule.exports.render(freshReference,cardData),/リアルタイム/);
   // 2026-10-22: a minute time stays current within its minute + 15 s while
   // the receipt is within 15 s; the shown time stays the stated minute.
   Date.now=()=>Date.parse('2026-10-14T01:47:24Z');
-  assert.match(quoteCardModule.exports.render(freshReference,cardData),/data-quote="LIVE"/);
+  assert.match(quoteCardModule.exports.render(freshReference,cardData),/リアルタイム/);
   Date.now=()=>Date.parse('2026-10-14T01:47:24.001Z');   // receipt 15.001 s old
   const afterExpiry=quoteCardModule.exports.render(freshReference,cardData);
-  assert.match(afterExpiry,/123\.4円/);assert.doesNotMatch(afterExpiry,/data-quote="LIVE"|100円/);
+  assert.match(afterExpiry,/123\.4円/);assert.doesNotMatch(afterExpiry,/リアルタイム|100円/);
   assert.match(afterExpiry,/10:47/);assert.doesNotMatch(afterExpiry,/分精度/);
   const lateReceipt={...freshReference,symbols:{'8058':{...freshReference.symbols['8058'],receivedAt:'2026-10-14T01:48:14Z'}}};
   Date.now=()=>Date.parse('2026-10-14T01:48:15Z');       // 75 s from the minute start
-  assert.match(quoteCardModule.exports.render(lateReceipt,cardData),/data-quote="LIVE"/);
+  assert.match(quoteCardModule.exports.render(lateReceipt,cardData),/リアルタイム/);
   Date.now=()=>Date.parse('2026-10-14T01:48:15.001Z');   // past the minute + 15 s
-  assert.doesNotMatch(quoteCardModule.exports.render(lateReceipt,cardData),/data-quote="LIVE"/);
+  assert.doesNotMatch(quoteCardModule.exports.render(lateReceipt,cardData),/リアルタイム/);
   Date.now=()=>quoteNow;
   const renderedClosed=quoteCardModule.exports.render(closedReference,cardData);
-  assert.match(renderedClosed,/引け後|受信停止/);assert.match(renderedClosed,/価格時刻不明/);
-  assert.doesNotMatch(renderedClosed,/data-quote="LIVE"/);
+  assert.match(renderedClosed,/市場クローズ・受信価格/);assert.match(renderedClosed,/価格時刻不明/);
+  assert.doesNotMatch(renderedClosed,/リアルタイム/);
   assert.equal(cardData.strat.price,100,'reference display cannot alter analysis basis');
 } finally { Date.now=clockBeforeQuoteTest;tl.setTachibanaLiveDocument(null); }
 // Shared admission (same as the server's row_trade_current, 2026-10-22).

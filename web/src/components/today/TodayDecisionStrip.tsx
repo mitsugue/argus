@@ -1,10 +1,10 @@
 import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
 import type { ComparisonPoint } from '../../types/japanMarketComparison';
-import { ALERT_HISTORY, ALERT_RAISED_HISTORY, MOMENTUM_Z, liveAlertRecord, TONE_HISTORY, decisionStrip, friendlyEventText, overnightGap, type FeatureRow, type Lean } from '../../lib/todayDecision';
+import { ALERT_HISTORY, ALERT_RAISED_HISTORY, MOMENTUM_Z, liveAlertRecord, OVERNIGHT_OPEN_SHARE_PCT, TONE_HISTORY, closeBasisLabel, decisionStrip, friendlyEventText, overnightGap, type FeatureRow, type Lean } from '../../lib/todayDecision';
 import { nikkeiLiveCurrent, useJapanMarketComparison, useNikkeiLive } from '../../hooks/useJapanMarketComparison';
 import { marketHeadline } from '../../lib/marketWording';
-import { MarketPositionCard, MarketPositionHighlights } from './MarketPositionCard';
+import { MarketPositionCard } from './MarketPositionCard';
 import { jumpTo } from '../../lib/todayJump';
 import './TodayDecisionStrip.css';
 
@@ -58,10 +58,7 @@ function readLastInputs(): StripInputs | null {
 }
 
 /** Conclusion, four numbers and the inputs with their direction, before the detailed explanation. */
-// 2026-10-25 (owner, docs/TODAY_CARD_ORDER.md): the price and the view, four
-// numbers, the themes that moved today, then `middle` (the reason and what
-// would change the view), then the folded themes and inputs.
-export function TodayDecisionStrip({ brief, criticalNews = [], middle }: { brief: MarketBrief; criticalNews?: CriticalTodayNews[]; middle?: React.ReactNode }) {
+export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: MarketBrief; criticalNews?: CriticalTodayNews[] }) {
   const current = brief.calculationSnapshots?.['5']?.comparison as { actual?: ComparisonPoint[]; anchorDate?: string } | undefined;
   const currentFeatures = features(brief);
   const fresh = Array.isArray(current?.actual) && current!.actual.length >= 21;
@@ -90,9 +87,11 @@ export function TodayDecisionStrip({ brief, criticalNews = [], middle }: { brief
     liveCurrent ? Date.parse(live!.tradedAt) : lastActual + 6.5 * 3600_000, !!live?.sessionOpen);
   const strip = gap === null ? closeStrip : decisionStrip(stripActual, stripFeatures, gap, stripAnchor);
   const shownPrice = liveCurrent ? live!.price : strip.close;
-  // The three numbers use the saved closes; the band's yen line multiplies the
-  // shown price. 2026-10-25 (owner): the basis line shows only when the numbers
-  // are old, which the 準備中 line already says.
+  // Owner request 2026-10-22: the three numbers use the saved closes, not the intraday price; one line under the tiles says which.
+  const basis = closeBasisLabel(strip.closeDate);
+  const computed = strip.alert !== null || strip.momentum !== null || strip.band !== null;
+  // The band's yen line multiplies the shown (possibly delayed intraday) price; the band itself stays close-based.
+  const basisNote = basis && computed ? `上の3つは${basis}で計算${strip.band && liveCurrent && shownPrice !== strip.close ? '・値幅の円は現在値で換算' : ''}` : null;
   const shownChange = liveCurrent ? live!.changePct : strip.dayChangePct;
   // Owner policy 2026-10-23: no source or time-precision text beside the price; only a delayed value says so.
   const liveLabel = liveCurrent ? (live!.sessionOpen
@@ -113,6 +112,9 @@ export function TodayDecisionStrip({ brief, criticalNews = [], middle }: { brief
       {headline && <p>{headline}</p>}
       <small className="today-strip__record" data-tone-record={strip.tone}>
         5日後に上昇 {TONE_HISTORY.upAfter[strip.tone]}%(普段{TONE_HISTORY.baseUpPct}%・{TONE_HISTORY.since}年〜)</small>
+      {strip.overnightGapPct !== null && Math.abs(strip.overnightGapPct) >= 1 && <p className="today-strip__overnight" data-overnight-gap={strip.overnightGapPct!.toFixed(2)}
+        onClick={() => jumpTo('today-nikkei-chart', 'futures')}>
+        昨夜の日経先物 <b>{signed(strip.overnightGapPct!)}</b> · 寄り付きにおよそ{OVERNIGHT_OPEN_SHARE_PCT / 10}割が反映</p>}
     </div>
     <div className="today-strip__tiles">
       <button type="button" className={`today-strip__tile alert-${strip.alert ?? 'pending'}`} onClick={() => jumpTo('today-nikkei-chart')}>
@@ -133,19 +135,16 @@ export function TodayDecisionStrip({ brief, criticalNews = [], middle }: { brief
       </button> : brief.chips?.nextEvent ? <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}>
         <small>次の山場</small><b className="today-strip__event">{friendlyEventText(brief.chips.nextEvent)}</b></button> : <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}><small>次の山場</small><b>確認中</b></button>}
     </div>
-    <MarketPositionHighlights brief={brief} />
-    {middle}
-    <details className="today-strip__fold" data-fold="themes">
-      <summary>全テーマ</summary>
-      <MarketPositionCard brief={brief} />
-    </details>
-    {strip.rows.length > 0 && <details className="today-strip__fold today-strip__rows" data-fold="inputs" aria-label="材料ごとの向き">
-      <summary>材料ごとの向き</summary>
+    {basisNote && <p className="today-strip__basis" data-close-basis={strip.closeDate!}>{basisNote}</p>}
+    {/* Owner order 2026-10-20 (docs/TODAY_CARD_ORDER.md 1-4): verdict, the four tiles, then the market position. */}
+    <MarketPositionCard brief={brief} />
+    {strip.rows.length > 0 && <div className="today-strip__rows" aria-label="材料ごとの向き">
+      <h2>材料ごとの向き</h2>
       {strip.rows.map(row => <details key={row.id} className="today-strip__row" data-lean={row.lean} data-row={row.id}>
         <summary><span className={`today-strip__chip is-${row.lean}`}>{leanLabel[row.lean]}</span>
           <span><b>{row.title}</b><small>{row.meaning}</small></span></summary>
         {row.soWhat && <p className="today-strip__detail">{row.soWhat}</p>}
       </details>)}
-    </details>}
+    </div>}
   </section>;
 }

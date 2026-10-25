@@ -24,7 +24,7 @@ const m = new Module(file,module);m.filename=file;m.paths=module.paths;
 const native = m.require.bind(m);
 m.require = name => name.endsWith('/useAnalystTargets') ? {useAnalystTargetState:()=>state} : native(name);
 m._compile(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.React,esModuleInterop:true}}).outputText,file);
-const {AssetEarningsDetails} = m.exports;
+const {AssetEarningsDate,AssetEarningsDetails} = m.exports;
 const render = () => renderToStaticMarkup(React.createElement(AssetEarningsDetails,{market:'US',symbol:'TEST'}));
 const html=render();
 for (const text of ['前回の決算','次回の注目点','見通し','2026-06-30期','EPS','8人','7人','上方修正']) assert.ok(html.includes(text),text);
@@ -36,13 +36,15 @@ assert.ok(render().includes('$2.00') && render().includes('￥1,000,000,000'));
 state={...state,earnings:{'US:TEST':{...row,previous:{...row.previous,currency:undefined},estimate:{...row.estimate,epsCurrency:undefined}}}};
 assert.ok(render().includes('通貨未確認') && !render().includes('EPSは$2.00') && !render().includes('30日前の予想'));
 state={...state,earnings:{'US:TEST':row}};
-assert.equal(domain.earningsShortDate(row,new Date('2026-10-08')), '11/2');
+const date = renderToStaticMarkup(React.createElement(AssetEarningsDate,{market:'US',row}));
+assert.ok(date.includes('11/2〜11/4') && date.includes('米東部'));
+assert.equal(renderToStaticMarkup(React.createElement(AssetEarningsDate,{market:'CRYPTO',row})), '');
 state={...state,earnings:{}};
 assert.equal((render().match(/未取得/g)||[]).length,3);
 const summary=fs.readFileSync('src/components/assetDesk/AssetDecisionSummary.tsx','utf8');
 const details=fs.readFileSync('src/components/assetDesk/AssetDecisionCard.tsx','utf8');
-assert.ok(summary.includes('earningsShortDate('));
-assert.ok(details.indexOf('<AssetNumbers') < details.indexOf('<AssetEarningsDetails'));
+assert.ok(summary.includes('<AssetEarningsDate'));
+assert.ok(details.includes('<AssetEarningsDetails'));
 console.log('決算の日付・期末・予想の区別、根拠なし表示、閉じたカードと詳細 PASS');
 const official = {...row,market:'JP',symbol:'1001',next:{from:'2026-11-03',to:'2026-11-03',certainty:'COMPANY_SCHEDULE',
   timezone:'Asia/Tokyo',source:'J-Quants 決算発表予定日',publishedDate:'2026-10-07',fetchedAt:row.fetchedAt}};
@@ -50,7 +52,9 @@ assert.ok(domain.validAssetEarnings(official,'JP:1001'));
 assert.equal(domain.earningsDateLabel(official,new Date('2026-10-08')), '次回決算 11/3（会社予定）');
 assert.equal(domain.validAssetEarnings({...official,next:{...official.next,source:'unknown'}},'JP:1001'),false);
 assert.equal(domain.validAssetEarnings({...official,market:'US'},'US:1001'),false);
-assert.equal(domain.earningsShortDate(official,new Date('2026-10-08')), '11/3');
+const scheduledHtml = renderToStaticMarkup(React.createElement(AssetEarningsDate,{market:'JP',row:official,refreshFailed:true}));
+assert.ok(scheduledHtml.includes('会社予定') && !scheduledHtml.includes('更新未確認'));
+assert.ok(renderToStaticMarkup(React.createElement(AssetEarningsDate,{market:'JP',row:{...official,scheduleStatus:'FETCH_FAILED'}})).includes('更新未確認'));
 const correctedCompany = {...official,previous:null,estimate:null,company:{disclosedDate:'2026-07-31',periodEnd:'2026-06-30',
   periodType:'1Q',fiscalYearEnd:'2027-03-31',operatingProfit:100000000,forecastOperatingProfit:450000000,consolidated:true,
   source:'J-Quants 決算短信',currency:'JPY',receivedAt:'2026-08-01T00:00:00Z',forecastDisclosedDate:'2026-10-01',forecastReceivedAt:row.fetchedAt}};

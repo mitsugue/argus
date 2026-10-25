@@ -47,13 +47,11 @@ for(const [market,genre,price] of [['JP','jp','1,000円'],['US','us','$100.00']]
     sdg:{...d.sdg,market}};
   const before=JSON.stringify(card);
   const first=renderToStaticMarkup(React.createElement(AssetDecisionSummary,{d:card,open:false,onToggle:()=>{}}));
-  // 2026-10-25 (owner): the row is the name, the price and the change; the
-  // target, supply and results are the four numbers inside the stock page.
-  for(const text of [price,'検査用銘柄'])assert.ok(first.includes(text),text);
+  for(const text of [price,'検査用銘柄','次回決算','アナリスト目標','需給'])assert.ok(first.includes(text),text);
   assert.ok(!first.includes('確認待ち')&&!first.includes('ad-cmd')&&!first.includes('買い候補'));
   assert.equal(JSON.stringify(card),before,'表示整理で判断・根拠・制限を書き換えない');
 }
-console.log('登録日米カード: 一律待機を除去、価格と内部制限を保持 PASS');
+console.log('登録日米カード: 一律待機を除去、価格・決算・目標・需給と内部制限を保持 PASS');
 
 const usFlow=render(AssetFlowPanel,{asset:{symbol:'MU',market:'US'},genre:'us',sdg:{...d.sdg,market:'US',ownerReadableWhyJa:'実測フローの取得待ちです。'}});
 for(const text of ['信用倍率 6.00倍','日証金の貸借倍率','信用残 10/2週','日証金 10/6','信用買い残','前週差'])assert.ok(!usFlow.includes(text),text);

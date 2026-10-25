@@ -18619,8 +18619,6 @@ def _market_brief_ai_polish(brief):
         "報道が述べる原因は報道として扱い、実測で確かめた事実と区別してください。"
         "priorAssessmentsは過去のAIの見立てです。新しい外部材料や観測済み事実として引用せず、現在の根拠で見直してください。"
         "viewは60字以内の短い結論、reasonsは重要な理由を2文以内、他の項目は各120字以内。"
-        # 2026-10-25 (owner): Today shows the first sentence of reasons and invalidation.
-        "reasonsとinvalidationは、最初の1文(60字以内)だけで要点が伝わるように書く。"
         "メールの見出しや入力資料を紹介する前置きを避け、市場で何が変わり、何を確認するかを先に述べる。"
         "資料を紹介する代わりに断定を強めてはいけない。報道・予想・公式決定・実測と未確認範囲は明確にする。"
         "各説明は240字以内。view=今の見立て、reasons=重要な理由、changes=前回からの変化、"
@@ -32595,6 +32593,22 @@ def _public_osint_investigation(investigation):
         _public_scalar_fields(row, ("provider", "status"))
         for row in (inv.get("agentRuns") or [])[:4] if isinstance(row, dict)
     ]
+    # 2026-10-26 (owner): what the web search found, as public links (title,
+    # outlet, date, https URL), so a run that verified nothing still shows it.
+    findings, seen_urls = [], set()
+    for row in inv.get("agentRuns") or []:
+        if not isinstance(row, dict) or row.get("provider") != "gpt" or row.get("status") != "ok":
+            continue
+        for claim in row.get("claims") or []:
+            url = str((claim or {}).get("url") or "")
+            title = str(claim.get("titleJa") or claim.get("title") or "").strip()
+            if not url.startswith("https://") or not title or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            findings.append({"titleJa": title[:160], "url": url[:500],
+                             "sourceName": str(claim.get("sourceName") or "")[:80] or None,
+                             "publishedAt": str(claim.get("publishedAt") or "")[:32] or None})
+    out["searchFindings"] = findings[:5]
     out["verifiedSources"] = [projected for projected in (
         _public_osint_source(row) for row in (inv.get("verifiedSources") or [])[:10]
     ) if projected is not None]

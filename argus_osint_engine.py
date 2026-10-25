@@ -497,7 +497,10 @@ def synthesize_verdict(verified: List[Dict[str, Any]], coverage: Dict[str, Any],
     macro = [v for v in eligible if v.get("directness") == "macro"]
     cov_ok = coverage.get("totalCoverage") in ("strong", "medium")
 
-    if len(contradictions) >= 3:
+    # 2026-10-26: only a real disagreement (a direct company item and a macro
+    # cause side by side) is a conflict. Notes about stale or unverified items
+    # are not; counting them made every searched run read 「証拠が矛盾」.
+    if directs and macro:
         verdict = "conflicting_evidence"
         primary = None
     elif directs:
