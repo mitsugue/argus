@@ -54,6 +54,11 @@ export function earningsDateLabel(row?: AssetEarnings, now = new Date()): string
   const dates = row.next.from === row.next.to ? short(row.next.from) : `${short(row.next.from)}〜${short(row.next.to)}`;
   return `次回決算 ${dates}（${row.next.certainty === 'COMPANY_SCHEDULE' ? '会社予定' : `推定${row.market === 'US' ? '・米東部' : ''}`}）`;
 }
+/** 2026-10-25 (owner): the short date for the stock list ("11/7"), or null. */
+export function earningsShortDate(row?: AssetEarnings, now = new Date()): string | null {
+  if (!row?.next || row.next.to < earningsToday(row, now)) return null;
+  return `${Number(row.next.from.slice(5, 7))}/${Number(row.next.from.slice(8, 10))}`;
+}
 export function earningsAmount(value: number, currency: string | null): string {
   if (!currency) return `${value.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}（通貨未確認）`;
   return new Intl.NumberFormat('ja-JP', { style: 'currency', currency, maximumFractionDigits: 2 }).format(value);

@@ -257,7 +257,9 @@ def test_dq_shows_osint_health(monkeypatch):
 
 def test_fe_osint_deep_dive_ui():
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    for needle in ("OSINT DEEP DIVE", "調べる", "材料は見つかりませんでした",
+    # 2026-10-25 (owner): the stock page heads the panel 「材料」.
+    assert "OSINT DEEP DIVE" not in src
+    for needle in ("調べる", "材料は見つかりませんでした",
                    "今日の上限(5回)に達しました。"):
         assert needle in src, needle
     assert "キャッシュ済み調査のカバレッジが不十分です" not in src

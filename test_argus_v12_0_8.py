@@ -222,12 +222,12 @@ def test_fe_osint_pack_and_ui():
 def test_fe_registered_asset_facts_preserve_internal_stance_authority():
     # 登録銘柄は価格・決算・需給の事実を表示し、旧保有判断を出さない。
     # 内部のSDA正本と制限は維持し、別の判断経路を作らない。
-    details = _read("components", "assetDesk", "AssetDecisionDetails.tsx")
+    details = _read("components", "assetDesk", "AssetDecisionCard.tsx")
     summary = _read("components", "assetDesk", "AssetDecisionSummary.tsx")
-    # 詳細は同じ正本の根拠を読み、先頭は取得済みの事実を表示する。
-    assert "d.decisionFirst" in details and "view.whyJa" in details
-    assert "d.decisionFirst" in summary and "view.priceText" in summary
-    assert "AssetEarningsDate" in summary and "AssetOutlookSummary" in summary
+    # 2026-10-25 (owner): the stock page reads the same canonical view for its
+    # conclusion when there is no AI answer; the row shows facts only.
+    assert "d.decisionFirst" in details and "view.whyJa" in details and "view.whatChangesJa" in details
+    assert "d.decisionFirst" in summary and "view.priceText" in summary and "earningsShortDate" in summary
     assert "view.currentActionJa" not in summary and "ad-cmd" not in summary
     assert "view.currentActionJa" not in details
     intel = _read("hooks", "useAssetIntel.ts")

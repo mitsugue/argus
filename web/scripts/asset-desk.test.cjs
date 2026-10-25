@@ -72,7 +72,7 @@ check('Entry Scout action surface is retired', !fs.existsSync(path.join(root, 's
   && !card.includes('EntryScout'));
 check('registered card shows facts while old canonical action remains internal',
   summary.includes('d.decisionFirst') && summary.includes('view.priceText')
-  && summary.includes('AssetEarningsDate') && summary.includes('AssetOutlookSummary')
+  && summary.includes('earningsShortDate(')
   && !summary.includes('canonicalPrimaryAction') && !summary.includes('currentActionJa')
   && !summary.includes('Calibration pending') && !summary.includes('ad-prio'));
 check('owner list is grouped and long-press ordered instead of priority sorted',

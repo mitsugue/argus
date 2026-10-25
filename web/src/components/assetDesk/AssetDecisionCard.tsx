@@ -1,18 +1,15 @@
-import React, { useEffect, useState } from 'react';
-import type { DeskCardData, DeskTab } from './types';
-import { sectionAnchorId, tabForDeskSection } from './types';
+import React, { useState } from 'react';
+import type { DeskCardData } from './types';
+import { sectionAnchorId } from './types';
 import { AssetDecisionSummary } from './AssetDecisionSummary';
 import { AssetTargetDetails } from './AssetTargetDetails';
 import { AssetEarningsDetails } from './AssetEarnings';
-import { AssetDecisionDetails } from './AssetDecisionDetails';
-import { AssetMarketContext } from './AssetMarketContext';
-import { AssetWhyPanel } from './AssetWhyPanel';
 import { AssetFlowPanel } from './AssetFlowPanel';
 import { AssetEventsPanel } from './AssetEventsPanel';
 import { AssetScenarioPanel } from './AssetScenarioPanel';
 import { AssetResearchPanel } from './AssetResearchPanel';
-import { AssetDataQuality } from './AssetDataQuality';
-import { AssetEvidenceSummary } from './AssetEvidenceSummary';
+import { AssetNumbers } from './AssetNumbers';
+import { OwnerOverview } from '../dialogue/OwnerOverview';
 import { OsintDeepDive } from '../dashboard/OsintDeepDive';
 import '../dashboard/UnifiedAssetCard.css';
 import '../dashboard/Dashboard.css';
@@ -30,133 +27,68 @@ interface Props {
   collapsible?: boolean;
 }
 
-const TABS: Array<{ id: DeskTab; label: string }> = [
-  { id: 'decision', label: '見立て' },
-  { id: 'chart', label: '目標・条件' },
-  { id: 'evidence', label: '需給・材料' },
-];
+// 2026-10-25 (owner): one page read from the top — the conclusion, four
+// numbers, the material, then folded details. Market-wide views stay on
+// Today; nothing here repeats them.
 
-const Section: React.FC<{
-  symbol: string; id: string; title?: string; children: React.ReactNode;
-}> = ({ symbol, id, title, children }) => (
-  <section className="ad-tab-section" id={sectionAnchorId(symbol, id)}>
-    {title && <h4>{title}</h4>}
-    {children}
-  </section>
-);
+const first = (text?: string | null) => {
+  const value = (text ?? '').trim();
+  const cut = value.indexOf('。');
+  return cut > 0 ? value.slice(0, cut + 1) : value;
+};
 
-export const AssetDecisionCard: React.FC<Props> = ({
-  d, open, onToggle, onRemove, nowMs, dragHandle, focusSection,
-  collapsible = true,
-}) => {
-  const [tab, setTab] = useState<DeskTab>('decision');
-  const [supportOpen, setSupportOpen] = useState(false);
-  const sym = d.asset.symbol;
-  const actionTone = { BUY: 'var(--value-positive)', HOLD: 'var(--accent)',
-    WAIT: 'var(--amber, #fbbf24)', REDUCE: 'var(--event-high)', EXIT: 'var(--value-negative)' } as const;
-  const sigColor = actionTone[d.decisionFirst.canonicalPrimaryAction ?? 'WAIT'];
-
-  useEffect(() => {
-    if (!open) { setTab('decision'); setSupportOpen(false); return; }
-    if (focusSection) {
-      setTab(tabForDeskSection(focusSection));
-      if (['research', 'data-quality', 'ai-review'].includes(focusSection)) setSupportOpen(true);
-    }
-  }, [open, focusSection]);
-
-  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    const index = TABS.findIndex((item) => item.id === tab);
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? TABS.length - 1
-      : event.key === 'ArrowRight' ? (index + 1) % TABS.length
-      : (index - 1 + TABS.length) % TABS.length;
-    setTab(TABS[next].id);
-    const list = event.currentTarget.parentElement;
-    window.requestAnimationFrame(() => {
-      (list?.querySelector(`[data-tab="${TABS[next].id}"]`) as HTMLButtonElement | null)?.focus();
-    });
+// A folded part mounts only once opened, so its reads start on demand.
+const Fold: React.FC<{ symbol: string; id: string; title: string; open?: boolean; children: React.ReactNode }> =
+  ({ symbol, id, title, open = false, children }) => {
+    const [isOpen, setOpen] = useState(open);
+    return (
+      <details className="ad-fold" id={sectionAnchorId(symbol, id)} open={isOpen}
+        onToggle={(event) => setOpen(event.currentTarget.open)}>
+        <summary>{title}</summary>
+        {isOpen && <div className="ad-fold__body">{children}</div>}
+      </details>
+    );
   };
 
+export const AssetDecisionCard: React.FC<Props> = ({
+  d, open, onToggle, onRemove, dragHandle, focusSection, collapsible = true,
+}) => {
+  const sym = d.asset.symbol;
+  const view = d.decisionFirst;
+  const market = d.asset.market;
+  const stock = market === 'JP' || market === 'US';
+  const lead = d.incident?.moverCause?.bestLeadJa ?? null;
+  const focus = (...ids: string[]) => !!focusSection && ids.includes(focusSection);
   return (
-    <article className={`uac ad-card asset-reading-card uac--${open ? 'open' : 'compact'}${d.decisionFirst.held ? ' uac--held' : ''}`}
-         id={sectionAnchorId(sym)} style={{ ['--uac-sig' as string]: sigColor }}>
+    <article className={`uac ad-card asset-reading-card uac--${open ? 'open' : 'compact'}`} id={sectionAnchorId(sym)}>
       {dragHandle}
       <AssetDecisionSummary d={d} open={open} onToggle={onToggle} interactive={collapsible} />
       {open && (
         <div className="uac-body ad-expanded">
-          {/* 2026-10-25 (owner): 「調べる」は銘柄を開いてすぐの場所に置く。 */}
-          {(d.asset.market === 'JP' || d.asset.market === 'US') && (
-            <OsintDeepDive symbol={sym} market={d.asset.market}
-              name={d.asset.displayNameJa ?? d.asset.displayName} />
-          )}
-          <div className="ad-tabs" role="tablist" aria-label={`${sym} 詳細`}>
-            {TABS.map((item) => (
-              <button key={item.id} type="button" role="tab"
-                id={`ad-tab-${sym}-${item.id}`}
-                aria-selected={tab === item.id}
-                aria-controls={`ad-panel-${sym}-${item.id}`}
-                tabIndex={tab === item.id ? 0 : -1}
-                data-tab={item.id}
-                className={tab === item.id ? 'is-active' : ''}
-                onClick={() => setTab(item.id)}
-                onKeyDown={onTabKeyDown}>
-                {item.label}
-              </button>
-            ))}
+          <section className="ad-block" id={sectionAnchorId(sym, 'decision')}>
+            <h4 className="ad-block__label">結論</h4>
+            {stock
+              ? <OwnerOverview key={`${market}:${sym}`} symbol={sym} market={market} horizon={5} asset={d.asset}
+                  line={{ fallback: first(view.whyJa) || '見立てなし', fallbackChange: first(view.whatChangesJa) || undefined }} />
+              : <div className="ad-conclusion"><p className="ad-conclusion__view">{first(view.whyJa) || '見立てなし'}</p></div>}
+          </section>
+          {stock && <section className="ad-block"><h4 className="ad-block__label">数字</h4><AssetNumbers d={d} /></section>}
+          {stock && <section className="ad-block" id={sectionAnchorId(sym, 'why-downside')}>
+            <h4 className="ad-block__label">材料</h4>
+            {lead && <p className="ad-material__lead">{lead}</p>}
+            <OsintDeepDive symbol={sym} market={market} name={d.asset.displayNameJa ?? d.asset.displayName} />
+          </section>}
+          <div className="ad-folds">
+            {stock && <Fold symbol={sym} id="earnings" title="決算の内訳"><AssetEarningsDetails market={market} symbol={sym} /></Fold>}
+            <Fold symbol={sym} id="flow-supply" title="需給の数値" open={focus('flow-supply')}><AssetFlowPanel d={d} /></Fold>
+            <Fold symbol={sym} id="scenarios" title="条件・目標" open={focus('scenarios', 'technical', 'chart')}>
+              {view.nextJa && <p className="ad-fold__line">次に確認：{first(view.nextJa)}</p>}
+              <AssetTargetDetails d={d} />
+              <AssetScenarioPanel d={d} />
+            </Fold>
+            {d.eventTags.length > 0 && <Fold symbol={sym} id="events" title="関連イベント" open={focus('events')}><AssetEventsPanel d={d} /></Fold>}
+            <Fold symbol={sym} id="research" title="メモ・記録" open={focus('research')}><AssetResearchPanel d={d} onRemove={onRemove} /></Fold>
           </div>
-
-          <div role="tabpanel" id={`ad-panel-${sym}-${tab}`}
-               aria-labelledby={`ad-tab-${sym}-${tab}`} className="ad-tab-panel">
-            {tab === 'decision' && (
-              <Section symbol={sym} id="decision">
-                <AssetDecisionDetails d={d} />
-                <AssetEarningsDetails market={d.asset.market} symbol={sym} />
-                <AssetMarketContext symbol={sym} market={d.asset.market} asset={d.asset} />
-              </Section>
-            )}
-            {tab === 'chart' && (
-              <Section symbol={sym} id="technical">
-                <AssetTargetDetails d={d} />
-                <Section symbol={sym} id="scenarios" title="状況ごとの条件">
-                  <AssetScenarioPanel d={d} />
-                </Section>
-                <p className="ad-chart-retired" data-asset-chart="retired" hidden />
-              </Section>
-            )}
-            {tab === 'evidence' && (
-              <>
-                <Section symbol={sym} id="why-downside">
-                  <AssetEvidenceSummary d={d} />
-                </Section>
-                <details className="ad-evidence-details" open>
-                  <summary>需給の根拠と数値</summary>
-                  <Section symbol={sym} id="flow-supply"><AssetFlowPanel d={d} /></Section>
-                </details>
-                <details className="ad-evidence-details" open={focusSection === 'events'}>
-                  <summary>関連イベント・材料</summary>
-                  <Section symbol={sym} id="events"><AssetEventsPanel d={d} /></Section>
-                </details>
-                <details className="ad-evidence-details" open={focusSection === 'why-downside'}>
-                  <summary>値動きの経緯・原因候補</summary>
-                  <Section symbol={sym} id="evidence-raw"><AssetWhyPanel d={d} /></Section>
-                </details>
-              </>
-            )}
-          </div>
-          <details className="ad-research-drawer" open={supportOpen}
-            data-secondary-utility="research-data"
-            onToggle={(event) => setSupportOpen(event.currentTarget.open)}>
-            <summary>記録・データ</summary>
-            {supportOpen && <div className="ad-research-drawer__body">
-              <Section symbol={sym} id="research" title="銘柄メモ・調査記録">
-                <AssetResearchPanel d={d} onRemove={onRemove} />
-              </Section>
-              <Section symbol={sym} id="data-quality" title="データの状態">
-                <AssetDataQuality d={d} nowMs={nowMs} />
-              </Section>
-            </div>}
-          </details>
         </div>
       )}
     </article>

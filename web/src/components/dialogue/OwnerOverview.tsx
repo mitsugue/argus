@@ -20,7 +20,10 @@ const statusText:Record<string,string>={
   INTERRUPTED:'再起動で中断',
   SAVE_FAILED:'保存を確認できず・保存済みの説明',
 };
-export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:string;market:'JP'|'US';horizon:number;asset?:AssetItem;onReference?:(job:Job|null)=>void}) {
+// 2026-10-25 (owner): the stock page leads with one sentence of the view and
+// the condition that would change it; the full answer folds under it.
+const firstSentence=(text:string)=>{const cut=text.indexOf('。');return cut>0?text.slice(0,cut+1):text;};
+export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{symbol:string;market:'JP'|'US';horizon:number;asset?:AssetItem;onReference?:(job:Job|null)=>void;line?:{fallback:string;fallbackChange?:string}}) {
   const session = useSyncExternalStore(subscribeOwner, hasOwnerSession, () => false);
   const {brief,loading:marketLoading,error:marketError}=useMarketBrief();const [token,setToken]=useState(readToken);
   const [edition,setEdition]=useState<{key:string;job:Job}|null>(null);
@@ -89,6 +92,18 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference}:{symbol:
   const current=edition?.key===requestKey&&job?.status==='SUCCEEDED';
   const saved=job?.status==='SUCCEEDED'?job:validJob(job?.previousOverview)&&job.previousOverview.status==='SUCCEEDED'?job.previousOverview:null;
   useEffect(()=>{onReference?.(token||session?saved??null:null);},[saved,token,session,onReference]);
+  if(line){
+    const sections=saved?.result?.answer?.sections;
+    const view=sections?.view?.textJa?withoutScreenNotes(sections.view.textJa):null;
+    const change=view?(sections?.invalidation?.textJa?withoutScreenNotes(sections.invalidation.textJa):null):line.fallbackChange;
+    const status=!token&&!session?'接続設定が必要':error||(!saved&&(fetching||job?.status==='RUNNING')?'確認中':null);
+    return <div className="ad-conclusion" data-conclusion-source={view?'ai':'rules'}>
+      <p className="ad-conclusion__view">{view?firstSentence(view):line.fallback}</p>
+      {change&&<p className="ad-conclusion__change">変わる条件：{firstSentence(change)}</p>}
+      {!view&&status&&<p className="ad-conclusion__status">{status}{error&&<button type="button" className="asset-mini" onClick={()=>setRevision(value=>value+1)}>再取得</button>}</p>}
+      {saved&&<details className="ad-fold"><summary>見立ての全文</summary><OwnerAnswerBody job={saved}/></details>}
+    </div>;
+  }
   if(!token&&!session)return <section className="owner-overview"><h3>この銘柄について</h3><p>接続設定が必要（Settings）</p></section>;
   return <section className="owner-overview" aria-label="この銘柄へのARGUSの説明">
     <header><p className="owner-overview__eyebrow">{asset?.displayNameJa||asset?.displayName||(symbol==='N225'?'日経平均':symbol)}</p><span>{horizon}営業日の見通し</span></header>
