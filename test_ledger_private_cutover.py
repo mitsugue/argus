@@ -13,7 +13,7 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parent
 SCRIPT = ROOT / "scripts" / "ledger_use_private.sh"
 WRITERS = ("event-ledger", "macro-event-analysis", "learning-memory", "mover-causes",
-           "prediction-ledger", "vault-sync", "caos-scan", "caos-watchtower")
+           "prediction-ledger", "caos-scan", "caos-watchtower")
 
 
 def test_every_ledger_writer_points_at_the_private_repository_before_fetching():

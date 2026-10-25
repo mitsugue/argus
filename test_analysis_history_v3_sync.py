@@ -74,3 +74,68 @@ def test_the_backup_runs_on_its_own_cadence_not_only_after_a_brief():
     # the call keeps its own interval and lock
     body = inspect.getsource(scanner._market_brief_history_sync)
     assert '_MARKET_BRIEF_HISTORY_SYNC_LOCK.acquire(blocking=False)' in body and 'interval' in body
+
+
+@pytest.fixture
+def settled_run(wired, monkeypatch):
+    """2026-10-25: an unchanged history skips the remote read for up to six hours."""
+    runs = []
+    v3 = _v3(True)
+
+    def counted(local_path, remote):
+        runs.append(local_path)
+        return v3(local_path, remote)
+
+    monkeypatch.setattr(parts, 'synchronize', counted)
+    monkeypatch.setattr(scanner, '_ANALYSIS_HISTORY_FORM', {"status": "NOT_RUN"})
+    monkeypatch.setattr(scanner, '_analysis_history_form_step', lambda path: scanner._ANALYSIS_HISTORY_FORM.update(
+        status="CONVERTED", verifiedAll={"checked": 1}))
+    fingerprint = {"value": ((1, 1), (None, 0))}
+    monkeypatch.setattr(scanner, '_market_brief_history_fingerprint', lambda path: fingerprint["value"])
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(scanner.time, 'monotonic', lambda: clock["now"])
+    return runs, fingerprint, clock
+
+
+def test_an_unchanged_history_does_not_read_the_remote_again(settled_run):
+    runs, _fingerprint, clock = settled_run
+    scanner._market_brief_history_sync()
+    clock["now"] += 601
+    scanner._market_brief_history_sync()
+    assert len(runs) == 1
+    assert scanner._MARKET_BRIEF_HISTORY_REMOTE['status'] == 'VERIFIED'
+    assert scanner._MARKET_BRIEF_HISTORY_REMOTE['unchangedSkips'] == 1
+
+
+def test_a_new_record_is_synchronised_on_the_next_round(settled_run):
+    runs, fingerprint, clock = settled_run
+    scanner._market_brief_history_sync()
+    fingerprint["value"] = ((2, 2), (None, 0))
+    clock["now"] += 601
+    scanner._market_brief_history_sync()
+    assert len(runs) == 2
+
+
+def test_the_remote_is_verified_again_after_six_hours(settled_run):
+    runs, _fingerprint, clock = settled_run
+    scanner._market_brief_history_sync()
+    clock["now"] += scanner._MARKET_BRIEF_HISTORY_RECHECK_SEC
+    scanner._market_brief_history_sync()
+    assert len(runs) == 2
+
+
+def test_an_unconverted_or_unverified_form_keeps_running(settled_run, monkeypatch):
+    runs, _fingerprint, clock = settled_run
+    monkeypatch.setattr(scanner, '_analysis_history_form_step', lambda path: scanner._ANALYSIS_HISTORY_FORM.update(
+        status="CONVERTING"))
+    scanner._market_brief_history_sync()
+    clock["now"] += 601
+    scanner._market_brief_history_sync()
+    assert len(runs) == 2
+
+
+def test_the_fingerprint_reads_counts_without_bodies(tmp_path):
+    path = tmp_path / 'history.sqlite'
+    history.initialize(str(path))
+    assert scanner._market_brief_history_fingerprint(str(path)) == ((None, 0), (None, 0))
+    assert scanner._market_brief_history_fingerprint(str(tmp_path / 'missing.sqlite')) is None

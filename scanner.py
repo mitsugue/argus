@@ -9732,8 +9732,8 @@ def _data_quality_console():
             "readiness": _fr,
             "liveForecasts": sum(1 for f in _FORECAST_LEDGER
                                  if f.get("origin") == "forward_live"),
-            "blockerJa": ("OSINT調査ゼロ(デプロイ直後等) — ウォームアップを"
-                          "自動キュー済み・次のcronで発行" if _fr != "ready" else None),
+            "blockerJa": ("OSINT調査ゼロ(デプロイ直後等) — 固定銘柄の自動予約は"
+                          "停止済み・調査は手動実行のみ" if _fr != "ready" else None),
         }
         # v12.2.9 Phase 4: 予測活性化の正確なテレメトリ(校正run≠ライブ調査)
         console["forecastActivation"] = \
@@ -17745,6 +17745,40 @@ def _market_brief_due(previous):
 _MARKET_BRIEF_HISTORY_REMOTE = {"status": "NOT_RUN", "lastVerifiedAt": None,
                                 "lastAttemptAt": None, "headVersion": None}
 _MARKET_BRIEF_HISTORY_SYNC_LOCK = threading.Lock()
+# 2026-10-25: measured 85 runs a day at up to 80 s and +281 MiB while new
+# editions arrive about 11 times a weekday. A run whose local records are
+# unchanged since the last complete, verified one skips the remote read; the
+# remote head is still re-verified at least every six hours.
+_MARKET_BRIEF_HISTORY_RECHECK_SEC = 6 * 3600
+
+
+def _market_brief_history_fingerprint(path):
+    """Cheap identity of the local records, or None when it cannot be read."""
+    try:
+        conn = argus_analysis_history._connect(path, True)
+        try:
+            views = tuple(conn.execute('SELECT MAX(sequence), COUNT(*) FROM views').fetchone())
+            outcomes = tuple(conn.execute('SELECT MAX(sequence), COUNT(*) FROM outcomes').fetchone())
+            return views, outcomes
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
+def _market_brief_history_unchanged(path, fingerprint, now):
+    settled = _MARKET_BRIEF_HISTORY_REMOTE.get("settled") or {}
+    if fingerprint is None or settled.get("fingerprint") != fingerprint:
+        return False
+    if _MARKET_BRIEF_HISTORY_REMOTE.get("status") != "VERIFIED" or \
+            now - float(settled.get("atMonotonic")) >= _MARKET_BRIEF_HISTORY_RECHECK_SEC:
+        return False
+    if _ANALYSIS_HISTORY_FORM.get("status") != "CONVERTED" or not _ANALYSIS_HISTORY_FORM.get("verifiedAll"):
+        return False
+    try:
+        return argus_analysis_history.free_page_bytes(path) < ANALYSIS_HISTORY_COMPACT_MIN_FREE_BYTES
+    except Exception:
+        return False
 
 
 def _market_brief_history_sync():
@@ -17763,6 +17797,12 @@ def _market_brief_history_sync():
         token_configured = bool(os.environ.get("ARGUS_LAYER2B_PRIVATE_TOKEN", ""))
         if not path or not repo or not token_configured:
             _MARKET_BRIEF_HISTORY_REMOTE.update(status="NOT_CONFIGURED")
+            return
+        fingerprint = _market_brief_history_fingerprint(path)
+        if _market_brief_history_unchanged(path, fingerprint, now):
+            _MARKET_BRIEF_HISTORY_REMOTE["unchangedSkips"] = int(
+                _MARKET_BRIEF_HISTORY_REMOTE.get("unchangedSkips") or 0) + 1
+            _MARKET_BRIEF_HISTORY_REMOTE["lastUnchangedSkipAt"] = _ai_now_iso()
             return
         _MARKET_BRIEF_HISTORY_REMOTE.update(lastAttemptAt=_ai_now_iso(), status="RUNNING")
         # The verified remote head used to live only in this dict, so every
@@ -17813,6 +17853,10 @@ def _market_brief_history_sync():
                                                 restoredCounts=v3.get("restoredCounts"),
                                                 lastVerifiedAt=_ai_now_iso(), errorClass=None,
                                                 v2="READ_ONLY_SUPERSEDED_BY_V3")
+            if fingerprint is not None and \
+                    (_MARKET_BRIEF_HISTORY_REMOTE.get("v3") or {}).get("status") == "VERIFIED":
+                _MARKET_BRIEF_HISTORY_REMOTE["settled"] = {
+                    "fingerprint": fingerprint, "atMonotonic": now}
             return
         remote = argus_analysis_history_backup.GitHubStore(
             repo=repo, headers=_gh_private_headers(), http=requests.request)
@@ -35658,7 +35702,8 @@ def _api_argus_admin_missions_tick_impl():
             f.get("origin") == "forward_live" and
             str(f.get("issuedAt", ""))[:10] == session_date
             for f in _FORECAST_LEDGER):
-        warm_consumed = any(m.get("checkpoint") == "warmup_queued"
+        warm_consumed = any(m.get("checkpoint") in (
+                                "warmup_queued", "cold_store_no_forecast")
                             for m in _MISSIONS
                             if m.get("sessionDate") == session_date)
         rk = f"recovery_issuance:{session_date}"
@@ -35779,16 +35824,12 @@ def _api_argus_admin_missions_tick_impl():
                 metadata={"missionType": str(mt)[:80]})
             if mt in ("pre_session_forecast", "post_session_snapshot",
                       "missed_mission_recovery"):
-                # v12.2.2 Phase 2: プリフライト — コールド/調査ゼロなら発行せず
-                # 決定論ウォームアップ(deep-diveキュー・外部AIなし・無料)を仕込む
+                # v12.2.2 Phase 2: プリフライト — コールド/調査ゼロなら発行しない。
+                # 2026-10-25: 固定2銘柄の深掘り予約は外した。調査ストアは再起動で
+                # 空になるため、配信のたびに翌朝のGPTウェブ検索を2銘柄ぶん生み、
+                # その結果は画面の判断にも予測の採点にも使われていなかった。
                 if not _OSINT_STORE:
-                    for wsym in ("6965", "5803"):
-                        if wsym not in _OSINT_AGENT_QUEUE and                                 len(_OSINT_AGENT_QUEUE) < _OSINT_QUEUE_MAX:
-                            _OSINT_AGENT_QUEUE[wsym] = {
-                                "market": "JP", "mode": "deep",
-                                "privacyMode": "redacted",
-                                "queuedAt": now_iso}
-                    m["checkpoint"] = "warmup_queued"
+                    m["checkpoint"] = "cold_store_no_forecast"
                     argus_scheduler.complete(m, now_iso)
                     _persist_mission_transition(
                         m, cursor=int(_MISSION_BATCH_STATE.get(
@@ -40568,6 +40609,52 @@ _JP_MARKET_FEATURE_HISTORY_LOCK = threading.Lock()
 _JP_MARKET_FEATURE_CACHE_STATUS = {"restoreAttempted": False}
 
 
+_INDEX_HISTORY_SETTLE_MARKETS = {
+    "^GSPC": argus_market_clock.US_EQUITY,
+    "^VIX": argus_market_clock.VIX_MKT,
+    "JPY=X": argus_market_clock.FX,
+}
+_INDEX_HISTORY_SETTLE_MARGIN = timedelta(minutes=30)
+
+
+def _index_history_settled(yahoo_symbol, cached, now_utc):
+    """True when no new daily bar can exist since the held acquisition.
+
+    The held rows must be a successful fetch taken at least 30 minutes after
+    the latest completed session's close, and the market must not be in its
+    regular session now (FX: the weekend gap). Any calendar doubt refetches.
+    """
+    market = _INDEX_HISTORY_SETTLE_MARKETS.get(yahoo_symbol)
+    if not market or cached.get("lastFetchStatus") != "AVAILABLE" \
+            or not cached.get("data"):
+        return False
+    try:
+        acquired = datetime.fromisoformat(str(cached.get("acquiredAt")))
+        if acquired.tzinfo is None:
+            return False
+        latest = argus_market_clock.latest_completed_session_date(
+            market, now_utc)
+        closed_at = argus_market_clock._local_close(market, latest, now_utc)
+        if acquired < closed_at + _INDEX_HISTORY_SETTLE_MARGIN:
+            return False
+        local = now_utc.astimezone(argus_market_clock._ET)
+        if market == argus_market_clock.FX:
+            return (local.weekday() == 5
+                    or (local.weekday() == 4 and local.hour >= 17)
+                    or (local.weekday() == 6 and local.hour < 17))
+        bounds = argus_market_clock.market_session_bounds(
+            market, local.date())
+        if not bounds.get("isTradingDay"):
+            return True
+        opened = datetime.fromisoformat(
+            bounds["regularOpenUtc"].replace("Z", "+00:00"))
+        closes = datetime.fromisoformat(
+            bounds["regularCloseUtc"].replace("Z", "+00:00"))
+        return not opened <= now_utc < closes + _INDEX_HISTORY_SETTLE_MARGIN
+    except Exception:
+        return False
+
+
 def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
                        available_hour_utc=None, next_day_available=False, range_="2y"):
     """Complete OHLCV rows for one index from the public Yahoo v8 chart API.
@@ -40592,6 +40679,12 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
         return cached["data"]
     if not fetch:
         return []
+    if cached and not wider_scope and _index_history_settled(
+            yahoo_symbol, cached, datetime.now(pytz.utc)):
+        # 2026-10-25: 休日・取引時間外に新しい足は出ない。最後の終値の後に
+        # 取得済みなら10年分を取り直さず、同じ行をそのまま使い続ける。
+        cached["expires"] = now + _JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC
+        return cached["data"]
     rows = []; source_hash = None; response = None; fetch_error = None
     try:
         r = requests.get(
@@ -49685,6 +49778,23 @@ def _jq_history_behind_completed_session(data, now_utc=None):
         return False
 
 
+def _jq_history_holiday_hold(data, now_utc=None):
+    """True on a Tokyo non-trading day when the history already holds the
+    latest completed session. Calendar doubt returns False (refetch)."""
+    try:
+        now_utc = now_utc or datetime.now(pytz.utc)
+        today = now_utc.astimezone(TZ_JST).date()
+        if argus_market_clock.is_trading_day(argus_market_clock.JP_EQUITY, today):
+            return False
+        dates = (data or {}).get("dates") or []
+        newest = str(dates[0] or "")[:10] if dates else ""
+        latest = argus_market_clock.latest_completed_session_date(
+            argus_market_clock.JP_EQUITY, now_utc)
+        return len(newest) == 10 and newest >= latest.isoformat()
+    except Exception:
+        return False
+
+
 def _jq_price_history(code, *, deadline=None):
     """Up to ~5 years of OHLCV (newest-first) for one TSE code.
     Same daily-bars endpoint the watchlist uses; 6h cache, 10-min fail back-off.
@@ -49700,6 +49810,11 @@ def _jq_price_history(code, *, deadline=None):
         recheck_due = now >= float(c.get("sessionRecheckAt") or 0)
         if not (behind and recheck_due):
             return c["data"]
+    if c and c.get("data") is not None and _jq_history_holiday_hold(c["data"]):
+        # 2026-10-25: 東証の休場日に新しい足は出ない。最新の確定日まで持つ
+        # 履歴は、次の営業日まで10年分を取り直さずに使い続ける。
+        c["expires"] = now + _JQ_HISTORY_TTL
+        return c["data"]
     data = None
     source_identity_verified = False; source_complete = False
     if _JQUANTS_API_KEY:

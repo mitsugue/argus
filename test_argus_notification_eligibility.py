@@ -328,7 +328,6 @@ def test_notification_workflow_consolidation_preserves_schedule_semantics():
         "pages-deploy-watchdog.yml",  # cancels a Pages release stuck unassigned (2026-09-30)
         "prediction-ledger.yml",      # daily ledger close
         "smoke-test.yml",             # six-hourly production smoke
-        "vault-sync.yml",             # owner vault sync
     }, sorted(scheduled_or_notifying)
     # Only these three may reach the owner's phone.
     notifying = {name for name, text in

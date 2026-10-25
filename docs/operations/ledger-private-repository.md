@@ -5,7 +5,7 @@
 - 非公開側の `ledger` 枝は、公開側にあったときと**同じコミットの続き**になっている。遠隔からの復旧が保存しているコミット番号(受領記録の `remoteCommitSha`・封印した `ledgerBaseCommitSha`)が、そのまま通用する。
 
 ## 書く側
-- 書き込みのワークフロー(event-ledger・macro-event-analysis・learning-memory・mover-causes・prediction-ledger・vault-sync・caos-scan・caos-watchtower)は、ledger を取得する直前に `scripts/ledger_use_private.sh` を呼ぶ。
+- 書き込みのワークフロー(event-ledger・macro-event-analysis・learning-memory・mover-causes・prediction-ledger・caos-scan・caos-watchtower)は、ledger を取得する直前に `scripts/ledger_use_private.sh` を呼ぶ。
 - このスクリプトは、接続先(origin)と、actions/checkout が保存した鍵を、非公開リポジトリ用の鍵(秘密 `ARGUS_PRIVATE_LEDGER_TOKEN`)に置き換える。鍵は HTTP の見出しとしてだけ送り、ログでは伏せ字にする。鍵がなければ、その手順は失敗する。
 
 ## 読む側
