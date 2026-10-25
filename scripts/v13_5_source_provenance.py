@@ -692,6 +692,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_jp_market_level_map_stand_in.py",
     "test_argus_v12_1_6.py",
     "test_argus_v12_1_5.py",
     "web/src/components/dashboard/UnifiedAssetCard.css",
