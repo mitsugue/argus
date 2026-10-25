@@ -45,7 +45,7 @@ export const AssetDecisionSummary: React.FC<{
   const referenceWord = !live && reference
     ? `${receivedCurrent && reference.marketStatus === 'CLOSED' ? '引け後' : receivedCurrent ? '参考価格' : '受信停止'} ${tachibanaPriceTime(reference)}`
     : null;
-  const priceProblem = crypto ? (d.cryptoRefreshFailed ? '更新失敗' : null)
+  const priceProblem = crypto ? (d.cryptoRefreshFailed ? '更新失敗' : crypto.delay !== 'LIVE' ? crypto.label : null)
     : referenceWord ?? (!live && !reference && view.quoteTruth ? PRICE_PROBLEM[view.quoteTruth.delayClass] ?? null : null);
   const earnings = earningsShortDate(analyst.earnings?.[`${d.asset.market}:${view.symbol.toUpperCase()}`]);
   const note = drop ?? priceProblem ?? (earnings ? `決算 ${earnings}` : null);
