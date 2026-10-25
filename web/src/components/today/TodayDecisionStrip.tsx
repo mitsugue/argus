@@ -1,7 +1,7 @@
 import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
 import type { ComparisonPoint } from '../../types/japanMarketComparison';
-import { ALERT_HISTORY, ALERT_RAISED_HISTORY, MOMENTUM_Z, liveAlertRecord, OVERNIGHT_HISTORY, TONE_HISTORY, closeBasisLabel, decisionStrip, friendlyEventText, overnightGap, overnightRecord, type FeatureRow, type Lean } from '../../lib/todayDecision';
+import { ALERT_HISTORY, ALERT_RAISED_HISTORY, MOMENTUM_Z, liveAlertRecord, OVERNIGHT_OPEN_SHARE_PCT, TONE_HISTORY, closeBasisLabel, decisionStrip, friendlyEventText, overnightGap, type FeatureRow, type Lean } from '../../lib/todayDecision';
 import { nikkeiLiveCurrent, useJapanMarketComparison, useNikkeiLive } from '../../hooks/useJapanMarketComparison';
 import { marketHeadline } from '../../lib/marketWording';
 import { MarketPositionCard } from './MarketPositionCard';
@@ -86,7 +86,6 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
   const gap = overnightGap(futures, liveCurrent && !live!.sessionOpen ? live!.price : closeStrip.close,
     liveCurrent ? Date.parse(live!.tradedAt) : lastActual + 6.5 * 3600_000, !!live?.sessionOpen);
   const strip = gap === null ? closeStrip : decisionStrip(stripActual, stripFeatures, gap, stripAnchor);
-  const gapRecord = strip.overnightGapPct !== null ? overnightRecord(strip.overnightGapPct) : null;
   const shownPrice = liveCurrent ? live!.price : strip.close;
   // Owner request 2026-10-22: the three numbers use the saved closes, not the intraday price; one line under the tiles says which.
   const basis = closeBasisLabel(strip.closeDate);
@@ -113,9 +112,9 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
       {headline && <p>{headline}</p>}
       <small className="today-strip__record" data-tone-record={strip.tone}>
         5日後に上昇 {TONE_HISTORY.upAfter[strip.tone]}%(普段{TONE_HISTORY.baseUpPct}%・{TONE_HISTORY.since}年〜)</small>
-      {gapRecord && Math.abs(strip.overnightGapPct!) >= 1 && <p className="today-strip__overnight" data-overnight-gap={strip.overnightGapPct!.toFixed(2)}
+      {strip.overnightGapPct !== null && Math.abs(strip.overnightGapPct) >= 1 && <p className="today-strip__overnight" data-overnight-gap={strip.overnightGapPct!.toFixed(2)}
         onClick={() => jumpTo('today-nikkei-chart', 'futures')}>
-        昨夜の日経先物 <b>{signed(strip.overnightGapPct!)}</b> · 5日後に上昇 <b>{gapRecord.upPct}%</b>(普段{OVERNIGHT_HISTORY.baseUpPct}%)・中央値{signed(gapRecord.medianPct)}({gapRecord.n}回)</p>}
+        昨夜の日経先物 <b>{signed(strip.overnightGapPct!)}</b> · 寄り付きにおよそ{OVERNIGHT_OPEN_SHARE_PCT / 10}割が反映</p>}
     </div>
     <div className="today-strip__tiles">
       <button type="button" className={`today-strip__tile alert-${strip.alert ?? 'pending'}`} onClick={() => jumpTo('today-nikkei-chart')}>
