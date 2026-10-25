@@ -133,7 +133,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/today/BootConsole.tsx': '55828d86e169ef8f1f5b26499503b414a040e437',
     # Legacy scanner-phase removal: tests and probe trimmed to the retained
     # contracts only (exact reviewed contents).
-    'test_argus_v12_0_7.py': '7adde8c0541300fda75622390c078aed3e3e77de',
+    'test_argus_v12_0_7.py': '980db853c81c14fcf55daeb2c9bd86679350b1d7',
     'test_catalyst_source_authority.py': 'de1c722906e73381dbc70cdd1155978795db25f1',
     'test_provider_decision_authority_closure.py': 'a97c3d3b9272a3fceca1bd02c9200f59ed3194b7',
     'test_legacy_provider_source_authority.py': 'a10bedba576ceb32616133c773d2bb3fbbdb4f0f',
@@ -296,11 +296,11 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_macro_readiness.py': 'd1348cbcc814fb28857bd42095007f355728cd5a',
     'scripts/macro_readiness.py': 'd9d736333960d220a5ce3fc55951abc901ea47f0',
     'docs/V13_7_REQUIREMENTS.md': '4531b8a7f358a4f14dbb5d3d6e86c481f9c3ac07',
-    'web/src/hooks/useOsintInvestigation.ts': 'd557be1f66642343c91cfcca3630164e7083bae4',
+    'web/src/hooks/useOsintInvestigation.ts': '93a21a776cfe8829107f8c6c17bd5ba7740a8ba6',
     'web/src/components/guide/Layer2BSyncCard.tsx': '121a14868ff0d4e129fd1ddd2e0645229249b4c2',
-    'web/src/components/dashboard/OsintDeepDive.tsx': 'd87e6ff2d1e3d3f00838cc805e5d1ef835887c4d',
+    'web/src/components/dashboard/OsintDeepDive.tsx': '4fc3d807bb60eee344f9367825d1ecc8e4e0901d',
     'web/src/components/dashboard/AddAssetModal.tsx': '1bffa7862c536eb0f84fdcdb3971d472cc94ba6c',
-    'web/src/components/assetDesk/AssetResearchPanel.tsx': '113c5e54eb4b0d6cb09881f38d80190ec251bfba',
+    'web/src/components/assetDesk/AssetResearchPanel.tsx': '69d8e0ab11ff66008cfe0b76049e6699a08afe54',
     'test_argus_v12_3_1.py': '418ef7c191c389740a453a01b35386ffa3dea26e',
     'web/src/components/dashboard/SystemHealthPopover.tsx': '9360fe75e73412502ae2c673914e56c3d8327a75',
     'web/src/routes/DataQualityPage.tsx': '722dac36f536d466edd90b57befdb63700e1c453',
