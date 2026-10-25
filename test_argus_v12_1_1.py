@@ -228,15 +228,12 @@ def test_dq_benchmark_warn_when_samsung_missed(monkeypatch):
 # ── FE/DQ/Pack 検査 ─────────────────────────────────────────────────────────
 
 def test_fe_superiority_and_progress_ui():
+    # 2026-10-25 (owner): the panel became the 「調べる」 button; see test_osint_owner_request.py.
     src = _read("components", "dashboard", "OsintDeepDive.tsx")
-    for needle in ("進捗:",
-                   "キュー", "次回実行まで約",
-                   "検証率", "未回収", "ARGUS独自検証済み"):
+    for needle in ("調査中…", "もう一度調べる", "今日は調査済み"):
         assert needle in src, needle
     for removed in ("再探索する", "このニュースをARGUSに学習させる"):
         assert removed not in src, removed
-    hook = _read("hooks", "useOsintInvestigation.ts")
-    assert "superiority" in hook and "OsintProgress" in hook
 
 
 def test_fe_dq_superiority_fields():

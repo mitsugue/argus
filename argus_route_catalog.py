@@ -214,6 +214,7 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/osint/investigation", ("GET",), "api_argus_osint_investigation", "PUBLIC", "NONE", False, "PUBLIC_OSINT_INVESTIGATION_V1", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/osint/memory-snapshot", ("GET",), "api_argus_osint_memory_snapshot", "RECOVERY_PROOF", "LEGACY_PUBLIC_PROOF", False, "RECOVERY_PROOF_LEGACY", "SERVER_RECOVERY"),
     RouteCatalogEntry("/api/argus/osint/remote-readback", ("GET",), "api_argus_osint_remote_readback", "RECOVERY_PROOF", "LEGACY_PUBLIC_PROOF", False, "RECOVERY_PROOF_LEGACY", "SERVER_RECOVERY"),
+    RouteCatalogEntry("/api/argus/osint/research-request", ("POST",), "api_argus_osint_research_request", "OWNER_SYNC", "OWNER_SYNC_OR_ADMIN", True, "OWNER_PRIVATE", "OWNER_CLIENT"),
     RouteCatalogEntry("/api/argus/prediction-snapshot", ("GET",), "api_argus_prediction_snapshot", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/price-history", ("GET",), "api_argus_price_history", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/pro-handoff", ("GET",), "api_argus_pro_handoff", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
