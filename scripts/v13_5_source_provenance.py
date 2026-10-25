@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.171"
+PRODUCT_VERSION = "v13.8.172"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -168,7 +168,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '6917f1c6c223463a2047d61829f0d057a969558c',
+    'web/scripts/owner-today-https.mjs': 'e800f8a65d3fdc19152ff08552ef8b3ab1cd642a',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -435,9 +435,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/macro-result-details.test.cjs': 'b2bcdb290db61a0ef8d8ffcd090a55e5020e10a1',
     'web/scripts/margin-dynamics.test.cjs': '52f4a8dbd70faada9c31f80446594dbebb68a9da',
     'web/scripts/market-brief-response.test.cjs': '64be553e97cb0820761dfd7aafd3db1799586735',
-    'web/src/components/chart/JapanMarketComparisonChart.css': 'ed4a3479e60375c21f67e0cb40680a658baac18d',
+    'web/src/components/chart/JapanMarketComparisonChart.css': '82ec2764075ee45b629725c14cd344945bc83b1a',
     'web/src/components/chart/JapanMarketComparisonChart.tsx': 'bbe7754e5cc7a099fb5a60f5d2f7343f268d6530',
-    'web/src/components/chart/JapanMarketComparisonPanel.tsx': 'fc98eb651b59802834eeb76e7146f625eb5ae58f',
+    'web/src/components/chart/JapanMarketComparisonPanel.tsx': 'ec4a2b7473985bd18e20db325130173b080fce75',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': 'bf645a5a2e4ef7c48b9391df5a8f8d645f3ea64d',
     'web/src/components/dashboard/MacroResultDetails.tsx': '8428449ded5e6b9eab7ac4bd72983a40d500ed77',

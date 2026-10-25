@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useFutureLines } from '../../hooks/useFutureLines';
-import { LINE_LABEL, MEASURE_LABEL, dayNumber, linesFrame, pathPoints, type FutureLinesDoc, type LineId, type LineRecord } from '../../lib/futureLines';
+import { LINE_LABEL, MEASURE_LABEL, dayNumber, linesFrame, nextTurn, pathPoints, scoreJa, type FutureLinesDoc, type LineId, type LineRecord } from '../../lib/futureLines';
 import './NikkeiResearchChart.css';
 import './FutureLinesChart.css';
 
@@ -49,7 +49,6 @@ export function FutureLinesChartView({ doc }: { doc: FutureLinesDoc }) {
   const latest = frame.shown.filter(s => s.latest);
   const lastClose = frame.closes.at(-1);
   return <div className="nr-chart fl-chart" ref={ref} data-argus-contract="future-lines-chart-v1">
-    <p className="nr-note">白＝動画の予想線・機械1＝2018年の同じ月日・機械2＝直近の山谷の間隔（毎週土曜に記録）</p>
     {!latest.length && <p role="status">記録なし</p>}
     <div className="nr-plot-wrap"><svg viewBox={`0 0 ${width} ${bottom + 32}`} role="img" aria-label={`日経平均の終値と${ids.map(i => LINE_LABEL[i]).join('・')}`}>
       {frame.multiples.map(m => <g key={m} className="nr-per-label"><line x1={left} x2={right + 4} y1={y(frame.eps! * m)} y2={y(frame.eps! * m)} />
@@ -63,27 +62,39 @@ export function FutureLinesChartView({ doc }: { doc: FutureLinesDoc }) {
       {frame.shown.filter(s => !s.latest).map((s, i) => <path key={`old-${s.id}-${i}`} className={`fl-line fl-${s.id} is-old`} d={line(pathPoints(s.line, frame.closes))} />)}
       {latest.map(s => <g key={s.id} className={`fl-${s.id}`}>
         <path className="fl-line" d={line(pathPoints(s.line, frame.closes))} />
-        {s.line.points.map((p, i) => <g key={i}><circle className="fl-point" cx={x(p.date)} cy={y(p.price)} r={3.5} />
-          <text className="fl-point-label" x={x(p.date)} y={p.kind === 'H' ? y(p.price) - 7 : y(p.price) + 14} textAnchor="middle">{KIND[p.kind]} {md(p.date)}</text></g>)}
+        {/* 2026-10-25 (owner): one labelled line keeps the chart readable; the
+            table below names every line's next turning point. */}
+        {s.line.points.map((p, i) => <g key={i}><circle className="fl-point" cx={x(p.date)} cy={y(p.price)} r={s.id === 'commentator' ? 3.5 : 2.5} />
+          {s.id === 'commentator' && <text className="fl-point-label" x={x(p.date)} y={p.kind === 'H' ? y(p.price) - 7 : y(p.price) + 14} textAnchor="middle">{KIND[p.kind]} {md(p.date)}</text>}</g>)}
       </g>)}
       {months(frame.start, frame.end).map(m => <g key={m} className="nr-grid"><line x1={x(m)} x2={x(m)} y1={top} y2={bottom} />
         <text x={x(m) + 2} y={bottom + 12}>{Number(m.slice(5, 7))}月</text></g>)}
       {lastClose && <><line className="nr-today" x1={x(lastClose.date)} x2={x(lastClose.date)} y1={top} y2={bottom} />
         <text className="nr-today-label" x={x(lastClose.date)} y={bottom + 24} textAnchor="middle">{md(lastClose.date)}の終値まで</text></>}
     </svg></div>
-    <div className="nr-legend"><span className="nr-key-price">日経平均・終値</span>
-      {ids.map(id => <span key={id} className={`fl-key fl-${id}`}>{LINE_LABEL[id]}（太線=最新・細線=前の週）</span>)}
-      {wave && <span>波動の公開予想：目標と崩れの水準</span>}</div>
-    <div className="fl-points">{latest.map(s => <p key={s.id}><b className={`fl-${s.id}`}>{LINE_LABEL[s.id]}</b>（{md(s.line.rec)}の大引けまでで記録）：
-      {s.line.points.map(p => `${KIND[p.kind]} ${md(p.date)} ${yen(p.price)}円`).join(' → ')}</p>)}
-      {wave && <p><b>波動の公開予想</b>（{md(wave.pub)}の記事）：{wave.dir === 'up' ? '上向き' : '下向き'}・目標 {yen(wave.target)}円・崩れ {yen(wave.stop)}円 → {wave.result === 'pending' ? '判定待ち' : wave.result === 'reach' ? '届いた' : wave.result === 'stop' ? '崩れた' : '期限切れ'}</p>}
-    </div>
-    {ids.map(id => <RecordTable key={id} id={id} record={doc.record[id]} retro={doc.retroRecord[id]} />)}
-    {<p className="nr-note">{doc.record.wave && doc.record.wave.records
-      ? `波動の公開予想の成績（目標に崩れより先に届いたか）：届いた ${doc.record.wave.reach}/${doc.record.wave.n}・判定待ち ${doc.record.wave.pending}（記録 ${doc.record.wave.records}件）`
-      : '波動の公開予想：記録なし'}</p>}
-    <p className="nr-note">2010〜2025年の検証：日付の当たりは機械1・機械2ともでたらめと同じ</p>
-    <p className="nr-note">記録 {doc.updatedAt.slice(0, 16).replace('T', ' ')}・価格 {md(doc.dataEnd)}まで</p>
+    <div className="nr-legend"><span className="nr-key-price">日経平均</span>
+      {ids.map(id => <span key={id} className={`fl-key fl-${id}`}>{LINE_LABEL[id]}</span>)}
+      {wave && <span>波動の目標・崩れ</span>}</div>
+    {latest.length > 0 && <div className="fl-next" data-argus-contract="future-lines-next-v1">
+      <p className="nr-note">次の転換点（{md(latest[0].line.rec)}の終値まで・毎週土曜に更新）</p>
+      <table><thead><tr><th>線</th><th>次</th><th>目安</th><th>成績</th></tr></thead>
+        <tbody>{latest.map(s => { const next = nextTurn(s.line, [doc.dataEnd, lastClose?.date ?? ''].sort().at(-1)!); return <tr key={s.id}>
+          <td><b className={`fl-${s.id}`}>{LINE_LABEL[s.id]}</b></td>
+          <td>{next ? `${KIND[next.kind]} ${md(next.date)}` : '―'}</td><td>{next ? `${yen(next.price)}円` : '―'}</td>
+          <td className="fl-score">{scoreJa(doc.record[s.id])}</td></tr>; })}</tbody></table>
+      {wave && <p className="nr-note">波動の公開予想（{md(wave.pub)}）：{wave.dir === 'up' ? '上向き' : '下向き'}・目標 {yen(wave.target)}円・崩れ {yen(wave.stop)}円 → {wave.result === 'pending' ? '判定待ち' : wave.result === 'reach' ? '届いた' : wave.result === 'stop' ? '崩れた' : '期限切れ'}</p>}
+    </div>}
+    <details className="fl-details"><summary>線の全部の点・成績の詳しい見方</summary>
+      <div className="fl-points">{latest.map(s => <p key={s.id}><b className={`fl-${s.id}`}>{LINE_LABEL[s.id]}</b>（{md(s.line.rec)}の大引けまでで記録）：
+        {s.line.points.map(p => `${KIND[p.kind]} ${md(p.date)} ${yen(p.price)}円`).join(' → ')}</p>)}</div>
+      <p className="nr-note">動画の線＝動画で示された予想の線・2018年の暦＝2018年の同じ月日の山谷・山谷の間隔＝直近の山谷の間隔。太線が最新、細線が前の週。</p>
+      {ids.map(id => <RecordTable key={id} id={id} record={doc.record[id]} retro={doc.retroRecord[id]} />)}
+      <p className="nr-note">{doc.record.wave && doc.record.wave.records
+        ? `波動の公開予想の成績（目標に崩れより先に届いたか）：届いた ${doc.record.wave.reach}/${doc.record.wave.n}・判定待ち ${doc.record.wave.pending}（記録 ${doc.record.wave.records}件）`
+        : '波動の公開予想：記録なし'}</p>
+      <p className="nr-note">2010〜2025年の検証：日付の当たりは2018年の暦・山谷の間隔ともでたらめと同じ</p>
+      <p className="nr-note">記録 {doc.updatedAt.slice(0, 16).replace('T', ' ')}・価格 {md(doc.dataEnd)}まで</p>
+    </details>
   </div>;
 }
 
