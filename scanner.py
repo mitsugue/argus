@@ -17704,6 +17704,14 @@ def _market_brief_text_complete(previous):
     return previous.get("unifiedStatus") == "GENERATED"
 
 
+_MARKET_BRIEF_ATTEMPTS_PER_DUE = 2
+
+
+def _market_brief_due_key(decision):
+    return "|".join([str(decision.get("kind")), str(decision.get("slot")),
+                     ",".join(sorted(str(e) for e in decision.get("eventIds") or []))])
+
+
 def _market_brief_due(previous):
     """The schedule decision, plus one layout retry for an edition whose text
     was accepted but whose presentation was not.
@@ -17714,7 +17722,18 @@ def _market_brief_due(previous):
     each). Its text now stands until the next update time; the layout is
     retried once per edition."""
     decision = _market_brief_schedule_decision(previous)
-    if decision["due"] or previous.get("presentationStatus") == "GENERATED":
+    if decision["due"]:
+        # 2026-10-25 (owner: 無駄な動きの総点検): a failed generation kept the
+        # same update time due and was retried every 2-30 minutes without end
+        # (one or two model calls each). One update time or release now gets
+        # at most _MARKET_BRIEF_ATTEMPTS_PER_DUE attempts; the saved edition
+        # stands until the next one.
+        key = _market_brief_due_key(decision)
+        failed = _MARKET_BRIEF_SCHEDULE.get("failedAttempts") or {}
+        if failed.get("key") == key and int(failed.get("count") or 0) >= _MARKET_BRIEF_ATTEMPTS_PER_DUE:
+            return {**decision, "due": False, "reason": "attempts_exhausted"}
+        return decision
+    if previous.get("presentationStatus") == "GENERATED":
         return decision
     edition = (previous.get("aiDiagnostics") or {}).get("completedAt") or previous.get("generatedAt")
     state = _MARKET_BRIEF_SCHEDULE
@@ -18893,6 +18912,12 @@ def _market_brief_refresh(allow_ai=True):
         # Freeze the engine output before asking the model. Later input updates
         # create another record; the original calculation is never recomputed.
         brief = _memory_operation_run("internal", "brief.ai_polish", _market_brief_ai_polish, brief)
+        if brief.get("unifiedStatus") != "GENERATED" and decision.get("kind") != "NO_PREVIOUS":
+            key = _market_brief_due_key(decision)
+            failed = _MARKET_BRIEF_SCHEDULE.get("failedAttempts") or {}
+            _MARKET_BRIEF_SCHEDULE["failedAttempts"] = {
+                "key": key, "count": (int(failed.get("count") or 0) if failed.get("key") == key else 0) + 1,
+                "at": _ai_now_iso()}
         if brief.get("unifiedStatus") == "GENERATED":
             brief["lastSuccessfulAiAt"] = (brief.get("aiDiagnostics") or {}).get("completedAt")
             _MARKET_BRIEF["aiFactsHash"] = facts_hash
@@ -52413,28 +52438,25 @@ def _residency_ai_tick():
     decision path is created here."""
     try:
         nowt = time.time()
-        if nowt - _LAST_INTEL_REFRESH[0] > 600:      # free public RSS; ≤ every 10 min
+        # 2026-10-25 (owner: 無駄な動きの総点検): the same public feeds are also
+        # collected every 30 minutes by the resident intel tick and caos-scan.
+        # The extra 10-minute pass now runs only while a market is open. The
+        # research-mission results it also computed were written to a store
+        # nothing reads, and the legacy buy-candidate model call fed no screen;
+        # both are no longer run here (the manual routes stay).
+        in_session = _jp_market_open() or _us_market_open()
+        if in_session and nowt - _LAST_INTEL_REFRESH[0] > 600:      # free public RSS
             _LAST_INTEL_REFRESH[0] = nowt
             try:
                 collect_institutional_intel()
             except Exception:
                 pass
-            try:
-                _dispatch_research_missions(nowt)     # deterministic (free) — runs off-hours too
-            except Exception:
-                pass
-        if not (_jp_market_open() or _us_market_open()):
+        if not in_session:
             return                                    # only spend AI budget in-session
         allowed, _info, _code = _ai_run_gate(force=False)   # budget + interval + daily cap
         if not allowed:
             return
         _execute_ai_judgment(run_mode="scheduled", checker="flash")
-        try:
-            # Route-name compatibility only: this is EVIDENCE_ONLY and does not
-            # persist, push, notify, or append a final-action prediction.
-            _buy_candidates_generate()
-        except Exception:
-            pass
     except Exception as e:
         add_log(f"[residency] AI tick failed: {type(e).__name__}")
 

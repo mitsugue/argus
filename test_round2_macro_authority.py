@@ -124,7 +124,8 @@ def test_scheduled_ai_candidate_route_is_non_persistent_evidence_only():
     assert "_BUY_CANDIDATES_FILE" not in scanner_source
     assert "_buy_candidates_restore" not in scanner_source
     assert 'skipped["authorityRole"] = LEGACY_DECISION_AUTHORITY_ROLE' in route
-    assert "EVIDENCE_ONLY" in resident
+    # 2026-10-25: the resident tick no longer runs the legacy candidates at all.
+    assert "_buy_candidates_generate(" not in resident
 
 
 def test_scanner_has_no_primary_stance_import_or_counter_vote():

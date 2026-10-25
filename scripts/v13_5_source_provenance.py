@@ -138,7 +138,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_provider_decision_authority_closure.py': 'a97c3d3b9272a3fceca1bd02c9200f59ed3194b7',
     'test_legacy_provider_source_authority.py': 'a10bedba576ceb32616133c773d2bb3fbbdb4f0f',
     'scripts/deep_memory_attribution_probe.py': '5dbd30561d196fb11931526feebe0d70e49d9094',
-    'test_round2_macro_authority.py': '445ffe50846f4dd6be3be8b8d870366c8cbacaaa',
+    'test_round2_macro_authority.py': '6221552476178b2dc2a256f93c24dc23e66fc7c0',
     'test_watch_quote_decision_authority.py': '2835f4173027dd48495d17e17bdba077f56eb83a',
     # Visible-page polling policy (owner 2026-09-28): exact reviewed hook
     # contents; cadence constants live in web/src/lib/pollingPolicy.ts.
