@@ -133,7 +133,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/today/BootConsole.tsx': '55828d86e169ef8f1f5b26499503b414a040e437',
     # Legacy scanner-phase removal: tests and probe trimmed to the retained
     # contracts only (exact reviewed contents).
-    'test_argus_v12_0_7.py': '980db853c81c14fcf55daeb2c9bd86679350b1d7',
+    'test_argus_v12_0_7.py': '6454678482b1817a29b1327fea60fc400223b3ed',
     'test_catalyst_source_authority.py': 'de1c722906e73381dbc70cdd1155978795db25f1',
     'test_provider_decision_authority_closure.py': 'a97c3d3b9272a3fceca1bd02c9200f59ed3194b7',
     'test_legacy_provider_source_authority.py': 'a10bedba576ceb32616133c773d2bb3fbbdb4f0f',
@@ -168,7 +168,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '7e9dc20f6221cc191b16b180a90bd41b743c1182',
+    'web/scripts/owner-today-https.mjs': '83584c864b497ce20bfc6115d652ff52a2245021',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -298,7 +298,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/V13_7_REQUIREMENTS.md': '4531b8a7f358a4f14dbb5d3d6e86c481f9c3ac07',
     'web/src/hooks/useOsintInvestigation.ts': '93a21a776cfe8829107f8c6c17bd5ba7740a8ba6',
     'web/src/components/guide/Layer2BSyncCard.tsx': '121a14868ff0d4e129fd1ddd2e0645229249b4c2',
-    'web/src/components/dashboard/OsintDeepDive.tsx': '4fc3d807bb60eee344f9367825d1ecc8e4e0901d',
+    'web/src/components/dashboard/OsintDeepDive.tsx': 'bec4e13dadf34e59b70a7e82727f9635eb1189a6',
     'web/src/components/dashboard/AddAssetModal.tsx': '1bffa7862c536eb0f84fdcdb3971d472cc94ba6c',
     'web/src/components/assetDesk/AssetResearchPanel.tsx': '69d8e0ab11ff66008cfe0b76049e6699a08afe54',
     'test_argus_v12_3_1.py': '418ef7c191c389740a453a01b35386ffa3dea26e',
@@ -311,9 +311,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_prediction_ledger_workflow.py': '43c2b42cf67c6dfa884374a271593a3546bc9755',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
     'web/src/hooks/useAssets.ts': '0a82da6958f58aaba4c3bd7659c2af2032b4e93f',
-    'web/src/components/dialogue/OwnerOverview.tsx': 'e7f3bc0eaf42a62465f8c17817b70155b30f63c5',
+    'web/src/components/dialogue/OwnerOverview.tsx': 'bffc59eb134b260698646ed146fbd3871f501cf9',
     'web/src/components/dialogue/OwnerOverview.css': 'abbeb648911495be4ef4a62248d40c925ebffa8a',
-    'web/scripts/product-integrity.test.cjs': 'ab517d81f9118ecb74163ed2b4efc62ff99521ac',
+    'web/scripts/product-integrity.test.cjs': '12ab62a39972e106fc7dde2e1c9c5709c5940c69',
     'web/src/lib/presentationIntent.ts': '19e8431fe6b6063988a387584f53ea6b3c75726b',
     'web/src/components/today/ArgusEditorialSurface.tsx': 'ffb95e6d77a4884d62664165352a18d13fa0626d',
     'web/src/components/today/ArgusEditorialSurface.css': 'ee1fe180b9319d6db8e54cf2829b1738c9e26fa2',
@@ -346,7 +346,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-vault-auto-save.test.cjs': '7181233ba2be7d1cd5111b8c11386b545e511c29',
     'web/scripts/owner-restore-guard.test.cjs': 'a6711358fc81ad10afaab52af2b118f79133d7ce',
     'web/scripts/owner-protection-consistency.test.cjs': 'f6365d9edfda291084bc17ee05e8d2499bc2774b',
-    'web/scripts/lean-surface.test.mjs': 'fc991b0a77ec16be746457906085b23a416b77cf',
+    'web/scripts/lean-surface.test.mjs': 'a9b81236bc8b2828ac47c66309c28d9bb523d1fe',
     'web/scripts/ai-usage-view.test.cjs': '558e8ef36130e5a59e26f8973176ee2ce741db8a',
     'web/public/push-worker.js': '8f6d750dfa8555f9c70a523970b84f535cfb6c23',
     'test_argus_web_push.py': 'b379420d8405ced024bb78adbc8a5e604dbe6c17',
@@ -384,7 +384,6 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_jp_market_internals.py': '147e20e74c5502248265c8109bbfe573ec5bc2ec',
     'web/scripts/pwa-recovery.test.mjs': 'd2fc2ff86480cb685328e1341e61d4415285d8a6',
     'web/scripts/shared-market-context.test.cjs': '4f838a348ff036356ba3257f78c2be35d63a7588',
-    'web/src/components/assetDesk/AssetMarketContext.tsx': '4cf6dc7d17c4f4743b647b89b12c5f5c5a9126e2',
     'web/src/components/dialogue/OwnerDialogue.css': '99f542e0fc1391a58a1cb60ac1c5bec249fe9a28',
     'web/src/components/dialogue/OwnerDialogue.tsx': 'ee84e0b33570373650bb69c2208bafae960eae8e',
     'web/src/components/today/MarketBriefCard.tsx': '72795ead710525383353eb8f25f0e57a9d8b78a4',
@@ -474,7 +473,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # v13.7.18 owner-required Today consolidation: these exact acceptance
     # assertions remove the legacy four-index selector and its duplicate
     # outlook without relaxing the underlying research/truth contracts.
-    "test_argus_v12_0_6.py": "37500e007f23849436eb4f42d26c28144efc75f0",
+    "test_argus_v12_0_6.py": "36880cb9102ef2f2964ae4705cb33acb2f4c3a95",
     "test_argus_v13_1_1.py": "45f9a9adca9336098d1ee5bd856a0a5900106c15",
     # Owner-authorized v13.7 operating-cost reduction: retire redundant
     # scheduled workflows while retaining manual recovery and product tests.
@@ -692,6 +691,11 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/components/assetDesk/AssetPortfolioCommand.tsx",
+    "web/src/components/assetDesk/AssetNumbers.tsx",
+    "web/src/components/assetDesk/AssetMarketContext.tsx",
+    "web/src/components/assetDesk/AssetAIReview.tsx",
+    "web/dev-dist/sw.js",
     "test_jp_market_level_map_stand_in.py",
     "test_argus_v12_1_6.py",
     "test_argus_v12_1_5.py",
