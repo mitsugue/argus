@@ -170,7 +170,8 @@ def test_migrated_features_present():
     research = _read("components", "assetDesk", "AssetResearchPanel.tsx")
     assert "saveNote" in research and "getNote" in research
     assert "buildReviewPackMarkdown" not in research
-    assert "OsintDeepDive" in research and "decisionHistoryFor" in research
+    assert "decisionHistoryFor" in research
+    assert "<OsintDeepDive" in _read("components", "assetDesk", "AssetDecisionCard.tsx")
     # Quantity entry was retired with holdings management (2026-10-02).
     assert not os.path.exists(os.path.join(WEB, "components", "assetDesk", "AssetPositionPanel.tsx"))
     # 旧Todayカードのセクション

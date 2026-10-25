@@ -7,7 +7,7 @@ import { OWNER_SYNC_TOKEN_KEY } from '../lib/watchlistAutoSync';
 
 export interface OsintVerifiedSource {
   titleJa: string; url?: string | null; sourceName?: string | null;
-  publishedAt?: string | null; primaryEligible?: boolean;
+  publishedAt?: string | null; primaryEligible?: boolean; directness?: string | null;
 }
 
 export interface OsintInvestigation {
@@ -20,7 +20,7 @@ export interface OsintInvestigation {
 
 export interface OsintOwnerRequest {
   running: boolean; requestedToday: boolean; remainingToday: number;
-  completedAt?: string | null; complete?: boolean | null;
+  completedAt?: string | null; complete?: boolean | null; failureReason?: string | null;
 }
 
 export type OsintRequestError =
@@ -33,7 +33,7 @@ const POLL_MS = 15_000;
 
 const ownerKey = () => { try { return localStorage.getItem(OWNER_SYNC_TOKEN_KEY) || ''; } catch { return ''; } };
 
-export function useOsintInvestigation(symbol: string, market: string) {
+export function useOsintInvestigation(symbol: string, market: string, name?: string) {
   const [state, setState] = useState<State>({ inv: null, loading: true, error: false,
     owner: null, requestError: null });
   const backend = (import.meta.env.VITE_ARGUS_BACKEND_URL as string | undefined)?.replace(/\/$/, '');
@@ -71,18 +71,19 @@ export function useOsintInvestigation(symbol: string, market: string) {
     try {
       const r = await fetch(`${backend}/api/argus/osint/research-request`, {
         method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol, market, ownerToken: key }), signal: AbortSignal.timeout(12000) });
+        body: JSON.stringify({ symbol, market, name, ownerToken: key }), signal: AbortSignal.timeout(12000) });
       if (r.status === 401 || r.status === 403) { setState((s) => ({ ...s, requestError: 'bad_key' })); return; }
       const d = await r.json() as { status?: string } & Partial<OsintOwnerRequest>;
       const owner: OsintOwnerRequest = { running: !!d.running, requestedToday: !!d.requestedToday,
-        remainingToday: d.remainingToday ?? 0, completedAt: d.completedAt ?? null, complete: d.complete ?? null };
+        remainingToday: d.remainingToday ?? 0, completedAt: d.completedAt ?? null, complete: d.complete ?? null,
+        failureReason: d.failureReason ?? null };
       const failure = (['daily_limit', 'already_today', 'ai_stopped'] as const)
         .find((code) => code === d.status) ?? (d.status === 'started' || d.status === 'running' ? null : 'failed');
       setState((s) => ({ ...s, owner, requestError: failure }));
     } catch {
       setState((s) => ({ ...s, requestError: 'failed' }));
     }
-  }, [backend, symbol, market]);
+  }, [backend, symbol, market, name]);
 
   return { ...state, reload: load, research };
 }

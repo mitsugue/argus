@@ -23308,6 +23308,12 @@ def _osint_profile(symu, market="JP"):
                 break
     except Exception:
         pass
+    if name_ja == symu:
+        # 2026-10-25: a stock on the owner's device list is absent from the
+        # server snapshot; without its name the search only had the code.
+        name_ja = (_OSINT_NAME_HINTS.get(symu)
+                   or (_jq_name_for(symu, allow_provider_fetch=False)
+                       if market == "JP" else "") or symu)
     themes = []
     for tname, members in _DOWNSIDE_THEMES.items():
         if symu in members:
@@ -23332,6 +23338,8 @@ _OSINT_STORE_MAX = 24
 _OSINT_AGENT_QUEUE = {}           # SYM -> {market, mode, privacyMode, queuedAt}
 _OSINT_QUEUE_MAX = 12
 _OSINT_TERM_OVERLAY = {}          # SYM -> [terms] (owner貼り戻しの探索語拡張・有界)
+_OSINT_NAME_HINTS = {}            # SYM -> 画面が送った銘柄名(「調べる」ボタン・有界)
+_OSINT_NAME_HINTS_MAX = 60
 _OSINT_LAST = {"deepAt": None, "agentsAt": None, "agentsStatus": None}
 _OSINT_CANARY_LAST = {"data": None, "at": None}
 _OSINT_CANARY_TOPICS = [
@@ -31932,6 +31940,27 @@ def _osint_pool_items(cap=400):
     return pool
 
 
+_OSINT_GENERIC_TOKENS = frozenset((
+    "stock", "stocks", "news", "ニュース", "影響", "懸念", "採算", "競合"))
+
+
+def _osint_match_tokens(query, limit, symu):
+    out = []
+    for tok in str(query).lower().split()[:limit]:
+        if tok in _OSINT_GENERIC_TOKENS or tok == symu.lower() or tok.isdigit() \
+                or len(tok) < 2:
+            continue
+        out.append(tok)
+    return out
+
+
+def _osint_token_hit(tok, title_lower):
+    if tok.isascii():
+        return re.search(r"(?<![a-z0-9])" + re.escape(tok) + r"(?![a-z0-9])",
+                         title_lower) is not None
+    return tok in title_lower
+
+
 def _osint_retrieve(symu, market, plan):
     """決定論収集: 銘柄の cause-attribution ニュース + プール内のクエリ語ヒット。
     fetchなし(cached-only) — 公開POSTから呼ばれても安全。"""
@@ -31957,16 +31986,23 @@ def _osint_retrieve(symu, market, plan):
         flow_hint = None
     # プール内クエリヒット(テーマ/バリューチェーン/海外)
     pool = _osint_pool_items()
-    vs = [w.lower() for w in (plan.get("valueChain") or []) + (plan.get("globalCatalyst") or [])]
+    # 2026-10-25: a stock with no theme matched every pool headline through the
+    # shared AI terms and "<code> stock news" ("ai" inside "proclaimed",
+    # "stock" in any market story). The shared terms now apply only to a stock
+    # with a value chain, and a token must be a whole word that names something.
+    vchain = plan.get("valueChain") or []
+    vs = [w.lower() for w in vchain + ((plan.get("globalCatalyst") or []) if vchain else [])]
     ss = [w.lower() for w in (plan.get("sector") or [])]
+    vt = [_osint_match_tokens(q, 2, symu) for q in vs[:12]]
+    st_ = [_osint_match_tokens(q, 1, symu) for q in ss[:8]]
     seen = set()
     for it in pool:
         t = str(it.get("titleJa") or it.get("title") or "")
         tl = t.lower()
         if not t or t in seen:
             continue
-        hit_v = any(any(tok in tl for tok in q.split()[:2]) for q in vs[:12]) if vs else False
-        hit_s = any(any(tok in tl for tok in q.split()[:1]) for q in ss[:8]) if ss else False
+        hit_v = any(_osint_token_hit(tok, tl) for toks in vt for tok in toks)
+        hit_s = any(_osint_token_hit(tok, tl) for toks in st_ for tok in toks)
         if not (hit_v or hit_s):
             continue
         seen.add(t)
@@ -32110,6 +32146,9 @@ def _gemini_osint(prompt, benchmark=False, model_override=None,
         return None, "failed"
 
 
+_OSINT_SCOUT_MAX_OUTPUT = 8000
+
+
 def _gpt_osint(prompt, benchmark=False, diagnostic_context=None):
     """GPT scout(web_search付き・admin経路のみ)。"""
     if not _OPENAI_API_KEY:
@@ -32133,8 +32172,20 @@ def _gpt_osint(prompt, benchmark=False, diagnostic_context=None):
                             "providerResponseStatus")})
                 return None, "failed"
         else:
-            txt, execution = _openai_research(full_prompt), None
+            # 2026-10-25: the owner's first presses failed. A searched scout
+            # answer is a JSON list of sources; the shared 2,000-token output
+            # is spent on search and reasoning before the JSON is written
+            # (same as the 2026-10-24 N-19 run).
+            txt, execution = _openai_research_ex(
+                full_prompt, role="standard", max_output=_OSINT_SCOUT_MAX_OUTPUT)
+            if execution.get("status") != "ok":
+                txt = None
         if not txt:
+            if isinstance(diagnostic_context, dict):
+                diagnostic_context.update({
+                    "status": "failed",
+                    "errorClass": (execution or {}).get("failureReasonRedacted")
+                    or (execution or {}).get("status") or "no_text"})
             return None, "failed"
         out, warns = argus_osint_engine.parse_scout_output(txt)   # v12.1.1 頑健パーサ
         out["parserWarnings"] = warns
@@ -32763,9 +32814,12 @@ def _osint_agents_worker(syms):
                 prompt = argus_osint_engine.build_scout_prompt(
                     prov, prof, plan, move_pct=None,
                     privacy_mode=meta["privacyMode"])
-                out, status = caller(prompt)
+                diag = {}
+                out, status = caller(prompt, diagnostic_context=diag)
                 run_rec = _osint_agent_run(prov, status, out, now_iso,
                                            meta["privacyMode"])
+                if status != "ok" and diag.get("errorClass"):
+                    run_rec["failureReasonRedacted"] = str(diag["errorClass"])[:80]
                 runs.append(run_rec)
                 if status == "ok":
                     _osint_autopilot_mark(sym, f"scout_{prov}")
@@ -33015,7 +33069,8 @@ def _osint_owner_status(sym):
                 "requestedToday": sym in _OSINT_OWNER["symbols"],
                 "remainingToday": max(0, _OSINT_OWNER_DAILY_MAX - len(_OSINT_OWNER["symbols"])),
                 "completedAt": row.get("completedAt"),
-                "complete": row.get("complete")}
+                "complete": row.get("complete"),
+                "failureReason": row.get("failureReason")}
 
 
 def _osint_owner_saved_investigation(sym):
@@ -33034,21 +33089,28 @@ def _osint_owner_runner():
             sym, market = _OSINT_OWNER["pending"].pop(0)
             _OSINT_OWNER["running"] = sym
         requested_at = _ai_now_iso()
+        failure = None
         try:
             _OSINT_AGENT_QUEUE[sym] = {"market": market, "mode": "deep",
                                        "privacyMode": "redacted", "queuedAt": requested_at}
             _osint_agents_worker([sym])
             complete = (_OSINT_PROGRESS.get(sym) or {}).get("stage") == "complete"
+            if not complete:
+                failure = next((str(run.get("failureReasonRedacted") or run.get("status"))
+                                for run in ((_OSINT_STORE.get(sym) or {}).get("agentRuns") or [])
+                                if run.get("provider") == "gpt" and run.get("status") != "ok"),
+                               str((_OSINT_PROGRESS.get(sym) or {}).get("stage") or "failed"))
         except Exception as exc:
             add_log(f"[osint] owner request failed: {type(exc).__name__}")
             complete = False
+            failure = type(exc).__name__[:80]
         with _OSINT_OWNER_LOCK:
             inv = _OSINT_STORE.get(sym)
             if inv is not None:
                 _OSINT_OWNER["results"][sym] = {
                     "investigation": _public_osint_investigation(inv),
                     "requestedAt": requested_at, "completedAt": _ai_now_iso(),
-                    "complete": complete}
+                    "complete": complete, "failureReason": failure}
                 while len(_OSINT_OWNER["results"]) > _OSINT_OWNER_RESULTS_MAX:
                     oldest = min(_OSINT_OWNER["results"], key=lambda key: str(
                         _OSINT_OWNER["results"][key].get("completedAt") or ""))
@@ -33077,6 +33139,7 @@ def api_argus_osint_research_request():
     if market not in ("JP", "US") or not _OSINT_OWNER_SYMBOL_RE.match(sym) \
             or (market == "JP") != sym[:1].isdigit():
         return jsonify({"ok": False, "status": "invalid"}), 400
+    name = re.sub(r"[\x00-\x1f<>]", "", str(body.get("name") or "")).strip()[:40]
     skipped = _scheduled_ai_skip("openai", "osint_research")
     if skipped:
         return jsonify({"ok": False, "status": "ai_stopped",
@@ -33097,6 +33160,10 @@ def api_argus_osint_research_request():
             status = "started"
             _OSINT_OWNER["symbols"].append(sym)
             _OSINT_OWNER["pending"].append((sym, market))
+            if name and name != sym:
+                _OSINT_NAME_HINTS[sym] = name
+                while len(_OSINT_NAME_HINTS) > _OSINT_NAME_HINTS_MAX:
+                    _OSINT_NAME_HINTS.pop(next(iter(_OSINT_NAME_HINTS)))
             _OSINT_PROGRESS[sym] = {"stage": "queued_for_agents", "loop": 0,
                                     "maxLoops": 0, "notesJa": [], "at": _ai_now_iso()}
             start = _OSINT_OWNER["running"] is None and len(_OSINT_OWNER["pending"]) == 1

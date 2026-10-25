@@ -13,6 +13,7 @@ import { AssetScenarioPanel } from './AssetScenarioPanel';
 import { AssetResearchPanel } from './AssetResearchPanel';
 import { AssetDataQuality } from './AssetDataQuality';
 import { AssetEvidenceSummary } from './AssetEvidenceSummary';
+import { OsintDeepDive } from '../dashboard/OsintDeepDive';
 import '../dashboard/UnifiedAssetCard.css';
 import '../dashboard/Dashboard.css';
 import './AssetDesk.css';
@@ -84,6 +85,11 @@ export const AssetDecisionCard: React.FC<Props> = ({
       <AssetDecisionSummary d={d} open={open} onToggle={onToggle} interactive={collapsible} />
       {open && (
         <div className="uac-body ad-expanded">
+          {/* 2026-10-25 (owner): 「調べる」は銘柄を開いてすぐの場所に置く。 */}
+          {(d.asset.market === 'JP' || d.asset.market === 'US') && (
+            <OsintDeepDive symbol={sym} market={d.asset.market}
+              name={d.asset.displayNameJa ?? d.asset.displayName} />
+          )}
           <div className="ad-tabs" role="tablist" aria-label={`${sym} 詳細`}>
             {TABS.map((item) => (
               <button key={item.id} type="button" role="tab"

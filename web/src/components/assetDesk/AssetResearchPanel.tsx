@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import type { DeskCardData } from './types';
 import { getNote, saveNote } from '../../lib/researchNotes';
-import { OsintDeepDive } from '../dashboard/OsintDeepDive';
 import { decisionHistoryFor } from '../../lib/decisionQuality';
 import { pastPatternLineJa } from '../../lib/learningReview';
 
@@ -28,9 +27,6 @@ export const AssetResearchPanel: React.FC<{
         {noteSaved && <span className="asset-detail__note-saved">✓ 保存</span>}
       </div>
 
-
-      {/* v12.1.0: マルチエージェントOSINT(計画→収集→Gemini/GPT→検証→統合) */}
-      <OsintDeepDive symbol={d.asset.symbol} market={d.asset.market} held={!!d.pn?.held} />
 
       {/* 過去の記録・答え合わせ (v11.11.0) — 端末内記録の答え合わせ */}
       {hist.length > 0 && (
