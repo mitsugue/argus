@@ -57,15 +57,16 @@ assert(s.rows.find(r => r.id === 'us10y').soWhat.includes('61%'));
 assert.equal(s.tone, 'wait', 'one headwind and a soft headwind against one tailwind');
 assert.equal(s.overnightGapPct, null);
 
-// Overnight future (owner check 2026-10-03): its own record, double weight, band shifted by the gap.
+// Overnight future (2026-10-25, research step 2): measured from the open it carries no
+// direction, so it no longer leans the tone; the band still moves with the opening level.
 const night = d.decisionStrip(path, features, 2.2);
 assert.equal(night.rows[0].id, 'futures');
-assert.equal(night.rows[0].lean, 'tail');
-assert(night.rows[0].meaning.includes('86%') && night.rows[0].soWhat.includes('+4.1%'));
-assert.equal(night.tone, 'tail', 'a +2.2% night outweighs the mixed inputs');
+assert.equal(night.rows[0].lean, 'neutral');
+assert(!/86%|17%/.test(JSON.stringify(night.rows[0])), 'the previous-close record is gone');
+assert(night.rows[0].meaning.includes('寄り付きの水準の手がかり') && night.rows[0].soWhat.includes('普段と区別できません'));
+assert.equal(night.tone, s.tone, 'a big night no longer decides the tone');
 assert(Math.abs(night.band.lower - (s.band.lower + 2.2)) < 1e-9 && Math.abs(night.band.upper - (s.band.upper + 2.2)) < 1e-9);
-assert.equal(d.overnightRecord(-2.5).upPct, 17);
-assert.equal(d.overnightRecord(0.3).upPct, 57);
+assert.equal(d.overnightRecord, undefined);
 assert.equal(d.decisionStrip(path, features, 0.4).rows[0].lean, 'neutral');
 const closeAt = Date.parse('2026-10-02T06:30:00Z');
 const fut = { price: 69785, tradedAt: '2026-10-02T20:59:00Z' };

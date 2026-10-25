@@ -82,18 +82,15 @@ export const TONE_HISTORY = { since: 2012, baseUpPct: 57, upAfter: { tail: 59, h
  * The tone record above was re-measured with this row (weight 2) and the US
  * 10-year row read as neutral; it still does not beat the base rate.
  */
-export const OVERNIGHT_HISTORY = { since: 2012, baseUpPct: 57, buckets: [
-  { from: 2, to: Infinity, upPct: 86, medianPct: 4.1, n: 92 },
-  { from: 1, to: 2, upPct: 72, medianPct: 1.7, n: 396 },
-  { from: -1, to: 1, upPct: 57, medianPct: 0.4, n: 2678 },
-  { from: -2, to: -1, upPct: 34, medianPct: -1.3, n: 234 },
-  { from: -Infinity, to: -2, upPct: 17, medianPct: -1.9, n: 75 },
-] } as const;
+// 2026-10-25 (research step 2, owner: 「もっとも理にかなった方」): the old record
+// (+2% night → 86% up five days later) was measured from the previous close, so it
+// counted the overnight move itself, which the next open already prices in. Measured
+// from the ETF's open (2010-2026, 3,771 nights) no band differs from the usual rate
+// beyond chance (+2% or more: 64.5% of 107 against 55.8%). The night says where the
+// market opens; it is not a direction for the following days.
+export const OVERNIGHT_OPEN_SHARE_PCT = 90;
 /** US 10-year 5-session change of +0.15 points or more, 2012-2026 (n=293): up 61% five sessions later. */
 export const US10Y_RISE_HISTORY = { upPct: 61, n: 293, baseUpPct: 57 } as const;
-export function overnightRecord(gapPct: number) {
-  return OVERNIGHT_HISTORY.buckets.find(b => gapPct >= b.from && gapPct < b.to) ?? OVERNIGHT_HISTORY.buckets[2];
-}
 /** The momentum headline: the latest close this many standard deviations from the 20-close mean. */
 export const MOMENTUM_Z = 1.8;
 const BAND_LOWER = 1.278; const BAND_UPPER = 1.371;
@@ -139,14 +136,13 @@ export function materialRows(features: FeatureRow[], fiveDayChangePct: number | 
   const f = (id: string) => features.find(row => row.seriesId === id && finite(row.value))?.value;
   const rows: MaterialRow[] = [];
   if (overnightGapPct !== null) {
-    const record = overnightRecord(overnightGapPct);
-    rows.push({ id: 'futures', lean: overnightGapPct >= 1 ? 'tail' : overnightGapPct <= -1 ? 'head' : 'neutral',
+    rows.push({ id: 'futures', lean: 'neutral',
       title: `夜間の日経先物 終値比${pct(overnightGapPct)}`,
-      meaning: `過去に同じ程度の夜のあと、5日後に上がっていたのは${record.upPct}%(普段${OVERNIGHT_HISTORY.baseUpPct}%)。`,
-      what: '東京の取引が終わった後、米国の時間帯に取引される日経平均先物(CME)です。翌営業日の日経平均は、この差のおよそ9割をそのまま反映してきました。',
+      meaning: '寄り付きの水準の手がかり。その後の向きの材料にはなっていません。',
+      what: `東京の取引が終わった後、米国の時間帯に取引される日経平均先物(CME)です。翌営業日の寄り付きは、この差のおよそ${OVERNIGHT_OPEN_SHARE_PCT / 10}割をそのまま反映してきました。`,
       now: `前回の終値より${pct(overnightGapPct)}の水準です。`,
       soWhat: Math.abs(overnightGapPct) >= 1
-        ? `${OVERNIGHT_HISTORY.since}年以降、同じ程度の夜のあとの5営業日の値動きは中央値で${pct(record.medianPct)}(${record.n}回)。動きの大半は次の寄り付きで出ており、寄り付き後の上乗せは普段並みです。`
+        ? '寄り付きから数えると、同じ程度の夜のあとに5日後に上がっていた割合は普段と区別できません。'
         : '夜間の動きは小さく、次の寄り付きへの影響も小さい状態です。' });
   }
   const foreign = f('foreign_flow.net4w');
@@ -240,7 +236,7 @@ export function decisionStrip(actual: ComparisonPoint[] | null, features: Featur
   }
   const gap = overnightGapPct !== null && finite(overnightGapPct) ? overnightGapPct : null;
   const rows = materialRows(features, fiveDayChangePct, gap);
-  const score = rows.reduce((s, r) => s + (r.id === 'futures' ? 2 : 1)
+  const score = rows.reduce((s, r) => s + 1
     * (r.lean === 'tail' ? 1 : r.lean === 'head' ? -1 : r.lean === 'soft-head' ? -0.5 : 0), 0);
   const base = sigma === null ? null : fiveDayBand(sigma);
   const drop = sigma === null ? null : raisedAlert(sigma, dayChangePct, fiveDayChangePct);
