@@ -69,13 +69,13 @@ export function rowLabelJa(row: LevelMapRow): string {
   const same = multiples.find(m => m != null && !Number.isInteger(m)) ?? row.multiple;
   return row.kinds.map(kind => kind === 'PER_LINE' ? `${row.kinds.length > 1 ? '近接する' : ''}PER${multipleText(per)}倍線（EPS更新で動く）`
     : kind === 'SAME_MULTIPLE' ? `直前の${row.side === 'UP' ? '天井' : '底'}と同じ倍率 ${multipleText(same)}倍`
-    : kind === 'PIVOT_PRICE' ? `直前の${row.side === 'UP' ? '天井' : '底'}の価格（参考）` : '距離の目安').join(' / ');
+    : kind === 'PIVOT_PRICE' ? `直前の${row.side === 'UP' ? '天井' : '底'}の価格` : '距離の目安').join(' / ');
 }
 
 export function evidenceJa(row: LevelMapRow): string {
-  if (row.kinds.includes('SAME_MULTIPLE') && !row.kinds.includes('PER_LINE')) return '山・谷の予測力は未確認';
+  if (row.kinds.includes('SAME_MULTIPLE') && !row.kinds.includes('PER_LINE')) return '—';
   if (row.kinds.includes('PER_LINE')) return '山・谷の予測力は偶然並み（2010〜2023年）';
-  return '参考';
+  return '—';
 }
 
 export function currentLevelMap(state: LevelMapState): LevelMapRecord | null {

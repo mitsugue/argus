@@ -14,7 +14,7 @@ function IssuedForecastRecord({ record, minimum }: { record: ForecastTrackRecord
   const head = `実際に出した${record.horizonSessions}営業日後の見通しの成績：`;
   return <p className="jp-comparison__notice" data-forecast-track-record={record.status}>
     {record.status === 'INSUFFICIENT_SAMPLE'
-      ? `${head}方向を示した${record.directionalForecasts}件を採点済み。一致率は${minimum}件たまってから表示します。`
+      ? `${head}方向を示した${record.directionalForecasts}件を採点済み（${minimum}件で一致率）。`
       : `${head}方向を示した${record.directionalForecasts}件中${record.hits}件が一致（${percent(record.hitRate)}、95%信頼下限 ${percent(record.hitRateWilsonLower95)}）。`
         + `「いつも多数派の方向」と予想した場合は${percent(record.naiveMajorityRate)}で、`
         + (record.status === 'ABOVE_BASELINE' ? 'これを統計的に上回っています。'
@@ -33,8 +33,7 @@ export function fewAnalogsText(document: JapanMarketComparison): string | null {
     return `${candidate.anchorDate}${distance === null ? '' : `・距離${distance.toFixed(2)}`}`;
   });
   const limit = document.selectionPolicy ? `／上限${document.selectionPolicy.maximumDistance}` : '';
-  return `似た局面は${n}件（${items.join('、')}${limit}）。`
-    + (n === 1 ? '1件のため計算予測の線はありません。' : '');
+  return `似た局面は${n}件（${items.join('、')}${limit}）。`;
 }
 
 export function JapanMarketComparisonChart({ document }: { document: JapanMarketComparison }) {
@@ -45,7 +44,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
   // path (median of past outcomes), not an outlook, and is named as such.
   // Owner instruction 2026-10-02: always draw it; the on/off switch is gone.
   const validated = document.forecast.validationStatus === 'VALIDATED';
-  const forecastName = validated ? '計算予測' : '参考経路（過去事例の中央値）';
+  const forecastName = validated ? '計算予測' : '過去事例の中央値';
   const [showReferences, setShowReferences] = useState(true);
   const trackRecord = useForecastTrackRecord();
   const issued = trackRecord?.horizons[String(document.forecast.horizonSessions)];
@@ -180,13 +179,13 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
     {document.candidates.length > 0 && document.candidates.every(candidate => candidate.comparisonKind === 'PARTIAL_COMPARISON') &&
       <p className="jp-comparison__notice">一部の条件だけで比較</p>}
     {!document.forecast.line.length && validated && <p className="jp-comparison__notice">{noAnalogText(document) ?? (document.candidates.length === 1
-      ? `${forecastName}なし（似た局面2件以上で計算・今は1件）`
+      ? `${forecastName}なし（1件）`
       : `${forecastName}なし（事例不足）`)}</p>}
     {!validated && !document.candidates.length && noAnalogText(document) && <p className="jp-comparison__notice">{noAnalogText(document)}</p>}
     {showResearchNote && <p className="jp-comparison__notice" data-forecast-role="references-only">
       {document.forecast.validation
-        ? `方向一致率 ${document.forecast.validation.hitRate === null ? '—' : (document.forecast.validation.hitRate * 100).toFixed(0) + '%'}（いつも多数派の予想 ${document.forecast.validation.naiveMajorityRate === null ? '—' : (document.forecast.validation.naiveMajorityRate * 100).toFixed(0) + '%'}・過去10年）を上回らないため、予想の線は出していません。`
-        : '予想の線は出していません（検証待ち）。'}</p>}
+        ? `予想の線なし：方向一致率 ${document.forecast.validation.hitRate === null ? '—' : (document.forecast.validation.hitRate * 100).toFixed(0) + '%'}（いつも多数派の予想 ${document.forecast.validation.naiveMajorityRate === null ? '—' : (document.forecast.validation.naiveMajorityRate * 100).toFixed(0) + '%'}・過去10年）`
+        : '予想の線なし'}</p>}
     {issued && trackRecord && <IssuedForecastRecord record={issued} minimum={trackRecord.minimumDirectionalForecasts} />}
     <details className="jp-comparison__details"><summary>比較元と検証</summary>
       <p>{document.scaleExplanation}</p>
@@ -225,21 +224,18 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       {document.valuationEvidence && document.valuationEvidence.epsKind === 'MARKET_CAP_WEIGHTED_FORWARD_ESTIMATE' &&
         <p data-valuation-basis="argus-current-estimate">
           {document.valuationEvidence.date}のPER {valuationNumber(document.valuationEvidence.per)}倍、
-          指数EPS {valuationNumber(document.valuationEvidence.eps)}円は<b>ARGUS推計</b>。
-          取得：{new Date(document.valuationEvidence.knownAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST。
+          指数EPS {valuationNumber(document.valuationEvidence.eps)}円（推計）。
         </p>}
       {document.valuationEvidence && document.valuationEvidence.epsKind !== 'MARKET_CAP_WEIGHTED_FORWARD_ESTIMATE'
         && (document.valuationEvidence.epsKind === 'PROXY_FROM_CONSTITUENT_FORECAST_EPS'
         ? <p data-valuation-basis="argus-proxy">
           {document.valuationEvidence.date}の指数ベースPER {valuationNumber(document.valuationEvidence.per)}倍、
-          指数EPS {valuationNumber(document.valuationEvidence.eps)}円は<b>ARGUS代理値</b>。
-          取得：{new Date(document.valuationEvidence.knownAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST。
+          指数EPS {valuationNumber(document.valuationEvidence.eps)}円（代理値）。
         </p>
         : <p data-valuation-basis="official">
           {document.valuationEvidence.date}の指数ベースPER {valuationNumber(document.valuationEvidence.per)}倍、
-          終値・指数ベースPERから算出した概算EPS {valuationNumber(document.valuationEvidence.eps)}円。
-          公表EPSそのものではありません。取得：{new Date(document.valuationEvidence.knownAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST。
-          公表時刻は未確認です。<a href={document.valuationEvidence.sourceRef} target="_blank" rel="noreferrer">日経公式の算出資料</a>
+          概算EPS {valuationNumber(document.valuationEvidence.eps)}円。
+          <a href={document.valuationEvidence.sourceRef} target="_blank" rel="noreferrer">日経公式の算出資料</a>
         </p>)}
       {document.sourceAcquisition && <section aria-label="公式データの収録範囲">
         <h3>公式データの収録範囲</h3>
@@ -265,9 +261,9 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
         const v = document.forecast.validation;
         const pct = (n: number | null) => n === null ? '—' : `${(n * 100).toFixed(1)}%`;
         const reasonJa: Record<string, string> = {
-          too_few_independent_evaluations: '独立した検証件数が100件に届いていません',
-          direction_not_better_than_naive_majority: '方向の一致率が「いつも多数派の方向」という単純な予想を統計的に上回っていません',
-          band_coverage_outside_35_65_percent: '帯の中に実際の値が入った割合が目安（35〜65%）から外れています',
+          too_few_independent_evaluations: '検証100件未満',
+          direction_not_better_than_naive_majority: '単純な予想を上回らない',
+          band_coverage_outside_35_65_percent: '帯の的中が35〜65%の外',
         };
         return <section aria-label="計算予測の過去検証" data-forecast-validation={v.validationStatus}>
           <h3>この計算予測の過去検証（{document.forecast.horizonSessions}営業日後）</h3>
@@ -297,7 +293,7 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       <MaterialReactionLine research={document.forecast.materialReactionResearch} />
       <YardstickLine research={(document.forecast as Record<string, unknown>).yardstickResearch} />
       {document.forecast.signEventStudy && <p><a href="#today-seven-conditions">七条件の向き・過去成績を見る</a></p>}
-      <ul>{document.limitations.map((limitation, index) => <li key={index}>{limitation}</li>)}</ul>
+
     </details>
   </section>;
 }

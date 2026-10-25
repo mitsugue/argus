@@ -22,13 +22,14 @@ const doc=(contribution)=>({schemaVersion:'jp-market-internals-v1',evidenceId:'a
 const html=renderToStaticMarkup(React.createElement(MarketInternalsCard,{document:doc({status:'AVAILABLE',members:225,indexDeltaPoints:300.5,factorsAsOf:'2026-09-30',
  top:[{code:'8035',nameJa:'東京エレクトロン',points:120.5,pricePct:3.1}],bottom:[{code:'9984',nameJa:'ソフトバンクグループ',points:-80.25,pricePct:-2}]}),horizon:1}));
 assert.match(html,/日経平均を動かした銘柄/);assert.match(html,/8035 東京エレクトロン/);assert.match(html,/\+120\.50円/);assert.match(html,/-80\.25円/);
-assert.match(html,/225銘柄の合計と一致/);assert.doesNotMatch(html,/入力/);
+assert.doesNotMatch(html,/銘柄の合計と一致/);assert.doesNotMatch(html,/入力/);
 const mismatch=renderToStaticMarkup(React.createElement(MarketInternalsCard,{document:doc({status:'SUM_MISMATCH',reason:'factor_or_divisor_changed'}),horizon:1}));
-assert.match(mismatch,/合計が日経平均と一致しないため非表示/);assert.doesNotMatch(mismatch,/押し上げ/);
+assert.match(mismatch,/計算なし/);assert.doesNotMatch(mismatch,/押し上げ/);
 const focus=renderToStaticMarkup(React.createElement(MarketInternalsCard,{document:doc({status:'AVAILABLE',top:[],bottom:[]}),horizon:1,focusSymbol:'7203'}));
 assert.doesNotMatch(focus,/日経平均を動かした銘柄/);
 const estimate=renderToStaticMarkup(React.createElement(MarketInternalsCard,{document:doc({status:'AVAILABLE',members:225,indexDeltaPoints:300.5,
  residualPoints:0.8,estimate:true,assumedFactorCodes:['5016','6525','9697'],factorsAsOf:'2026-09-30',top:[{code:'8035',nameJa:'東京エレクトロン',points:120.5,pricePct:3.1}],bottom:[]}),horizon:1}));
-assert.match(estimate,/0\.80円以内で一致・概算/);assert.match(estimate,/表にない3銘柄は1\.0と仮定/);
+// 2026-10-25 (owner): no estimate/assumption caveats on screen.
+assert.doesNotMatch(estimate,/以内で一致・概算|1\.0と仮定/);assert.match(estimate,/\+300\.50円/);
 assert.ok(!require('node:fs').existsSync('src/components/today/IndexFactorInput.tsx'),'手入力の欄は無い');
 console.log('日経平均の寄与度(手入力なし・概算の表示) PASS');

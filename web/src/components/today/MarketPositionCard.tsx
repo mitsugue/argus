@@ -42,7 +42,7 @@ function ThemeRow({ theme }: { theme: MarketPositionTheme }) {
       {theme.view.expectationJa && <><dt>市場の期待</dt><dd>{marketWording(theme.view.expectationJa)}</dd></>}
       {theme.view.fearJa && <><dt>市場の警戒</dt><dd>{marketWording(theme.view.fearJa)}</dd></>}
       {theme.view.triggerJa && <><dt>次の確認点</dt><dd>{marketWording(theme.view.triggerJa)}</dd></>}
-      <dd className="mp-view-note">ARGUSの整理(推論){theme.view.at ? `・${jst(theme.view.at)}` : ''}。根拠は下の記録です。</dd>
+      {theme.view.at && <dd className="mp-view-note">{jst(theme.view.at)}</dd>}
     </dl>}
     <p className="mp-empty">{description}{theme.lastUpdatedAt ? ` · 最終記録 ${jst(theme.lastUpdatedAt)}` : ''}</p>
     {theme.recent.length > 0 ? <ol className="mp-entries">

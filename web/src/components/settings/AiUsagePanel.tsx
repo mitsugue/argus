@@ -73,14 +73,14 @@ export function AiUsagePanel() {
     {view&&<>
       <p>内訳の取得：{localTime(view.generatedAt)}</p>
       {view.status==='AVAILABLE'&&view.totals ? <>
-        <div className="ai-usage__row"><span>記録された参考費用</span><strong>{usageCost(view.totals)}</strong></div>
+        <div className="ai-usage__row"><span>記録された費用</span><strong>{usageCost(view.totals)}</strong></div>
         <p>{view.monthUtc}（UTC）の記録 {view.totals.records.toLocaleString('ja-JP')}件 · 呼出し {usageCount(view.totals.providerCalls,view.totals.unknownProviderCallCount,view.totals.records)}回</p>
         {!view.rows.length&&<p>記録なし</p>}
         {view.rows.map((r,i)=><Group key={`${r.feature}:${r.provider}:${r.requestedModel}:${r.returnedModel}:${i}`} row={r}/>)}
         {view.nextOffset!==null&&<button type="button" disabled={busy} onClick={()=>void load(true)}>続きの内訳を表示</button>}
         <p>呼出し開始の記録範囲：{localTime(view.firstRecordedAt)}〜{localTime(view.lastRecordedAt)}</p>
       </> : <p>記録を確認できません</p>}
-      {view.state.pendingReceipts!==null&&view.state.pendingReceipts>0&&<p>保存待ち {view.state.pendingReceipts}件は、この内訳に含まれていません。</p>}
+      {view.state.pendingReceipts!==null&&view.state.pendingReceipts>0&&<p>保存待ち {view.state.pendingReceipts}件</p>}
     </>}
 
   </section>;

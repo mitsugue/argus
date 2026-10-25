@@ -28,7 +28,7 @@ const score = (pre, mornings) => ({ firstMorning: pre ? '2026-10-05' : '2026-06-
 const state = { schemaVersion: 'jp-market-level-map-state-v1', status: 'AVAILABLE', latest, morningCount: 1,
   missedMornings: [], score: score(true, 1), retrospective: score(false, 84), actionAuthority: false };
 const html = renderToStaticMarkup(React.createElement(LevelMapView, { state }));
-assert.ok(html.includes('<b>PRICE LEVELS</b>') && html.includes('2026-10-05 朝') && html.includes('寄付前に固定保存'));
+assert.ok(html.includes('<b>PRICE LEVELS</b>') && html.includes('2026-10-05 朝') && !html.includes('寄付前に固定保存'));
 assert.ok(!html.includes('利益の何倍か'),'no explanation line under the heading (owner 2026-10-23)');
 assert.ok(html.includes('17.37倍') && html.includes('18倍まで上がると') && html.includes('70,787') && html.includes('17倍まで下がると') && html.includes('66,854'));
 assert.ok(!html.includes('倍率と価格の読み方'),'the ladder is not repeated in words');
@@ -36,7 +36,8 @@ assert.ok(html.includes('PER18倍線（EPS更新で動く）') && html.includes(
 const table = html.split('<tbody>')[1];
 assert.ok(table.indexOf('70,787') < table.indexOf('前日終値</td>') && table.indexOf('前日終値</td>') < table.indexOf('66,854'),
   'upper rows above the close, lower rows below');
-assert.ok(html.includes('公式値ではありません') && html.includes('実績で補った社 22') && html.includes('2026-08-31 時点'));
+// 2026-10-25 (owner): no estimate/source caveat line on screen.
+assert.ok(!html.includes('公式値ではありません') && !html.includes('実績で補った社') && !html.includes('2026-08-31 時点'));
 assert.ok(!html.includes('確率ではありません') && html.includes('±2ATR'),'server disclaimer sentence hidden, its numbers kept');
 assert.ok(html.includes('答え合わせ（2026-10-05からの事前記録）') && !html.includes('判定には使いません'));
 assert.ok(html.includes('件数不足（'));
@@ -60,9 +61,9 @@ for (const invalid of [{...history,basis:'INDEX_WEIGHTED'},{...history,lastDate:
  assert.ok(!renderHistory(invalid).includes('210 / 600営業日'));
 }
 // 2026-10-24: during the manual calibration the comparison stays among the uncalibrated estimates, marked.
-assert.ok(renderHistory(history).includes('同じ方式で再計算') && !renderHistory(history).includes('補正前の推計で比較'));
+assert.ok(!renderHistory(history).includes('同じ方式で再計算') && !renderHistory(history).includes('補正前の推計で比較'));
 const uncalibrated = renderHistory({...history,upperMultiple:17,beforeManualCalibration:true});
-assert.ok(uncalibrated.includes('17倍は、この期間の中央値16.9倍より上') && uncalibrated.includes('補正前の推計で比較'), uncalibrated);
+assert.ok(uncalibrated.includes('17倍は、この期間の中央値16.9倍より上') && !uncalibrated.includes('補正前の推計で比較'), uncalibrated);
 assert.ok(!uncalibrated.includes('同じ方式で再計算'));
 assert.ok(!renderHistory({...history,upperMultiple:17}).includes('中央値16.9倍'), 'an unmarked other line stays hidden');
 
@@ -87,7 +88,7 @@ const scaleHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{..
 const calculations=scaleHtml.split('<details class="lm-all-levels">')[1].split('</details>')[0];
 assert.ok(calculations.includes('70,000')&&!calculations.includes('68,309'),'expanded table uses latest close');
 assert.ok(calculations.includes('+1.1%')&&!calculations.includes('+3.6%'),'expanded distances use latest close');
-assert.ok(calculations.includes('82%')&&calculations.includes('実績で補った社 3'),'fresh stats and EPS coverage');
+assert.ok(calculations.includes('82%'),'fresh stats');
 assert.ok(scaleHtml.includes('朝の固定記録を見る')&&scaleHtml.includes('68,309'),'fixed record remains separate');
 const pendingHtml=renderToStaticMarkup(React.createElement(LevelMapView,{state:{...state,chart:{today:'2026-10-06',closePending:true}}}));
 assert.ok(pendingHtml.includes('10/06の終値は取得待ち')&&pendingHtml.includes('10/02の終値を表示'),'missing close is visibly dated');

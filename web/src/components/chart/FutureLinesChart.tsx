@@ -26,7 +26,7 @@ function RecordTable({ id, record, retro }: { id: LineId; record?: LineRecord; r
           <td>{x ? `${x.hit}/${x.n}` : '―'}</td><td>{x ? x.pending : '―'}</td><td>{x && x.n && x.randomMean !== null ? `平均${x.randomMean}` : '―'}</td></tr>; })}</tbody></table>
       <p>最初の点に、逆へ5%動く前に届いたか：届いた {record.reach.reach}・崩れた {record.reach.stop}・期限切れ {record.reach.expire}・判定待ち {record.reach.pending}（記録 {record.records}件）</p>
     </>}
-    {retro && retro.loose && <p className="fl-retro">参考（後から読み取った分）：ゆるい {retro.loose.hit}/{retro.loose.n}（でたらめ平均{retro.loose.randomMean ?? '―'}）・標準 {retro.standard?.hit ?? '―'}/{retro.standard?.n ?? '―'}</p>}
+    {retro && retro.loose && <p className="fl-retro">後から読み取った分：ゆるい {retro.loose.hit}/{retro.loose.n}（でたらめ平均{retro.loose.randomMean ?? '―'}）・標準 {retro.standard?.hit ?? '―'}/{retro.standard?.n ?? '―'}</p>}
   </div>;
 }
 

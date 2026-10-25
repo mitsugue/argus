@@ -65,7 +65,7 @@ export const InstitutionalView: React.FC<{ symbol: string }> = ({ symbol }) => {
   return (
     <div className="uac-sec">
       {credit && <div className="iv-row"><div className="uac-sec-t">金利・信用環境</div>
-        <p>{credit.textJa}</p><small>ARGUSの条件付きの見方</small>
+        <p>{credit.textJa}</p>
         {(Array.isArray(credit.sources) ? credit.sources : []).slice(0, 2).map((row, index) => <p className="iv-meta" key={index}>
           対象 {row.dataAsOf} · 受領 {row.retrievedAt} · <a href={row.sourceUrl} target="_blank" rel="noopener noreferrer">{row.publisher}の根拠</a>
         </p>)}
@@ -92,7 +92,7 @@ export const InstitutionalView: React.FC<{ symbol: string }> = ({ symbol }) => {
           {it.isNamedView && it.notConfirmed.length > 0 && (
             <div className="iv-nc">未確認: {it.notConfirmed.join(' / ')}</div>
           )}
-          <div className="iv-meta">{it.publishedAt || ''} · {ACCESS_JA[it.accessClass] ?? '公開メタデータ'}{it.category === 'INSTITUTIONAL_RESEARCH_VIEW' ? '(見解であり建玉ではない)' : ''}</div>
+          <div className="iv-meta">{it.publishedAt || ''} · {ACCESS_JA[it.accessClass] ?? '公開メタデータ'}</div>
         </div>
       ))}
     </div>

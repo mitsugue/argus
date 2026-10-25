@@ -41,31 +41,16 @@ export function OwnerAnswerBody({job,compact=false}:{job:Job;compact?:boolean}) 
   const answer=job.result?.answer;
   if(!answer)return null;
   return <div className="argus-editorial owner-dialogue__answer">
-    {job.context.referenceEdition&&<p className="argus-editorial__retained">保存した説明（{new Date(job.context.referenceEdition.recordedAt).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})}）の根拠への回答です。最新の市場分析とは区別しています。</p>}
+    {/* 2026-10-25 (owner): no disclaimers on screen; a saved edition says its time. */}
+    {job.context.referenceEdition&&<p className="argus-editorial__retained">{new Date(job.context.referenceEdition.recordedAt).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})}の保存版</p>}
     {dialogueChoices(job).map(choice=>{
         if(choice.id==='nikkei-comparison')return <section className={`argus-editorial__element is-${choice.emphasis} placement-${choice.placement}`} key={choice.id}>
           <JapanMarketComparisonChart document={job.context.indexComparison!}/>
-          <p className="argus-editorial__uncertain">この回答を作成した時点の比較です。現在の値で過去の線を書き換えていません。</p>
         </section>;
-        const content=<><p className="argus-editorial__text">{answer.sections[choice.id].textJa}</p>
-          {answer.sections[choice.id].kind==='UNKNOWN'&&<small>確認できていない範囲</small>}</>;
+        const content=<p className="argus-editorial__text">{answer.sections[choice.id].textJa}</p>;
         const className=`argus-editorial__element is-${choice.emphasis} placement-${choice.placement} element-${choice.id}`;
         return choice.placement==='detail'||compact&&['reasons','changes','next'].includes(choice.id)?<details className={className} key={choice.id}><summary>{labels[choice.id]}</summary>{content}</details>
           :<section className={className} key={choice.id}><h2>{labels[choice.id]}</h2>{content}</section>;
       })}
-    {job.context.retrievalRecord?.policyVersion==='owner-edition-retrieval-v1'&&<details className="argus-editorial__element is-quiet placement-detail">
-      <summary>この回答で確認した範囲</summary>
-      <p className="argus-editorial__text">この対象・期間の現在の根拠と、比較できる前回の根拠を読みました。内容が変わらない資料は一度だけ読み、変更・相違・不明点は残しています。</p>
-      <p className="argus-editorial__uncertain">{job.context.retrievalRecord.archiveSearchStatus==='BOUNDED_EVENT_MEMORY'
-        ?'同じテーマの保存済みイベントから、当時の根拠と反対材料を件数・容量の範囲内で確認しました。過去の仮説に対する反証であり、現在の見方を直接否定するものではありません。全履歴を網羅した検索ではありません。'
-        :job.context.retrievalRecord.archiveSearchStatus==='UNAVAILABLE'
-          ?'関連する過去記録を確認できなかったため、現在と前回の根拠で説明しています。'
-          :'過去の全記録を検索する機能はまだ接続していません。'}見つからなかったことは、反証が存在しないことを意味しません。</p>
-      {job.context.eventFocus?.snapshot?.relatedMemory?.policyVersion==='bounded-event-history-v2'&&<p className="argus-editorial__uncertain">
-        {job.context.eventFocus.snapshot.relatedMemory.records?.some(record=>record.outcomeWindows?.some(window=>window.status==='OBSERVED'))
-          ?'過去の仮説に結び付いた、その後の実測結果も参照しました。当時の予測と現在の見通しは分け、結果不足を的中扱いにしていません。'
-          :'後日の実測結果は、この回答の検索範囲では確認できていません。過去の仮説が当たったという根拠には使っていません。'}
-      </p>}
-    </details>}
     </div>;
 }

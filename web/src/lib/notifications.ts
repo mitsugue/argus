@@ -93,7 +93,7 @@ export function saveNotificationPreferences(value: NotificationPreferences): voi
 function migrateLegacyNotification(item: AppNotification): AppNotification {
   if (item.checkNextJa.includes('Positions & Risk')) {
     return { ...item, checkNextJa: item.eventType === 'strategy_risk'
-      ? 'Holdings / Watchlist → Advanced portfolio → PORTFOLIO STRATEGYで詳細確認(助言ではない)'
+      ? 'Holdings / Watchlist → Advanced portfolio → PORTFOLIO STRATEGYで詳細確認'
       : 'Holdings / Watchlist → Advanced portfolio → FIRE COREで確認' };
   }
   if (item.eventType === 'sync_backup_warning'
@@ -403,7 +403,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
       cands.push({ eventType: 'strategy_risk', severity: 'high', symbol: null,
         assetName: null, titleJa: `戦略注意：${title}`,
         bodyJa: inp.strategyState.summaryJa?.slice(0, 80) || body,
-        whyJa: body, checkNextJa: 'Holdings / Watchlist → Advanced portfolio → PORTFOLIO STRATEGYで詳細確認(助言ではない)',
+        whyJa: body, checkNextJa: 'Holdings / Watchlist → Advanced portfolio → PORTFOLIO STRATEGYで詳細確認',
         dedupeKey: `strat|${key}`, isPrivate: true });
     }
   }
@@ -427,7 +427,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
     } else if (cur.contribution === 'missing' && was.contribution !== 'missing') {
       cands.push({ eventType: 'fire_core', severity: 'low', symbol: null, assetName: null,
         titleJa: 'FIRE Core: 毎月積立額が未入力です',
-        bodyJa: '積立額を入力すると長期入金整合の判定精度が上がります(捏造はしません)。',
+        bodyJa: '積立額を入力すると長期入金整合を判定できます。',
         whyJa: '積立データが欠落しています。', checkNextJa: 'Holdings / Watchlist → Advanced portfolio → FIRE COREで入力',
         dedupeKey: 'fc|contrib', isPrivate: true });
     }
@@ -447,7 +447,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
       cands.push({ eventType: 'plan_change', severity: 'high', symbol: sym,
         assetName: pl.name ?? null,
         titleJa: `計画条件の変化：${nm(sym, pl.name)}が${pl.currentStance === 'trim_consideration' ? '利確検討' : 'リスク確認'}条件に該当`,
-        bodyJa: pl.summaryJa?.slice(0, 80) || '登録銘柄の計画条件がリスク確認側に切り替わりました(参考情報)。',
+        bodyJa: pl.summaryJa?.slice(0, 80) || '登録銘柄の計画条件がリスク確認側に切り替わりました。',
         whyJa: '悪化信号(需給/フロー/シナリオ)が重なったため。売買指示ではありません（参考情報）。',
         checkNextJa: '銘柄カードの最終判断とPOSITION PLANの無効化条件を確認',
         dedupeKey: `plan|${sym}|risk`, isPrivate: true });
@@ -455,7 +455,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
       cands.push({ eventType: 'plan_change', severity: 'medium', symbol: sym,
         assetName: pl.name ?? null,
         titleJa: `計画条件の変化：${nm(sym, pl.name)}が追いかけ注意条件に該当`,
-        bodyJa: '追加候補条件でしたが、過熱/買い戻し主導の可能性が出たため計画条件は待ち側です(参考情報)。',
+        bodyJa: '追加候補条件でしたが、過熱/買い戻し主導の可能性が出たため計画条件は待ち側です。',
         whyJa: '上昇の持続性が未確認になったため。売買指示ではありません（参考情報）。',
         checkNextJa: '出来高を伴う押し目か、上昇主体の入れ替わりを確認',
         dedupeKey: `plan|${sym}|chase`, isPrivate: !!pl.isHeld });
@@ -469,7 +469,7 @@ export function runNotificationEngine(inp: NotifInputs): { delivered: number } {
       cands.push({ eventType: 'scenario_change', severity: 'high', symbol: sym,
         assetName: sc.name ?? null,
         titleJa: `シナリオ証拠の変化：${nm(sym, sc.name)}は弱気側が優勢に`,
-        bodyJa: sc.summaryJa?.slice(0, 80) || '複数レイヤーの悪化が重なり、シナリオ証拠が弱気側優勢に切り替わりました(参考情報)。',
+        bodyJa: sc.summaryJa?.slice(0, 80) || '複数レイヤーの悪化が重なり、シナリオ証拠が弱気側優勢に切り替わりました。',
         whyJa: '需給・フロー等の条件付き分岐で弱気側の成立条件が優勢になったため。売買指示ではありません（参考情報）。',
         checkNextJa: '銘柄カードの最終判断とSCENARIOSの無効化条件を参照',
         dedupeKey: `scn|${sym}|bearish`, isPrivate: true });

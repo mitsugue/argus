@@ -11,7 +11,7 @@ const contributionReason:Record<string,string>={
   constituents_changed_in_period:'計算なし（期間中に構成銘柄の入れ替え）',
   member_closes_missing:'構成銘柄の終値を収集中',
   index_close_missing:'日経平均の終値待ち',
-  factor_or_divisor_changed:'合計が日経平均と一致しないため非表示',
+  factor_or_divisor_changed:'計算なし',
   members_unknown:'構成銘柄不明'};
 function Contributions({value}:{value:IndexContribution|undefined}){
   if(!value)return null;
@@ -21,10 +21,9 @@ function Contributions({value}:{value:IndexContribution|undefined}){
     <span>{jpDisplay(r.code,r.nameJa)}</span><b>{yen(r.points)}</b><small>株価 {percent(r.pricePct)}</small></div>);
   return <div className="at-contrib" data-contribution-status="AVAILABLE">
     <b>日経平均を動かした銘柄</b>
-    <p className="at-context-date">日経平均 {yen(value.indexDeltaPoints??0)}（{value.members}銘柄の合計{value.estimate?`と${yen(Math.abs(value.residualPoints??0)).replace('+','')}以内で一致・概算`:'と一致'}）</p>
+    <p className="at-context-date">日経平均 {yen(value.indexDeltaPoints??0)}</p>
     <h4>押し上げ</h4><div className="at-internals__rows">{list(value.top.filter(r=>r.points>0))}</div>
     <h4>押し下げ</h4><div className="at-internals__rows">{list(value.bottom.filter(r=>r.points<0))}</div>
-    <p className="at-context-date">係数 {value.factorsAsOf??'不明'}{value.assumedFactorCodes?.length?`(表にない${value.assumedFactorCodes.length}銘柄は1.0と仮定)`:''}</p>
   </div>;
 }
 const stamp=(v?:string)=>v&&Number.isFinite(Date.parse(v))?new Date(v).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'}):'未確認';
@@ -40,9 +39,6 @@ export function MarketInternalsCard({document,horizon,focusSymbol}:{document:unk
   return <section className="card at-internals" aria-label="日本株の指数・業種比較">
     <h3>{focusSymbol?`${focusSymbol}と市場の変化`:"BREADTH"}</h3>
     <p>{row.startDate} → {row.endDate} · 過去{horizon}営業日の比較</p>
-    {document.comparisonAvailability?.latestSessionIncluded===false&&<p role="status">
-      {document.comparisonAvailability.latestCompletedSessionDate}の終値が比較に必要な系列でそろっていないため、{document.comparisonAvailability.comparedThrough}までの確定値を表示しています。
-    </p>}
     {top&&<><p className="at-context-lead">{top.nameJa}が、同じ期間の市場平均より{(top.relativeToBenchmarkPct??0)>=0?'強い':'弱い'}</p>
       <div className="at-context-metrics"><article><span>{top.nameJa} · 過去{horizon}営業日</span><strong>{percent(top.returnPct)}</strong></article>
         <article><span>TOPIX連動ETFとの差</span><strong>{points(top.relativeToBenchmarkPct)}</strong></article></div>

@@ -574,8 +574,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     const quoteState = String(entry.quoteState ?? 'CLOSE').toUpperCase();
     const eod = quoteState === 'CLOSE' || quoteState === 'STALE';
     if (!sessionClosed && eod) {
-      return `表示価格は前日終値（${entry.periodEnd ?? '基準日不明'} EOD）· `
-        + 'ザラ場のリアルタイム価格ではありません';
+      return `前日終値 ${entry.periodEnd ?? ''}`.trim();
     }
     if (!eod) return null;
     const basisDate = entry.periodEnd ?? '不明';
