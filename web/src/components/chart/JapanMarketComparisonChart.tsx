@@ -5,6 +5,8 @@ import { MaterialReactionLine, YardstickLine, noAnalogText } from './MaterialRea
 import './JapanMarketComparisonChart.css';
 
 const COLOURS = ['#94c5de', '#c7b6ed', '#dfbc83'];
+// 2026-10-27 (owner): the closest windows when none is similar, in grey.
+const NEAR_COLOURS = ['#a7b4bd', '#8796a1', '#6b7b86'];
 const number = (value: number) => value.toLocaleString('ja-JP', { maximumFractionDigits: 1 });
 const valuationNumber = (value: number) => value.toLocaleString('ja-JP', { maximumFractionDigits: 2 });
 const percent = (value: number | null) => value === null ? '—' : `${(value * 100).toFixed(0)}%`;
@@ -64,7 +66,8 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
   // its band appear only once the rule passes its out-of-sample check.
   const forecast = validated ? document.forecast.line : [];
   const band = validated ? document.forecast.band : [];
-  const references = candidates.flatMap(candidate => [...candidate.comparison,
+  const nearest = document.candidates.length ? [] : document.nearestReferences ?? [];
+  const references = [...candidates, ...nearest].flatMap(candidate => [...candidate.comparison,
     ...(showReferences ? candidate.subsequentReference : [])]);
   const points = [...document.actual, ...references, ...forecast];
   const finitePoints = points.filter(point => Number.isFinite(point.value) && Number.isFinite(point.offsetSessions));
@@ -145,6 +148,14 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
                 d={path(candidate.subsequentReference)} fill="none" stroke={colour} strokeWidth="1.8" strokeDasharray="2 5" />}
             </g>;
           })}
+          {nearest.map((reference, index) => <g key={reference.snapshotId}>
+            <path data-series="nearest-reference" data-anchor={reference.anchorDate}
+              d={path(reference.comparison)} fill="none" stroke={NEAR_COLOURS[index % NEAR_COLOURS.length]}
+              strokeWidth="1.4" strokeOpacity=".85" strokeDasharray="6 3" />
+            {showReferences && <path data-series="nearest-subsequent-reference" data-anchor={reference.anchorDate}
+              d={path(reference.subsequentReference)} fill="none" stroke={NEAR_COLOURS[index % NEAR_COLOURS.length]}
+              strokeWidth="1.5" strokeDasharray="2 5" />}
+          </g>)}
           <path data-series="current-actual" d={path(document.actual)} fill="none" stroke="#e1eaf0" strokeWidth="3" />
           {forecast.length > 0 && <path data-series="current-forecast" d={path(forecast)} fill="none"
             stroke="#79d6b0" strokeWidth="3" strokeDasharray="9 5" />}
@@ -156,15 +167,21 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
     </div>
     <ul className="jp-comparison__legend" aria-label="チャートの凡例">
       <li><i className="jp-comparison__sample jp-comparison__sample--actual" />現在の実績</li>
-      <li><i className="jp-comparison__sample jp-comparison__sample--past" />過去の比較</li>
-      <li><i className="jp-comparison__sample jp-comparison__sample--reference" />過去のその後</li>
+      {nearest.length > 0
+        ? nearest.map((reference, index) => <li key={reference.snapshotId} data-nearest-reference={reference.anchorDate}>
+          <i className="jp-comparison__sample jp-comparison__sample--near" style={{ borderColor: NEAR_COLOURS[index % NEAR_COLOURS.length] }} />
+          参考 {reference.anchorDate}・距離{reference.distance.toFixed(2)}</li>)
+        : <>
+          <li><i className="jp-comparison__sample jp-comparison__sample--past" />過去の比較</li>
+          <li><i className="jp-comparison__sample jp-comparison__sample--reference" />過去のその後</li>
+        </>}
       {validated && <li><i className="jp-comparison__sample jp-comparison__sample--forecast" />現在の計算予測</li>}
     </ul>
     {document.historyCoverage && <p className="jp-comparison__scale">
       候補を探した期間：{document.historyCoverage.candidateStart ?? '確認できていません'}
       {document.historyCoverage.candidateEnd && `〜${document.historyCoverage.candidateEnd}`}。
       {document.historyCoverage.candidateCount.toLocaleString('ja-JP')}局面から
-      {document.historyCoverage.selectedCount}件を表示しています。
+      {document.historyCoverage.selectedCount}件を表示しています{nearest.length ? `（参考${nearest.length}つ）` : ''}。
     </p>}
     <div className="jp-comparison__controls">
       <label>比較する局面 <select value={document.candidates.some(item => item.snapshotId === selectedId) ? selectedId : 'all'}
@@ -175,7 +192,8 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
       <label><input type="checkbox" checked={showReferences} onChange={event => setShowReferences(event.target.checked)} />その後の参考経路</label>
     </div>
     {document.retainedNoteJa && <p className="jp-comparison__notice" data-comparison-retained="true">{document.retainedNoteJa}</p>}
-    {!document.candidates.length && <p className="jp-comparison__notice">似た局面なし</p>}
+    {!document.candidates.length && <p className="jp-comparison__notice" data-nearest-count={nearest.length}>
+      {nearest.length ? `似た局面なし（上限${document.selectionPolicy?.maximumDistance ?? 1}）・最も近い${nearest.length}つを参考に表示` : '似た局面なし'}</p>}
     {document.candidates.length > 0 && document.candidates.every(candidate => candidate.comparisonKind === 'PARTIAL_COMPARISON') &&
       <p className="jp-comparison__notice">一部の条件だけで比較</p>}
     {!document.forecast.line.length && validated && <p className="jp-comparison__notice">{noAnalogText(document) ?? (document.candidates.length === 1

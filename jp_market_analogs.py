@@ -45,6 +45,9 @@ FEATURE_MAX_AGE_DAYS = {key: (35 if key.startswith(("credit.", "margin1570.")) e
 
 
 COMPONENTS = ("priceShape", "marketState", "conditionOrder", "materialReaction")
+# 2026-10-27 (owner): a week with no past window under the limit still draws
+# the closest few, each with its distance, as references (never a forecast).
+NEAREST_REFERENCE_COUNT = 3
 
 
 def _policy_material(policy):
@@ -398,6 +401,7 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
     # The closest past window above the limit and its largest differences;
     # kept outside the selection identity, never used to select.
     closest_rejected = None
+    rejected = []
     if current["status"] == "AVAILABLE":
         current_index = positions[current["anchorDate"]]
         if [row["date"] for row in current["window"]] != list(
@@ -435,6 +439,8 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
             if distance > policy.maximum_distance:
                 audit.append({"year": year, "anchorDate": anchor,
                               "status": "DISTANCE_ABOVE_THRESHOLD", "distance": distance})
+                rejected.append({"snapshotId": candidate["snapshotId"], "anchorDate": anchor,
+                                 "distance": distance, "componentDistances": dict(distances)})
                 if closest_rejected is None or (distance, anchor) < (closest_rejected["distance"], closest_rejected["anchorDate"]):
                     closest_rejected = {"anchorDate": anchor, "distance": distance,
                         "componentDistances": dict(distances),
@@ -516,7 +522,19 @@ def select_episodes(current: Mapping[str, Any], candidates: Sequence[Mapping[str
         "actionAuthority": False, "predictiveProbability": None,
         "validationStatus": "UNVALIDATED", "outcomesUsedForSelection": False,
     }
-    return {**body, "selectionId": _hash(body), "closestRejected": closest_rejected}
+    # 2026-10-27 (owner): when nothing is admitted, the closest windows above
+    # the limit, kept apart like the selection. Outside the selection identity
+    # and never used to select or to forecast.
+    nearest = []
+    if not selected:
+        for row in sorted(rejected, key=lambda row: (row["distance"], row["anchorDate"], row["snapshotId"])):
+            if any(abs(positions[row["anchorDate"]] - positions[other["anchorDate"]]) <
+                   policy.minimum_separation_sessions for other in nearest):
+                continue
+            nearest.append(row)
+            if len(nearest) == NEAREST_REFERENCE_COUNT:
+                break
+    return {**body, "selectionId": _hash(body), "closestRejected": closest_rejected, "nearestRejected": nearest}
 
 
 def reference_path(episode: Mapping[str, Any], *, later_bars: Sequence[Mapping[str, Any]],
