@@ -233,3 +233,26 @@ def test_japanese_releases_and_non_middle_east_geopolitics_find_their_theme():
     assert placed == {"jp-cpi": "BOJ", "us-cpi": "US_POLICY_RATE",
                       "nk": "EMERGING_GEOPOLITICS_OTHER", "me": "MIDDLE_EAST"}
     assert mpm.THEMES["EMERGING_GEOPOLITICS_OTHER"]["labelJa"] == "地政学(中東以外)"
+
+
+def test_an_answered_question_is_not_asked_again_inside_its_window():
+    # 2026-10-27: the shadow week asked the same report three or four times.
+    memory = mpm.empty()
+    mpm.ingest_news(memory, [_news()])
+    first = check.select_questions(_view(memory), now=NOW)
+    answers = [{"id": q["id"], "answerJa": "確認済み", "confirmation": "CONFIRMED", "unknown": False,
+                "nextEventDate": None, "sources": [{"url": "https://www.federalreserve.gov/x"}]} for q in first]
+    parsed = check.parse_answers(json.dumps({"answers": answers}), first)
+    rows = check.entries(parsed["accepted"], checked_at=NOW_ISO, slot="2026-10-26 11:30")
+    confirm = next(r for r in rows if r["ref"]["questionType"] == "CONFIRM")
+    assert confirm["ref"]["aboutKey"] == check.about_key(first[0]["aboutJa"])
+    # Four hours later: the same report and the same pricing are not asked again.
+    later = check.select_questions(_view(memory), now=NOW + timedelta(hours=4), recent_checks=rows)
+    asked = {(q["themeId"], q["type"]) for q in later}
+    assert ("US_POLICY_RATE", "CONFIRM") not in asked and ("US_POLICY_RATE", "PRICING") not in asked
+    # After each window the question comes back; a different report is asked at once.
+    assert ("US_POLICY_RATE", "PRICING") in {(q["themeId"], q["type"]) for q in check.select_questions(
+        _view(memory), now=NOW + timedelta(hours=9), recent_checks=rows)}
+    mpm.ingest_news(memory, [{**_news(event_id="e2", hours=1), "headlineJa": "FRB議長が追加の利下げを否定"}])
+    fresh = check.select_questions(_view(memory), now=NOW + timedelta(hours=4), recent_checks=rows)
+    assert any(q["type"] == "CONFIRM" and "否定" in q["aboutJa"] for q in fresh)

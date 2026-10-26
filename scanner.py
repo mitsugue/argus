@@ -18427,8 +18427,10 @@ def _market_position_check_run():
             return state
         view = argus_market_position_memory.snapshot(memory, now_iso=_ai_now_iso(),
                                                      scheduled_events=_position_check_scheduled_events())
+        recent_checks = [row for row in memory.get("entries") or []
+                         if row.get("kind") == argus_market_position_check.KIND]
     state.update(lastSlot=slot, lastRunAt=_ai_now_iso(), errorClass=None)
-    questions = argus_market_position_check.select_questions(view, now=now)
+    questions = argus_market_position_check.select_questions(view, now=now, recent_checks=recent_checks)
     if not questions:
         state.update(status="NO_QUESTIONS", asked=0, accepted=0, unknown=0, rejected={})
         return state
