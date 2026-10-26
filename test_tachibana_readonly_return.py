@@ -205,3 +205,40 @@ def test_policy_bootstrap_cli_never_loads_credentials_or_connects(monkeypatch,tm
     assert measure.main() == 0
     result=json.loads(capsys.readouterr().out)
     assert result['networkCalls']==0 and result['enabledChanged'] is False
+
+
+def test_the_first_stop_reason_of_the_day_survives_a_restart(tmp_path):
+    """2026-10-26: a restart erased why the realtime price stopped for the day."""
+    now = [NOW]; path = tmp_path / 'policy.json'
+    tokyo = __import__('zoneinfo').ZoneInfo('Asia/Tokyo')
+    path.write_text(json.dumps({'day': NOW.astimezone(tokyo).date().isoformat(), 'count': 1, 'blocked': False}))
+    policy = UsagePolicy(path, lambda: now[0]); policy.acquire()
+    policy.block('TRANSPORT_Timeout error!'); policy.block('LOGOUT_FAILED'); policy.release()
+    row = json.loads(path.read_text())
+    assert row['blocked'] and row['blockedReason'] == 'TRANSPORT_TIMEOUTERROR' and row['blockedAt']
+    restored = UsagePolicy(path, lambda: now[0]); restored.acquire()
+    try:
+        assert restored.blocked_reason == 'TRANSPORT_TIMEOUTERROR'
+        with pytest.raises(TachibanaError): restored.before_send(login=True)
+    finally: restored.release()
+    now[0] += timedelta(days=1)
+    nextday = UsagePolicy(path, lambda: now[0]); nextday.acquire()
+    try:
+        nextday.before_send(login=True)
+        assert nextday.blocked_reason is None and not nextday.blocked
+    finally: nextday.release()
+    assert 'blockedReason' not in json.loads(path.read_text())
+    path.write_text(json.dumps({'day': '2026-10-26', 'count': 1, 'blocked': True, 'blockedReason': 'x' * 49}))
+    with pytest.raises(TachibanaError): UsagePolicy(path, lambda: NOW).acquire()
+
+
+def test_the_realtime_lamp_says_a_stop_for_the_day_with_its_reason(monkeypatch):
+    import scanner, argus_tachibana_live
+    monkeypatch.setattr(argus_tachibana_live, 'current_evidence_safe', lambda: {
+        'enabled': True, 'status': 'UNAVAILABLE', 'symbols': {},
+        'usagePolicy': {'stoppedForToday': True, 'stopReason': 'DISABLED',
+                        'persistedStop': {'reason': 'REFRESH_PROVIDER', 'at': '2026-10-26T09:31:00+09:00'}}})
+    assert scanner._tachibana_jp_realtime_lamp() == ('warning', 'Tachibana 本日停止(REFRESH_PROVIDER)')
+    monkeypatch.setattr(argus_tachibana_live, 'current_evidence_safe', lambda: {
+        'enabled': True, 'status': 'UNAVAILABLE', 'symbols': {}, 'usagePolicy': {'stoppedForToday': False}})
+    assert scanner._tachibana_jp_realtime_lamp() == ('off', 'Tachibana 待機中(セッション外)')

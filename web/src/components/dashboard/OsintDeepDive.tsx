@@ -92,7 +92,8 @@ export const OsintDeepDive: React.FC<{ symbol: string; market: string; name?: st
         <p className="osint-deep__meta">読み込めませんでした。<button type="button" className="asset-mini" onClick={reload}>再取得</button></p>
       )}
       <p className="osint-deep__actions">
-        <button type="button" className="asset-mini" disabled={(loading && !owner) || running || doneToday}
+        {/* 2026-10-26 (owner): a large, easy button. */}
+        <button type="button" className="osint-deep__button" disabled={(loading && !owner) || running || doneToday}
                 onClick={() => { void research(); }}>{label}</button>
         {doneToday && <span className="osint-deep__meta">今日は調査済み</span>}
         {!running && !doneToday && owner && <span className="osint-deep__meta">今日あと{owner.remainingToday}回</span>}

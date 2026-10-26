@@ -20985,6 +20985,13 @@ def _tachibana_jp_realtime_lamp():
         return ("warning", f"Tachibana 認証失敗({boundary})")
     if status == "MAINTENANCE":
         return ("warning", "Tachibana メンテナンス中")
+    # 2026-10-26: a provider stop for the day was shown as 「待機中(セッション外)」
+    # even during the session; it now says so with the reason kept on disk.
+    policy = evidence.get("usagePolicy") if isinstance(evidence.get("usagePolicy"), dict) else {}
+    if policy.get("stoppedForToday"):
+        kept = policy.get("persistedStop") if isinstance(policy.get("persistedStop"), dict) else {}
+        reason = str(kept.get("reason") or policy.get("stopReason") or "")[:48]
+        return ("warning", f"Tachibana 本日停止({reason})" if reason else "Tachibana 本日停止")
     if status == "UNAVAILABLE":
         return ("off", "Tachibana 待機中(セッション外)")
     return None

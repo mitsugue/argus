@@ -154,6 +154,8 @@ def test_main_starts_the_price_worker_in_extended_sessions(monkeypatch):
     monkeypatch.setattr(m, "quote_session_active", lambda now=None: True)
     monkeypatch.setattr(m, "shared_session_open", lambda now=None: False)
     monkeypatch.setattr(m, "reference_job_due", lambda clock, last: False)
+    # The minute-bar job follows the real clock; keep it out of this test.
+    monkeypatch.setattr(m, "vwap_job_due", lambda clock, last: False)
     monkeypatch.setattr(m, "Thread", Worker)
     monkeypatch.setattr(m.time, "monotonic", lambda: next(ticks))
     monkeypatch.setattr(m, "send_heartbeat", lambda **kw: 200)
