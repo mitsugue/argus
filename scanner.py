@@ -7469,7 +7469,19 @@ _INTEL_STORE = []                  # capped list of recent IntelligenceItems (me
 _INTEL_STORE_MAX = 400
 _INTEL_LAST = {"ts": 0.0, "collected": 0, "perSource": {}}
 _INTEL_FETCH_MAX_BYTES = 1_500_000
-_INTEL_STORE_FILE = "/tmp/argus_intel_store.json"   # §27 persistence (survives restarts)
+# 2026-10-27 (13.8 §4-7): on the persistent disk in production, so a deploy no
+# longer drops the RSS store; the old /tmp copy is read once when no new one exists.
+_INTEL_STORE_LEGACY_FILE = "/tmp/argus_intel_store.json"
+
+
+def _intel_store_file():
+    try:
+        return os.path.join(argus_persistent_storage.configured_paths()["root"], "argus_intel_store.json")
+    except Exception:
+        return _INTEL_STORE_LEGACY_FILE
+
+
+_INTEL_STORE_FILE = _intel_store_file()   # §27 persistence (survives restarts and deploys)
 
 
 def _intel_translate_titles(cap=40):
@@ -7506,7 +7518,10 @@ def _intel_persist():
 def _intel_restore():
     """Load a previously persisted intel store at startup (best-effort)."""
     try:
-        with open(_INTEL_STORE_FILE, "r") as f:
+        path = _INTEL_STORE_FILE
+        if not os.path.exists(path) and os.path.exists(_INTEL_STORE_LEGACY_FILE):
+            path = _INTEL_STORE_LEGACY_FILE
+        with open(path, "r") as f:
             blob = json.load(f)
         items = blob.get("store") or []
         if isinstance(items, list):
