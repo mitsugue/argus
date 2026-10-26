@@ -405,11 +405,13 @@ def test_decision_evidence_names_each_stage_for_the_existing_recorder(monkeypatc
             "decision_evidence.view.reversal", "decision_evidence.view.warning_performance",
             "decision_evidence.view.adopted_rules", "decision_evidence.view.context",
             "decision_evidence.subject.market_truth", "decision_evidence.subject.reversal",
-            "decision_evidence.adopted.financial_read", "decision_evidence.adopted.d03",
-            "decision_evidence.adopted.financial_coverage", "decision_evidence.adopted.company_coverage",
-            "decision_evidence.adopted.d04", "decision_evidence.adopted.d07",
+            "decision_evidence.adopted.d03", "decision_evidence.adopted.d04", "decision_evidence.adopted.d07",
             "decision_evidence.adopted.study",
-        } | ({"decision_evidence.subject.prediction"} & names)
+        } | ({"decision_evidence.subject.prediction",
+              # 2026-10-26: the financial reads keep their names but run in the
+              # background worker, which may or may not have run by now.
+              "decision_evidence.adopted.financial_read", "decision_evidence.adopted.financial_coverage",
+              "decision_evidence.adopted.company_coverage"} & names)
         # Production held 46 named operations of 64 on 2026-10-15; sixteen more fit.
         assert 46 + 16 <= 64
         # A second read inside the same inputs reuses the adopted rules: none of
