@@ -22,6 +22,7 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
+from urllib.parse import urlparse
 
 SCHEMA = "argus-market-position-memory-v1"
 MAX_ENTRIES = 2000
@@ -420,6 +421,43 @@ def ingest_views(memory: Dict[str, Any], views: Iterable[Mapping[str, Any]], *, 
 # keep a theme ACTIVE until the owner has seen their quality.
 PUBLIC_CHECK_KIND = "PUBLIC_CHECK"
 PUBLIC_CHECK_VISIBLE = False
+# 2026-10-27 (owner, plan A): the checks stay off the screen, but a report the
+# check found contradicted or unverified carries that mark into the summary
+# the integrated view reads. The memory itself stays append-only.
+PUBLIC_CHECK_MARK_DAYS = 14
+_CHECK_MARK_JA = {"CONTRADICTED": "公開情報と食い違い", "UNVERIFIED": "公開情報で未確認"}
+
+
+def about_key(text: Any) -> str:
+    """Short digest of the report a CONFIRM question is about (shared with the check)."""
+    return hashlib.sha256(str(text or "").strip().encode("utf-8")).hexdigest()[:16]
+
+
+def public_check_marks(memory: Mapping[str, Any], now: datetime) -> Dict[str, Dict[str, Any]]:
+    """aboutKey -> the latest CONFIRM finding of the last PUBLIC_CHECK_MARK_DAYS days."""
+    marks: Dict[str, Dict[str, Any]] = {}
+    for row in memory.get("entries") or []:
+        ref, measured = row.get("ref") or {}, row.get("measured") or {}
+        at = _instant(row.get("at"))
+        claim = measured.get("claim") or ("UNVERIFIED" if measured.get("unknown") else None)
+        if (row.get("kind") != PUBLIC_CHECK_KIND or ref.get("questionType") != "CONFIRM"
+                or not ref.get("aboutKey") or claim not in ("SUPPORTED", "CONTRADICTED", "UNVERIFIED")
+                or at is None or now - at > timedelta(days=PUBLIC_CHECK_MARK_DAYS)):
+            continue
+        prior = marks.get(ref["aboutKey"])
+        if prior is None or str(row.get("at")) >= prior["at"]:
+            marks[ref["aboutKey"]] = {"claim": claim, "at": row.get("at"), "textJa": str(row.get("textJa") or "")[:120],
+                                      "sourceDomains": sorted({urlparse(str(s.get("url") or "")).hostname or ""
+                                                               for s in ref.get("sources") or [] if isinstance(s, dict)} - {""})}
+    return marks
+
+
+def _with_mark(row: Mapping[str, Any], marks: Mapping[str, Any]) -> Dict[str, Any]:
+    out = {k: row.get(k) for k in ("entryId", "kind", "at", "textJa", "severity", "ref")}
+    mark = marks.get(about_key(row.get("textJa"))) if row.get("kind") == "NEWS" else None
+    if mark:
+        out["publicCheck"] = dict(mark)
+    return out
 
 
 def _theme_entries(memory: Mapping[str, Any], theme_id: str,
@@ -456,6 +494,7 @@ def snapshot(memory: Mapping[str, Any], *, now_iso: str,
     """Per-theme state for display and for the integrated explanation."""
     now = _instant(now_iso) or datetime.now(timezone.utc)
     placement = _news_themes(memory)
+    marks = public_check_marks(memory, now)
     themes = []
     for theme_id, spec in FIXED_THEMES.items():
         original_rows = _theme_entries(memory, theme_id, placement)
@@ -480,8 +519,7 @@ def snapshot(memory: Mapping[str, Any], *, now_iso: str,
             "themeId": theme_id, "labelJa": spec["labelJa"], "status": status,
             "entryCount": len(original_rows), "excludedUnverifiedReleaseEntries": len(original_rows) - len(rows),
             "lastUpdatedAt": last["at"] if last else None,
-            "recent": [{k: r.get(k) for k in ("entryId", "kind", "at", "textJa", "severity", "ref")}
-                       for r in rows[-RECENT_ENTRIES:]][::-1],
+            "recent": [_with_mark(r, marks) for r in rows[-RECENT_ENTRIES:]][::-1],
             "pricing": pricing["measured"] if pricing else None,
             "lastReaction": {"at": reaction["at"], "textJa": reaction["textJa"],
                              "hasComparableMoves": (reaction.get("ref") or {}).get("hasComparableMoves") is True,
@@ -491,8 +529,7 @@ def snapshot(memory: Mapping[str, Any], *, now_iso: str,
             "view": ({**((ai_view.get("measured") or {}).get("view") or {}), "at": ai_view["at"],
                       "contextId": (ai_view.get("ref") or {}).get("contextId"), "kind": (ai_view.get("ref") or {}).get("kind")}
                      if ai_view else None),
-            "externalRecent": [{k: r.get(k) for k in ("entryId", "kind", "at", "textJa", "severity", "ref")}
-                               for r in external[-RECENT_ENTRIES:]][::-1],
+            "externalRecent": [_with_mark(r, marks) for r in external[-RECENT_ENTRIES:]][::-1],
         })
     themes.extend(emerging_themes(memory, now=now, placement=placement))
     return {"schemaVersion": SCHEMA, "asOf": now_iso, "themes": themes,
@@ -560,6 +597,7 @@ def emerging_themes(memory: Mapping[str, Any], *, now: datetime,
     news any more — then the running themes, busiest first.
     """
     placement = _news_themes(memory) if placement is None else placement
+    marks = public_check_marks(memory, now)
     chosen = []
     for theme_id, spec in EMERGING_THEMES.items():
         rows = _theme_entries(memory, theme_id, placement)
@@ -570,8 +608,7 @@ def emerging_themes(memory: Mapping[str, Any], *, now: datetime,
             continue
         ai_view = next((r for r in reversed(rows) if r.get("kind") == "AI_VIEW"), None)
         last = external[-1]
-        recent = [{k: r.get(k) for k in ("entryId", "kind", "at", "textJa", "severity", "ref")}
-                  for r in external[-RECENT_ENTRIES:]][::-1]
+        recent = [_with_mark(r, marks) for r in external[-RECENT_ENTRIES:]][::-1]
         breaking_at = state["breakingAt"]
         chosen.append(((breaking_at is not None, breaking_at or _EPOCH,
                         state["high"], state["total"], state["lastAt"]), {
@@ -601,7 +638,13 @@ def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
             continue
         bits = [f"現在位置・{theme['labelJa']}" + ("(新しい話題)" if theme.get("emerging") else "")]
         if theme.get("externalRecent"):
-            bits.append(theme["externalRecent"][0]["textJa"])
+            head = theme["externalRecent"][0]
+            mark = head.get("publicCheck") or {}
+            if mark.get("claim") in _CHECK_MARK_JA:
+                # Plan A: the integrated view reads the finding before the report.
+                bits.append(f"【{_CHECK_MARK_JA[mark['claim']]}】" + (mark.get("textJa") or "")[:60]
+                            if mark["claim"] == "CONTRADICTED" else f"【{_CHECK_MARK_JA[mark['claim']]}】")
+            bits.append(head["textJa"])
         elif theme.get("lastReaction"):
             bits.append(theme["lastReaction"]["textJa"])
         if theme.get("pricing") and theme["pricing"].get("ffImpliedRatePct") is not None:
