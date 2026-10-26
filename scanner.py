@@ -44801,40 +44801,75 @@ _JP_FINANCIAL_VERIFY = {"state": "NOT_STARTED", "startedAt": None, "finishedAt":
 _JP_FINANCIAL_VERIFY_LOCK = threading.Lock()
 
 
-def _jp_financial_verify_worker(path, scope, cutoff):
+# 2026-10-26: the background verification already read the three financial
+# stores and dropped the result; the first decision-evidence request after a
+# deploy then read them again inside the request (read 58 s + coverage 55 s
+# while missions/tick and checkpoint saving held the one CPU) and passed the
+# 120 s warm limit in 3 of 6 deploys. The verified reads are now kept for the
+# store identity they were made from; a request reuses them and, when the
+# store has changed, starts the same background read and shows D07 as being
+# checked. Every integrity check inside the reads is unchanged.
+_JP_FINANCIAL_INPUTS = {"key": None, "data": None, "failedKey": None, "failedAt": 0.0}
+_JP_FINANCIAL_RETRY_SEC = 300
+
+
+def _jp_financial_verify_worker(path, scope, cutoff, key=None):
     import argus_earnings_history
     started = time.monotonic()
+    kept = None
     try:
-        argus_earnings_history.read(path, cutoff=cutoff, member_codes=scope)
-        argus_earnings_history.read_coverage(path, cutoff=cutoff)
-        argus_earnings_history.read_company_coverage(path, cutoff=cutoff, member_codes=scope)
+        financial = _decision_evidence_stage("adopted.financial_read", lambda:
+            argus_earnings_history.read(path, cutoff=cutoff, member_codes=scope) if scope else [])
+        coverage = _decision_evidence_stage("adopted.financial_coverage", lambda:
+            argus_earnings_history.read_coverage(path, cutoff=cutoff))
+        company = _decision_evidence_stage("adopted.company_coverage", lambda:
+            argus_earnings_history.read_company_coverage(path, cutoff=cutoff, member_codes=scope) if scope else {})
+        kept = (financial, coverage, company)
         outcome = {"state": "DONE", "errorClass": None}
     except Exception as exc:
-        # The request path then reads synchronously and reports the failure.
+        # The next request reports the failure (D07 cannot be verified).
         outcome = {"state": "FAILED", "errorClass": type(exc).__name__}
     with _JP_FINANCIAL_VERIFY_LOCK:
         _JP_FINANCIAL_VERIFY.update(outcome, finishedAt=_ai_now_iso(),
                                     seconds=round(time.monotonic() - started, 1))
+        if kept is not None:
+            _JP_FINANCIAL_INPUTS.update(key=key, data=kept, failedKey=None)
+        else:
+            _JP_FINANCIAL_INPUTS.update(failedKey=key, failedAt=time.time())
 
 
-def _jp_financial_originals_ready(path, scope, cutoff):
-    """True once this process verified the originals; otherwise start it once."""
+def _jp_financial_start(target, args):
+    threading.Thread(target=target, args=args, name="jp-financial-verify", daemon=True).start()
+
+
+def _jp_financial_inputs(path, scope, cutoff, identity):
+    """(financial, coverage, company) read in the background for this store
+    identity, or None while that read runs. A failed read raises ValueError
+    (D07: the originals cannot be verified) and is tried again after five minutes."""
+    key = (str(identity), tuple(sorted(scope)))
     with _JP_FINANCIAL_VERIFY_LOCK:
-        state = _JP_FINANCIAL_VERIFY["state"]
-        if state in ("DONE", "FAILED"):
-            return True
-        if state == "RUNNING":
-            return False
+        if _JP_FINANCIAL_INPUTS["key"] == key and _JP_FINANCIAL_INPUTS["data"] is not None:
+            return _JP_FINANCIAL_INPUTS["data"]
+        if (_JP_FINANCIAL_INPUTS["failedKey"] == key
+                and time.time() - _JP_FINANCIAL_INPUTS["failedAt"] < _JP_FINANCIAL_RETRY_SEC):
+            raise ValueError("financial_originals_unverified")
+        if _JP_FINANCIAL_VERIFY["state"] == "RUNNING":
+            return None
         _JP_FINANCIAL_VERIFY.update(state="RUNNING", startedAt=_ai_now_iso(), finishedAt=None,
                                     seconds=None, errorClass=None)
     try:
-        threading.Thread(target=_jp_financial_verify_worker, args=(path, sorted(scope), cutoff),
-                         name="jp-financial-verify", daemon=True).start()
+        _jp_financial_start(_jp_financial_verify_worker, (path, sorted(scope), cutoff, key))
     except RuntimeError:
         with _JP_FINANCIAL_VERIFY_LOCK:
             _JP_FINANCIAL_VERIFY["state"] = "FAILED"
-        return True
-    return False
+            _JP_FINANCIAL_INPUTS.update(failedKey=key, failedAt=time.time())
+        raise ValueError("financial_originals_unverified")
+    with _JP_FINANCIAL_VERIFY_LOCK:
+        if _JP_FINANCIAL_INPUTS["key"] == key and _JP_FINANCIAL_INPUTS["data"] is not None:
+            return _JP_FINANCIAL_INPUTS["data"]
+        if _JP_FINANCIAL_INPUTS["failedKey"] == key:
+            raise ValueError("financial_originals_unverified")
+    return None
 
 
 def _jp_adopted_warning_rules(inputs, cutoff):
@@ -44898,20 +44933,16 @@ def _jp_adopted_warning_rules(inputs, cutoff):
             return rules.seal_candidates(cutoff=cutoff, results=copy.deepcopy(kept_results),
                                          performance=copy.deepcopy(kept_performance))
         financial_error = False
-        financial_pending = bool(path and scope) and not _jp_financial_originals_ready(path, scope, cutoff)
-        # 2026-10-16: the first computation after a deploy still took 37-70 s;
-        # each part carries its own name so the heavy one is read from
-        # production. The reuse path above is not recorded, so these counts
-        # are the recomputations.
+        financial_pending = False
+        # 2026-10-16: each part carries its own name so the heavy one is read
+        # from production. 2026-10-26: the financial reads run in the
+        # background per store identity (_jp_financial_inputs).
         try:
-            if financial_pending:
+            loaded = _jp_financial_inputs(path, scope, cutoff, financial_store) if path else ([], {}, {})
+            if loaded is None:
+                financial_pending = True
                 raise LookupError("financial_originals_being_verified")
-            financial = _decision_evidence_stage("adopted.financial_read", lambda:
-                argus_earnings_history.read(path, cutoff=cutoff, member_codes=scope) if path and scope else [])
-            coverage = _decision_evidence_stage("adopted.financial_coverage", lambda:
-                argus_earnings_history.read_coverage(path, cutoff=cutoff) if path else {})
-            company_coverage = _decision_evidence_stage("adopted.company_coverage", lambda:
-                argus_earnings_history.read_company_coverage(path, cutoff=cutoff, member_codes=scope) if path and scope else {})
+            financial, coverage, company_coverage = loaded
         except LookupError:
             financial, coverage, company_coverage = [], {}, {}
         except (ValueError, TypeError, OSError, sqlite3.Error):

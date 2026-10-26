@@ -19,6 +19,12 @@ def setup_inputs(monkeypatch,tmp_path):
     monkeypatch.setattr(scanner,'_LEVEL_MAP',{'eps':{d:dict(date=d,eps=4000,basis=EPS_BASIS,recordedAt=AT) for d in DAYS}})
     monkeypatch.setattr(scanner,'_JP_INTERNALS_CACHE',{'prices':{}})
     monkeypatch.setattr(scanner,'_TOPIX_HIST_CACHE',{'data':[]})
+    # 2026-10-26: the financial reads run in the background per store identity;
+    # here they run inline so each call sees its own read (the post-deploy test
+    # below uses the real thread).
+    monkeypatch.setattr(scanner,'_jp_financial_start',lambda target,args:target(*args))
+    monkeypatch.setattr(scanner,'_JP_FINANCIAL_INPUTS',{'key':None,'data':None,'failedKey':None,'failedAt':0.0})
+    monkeypatch.setitem(scanner._JP_FINANCIAL_VERIFY,'state','NOT_STARTED')
     request=Mock(side_effect=AssertionError('cache read cannot acquire'))
     monkeypatch.setattr(scanner.requests,'get',request)
     return request
@@ -173,6 +179,8 @@ def test_the_first_read_after_a_start_verifies_the_originals_in_the_background(m
     monkeypatch.setattr(argus_earnings_history, 'read_coverage', lambda *a, **k: {})
     monkeypatch.setattr(argus_earnings_history, 'read_company_coverage', lambda *a, **k: {})
     monkeypatch.setitem(scanner._JP_FINANCIAL_VERIFY, 'state', 'NOT_STARTED')
+    monkeypatch.setattr(scanner, '_jp_financial_start', lambda target, args: threading.Thread(
+        target=target, args=args, name='jp-financial-verify', daemon=True).start())
     runs = _count_rule_runs(monkeypatch)
     results = admitted_results(scanner._jp_adopted_warning_rules({}, AT), AT)
     assert results['D03']['state'] == 'CLEAR' and results['D04']['state'] == 'CLEAR'
@@ -188,3 +196,33 @@ def test_the_first_read_after_a_start_verifies_the_originals_in_the_background(m
     assert scanner._JP_FINANCIAL_VERIFY['state'] == 'DONE'
     results = admitted_results(scanner._jp_adopted_warning_rules({}, AT), AT)
     assert 'reasonJa' not in results['D07'] or '確認中' not in results['D07'].get('reasonJa', '')
+
+
+def test_the_kept_financial_reads_serve_later_requests_until_the_store_changes(monkeypatch, tmp_path):
+    """2026-10-26: the first request after a deploy read the originals again
+    after the background verification had read them (120 s warm timeouts).
+    The verified reads are kept per store identity and reused; a new identity
+    reads again; a failed read is reported and retried after five minutes."""
+    import argus_earnings_history
+    setup_inputs(monkeypatch, tmp_path)
+    (tmp_path / 'jp_market_source_history.sqlite3').write_bytes(b'')
+    identity = ['first']
+    reads = []
+    monkeypatch.setattr(argus_earnings_history, 'store_identity', lambda path: identity[0])
+    monkeypatch.setattr(argus_earnings_history, 'read', lambda *a, **k: reads.append('read') or [])
+    monkeypatch.setattr(argus_earnings_history, 'read_coverage', lambda *a, **k: {})
+    monkeypatch.setattr(argus_earnings_history, 'read_company_coverage', lambda *a, **k: {})
+    scanner._jp_adopted_warning_rules({}, AT)
+    scanner._JP_ADOPTED_RULES_MEMO['at'] -= scanner._JP_ADOPTED_RULES_MAX_AGE_SEC + 1
+    scanner._jp_adopted_warning_rules({}, '2026-09-15T12:02:00Z')
+    assert reads == ['read'], 'the kept read is reused when the rules are recomputed'
+    identity[0] = 'second'
+    scanner._jp_adopted_warning_rules({}, '2026-09-15T12:03:00Z')
+    assert reads == ['read', 'read'], 'a changed store is read again'
+    monkeypatch.setattr(argus_earnings_history, 'read', Mock(side_effect=sqlite3.DatabaseError('synthetic')))
+    identity[0] = 'third'
+    artifact = scanner._jp_adopted_warning_rules({}, '2026-09-15T12:04:00Z')
+    assert artifact is not None
+    results = admitted_results(artifact, '2026-09-15T12:04:00Z')
+    assert results['D07']['reasonJa'] == '営業利益予想の保存原本を検証できません'
+    assert scanner._JP_FINANCIAL_INPUTS['failedKey'][0] == 'third'
