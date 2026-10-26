@@ -61,9 +61,11 @@ assert.match(html, /波動の公開予想の目標 71,540円/); assert.match(htm
 assert.doesNotMatch(html, /src_[abc]/, '出どころの記号を出さない(名前は配信前の命名の検査で確かめる)');
 assert.equal((html.match(/class="fl-point-label"/g) || []).length, 2, '点の文字は動画の線だけ');
 const panel = fs.readFileSync('src/components/chart/JapanMarketComparisonPanel.tsx','utf8');
-// 2026-10-26 (owner): the past similar periods chart is offered again.
-for (const label of ['価格の目盛りと<wbr />参考予測','過去の似た局面','未来の線']) assert.ok(panel.includes(`>${label}</button>`), label);
+// 2026-10-26 (owner): the past similar periods chart is offered again; the future lines view is
+// removed because the reference forecast carries the newest drawn line.
+for (const label of ['価格の目盛りと<wbr />参考予測','過去の似た局面']) assert.ok(panel.includes(`>${label}</button>`), label);
+assert.ok(!panel.includes('未来の線') && !panel.includes('FutureLinesChart'), '未来の線の切り替えは外す(2026-10-26 オーナー)');
 assert.ok(panel.includes('<JapanMarketComparisonPanel key={horizon} horizon={horizon} />'));
 assert.ok(panel.includes('jp-comparison-periods jp-comparison-views'), '切り替えは1行に並べる');
-assert.equal((panel.match(/onClick=\{\(\) => setMode\(/g) || []).length, 3, '日経のチャートの切り替えは3つ(2026-10-26 オーナー)');
+assert.equal((panel.match(/onClick=\{\(\) => setMode\(/g) || []).length, 2, '日経のチャートの切り替えは2つ(2026-10-26 オーナー)');
 console.log('future lines: ok');
