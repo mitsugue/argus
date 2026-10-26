@@ -691,6 +691,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_intel_store_durable.py",
     "web/src/lib/learningReview.ts",
     "web/src/i18n/locales.ts",
     "web/src/components/assetDesk/AssetPortfolioCommand.tsx",
