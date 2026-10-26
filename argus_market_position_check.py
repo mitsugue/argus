@@ -61,10 +61,9 @@ QUESTION_TYPES = ("CONFIRM", "NEXT_EVENT", "PRICING", "STALE")
 REPEAT_HOURS = {"CONFIRM": 72, "NEXT_EVENT": 24, "PRICING": 8, "STALE": 72}
 
 
-def about_key(text: Any) -> str:
-    """Short digest of the report a CONFIRM question is about."""
-    import hashlib
-    return hashlib.sha256(str(text or "").strip().encode("utf-8")).hexdigest()[:16]
+about_key = memory_mod.about_key
+# 2026-10-27 (owner, plan A): what a CONFIRM answer found about the report.
+CLAIMS = ("SUPPORTED", "CONTRADICTED", "UNVERIFIED")
 
 
 def _instant(value: Any) -> Optional[datetime]:
@@ -194,9 +193,12 @@ def build_prompt(questions: List[Mapping[str, Any]], *, now: datetime) -> str:
         "PARTIAL=一部だけ出典で確かめられた(確かめられた事実と、まだ確かめられない点を分けて書く) / "
         "NONE=何も確かめられなかった。NONE の時だけ unknown を true にしてください。"
         "出典の URL が無い事実は確かめられたことにしないでください。推測で埋めないでください。",
+        "「対象の報道」がある問いだけ、claim に報道の主な主張の判定を入れてください: SUPPORTED=出典が主張を裏付けた / "
+        "CONTRADICTED=出典が主張と食い違う(数字・国・日付・主体の違いを含む。answerJa の最初に正しい事実を書く) / "
+        "UNVERIFIED=出典で確かめられなかった。対象の報道が無い問いは claim を null にしてください。",
         "売買の勧め・目標価格・利益の約束は書かないでください。事実と数字だけを短く書いてください。",
         "答えは次の JSON だけで返してください(前後に文章を付けない):",
-        '{"answers":[{"id":"q1","answerJa":"200字以内","confirmation":"CONFIRMED","unknown":false,'
+        '{"answers":[{"id":"q1","answerJa":"200字以内","confirmation":"CONFIRMED","unknown":false,"claim":null,'
         '"nextEventDate":"YYYY-MM-DD または null",'
         '"sources":[{"url":"https://...","title":"見出し","publishedAt":"YYYY-MM-DD"}]}]}',
         "",
@@ -272,8 +274,16 @@ def parse_answers(text: Any, questions: List[Mapping[str, Any]]) -> Dict[str, An
             reject("no_allowed_source")
             continue
         next_date = raw.get("nextEventDate")
+        claim = str(raw.get("claim") or "").upper()
+        if question.get("type") != "CONFIRM":
+            claim = None
+        elif claim not in CLAIMS:
+            # An unanswered report is unverified; otherwise say nothing rather than guess.
+            claim = "UNVERIFIED" if unknown else None
+        elif claim != "UNVERIFIED" and not sources:
+            claim = "UNVERIFIED"
         result["accepted"].append({
-            "question": question, "unknown": unknown, "confirmation": confirmation,
+            "question": question, "unknown": unknown, "confirmation": confirmation, "claim": claim,
             "answerJa": (answer or "確かめられませんでした")[:ANSWER_TEXT_LIMIT],
             "sources": sources[:MAX_SOURCES_PER_ANSWER],
             "nextEventDate": next_date if isinstance(next_date, str) and _DATE.match(next_date) else None,
@@ -295,6 +305,7 @@ def entries(accepted: Iterable[Mapping[str, Any]], *, checked_at: str, slot: str
                  "slot": slot, "sources": list(answer["sources"]),
                  **({"aboutKey": question["aboutKey"]} if question.get("aboutKey") else {})},
             measured={"unknown": bool(answer["unknown"]), "nextEventDate": answer["nextEventDate"],
+                      **({"claim": answer["claim"]} if answer.get("claim") else {}),
                       "confirmation": answer.get("confirmation") or ("NONE" if answer["unknown"] else "CONFIRMED")},
             text_limit=ANSWER_TEXT_LIMIT))
     return out

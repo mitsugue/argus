@@ -256,3 +256,49 @@ def test_an_answered_question_is_not_asked_again_inside_its_window():
     mpm.ingest_news(memory, [{**_news(event_id="e2", hours=1), "headlineJa": "FRB議長が追加の利下げを否定"}])
     fresh = check.select_questions(_view(memory), now=NOW + timedelta(hours=4), recent_checks=rows)
     assert any(q["type"] == "CONFIRM" and "否定" in q["aboutJa"] for q in fresh)
+
+
+def test_a_contradicted_report_is_marked_for_the_integrated_view_but_not_the_screen():
+    # 2026-10-27 (owner, plan A): off the screen; the integrated view reads the finding first.
+    memory = mpm.empty()
+    mpm.ingest_news(memory, [_news()])
+    [question] = [q for q in check.select_questions(_view(memory), now=NOW) if q["type"] == "CONFIRM"]
+    answer = {"id": question["id"], "answerJa": "米9月CPIは前年比3.7%(BLS)。2.1%は日本のCPI。",
+              "confirmation": "CONFIRMED", "unknown": False, "claim": "CONTRADICTED", "nextEventDate": None,
+              "sources": [{"url": "https://www.bls.gov/news.release/cpi.htm"}]}
+    parsed = check.parse_answers(json.dumps({"answers": [answer]}), [question])
+    assert parsed["accepted"][0]["claim"] == "CONTRADICTED"
+    for row in check.entries(parsed["accepted"], checked_at=NOW_ISO, slot="2026-10-26 11:30"):
+        mpm.append(memory, row)
+    view = _view(memory)
+    us = next(t for t in view["themes"] if t["themeId"] == "US_POLICY_RATE")
+    news = next(r for r in us["externalRecent"] if r["kind"] == "NEWS")
+    assert news["publicCheck"]["claim"] == "CONTRADICTED" and news["publicCheck"]["sourceDomains"] == ["www.bls.gov"]
+    fact = next(f for f in mpm.explanation_facts(view) if "米国" in f["text"] or "金利" in f["text"])
+    assert "【公開情報と食い違い】米9月CPIは前年比3.7%" in fact["text"]
+    assert "publicCheck" in json.dumps(mpm.generation_inputs(view), ensure_ascii=False)
+    assert "publicCheck" not in json.dumps(mpm.public_snapshot(view), ensure_ascii=False), "画面には出さない"
+    assert not any(r["kind"] == "PUBLIC_CHECK" for t in view["themes"] for r in t["recent"]), "確認そのものは出さない"
+
+
+def test_claim_is_only_for_reports_and_needs_a_source():
+    confirm = {"id": "q1", "themeId": "US_POLICY_RATE", "type": "CONFIRM", "questionJa": "確認", "aboutKey": "k"}
+    pricing = {"id": "q2", "themeId": "US_POLICY_RATE", "type": "PRICING", "questionJa": "織り込み"}
+    parsed = check.parse_answers(json.dumps({"answers": [
+        {"id": "q1", "answerJa": "", "confirmation": "NONE", "unknown": True, "claim": "CONTRADICTED", "sources": []},
+        {"id": "q2", "answerJa": "60%", "claim": "SUPPORTED", "sources": [{"url": "https://www.cmegroup.com/x"}]}]}),
+        [confirm, pricing])
+    claims = {a["question"]["id"]: a["claim"] for a in parsed["accepted"]}
+    assert claims == {"q1": "UNVERIFIED", "q2": None}
+    # Older checks without a claim: nothing found means unverified; a found answer stays unmarked.
+    memory = mpm.empty()
+    mpm.ingest_news(memory, [_news()])
+    text = next(r for t in _view(memory)["themes"] for r in t["externalRecent"] if r["kind"] == "NEWS")["textJa"]
+    old = mpm._entry("US_POLICY_RATE", "PUBLIC_CHECK", NOW_ISO, "確かめられませんでした",
+                     ref={"questionType": "CONFIRM", "aboutKey": mpm.about_key(text), "sources": []},
+                     measured={"unknown": True, "confirmation": "NONE"})
+    mpm.append(memory, old)
+    news = next(r for t in _view(memory)["themes"] for r in t["externalRecent"] if r["kind"] == "NEWS")
+    assert news["publicCheck"]["claim"] == "UNVERIFIED"
+    later = (NOW + timedelta(days=15)).isoformat().replace("+00:00", "Z")
+    assert mpm.public_check_marks(memory, NOW + timedelta(days=15)) == {}, f"{later}: 古い印は使わない"
