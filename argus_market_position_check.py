@@ -55,6 +55,16 @@ ALLOWED_DOMAINS = (
 )
 
 QUESTION_TYPES = ("CONFIRM", "NEXT_EVENT", "PRICING", "STALE")
+# 2026-10-27: the shadow week asked the same report three or four times with
+# the same answer. A question answered within its window is not asked again;
+# a CONFIRM is the same only for the same report.
+REPEAT_HOURS = {"CONFIRM": 72, "NEXT_EVENT": 24, "PRICING": 8, "STALE": 72}
+
+
+def about_key(text: Any) -> str:
+    """Short digest of the report a CONFIRM question is about."""
+    import hashlib
+    return hashlib.sha256(str(text or "").strip().encode("utf-8")).hexdigest()[:16]
 
 
 def _instant(value: Any) -> Optional[datetime]:
@@ -101,25 +111,45 @@ def _theme_label(theme: Mapping[str, Any]) -> str:
     return str(theme.get("labelJa") or theme.get("themeId") or "")
 
 
-def select_questions(view: Mapping[str, Any], *, now: datetime) -> List[Dict[str, Any]]:
+def _recently_answered(checks: Iterable[Mapping[str, Any]], now: datetime) -> set:
+    """(themeId, type, aboutKey) of the checks still inside their repeat window."""
+    out = set()
+    for row in checks or ():
+        ref = row.get("ref") or {}
+        qtype = ref.get("questionType")
+        at = _instant(row.get("at"))
+        if qtype not in REPEAT_HOURS or at is None or now - at > timedelta(hours=REPEAT_HOURS[qtype]):
+            continue
+        out.add((row.get("themeId"), qtype, ref.get("aboutKey") if qtype == "CONFIRM" else None))
+    return out
+
+
+def select_questions(view: Mapping[str, Any], *, now: datetime,
+                     recent_checks: Iterable[Mapping[str, Any]] = ()) -> List[Dict[str, Any]]:
     """Up to MAX_QUESTIONS questions about what the saved position does not say.
 
     Order: an unconfirmed HIGH/CRITICAL report of the last three days, an
     active theme with no known next release, how far the two busiest active
-    themes are priced in, an active theme with no entry for a week.
+    themes are priced in, an active theme with no entry for a week. A question
+    answered inside its REPEAT_HOURS window (`recent_checks`, the saved
+    PUBLIC_CHECK entries) is skipped.
     """
     themes = [t for t in (view.get("themes") or []) if t.get("status") == "ACTIVE"]
     asked: List[Dict[str, Any]] = []
     seen = set()
+    answered = _recently_answered(recent_checks, now)
 
-    def add(theme: Mapping[str, Any], qtype: str, text: str, about: Optional[str] = None) -> None:
+    def add(theme: Mapping[str, Any], qtype: str, text: str, about: Optional[str] = None) -> bool:
         key = (theme.get("themeId"), qtype)
-        if key in seen or len(asked) >= MAX_QUESTIONS:
-            return
+        about_id = about_key(about) if qtype == "CONFIRM" else None
+        if key in seen or len(asked) >= MAX_QUESTIONS or (*key, about_id) in answered:
+            return False
         seen.add(key)
         asked.append({"id": f"q{len(asked) + 1}", "themeId": theme.get("themeId"),
                       "themeLabelJa": _theme_label(theme), "type": qtype,
-                      "questionJa": text[:300], "aboutJa": (about or "")[:200]})
+                      "questionJa": text[:300], "aboutJa": (about or "")[:200],
+                      **({"aboutKey": about_id} if about_id else {})})
+        return True
 
     for theme in themes:
         for row in theme.get("externalRecent") or theme.get("recent") or []:
@@ -128,11 +158,11 @@ def select_questions(view: Mapping[str, Any], *, now: datetime) -> List[Dict[str
             if (row.get("kind") == "NEWS" and row.get("severity") in ("HIGH", "CRITICAL")
                     and ref.get("confirmationState") not in ("CONFIRMED", "OFFICIAL")
                     and at is not None and now - at <= timedelta(hours=CONFIRM_LOOKBACK_HOURS)):
-                add(theme, "CONFIRM",
-                    f"「{_theme_label(theme)}」の次の報道は、公式の発表や一次情報で確認できますか。"
-                    "確認できた事実と、まだ確認できない点を分けてください。",
-                    about=str(row.get("textJa") or ""))
-                break
+                if add(theme, "CONFIRM",
+                       f"「{_theme_label(theme)}」の次の報道は、公式の発表や一次情報で確認できますか。"
+                       "確認できた事実と、まだ確認できない点を分けてください。",
+                       about=str(row.get("textJa") or "")):
+                    break
     for theme in themes:
         if not theme.get("nextEvent"):
             add(theme, "NEXT_EVENT",
@@ -262,7 +292,8 @@ def entries(accepted: Iterable[Mapping[str, Any]], *, checked_at: str, slot: str
             question["themeId"], KIND, checked_at, answer["answerJa"],
             ref={"source": "public_check", "questionId": question["id"],
                  "questionType": question["type"], "questionJa": question["questionJa"],
-                 "slot": slot, "sources": list(answer["sources"])},
+                 "slot": slot, "sources": list(answer["sources"]),
+                 **({"aboutKey": question["aboutKey"]} if question.get("aboutKey") else {})},
             measured={"unknown": bool(answer["unknown"]), "nextEventDate": answer["nextEventDate"],
                       "confirmation": answer.get("confirmation") or ("NONE" if answer["unknown"] else "CONFIRMED")},
             text_limit=ANSWER_TEXT_LIMIT))
