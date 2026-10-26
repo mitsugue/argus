@@ -62,6 +62,15 @@ export interface JapanMarketComparison {
     stateFeatureDefinitionCount?: number;
     differences: string[];
   }>;
+  /** 2026-10-27 (owner): with no candidate, the closest past windows above the
+   *  limit, drawn as references with their distance. Never a forecast. */
+  nearestReferences?: Array<{
+    snapshotId: string;
+    anchorDate: string;
+    distance: number;
+    comparison: ComparisonPoint[];
+    subsequentReference: ComparisonPoint[];
+  }>;
   forecast: {
     status: string;
     line: ComparisonPoint[];

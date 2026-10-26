@@ -102,3 +102,24 @@ def test_reason_names_the_market_series_when_market_state_differs_most(monkeypat
     _, doc = comparison()
     assert doc['comparison']['noAnalogExplanation']['textJa'].endswith(
         '主な違い：日本10年金利の変化幅・NT倍率の変化率。')
+
+
+def test_no_close_window_draws_the_three_nearest_as_references():
+    # 2026-10-27 (owner): a week with no past window under the limit still
+    # draws the closest three, each with its distance, as references only.
+    days, doc = comparison(policy=analogs.AnalogPolicy(maximum_distance=0.001))
+    c, selection = doc['comparison'], doc['selection']
+    near = c['nearestReferences']
+    assert len(near) == analogs.NEAREST_REFERENCE_COUNT == 3
+    assert [r['distance'] for r in near] == sorted(r['distance'] for r in near)
+    assert all(r['distance'] > 0.001 for r in near)
+    assert near[0]['anchorDate'] == c['noAnalogExplanation']['anchorDate']
+    pos = {d: i for i, d in enumerate(days)}
+    gaps = [abs(pos[a['anchorDate']] - pos[b['anchorDate']]) for a in near for b in near if a is not b]
+    assert min(gaps) >= analogs.AnalogPolicy().minimum_separation_sessions
+    assert all(r['comparison'] and r['subsequentReference'][0]['offsetSessions'] == 0 for r in near)
+    # Never a candidate, never in the forecast, never in the selection identity.
+    assert c['candidates'] == [] and c['forecast']['line'] == [] and c['forecast']['sampleCount'] == 0
+    assert selection['selected'] == [] and len(selection['nearestRejected']) == 3
+    _, normal = comparison()
+    assert 'nearestReferences' not in normal['comparison'] and normal['selection']['nearestRejected'] == []

@@ -16,6 +16,8 @@
 .jp-comparison__sample--actual { border-color: #e1eaf0; border-top-width: 3px; }
 .jp-comparison__sample--past { border-color: #94c5de; }
 .jp-comparison__sample--reference { border-color: #94c5de; border-top-style: dotted; }
+.jp-comparison__sample--near { border-top-style: dashed; }
+.jp-comparison__legend li[data-nearest-reference] { grid-column: 1 / -1; white-space: nowrap; }
 .jp-comparison__sample--forecast { border-color: #79d6b0; border-top-style: dashed; border-top-width: 3px; }
 .jp-comparison__controls { display: flex; flex-wrap: wrap; gap: 10px 20px; font-size: 13px; }
 .jp-comparison__controls label { display: flex; align-items: center; gap: 8px; min-height: 44px; }

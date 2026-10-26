@@ -119,6 +119,19 @@ export function validJapanMarketComparison(v: unknown, horizon: number): v is Ja
     }
     ids.add(c.snapshotId);
   }
+  // 2026-10-27 (owner): references only when nothing was admitted.
+  if (v.nearestReferences !== undefined) {
+    const near = v.nearestReferences;
+    if (!Array.isArray(near) || !near.length || near.length > 3 || v.candidates.length) return false;
+    const seen = new Set<string>();
+    for (const r of near) {
+      if (!object(r) || typeof r.snapshotId !== 'string' || seen.has(r.snapshotId)
+        || typeof r.anchorDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(r.anchorDate)
+        || !finite(r.distance) || r.distance <= 0 || !points(r.comparison) || !(r.comparison as unknown[]).length
+        || !points(r.subsequentReference)) return false;
+      seen.add(r.snapshotId);
+    }
+  }
   const f = v.forecast;
   return object(f) && typeof f.status === 'string' && f.horizonSessions === horizon
     && ['UNVALIDATED', 'VALIDATED'].includes(String(f.validationStatus))

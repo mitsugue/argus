@@ -302,8 +302,14 @@ FEATURE_LABELS_JA = {
 
 def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any],
                         paths: Sequence[Mapping[str, Any]], ensemble: Mapping[str, Any], *,
-                        scale: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Project one set of calculation identities into the chart contract."""
+                        scale: Mapping[str, Any] | None = None,
+                        nearest_paths: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
+    """Project one set of calculation identities into the chart contract.
+
+    `nearest_paths` (2026-10-27 owner): with no admitted candidate, the paths
+    of the closest windows above the limit, drawn as references with their
+    distance. They never enter the candidates, the band or the forecast.
+    """
     if current.get("status") != "AVAILABLE" or not current.get("window"):
         raise ValueError("actual_index_window_required")
     if selection.get("currentSnapshotId") != current.get("snapshotId") or \
@@ -379,6 +385,16 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
                            "stateFeatureDefinitionCount": len(FEATURE_DEFINITIONS),
                            "similarReasons": [groups[key] for key in selected["similarityReasons"]],
                            "differences": differences})
+    nearest = []
+    if not candidates:
+        distances = {row["snapshotId"]: row["distance"] for row in selection.get("nearestRejected") or []}
+        for path in nearest_paths:
+            if path.get("snapshotId") in distances and path.get("comparison"):
+                nearest.append({"snapshotId": path["snapshotId"], "anchorDate": path["anchorDate"],
+                                "distance": distances[path["snapshotId"]],
+                                "comparison": convert(path["comparison"]),
+                                "subsequentReference": convert(path["subsequentReference"])})
+        nearest.sort(key=lambda row: (row["distance"], row["anchorDate"]))
     converted_band = []
     for point in ensemble["forecastBand"]:
         bounds = convert([{"offsetSessions": point["offsetSessions"], "value": point[key]}
@@ -390,6 +406,7 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
         "anchorDate": current["anchorDate"], "actualAnchorPrice": anchor_price,
         "unit": "JPY_INDEX_POINTS" if use_yen else "ANCHOR_100", "actual": convert(actual),
         "candidates": candidates,
+        **({"nearestReferences": nearest} if nearest else {}),
         "forecast": {"status": ensemble["status"], "line": convert(ensemble["forecastLine"]),
                      "band": converted_band, "horizonSessions": ensemble["horizonSessions"],
                      "validationStatus": ensemble["validationStatus"],
@@ -640,7 +657,11 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     ensemble = reference_ensemble(selection, paths, horizon_sessions=horizon_sessions)
     scale = index_valuation_scale(valuation, cutoff=cutoff, anchor_date=current["anchorDate"],
                                   anchor_price=current["window"][-1]["close"])
-    document = comparison_document(current, selection, paths, ensemble, scale=scale)
+    nearest_ids = {row["snapshotId"] for row in selection.get("nearestRejected") or []}
+    nearest_paths = [reference_path(episode, later_bars=visible, display_cutoff=cutoff,
+                                    session_dates=session_dates, horizon_sessions=horizon_sessions, policy=policy)
+                     for episode in candidates if episode["snapshotId"] in nearest_ids] if not selected else []
+    document = comparison_document(current, selection, paths, ensemble, scale=scale, nearest_paths=nearest_paths)
     if research:
         result = backtest_cache.get("materialReactionResearch") or {}
         pick = lambda part, side: {k: (result.get(part) or {}).get(side, {}).get(k) for k in

@@ -16,6 +16,13 @@ const document = {
   scaleExplanation: '基準日100の形状比較', limitations: ['未検証'],
 };
 assert(validJapanMarketComparison(document, 5));
+// 2026-10-27 (owner): the closest windows as references, only when nothing was admitted.
+const nearDoc = structuredClone(document);
+nearDoc.nearestReferences = [{ snapshotId: 'a', anchorDate: '2018-12-20', distance: 1.1, comparison: [{ offsetSessions: 0, value: 100 }],
+  subsequentReference: [{ offsetSessions: 0, value: 100 }] }];
+assert(validJapanMarketComparison(nearDoc, 5));
+assert(!validJapanMarketComparison({ ...nearDoc, nearestReferences: [...nearDoc.nearestReferences, ...['b', 'c', 'd'].map(id => ({ ...nearDoc.nearestReferences[0], snapshotId: id }))] }, 5));
+assert(!validJapanMarketComparison({ ...nearDoc, nearestReferences: [{ ...nearDoc.nearestReferences[0], distance: 0 }] }, 5));
 const withReview = structuredClone(document);
 withReview.reviewConditionsJa = ['基準日や市場条件を更新したら比較し直します。'];
 assert(validJapanMarketComparison(withReview, 5));
