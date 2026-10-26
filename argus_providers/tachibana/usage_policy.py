@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import re
 from datetime import datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -44,6 +45,10 @@ class UsagePolicy:
         self.blocked = False
         self.acquired = False
         self.initial_usage_unknown = False
+        # 2026-10-26: why and when today was stopped, kept across restarts
+        # (a restart had erased the reason the owner's realtime price stopped).
+        self.blocked_reason = None
+        self.blocked_at = None
 
     def acquire(self):
         self.lease.acquire()
@@ -63,6 +68,12 @@ class UsagePolicy:
                 if row.get('initialUsageUnknown') is True and (not self.blocked or self.count != 6):
                     raise ValueError('unknown_usage_must_be_blocked')
                 self.initial_usage_unknown = row.get('initialUsageUnknown', False)
+                reason, at = row.get('blockedReason'), row.get('blockedAt')
+                if reason is not None and (type(reason) is not str or len(reason) > 48):
+                    raise ValueError('invalid_policy')
+                if at is not None and (type(at) is not str or len(at) > 32):
+                    raise ValueError('invalid_policy')
+                self.blocked_reason, self.blocked_at = reason, at
             self.acquired = True
         except Exception:
             self.lease.release()
@@ -84,15 +95,24 @@ class UsagePolicy:
         if self.day != day:
             self.day, self.count, self.blocked = day, 0, False
             self.initial_usage_unknown = False
+            self.blocked_reason = self.blocked_at = None
         if self.blocked or login and self.count >= 6:
             raise TachibanaError(ErrorClass.DISABLED)
         if login:
             self.count += 1
             self._save()  # Persist before sending: a crash cannot reset the budget.
 
-    def block(self):
-        self.day = self.clock().astimezone(TOKYO).date().isoformat()
+    def block(self, reason=None):
+        now = self.clock()
+        day = now.astimezone(TOKYO).date().isoformat()
+        if self.day != day:
+            self.blocked_reason = self.blocked_at = None
+        self.day = day
         self.blocked = True
+        # The first reason of the day is the one that stopped it.
+        if self.blocked_reason is None:
+            self.blocked_reason = re.sub(r'[^A-Z0-9_]', '', str(reason or 'UNSPECIFIED').upper())[:48] or 'UNSPECIFIED'
+            self.blocked_at = now.astimezone(TOKYO).isoformat(timespec='seconds')[:32]
         self._save()
 
     def _save(self):
@@ -103,6 +123,8 @@ class UsagePolicy:
             row = {"day": self.day, "count": self.count, "blocked": self.blocked}
             if self.initial_usage_unknown:
                 row['initialUsageUnknown'] = True
+            if self.blocked and self.blocked_reason:
+                row['blockedReason'], row['blockedAt'] = self.blocked_reason, self.blocked_at
             json.dump(row, stream)
             stream.flush()
             os.fsync(stream.fileno())

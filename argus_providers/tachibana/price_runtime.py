@@ -30,8 +30,8 @@ class GuardedTransport:
         if login: self.session_day = day
         try:
             return self.transport.post_json(url, payload, timeout)
-        except Exception:
-            self.policy.block()
+        except Exception as exc:
+            self.policy.block("TRANSPORT_" + str(getattr(getattr(exc, 'classification', None), 'value', None) or type(exc).__name__))
             raise
 
 class TachibanaPriceRuntime:
@@ -60,8 +60,8 @@ class TachibanaPriceRuntime:
             self.session.authenticate()
             self._day = self.client.provider_calendar_date()
             self.refresh()
-        except Exception:
-            self.policy.block()
+        except Exception as exc:
+            self.policy.block("START_" + str(getattr(getattr(exc, 'classification', None), 'value', None) or type(exc).__name__))
             raise
 
     def refresh(self):
@@ -96,7 +96,7 @@ class TachibanaPriceRuntime:
             self._phase = truth.phase.value
         except Exception as exc:
             self.terminal_error = getattr(exc, "classification", ErrorClass.NORMALIZATION)
-            self.policy.block()
+            self.policy.block("REFRESH_" + str(getattr(self.terminal_error, "value", self.terminal_error)))
             self._price_observations = {}
             raise
 
@@ -107,7 +107,7 @@ class TachibanaPriceRuntime:
         if not self._leased: return True
         try:
             ok = self.session.logout()  # Guard also covers quiet hours and terminal errors.
-            if not ok: self.policy.block()
+            if not ok: self.policy.block("LOGOUT_FAILED")
             return ok
         finally:
             self.session.expire()

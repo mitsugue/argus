@@ -325,6 +325,9 @@ class TachibanaLiveService:
         self._blocked_day = None
         self._blocked_reason: Optional[str] = None
         self._probe_stages: Optional[Dict[str, Any]] = None
+        # 2026-10-26: the stop reason kept in the durable usage policy, so a
+        # restart still shows why today's realtime price stopped.
+        self._persisted_stop: Optional[Dict[str, Any]] = None
 
     # ── configuration ────────────────────────────────────────────────────
     def _load_config(self, environ: Optional[Mapping[str, str]]) -> Optional[TachibanaConfig]:
@@ -482,6 +485,7 @@ class TachibanaLiveService:
         except TachibanaError as exc:
             self._last_error_class = exc.classification.value
             self._capture_auth_diagnostic(runtime)
+            self._capture_persisted_stop(runtime)
             runtime.stop()
             self._block_today(self._clock(), exc.classification.value)
             self._set_idle()
@@ -514,6 +518,7 @@ class TachibanaLiveService:
                 self._sleeper(_POLL_SECONDS)
         finally:
             runtime.stop()
+            self._capture_persisted_stop(runtime)
             self._running = False
             self._runtime = None
         if terminal and not self._stop.is_set():
@@ -523,6 +528,13 @@ class TachibanaLiveService:
             self._block_today(self._clock(), "PROVIDER_ERROR_" + str(self._last_error_class))
             self._sleeper(_TERMINAL_HOLD_SECONDS)
         return True
+
+    def _capture_persisted_stop(self, runtime: Any) -> None:
+        policy = getattr(runtime, "policy", None)
+        reason, at = getattr(policy, "blocked_reason", None), getattr(policy, "blocked_at", None)
+        if getattr(policy, "blocked", False) and isinstance(reason, str):
+            with self._lock:
+                self._persisted_stop = {"reason": reason[:48], "at": at if isinstance(at, str) else None}
 
     def _probe_due(self, now: datetime) -> bool:
         local = now.astimezone(_TOKYO)
@@ -680,7 +692,8 @@ class TachibanaLiveService:
             "usagePolicy": {"quietHoursJst": "03:00-06:00", "pollSeconds": _POLL_SECONDS,
                             "maxAuthPerDay": _MAX_AUTH_PER_DAY, "authAttemptsToday": self._day_auth,
                             "stoppedForToday": self._blocked_day is not None,
-                            "stopReason": self._blocked_reason},
+                            "stopReason": self._blocked_reason,
+                            "persistedStop": dict(self._persisted_stop) if self._persisted_stop else None},
             "lastAuthAt": _iso(last_auth_at),
             "authBoundary": auth_boundary(last_error, auth_diagnostic),
             "lastAuthResult": ("PASS" if (running or probe_result == "PASS") and last_error is None
