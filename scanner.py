@@ -42279,17 +42279,28 @@ def _analyst_targets_saved_company(symbols, today):
             continue
         key = f"JP:{symbol}"
         try:
-            company = argus_asset_earnings.company_summary(
-                argus_earnings_history.read(path, cutoff=at, member_codes=[symbol[:4]]), today=today)
+            observations = argus_earnings_history.read(path, cutoff=at, member_codes=[symbol[:4]])
+            company = argus_asset_earnings.company_summary(observations, today=today)
         except Exception:
             continue  # Preserve any saved result; never replace corruption with empty data.
         if not company:
             continue
+        # 2026-10-27 (owner, N-07): how the stock moved after each release, from the
+        # saved disclosure times and the cached daily bars (no new fetch here).
+        try:
+            import argus_earnings_reaction
+            reactions = argus_earnings_reaction.reactions(
+                observations, (_JQ_HISTORY_CACHE.get(symbol[:4]) or {}).get("data"),
+                list(_TOPIX_HIST_CACHE.get("data") or []))
+        except Exception:
+            reactions = None
         row = dict(_ANALYST_TARGETS["items"].get(key) or {"market": market, "symbol": symbol, "unavailable": True})
         earnings = dict(row.get("earnings") or {"symbol": symbol, "market": market,
             "source": "J-Quants 決算短信", "fetchedAt": company["receivedAt"], "currency": "JPY",
             "next": None, "previous": None, "estimate": None, "actionAuthority": False})
         earnings["company"] = company
+        if reactions and reactions["rows"]:
+            earnings["reactions"] = reactions
         row["earnings"] = earnings
         row["companyStatus"] = "AVAILABLE"
         _ANALYST_TARGETS["items"][key] = row
