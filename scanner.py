@@ -21256,6 +21256,55 @@ def api_argus_admin_news_reprocess():
                         "error": f"{type(e).__name__}: {str(e)[:120]}"}), 500
 
 
+_MARGIN_RECONCILE = {"day": None, "result": None}
+
+
+def _margin_reconcile(weeks=4):
+    """2026-10-27 (owner): before J-Quants' daily per-stock margin balances can back
+    up the JPX two-market weekly totals, compare their sum with JPX for the
+    recent weeks J-Quants has daily rows for (from 2026-09-25). Numbers only."""
+    observations = [r for r in _MARKET_LEDGER.get("observations", [])
+                    if r.get("seriesId") in ("credit.long_balance", "credit.short_balance")
+                    and str(r.get("periodEnd") or "") >= "2026-09-25"]
+    jpx = {}
+    for row in sorted(observations, key=lambda r: str(r.get("knownAt") or r.get("observedAt") or "")):
+        key = "long" if row["seriesId"] == "credit.long_balance" else "short"
+        jpx.setdefault(str(row["periodEnd"])[:10], {})[key] = float(row["value"])
+    out = []
+    for day in sorted(jpx)[-weeks:]:
+        rows = _jquants_paginated("/markets/margin-interest", {"date": day}, max_pages=40)
+        totals = {}
+        for row in rows:
+            for key, value in row.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+                    totals[key] = totals.get(key, 0.0) + float(value)
+        out.append({"date": day, "jpx": jpx[day], "jquantsRows": len(rows),
+                    "jquantsCodes": len({str(r.get("Code")) for r in rows}),
+                    "jquantsTotals": {k: round(v, 2) for k, v in sorted(totals.items())},
+                    "jquantsFields": sorted({k for r in rows[:50] for k in r})})
+    return {"schemaVersion": "argus-margin-reconcile-v1", "weeks": out, "at": _ai_now_iso(),
+            "note": "JPX two-market weekly totals vs the sum of J-Quants daily per-stock rows"}
+
+
+@app.route("/api/argus/admin/margin-reconcile")
+def api_argus_admin_margin_reconcile():
+    """Admin-only, once a day: the margin backup check (numbers and field names only)."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    today = _ai_now_iso()[:10]
+    if _MARGIN_RECONCILE["day"] != today or not _MARGIN_RECONCILE["result"]:
+        if not _JQUANTS_API_KEY:
+            return jsonify({"error": "jquants_key_not_configured"}), 503
+        try:
+            _MARGIN_RECONCILE.update(day=today, result=_margin_reconcile())
+        except Exception as exc:
+            return jsonify({"error": "margin_reconcile_failed", "errorClass": type(exc).__name__}), 503
+    response = jsonify(_MARGIN_RECONCILE["result"])
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
+
+
 @app.route("/api/argus/admin/news-intake/audit")
 def api_argus_admin_news_audit():
     """Owner-only processing view (§6/§25): the bounded audit ledger with
