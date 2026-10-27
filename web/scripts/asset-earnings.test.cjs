@@ -63,3 +63,18 @@ assert.equal(domain.validAssetEarnings({...correctedCompany,company:{...correcte
 state={...state,earnings:{'JP:1001':correctedCompany},refreshFailed:false};
 const companyHtml=renderToStaticMarkup(React.createElement(AssetEarningsDetails,{market:'JP',symbol:'1001'}));
 for(const text of ['7/31発表','営業利益は1億円','会社予想は営業利益4.5億円','10/1発表'])assert.ok(companyHtml.includes(text),text);
+// 2026-10-27 (owner, N-07): the measured move after releases, one line on the stock page.
+{
+  const reactions={rows:[{disclosedDate:'2026-08-06',disclosedTime:'15:30',timing:'AFTER_CLOSE',session:'2026-08-07',gapPct:6.93,dayPct:8.91,topixPct:1,excessPct:7.91},
+    {disclosedDate:'2026-05-08',disclosedTime:'13:00',timing:'INTRADAY',session:'2026-05-08',gapPct:null,dayPct:-2.1,topixPct:null,excessPct:null}],count:2,ups:1};
+  assert.ok(domain.validEarningsReactions(reactions));
+  assert.equal(domain.validEarningsReactions({...reactions,count:3}),false);
+  assert.equal(domain.validEarningsReactions({...reactions,rows:[{...reactions.rows[0],dayPct:NaN}],count:1,ups:1}),false);
+  state={...state,earnings:{'JP:1001':{...correctedCompany,reactions}},refreshFailed:false};
+  const html=renderToStaticMarkup(React.createElement(AssetEarningsDetails,{market:'JP',symbol:'1001'}));
+  assert.ok(html.includes('data-earnings-reactions="2"'),'決算の後の値動きの1行');
+  assert.ok(/決算の後の値動き：前回 .*\+8\.9%.*TOPIX比 \+7\.9%.*過去2回で上げ1回/.test(html.replace(/<[^>]+>/g,'')),html);
+  state={...state,earnings:{'JP:1001':{...correctedCompany,reactions:{rows:[],count:0,ups:0}}}};
+  assert.ok(!renderToStaticMarkup(React.createElement(AssetEarningsDetails,{market:'JP',symbol:'1001'})).includes('決算の後の値動き'));
+  console.log('earnings reactions: PASS');
+}

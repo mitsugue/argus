@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAnalystTargetState } from '../../hooks/useAnalystTargets';
-import { earningsAmount, earningsDateLabel, earningsPct, type AssetEarnings } from '../../domain/assetEarnings';
+import { earningsAmount, earningsDateLabel, earningsPct, validEarningsReactions, type AssetEarnings } from '../../domain/assetEarnings';
 import { outlookDay } from '../../domain/assetOutlook';
 
 export const AssetEarningsDate: React.FC<{ market: string; row?: AssetEarnings; loading?: boolean; refreshFailed?: boolean }> =
@@ -29,6 +29,14 @@ export const AssetEarningsDetails: React.FC<{ market: string; symbol: string }> 
           {p.surprisePct !== null ? `${earningsPct(p.surprisePct)}の差` : '予想がゼロのため差率は計算できません'}。</>}
         </p> :
         <p>未取得</p>}
+    {validEarningsReactions(row?.reactions) && (() => {
+      // 2026-10-27 (owner, N-07): the measured move after releases, one line; facts only.
+      const r = row!.reactions!, last = r.rows[0], pct = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`;
+      return <p className="ad-earnings-reaction" data-earnings-reactions={r.count}>
+        決算の後の値動き：前回 {outlookDay(last.session)} {pct(last.dayPct)}
+        {last.excessPct !== null && `（TOPIX比 ${pct(last.excessPct)}）`}{last.timing === 'INTRADAY' && '・場中の発表'}
+        {r.count > 1 && ` · 過去${r.count}回で上げ${r.ups}回`}</p>;
+    })()}
     <h4>次回の注目点</h4>
     <p>{e?.eps !== null && e?.eps !== undefined ? <>1株利益が市場予想{amount(e.eps, e.epsCurrency)}（{e.analysts}人）を上回るか。
       {e.revenue !== null && <>売上高が市場予想{amount(e.revenue, e.revenueCurrency)}（{e.revenueAnalysts}人{e.revenueGrowthPct !== null && <>・前年同期比{earningsPct(e.revenueGrowthPct)}</>}）に届くか。</>}

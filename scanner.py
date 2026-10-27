@@ -19360,6 +19360,32 @@ _CAUSAL_MEMORY = {
     "lastErrorClass": None,
 }
 _CAUSAL_MEMORY_REFRESH_SEC = 15 * 60
+# 2026-10-27 (owner, 13.8 §4-7): a copy in the existing private store, at most hourly.
+_CAUSAL_MEMORY_BACKUP_SEC = 60 * 60
+
+
+def _causal_memory_backup(remote, now_epoch=None):
+    """Copy the event memory ledger to the private store, or restore a lost one.
+
+    The network work runs outside the memory lock (the bytes sent are verified
+    on their own); only a restore reloads the in-memory state under the lock."""
+    import argus_causal_event_memory_backup
+    now_epoch = time.time() if now_epoch is None else now_epoch
+    last = (_CAUSAL_MEMORY.get("remoteBackup") or {}).get("epoch") or 0.0
+    if now_epoch - last < _CAUSAL_MEMORY_BACKUP_SEC:
+        return _CAUSAL_MEMORY.get("remoteBackup")
+    try:
+        result = argus_causal_event_memory_backup.synchronize(
+            _causal_memory_file(), remote, read_ledger=argus_causal_event_memory.read_ledger)
+        if result.get("status") == "RESTORED":
+            with _CAUSAL_MEMORY_LOCK:
+                _CAUSAL_MEMORY["loaded"] = False
+                _causal_memory_load_locked()
+    except Exception as exc:
+        result = {"status": "FAILED", "errorClass": type(exc).__name__}
+    _CAUSAL_MEMORY["remoteBackup"] = {**result, "epoch": now_epoch,
+                                      "at": datetime.fromtimestamp(now_epoch, timezone.utc).isoformat()}
+    return _CAUSAL_MEMORY["remoteBackup"]
 
 
 def _causal_memory_file():
@@ -21389,6 +21415,9 @@ def api_argus_event_memory_health():
                                     else "development_root"),
             "rawArticleBodiesStored": False,
             "ownerPortfolioFieldsStored": False,
+            # 2026-10-27 (13.8 §4-7): the private copy's status and size, no content.
+            "remoteBackup": {k: v for k, v in (_CAUSAL_MEMORY.get("remoteBackup") or {}).items()
+                             if k in ("status", "records", "bytes", "chunksWritten", "errorClass", "at")} or None,
             "calibrationMode": "SHADOW",
             "automaticCalibrationEnabled": False,
             "analogCache": argus_causal_event_memory.analog_cache_metrics(),
@@ -42182,6 +42211,10 @@ def _level_map_warm(nikkei_rows, *, current_only=False):
                     owner_auth=app.extensions.get('argus_owner_auth')), "at": now}
             except Exception as exc:
                 _LEVEL_MAP["remoteBackup"] = {"status": "FAILED", "errorClass": type(exc).__name__, "at": now}
+            # The event memory rides the same private connection (its own deadline).
+            event_remote = _level_map_remote()
+            if event_remote is not None:
+                _causal_memory_backup(event_remote)
         pending_current = _LEVEL_MAP.get('pendingEstimateDate') == latest and latest not in _LEVEL_MAP['eps']
         _LEVEL_MAP.update(status='WAITING_FOR_CURRENT_ESTIMATE' if pending_current else
                           "AVAILABLE" if _LEVEL_MAP["mornings"] else "WAITING_FOR_ESTIMATE",
@@ -42246,17 +42279,28 @@ def _analyst_targets_saved_company(symbols, today):
             continue
         key = f"JP:{symbol}"
         try:
-            company = argus_asset_earnings.company_summary(
-                argus_earnings_history.read(path, cutoff=at, member_codes=[symbol[:4]]), today=today)
+            observations = argus_earnings_history.read(path, cutoff=at, member_codes=[symbol[:4]])
+            company = argus_asset_earnings.company_summary(observations, today=today)
         except Exception:
             continue  # Preserve any saved result; never replace corruption with empty data.
         if not company:
             continue
+        # 2026-10-27 (owner, N-07): how the stock moved after each release, from the
+        # saved disclosure times and the cached daily bars (no new fetch here).
+        try:
+            import argus_earnings_reaction
+            reactions = argus_earnings_reaction.reactions(
+                observations, (_JQ_HISTORY_CACHE.get(symbol[:4]) or {}).get("data"),
+                list(_TOPIX_HIST_CACHE.get("data") or []))
+        except Exception:
+            reactions = None
         row = dict(_ANALYST_TARGETS["items"].get(key) or {"market": market, "symbol": symbol, "unavailable": True})
         earnings = dict(row.get("earnings") or {"symbol": symbol, "market": market,
             "source": "J-Quants 決算短信", "fetchedAt": company["receivedAt"], "currency": "JPY",
             "next": None, "previous": None, "estimate": None, "actionAuthority": False})
         earnings["company"] = company
+        if reactions and reactions["rows"]:
+            earnings["reactions"] = reactions
         row["earnings"] = earnings
         row["companyStatus"] = "AVAILABLE"
         _ANALYST_TARGETS["items"][key] = row

@@ -11,7 +11,23 @@ export type AssetEarnings = {
     operatingProfit: number; forecastOperatingProfit: number | null; consolidated: boolean;
     forecastDisclosedDate?: string | null; forecastReceivedAt?: string | null;
     source: string; currency: 'JPY'; receivedAt: string };
+  /** 2026-10-27 (owner, N-07): measured moves after past releases, newest first. */
+  reactions?: EarningsReactions;
 };
+export type EarningsReaction = { disclosedDate: string; disclosedTime: string | null;
+  timing: 'BEFORE_OPEN' | 'INTRADAY' | 'AFTER_CLOSE'; session: string; gapPct: number | null; dayPct: number;
+  topixPct: number | null; excessPct: number | null };
+export type EarningsReactions = { rows: EarningsReaction[]; count: number; ups: number };
+/** Accept the reactions only in their exact measured shape (else the rest still shows). */
+export function validEarningsReactions(value: unknown): value is EarningsReactions {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as EarningsReactions;
+  return Array.isArray(v.rows) && v.rows.length > 0 && v.rows.length <= 8 && v.count === v.rows.length
+    && Number.isInteger(v.ups) && v.ups >= 0 && v.ups <= v.count
+    && v.rows.every(r => !!r && validEarningsDay(r.disclosedDate) && validEarningsDay(r.session) && r.session >= r.disclosedDate
+      && ['BEFORE_OPEN', 'INTRADAY', 'AFTER_CLOSE'].includes(r.timing) && Number.isFinite(r.dayPct)
+      && [r.gapPct, r.topixPct, r.excessPct].every(x => x === null || Number.isFinite(x)));
+}
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const optionalNumber = (value: unknown) => value === null || finite(value);
 const unit = (value: unknown) => value === undefined || value === null || typeof value === 'string' && /^[A-Z]{3}$/.test(value);
