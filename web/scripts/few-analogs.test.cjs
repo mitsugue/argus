@@ -37,6 +37,10 @@ assert.equal((html.match(/data-series="nearest-reference"/g) || []).length, 3, '
 assert.equal((html.match(/data-series="nearest-subsequent-reference"/g) || []).length, 3, 'その後も描く');
 assert.match(html, /参考 2018-12-20・距離1\.11/); assert.match(html, /参考 2023-01-06・距離1\.17/);
 assert.match(html, /似た局面なし（上限1）・最も近い3つを参考に表示/);
+// 2026-10-27 (owner): each reference has its own colour and its year-month at the line's end.
+assert.equal((html.match(/data-nearest-label=/g) || []).length, 3, '線の端に年と月');
+assert.match(html, />2018\/12</); assert.match(html, />2022\/3</);
+assert.equal(new Set((html.match(/data-series="nearest-reference"[^>]*stroke="(#[0-9a-f]{6})"/g) || [])).size, 3, '3本は別の色');
 assert.ok(!html.includes('data-series="current-forecast"'), '予想の線にはしない');
 const withCandidate = renderToStaticMarkup(React.createElement(JapanMarketComparisonChart, { document: { ...doc,
   candidates: [{ snapshotId: 'c', anchorDate: '2019-05-07', comparisonKind: 'MARKET_ANALOG', comparison: pts(99),
