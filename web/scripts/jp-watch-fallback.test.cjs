@@ -73,3 +73,13 @@ const hook2 = fs.readFileSync(path.join(src, 'hooks', 'useJapanWatchlist.ts'), '
 assert.ok(hook2.includes('/api/argus/price-history?symbol='), 'history fallback wired');
 assert.ok(hook2.includes('.slice(0, 8)'), 'history fallback is bounded');
 console.log('jp-watch-fallback.test: v13.5.44 history rows for owner symbols ok');
+
+// 2026-10-27 (owner): an unreachable backend never shows a made-up price, rate or regime.
+{
+  const fsm = require('node:fs');
+  for (const file of ['useJapanWatchlist.ts', 'useUSWatchlist.ts', 'useMarketRegime.ts', 'useRatesSnapshot.ts']) {
+    const text = fsm.readFileSync(`src/hooks/${file}`, 'utf8');
+    if (/\bmk\(|\bmkMock\(|142\.30|2900, 26|4\.42, 4\.30|慎重なスタンス（mock）/.test(text)) throw new Error(`made-up fallback values in ${file}`);
+  }
+  console.log('no made-up fallback values: PASS');
+}

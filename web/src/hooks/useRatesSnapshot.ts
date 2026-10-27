@@ -54,36 +54,9 @@ export interface RatesSnapshot {
   missingSeries?: string[];
 }
 
-// Mock fallback used when VITE_ARGUS_BACKEND_URL is unset (e.g. local
-// development with no .env) or when the backend call fails for any
-// reason. Matches the backend's _FRED_MOCK constants so dev and prod
-// look the same shape.
-const todayIso = new Date().toISOString().slice(0, 10);
-function mkMock(seriesId: string, label: string, latest: number, prev: number): FredSeriesPoint {
-  const change = +(latest - prev).toFixed(4);
-  return {
-    seriesId,
-    label,
-    latestValue: latest,
-    previousValue: prev,
-    change,
-    changeBp: +(change * 100).toFixed(1),
-    latestDate: todayIso,
-    status: 'mock',
-  };
-}
-const MOCK_SNAPSHOT: RatesSnapshot = {
-  us10y:     mkMock('DGS10',  'US 10Y Treasury yield', 4.42, 4.30),
-  us2y:      mkMock('DGS2',   'US 2Y Treasury yield',  4.65, 4.60),
-  usReal10y: mkMock('DFII10', 'US 10Y real yield',     1.85, 1.82),
-  vix:       mkMock('VIXCLS', 'VIX',                   17.4, 17.0),
-  // The mock 10Y change of +12 bps lands in the spec's "High" pressure
-  // bucket; VIX 17.4 lands in the "Low" volatility bucket.
-  ratesPressure:  'High',
-  riskVolatility: 'Low',
-  summary:        '10Y 4.42% (+12bp), VIX 17.4. Pressure: High, Vol: Low.',
-  status:         'mock',
-};
+// 2026-10-27 (owner): no made-up rates. With the backend unset the snapshot stays
+// empty; after every attempt fails the last received rows remain, already
+// marked no longer authoritative by failRefresh.
 
 // Connection phase, surfaced to the UI so a cold-starting backend reads
 // as "connecting" rather than snapping straight to "mock":
@@ -215,7 +188,7 @@ const ratesStore = createSharedPollingStore<RatesState>(
     }
 
     if (!backend) {
-      accept(MOCK_SNAPSHOT, 0);
+      setState((state) => ({ ...state, data: null, loading: false, phase: 'mock', attempt: 0, authority: 'unavailable' }));
       return () => { cancelled = true; cancelExpiry(); };
     }
     const url = backend.replace(/\/$/, '') + '/api/argus/rates';
@@ -251,8 +224,8 @@ const ratesStore = createSharedPollingStore<RatesState>(
             await sleep(RETRY_DELAYS_MS[attempt - 1] ?? 6_000);
             continue;
           }
-          setState((state) => ({ ...state, data: projectRatesSnapshot(MOCK_SNAPSHOT),
-            loading: false, phase: 'mock', attempt, authority: 'unavailable' }));
+          setState((state) => ({ ...state, loading: false, phase: state.data ? 'partial' : 'mock',
+            attempt, authority: 'unavailable' }));
           return;
         }
       }

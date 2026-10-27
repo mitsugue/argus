@@ -19,22 +19,8 @@ interface State {
   attempt: number;
 }
 
-// Mock fallback — values mirror the backend's _US_WATCHLIST mocks (NOT real
-// quotes). Used when VITE_ARGUS_BACKEND_URL is unset or every attempt fails.
-function mk(symbol: string, name: string, price: number, changeAbs: number, changePct: number, volume: number): USStockQuote {
-  return { symbol, name, price, changeAbs, changePct, volume, date: null, status: 'mock' };
-}
-const MOCK_SNAPSHOT: USWatchlistSnapshot = {
-  status: 'mock',
-  asOf: null,
-  provider: 'twelvedata',
-  stocks: [
-    mk('NVDA', 'NVIDIA', 142.30, -1.32, -0.92, 240_000_000),
-    mk('AAPL', 'Apple', 218.40, -0.74, -0.34, 52_000_000),
-    mk('TSLA', 'Tesla', 178.20, -5.74, -3.12, 98_000_000),
-    mk('META', 'Meta Platforms', 487.10, 3.78, 0.78, 14_000_000),
-  ],
-};
+// 2026-10-27 (owner): no made-up prices; an unreachable backend leaves the list empty (未取得).
+const MOCK_SNAPSHOT: USWatchlistSnapshot = { status: 'mock', asOf: null, provider: 'twelvedata', stocks: [] };
 
 // Render's free tier sleeps the backend; the first request after idle can take
 // 30–60s. Retry a couple of times with a per-attempt timeout, staying in

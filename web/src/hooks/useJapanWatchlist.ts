@@ -26,26 +26,9 @@ interface State {
   attempt: number;
 }
 
-// Mock fallback (used when VITE_ARGUS_BACKEND_URL is unset, the backend is
-// unreachable, or J-Quants returns nothing). Values mirror the backend's
-// _JP_WATCHLIST mocks so dev and prod look the same shape — NOT real quotes.
-function mk(symbol: string, name: string, price: number, changeAbs: number, changePct: number, volume: number): JapanStockQuote {
-  return { symbol, name, price, changeAbs, changePct, volume, date: null, status: 'mock' };
-}
-const MOCK_SNAPSHOT: JapanWatchlistSnapshot = {
-  status: 'mock',
-  asOf: null,
-  stocks: [
-    // 8058 = 三菱商事 (Mitsubishi Corporation) — NOT Mitsubishi Heavy (7011).
-    mk('8058', 'Mitsubishi Corporation', 2900, 26, 0.90, 9_800_000),
-    mk('9984', 'SoftBank Group', 9800, -180, -1.80, 8_100_000),
-    mk('5801', 'Furukawa Electric', 6400, 120, 1.91, 3_200_000),
-    mk('5803', 'Fujikura', 7200, 210, 3.01, 11_500_000),
-    mk('6584', 'Sanoh Industrial', 1480, -8, -0.54, 410_000),
-    mk('285A', 'Kioxia Holdings', 1820, 35, 1.96, 5_600_000),
-    mk('9501', 'Tokyo Electric Power', 720, -4, -0.55, 14_200_000),
-  ],
-};
+// 2026-10-27 (owner): no made-up prices. With the backend unset or unreachable
+// the list is empty and each row reads 未取得 (never a plausible-looking quote).
+const MOCK_SNAPSHOT: JapanWatchlistSnapshot = { status: 'mock', asOf: null, stocks: [] };
 
 // Render's free tier spins the backend down when idle; the first request after
 // a sleep can take 30–60s. Retry a couple of times with a per-attempt timeout,
