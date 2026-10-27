@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.190"
+PRODUCT_VERSION = "v13.8.191"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -168,7 +168,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '755bc96f9bbd3148e868cff218dc993961eb63ab',
+    'web/scripts/owner-today-https.mjs': 'a076e787d97823575875f0209f532a7b79cd8a42',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -193,7 +193,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # Exact opt-in owner authentication, UI, backup and regression candidate.
     'argus_owner_auth.py': 'b3beff3fe54bd66209c860df755aec7b33c7dff3',
     'docs/ops/owner-server-auth.md': 'c1c9661a76392785523d34572227bcb98911d4a3',
-    'scripts/owner_auth_backup.py': 'a6e25ebfbd2bbda11b88e578d5236eace54b2fcd',
+    'scripts/owner_auth_backup.py': 'ce700f026cecfddc611cb0a310782856c0aeeb37',
     'test_argus_owner_auth.py': 'e40b6d73bcb283e836e7d5812bd7f7b16e721ace',
     'web/scripts/owner-session.test.cjs': 'b7f6d5ca51592c31e52de1ce47cd1c788fe016dd',
     'web/src/components/OwnerAccess.css': '711268ba1b8478611e939f7cfecfd822c012ff44',
@@ -434,8 +434,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/macro-result-details.test.cjs': 'b2bcdb290db61a0ef8d8ffcd090a55e5020e10a1',
     'web/scripts/margin-dynamics.test.cjs': '52f4a8dbd70faada9c31f80446594dbebb68a9da',
     'web/scripts/market-brief-response.test.cjs': '64be553e97cb0820761dfd7aafd3db1799586735',
-    'web/src/components/chart/JapanMarketComparisonChart.css': 'ff27cf573de9f9c3f4489cc2317101fc6373bb7f',
-    'web/src/components/chart/JapanMarketComparisonChart.tsx': 'd88ad129a0ab2bef5ad3ba04d26c8c002cadaf05',
+    'web/src/components/chart/JapanMarketComparisonChart.css': 'ca74feef5672ef3184d89cb3a38d9e41f988e409',
+    'web/src/components/chart/JapanMarketComparisonChart.tsx': '4dc90a5df0a69d0a9ad7c5f1f2709b6c93cb1c45',
     'web/src/components/chart/JapanMarketComparisonPanel.tsx': '04595354741befd7fcf3473125068995699b0a22',
     'web/src/components/dashboard/JapanSqCalendarCard.css': 'a8bfb645823551f415e2d05e8f6721273c09083b',
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': 'bf645a5a2e4ef7c48b9391df5a8f8d645f3ea64d',

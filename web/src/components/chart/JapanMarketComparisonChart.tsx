@@ -5,8 +5,10 @@ import { MaterialReactionLine, YardstickLine, noAnalogText } from './MaterialRea
 import './JapanMarketComparisonChart.css';
 
 const COLOURS = ['#94c5de', '#c7b6ed', '#dfbc83'];
-// 2026-10-27 (owner): the closest windows when none is similar, in grey.
-const NEAR_COLOURS = ['#a7b4bd', '#8796a1', '#6b7b86'];
+// 2026-10-27 (owner): the closest windows when none is similar, one colour each
+// and the year-month where the line starts, so which line is which year is clear.
+const NEAR_COLOURS = ['#f0a35e', '#6fb6f2', '#c58df0'];
+const yearMonth = (day: string) => `${day.slice(0, 4)}/${Number(day.slice(5, 7))}`;
 const number = (value: number) => value.toLocaleString('ja-JP', { maximumFractionDigits: 1 });
 const valuationNumber = (value: number) => value.toLocaleString('ja-JP', { maximumFractionDigits: 2 });
 const percent = (value: number | null) => value === null ? '—' : `${(value * 100).toFixed(0)}%`;
@@ -92,6 +94,15 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
   const bandPath = band.length ? path(band.map(point => ({ offsetSessions: point.offsetSessions, value: point.upper })))
     + ' ' + [...band].reverse().map(point => `L${x(point.offsetSessions)},${y(point.lower)}`).join(' ') + ' Z' : '';
   const ticks = Array.from({ length: 5 }, (_, index) => yMinimum + (yMaximum - yMinimum) * index / 4);
+  // The year-month where each reference starts (left), nudged apart so they never
+  // overlap and never cover what followed each window on the right.
+  const nearestLabels = nearest.map((reference, index) => {
+    const start = reference.comparison.find(point => Number.isFinite(point.value));
+    return { id: reference.snapshotId, anchorDate: reference.anchorDate, colour: NEAR_COLOURS[index % NEAR_COLOURS.length],
+      x: left + 3, y: start ? y(start.value) - 5 : top + 12 * index };
+  }).sort((a, b) => a.y - b.y);
+  for (let index = 1; index < nearestLabels.length; index++)
+    nearestLabels[index].y = Math.max(nearestLabels[index].y, nearestLabels[index - 1].y + 12);
   const showResearchNote = document.forecast.validationStatus !== 'VALIDATED';
   // Which evidence the selection used. When the market-condition history is
   // absent (after a deploy, until the next collection recalculates it) the
@@ -151,15 +162,18 @@ export function JapanMarketComparisonChart({ document }: { document: JapanMarket
           {nearest.map((reference, index) => <g key={reference.snapshotId}>
             <path data-series="nearest-reference" data-anchor={reference.anchorDate}
               d={path(reference.comparison)} fill="none" stroke={NEAR_COLOURS[index % NEAR_COLOURS.length]}
-              strokeWidth="1.4" strokeOpacity=".85" strokeDasharray="6 3" />
+              strokeWidth="1.6" strokeOpacity=".9" />
             {showReferences && <path data-series="nearest-subsequent-reference" data-anchor={reference.anchorDate}
               d={path(reference.subsequentReference)} fill="none" stroke={NEAR_COLOURS[index % NEAR_COLOURS.length]}
-              strokeWidth="1.5" strokeDasharray="2 5" />}
+              strokeWidth="1.6" strokeDasharray="2 5" />}
           </g>)}
           <path data-series="current-actual" d={path(document.actual)} fill="none" stroke="#e1eaf0" strokeWidth="3" />
           {forecast.length > 0 && <path data-series="current-forecast" d={path(forecast)} fill="none"
             stroke="#79d6b0" strokeWidth="3" strokeDasharray="9 5" />}
         </g>
+        {nearestLabels.map(label => <text key={label.id} data-nearest-label={label.anchorDate} x={label.x} y={label.y}
+          textAnchor="start" fontSize="11" fontWeight="700"
+          style={{ fill: label.colour, stroke: '#0d161c', strokeWidth: 3, paintOrder: 'stroke' }}>{yearMonth(label.anchorDate)}</text>)}
         <text x={left} y={height - 9}>{Math.abs(xMinimum)}営業日前</text>
         <text x={x(0)} y={height - 9} textAnchor="middle">{width < 480 ? "基準" : "基準日"}</text>
         <text x={right} y={height - 9} textAnchor="end">{width < 480 ? `+${xMaximum}日` : `${xMaximum}営業日先`}</text>

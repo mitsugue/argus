@@ -21,6 +21,7 @@
 .lm-reading p { margin:4px 0; color:var(--text-main); }
 .lm-reading small { display:block; margin-top:8px; color:var(--text-sub); font-size:11px; }
 .lm-note { margin: 4px 0; color: var(--text-sub); font-size: 12px; line-height: 1.5; }
+.lm-drift--warn { color: #f0a35e; font-weight: 600; }
 .lm-eps { color: var(--text-faint); font-size: 11px; }
 .lm-jump { color: var(--text-main); }
 .lm-scroll { overflow-x: auto; margin: 8px 0; }

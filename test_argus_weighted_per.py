@@ -180,3 +180,27 @@ def test_real_reference_boundary_requires_same_day_complete_known_estimate(bad):
     exec(compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])), 'real-per-reference', 'exec'), namespace)
     result = namespace['_weighted_per_reference']('2026-10-13')
     assert result == ({'indexClose': 60000, 'estimateEps': 3000} if bad is None else None)
+
+
+def test_official_inputs_are_kept_and_the_gap_is_watched(setup):
+    # 2026-10-27 (owner): watch the estimate against the official value.
+    _, auth, client, headers = setup
+    first = save(client, headers)                                  # estimate PER 20 = official 20
+    assert first.json['drift'] == {**first.json['drift'], 'inputs': 1, 'latestPct': 0.0, 'previousPct': None, 'warning': False}
+    second = save(client, headers, revision=1, date='2026-10-14', per=21)   # official higher → estimated EPS +5%
+    drift = second.json['drift']
+    assert drift['inputs'] == 2 and drift['latestPct'] == 5.0 and drift['previousPct'] == 0.0
+    assert drift['warning'] and drift['reason'] == 'LARGE_GAP'
+    assert not {'per', 'ratio', 'estimateEps', 'indexClose'} & second.json.keys()
+    assert client.get('/api/argus/owner-auth/weighted-per', headers=headers).json['drift']['latestPct'] == 5.0
+    calm = per.drift([{'body': json.dumps({'date': d, 'ratio': r, 'receivedAt': d + 'T08:00:00+00:00'})}
+                      for d, r in (('2026-10-13', 1 / 1.01), ('2026-10-20', 1 / 1.045))])
+    assert calm['reason'] == 'LARGE_MOVE' and not per.drift([])['warning']
+    # The history travels with the private backup and comes back after a loss.
+    remote = Remote()
+    per.synchronize(auth, remote)
+    assert len(json.loads(remote.raw)['referenceHistory']) == 2
+    with auth.db() as conn: conn.execute('DELETE FROM owner_weighted_per_history')
+    per.synchronize(auth, remote)
+    with auth.reader() as conn:
+        assert len(per.history_records(conn)) == 2

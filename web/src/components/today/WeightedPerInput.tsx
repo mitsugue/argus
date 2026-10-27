@@ -2,8 +2,15 @@ import { useEffect, useState } from 'react';
 import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../../lib/pollingPolicy';
 import { sessionViewCheckpoint } from '../../lib/sessionViewCheckpoint';
 
+type Drift = { inputs: number; latestPct: number | null; previousPct: number | null; warning: boolean };
 type State = { revision: number; enabled: boolean; referenceDate: string | null; stale: boolean;
-  inputDue: boolean; defaultDate: string; dueDate: string; appliedFromDate?: string | null };
+  inputDue: boolean; defaultDate: string; dueDate: string; appliedFromDate?: string | null; drift?: Drift };
+// 2026-10-27 (owner): the estimated EPS against the official input, one line; coloured only when off.
+const pct = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`;
+const validDrift = (d: unknown): d is Drift => !!d && typeof d === 'object' && Number.isInteger((d as Drift).inputs)
+  && typeof (d as Drift).warning === 'boolean'
+  && ((d as Drift).latestPct === null || Number.isFinite((d as Drift).latestPct))
+  && ((d as Drift).previousPct === null || Number.isFinite((d as Drift).previousPct));
 const base = String(import.meta.env.VITE_ARGUS_BACKEND_URL ?? '').replace(/\/$/, '');
 const source = 'https://indexes.nikkei.co.jp/nkave/archives/data?list=per';
 const valid = (v: State | null | undefined): v is State => !!v && Number.isInteger(v.revision) && v.revision >= 0
@@ -79,6 +86,9 @@ export function WeightedPerInput() {
     {state && <p className="lm-note">{state.enabled ? `補正あり · 対象日 ${state.referenceDate}${state.appliedFromDate ? ` · ${state.appliedFromDate}以降に適用` : ''}` : '補正なし'}
       {state.stale && ' · 10営業日超・要更新'}
       {!show && <button type="button" onClick={() => setEditing(true)}>入力・変更</button>}</p>}
+    {state && validDrift(state.drift) && state.drift.latestPct !== null && <p className={state.drift.warning ? 'lm-note lm-drift--warn' : 'lm-note'}
+      data-drift-warning={state.drift.warning}>推計EPS 公式比 {pct(state.drift.latestPct)}
+      {state.drift.previousPct !== null && `（前回 ${pct(state.drift.previousPct)}）`}</p>}
     {show && <form onSubmit={e => { e.preventDefault(); void save('save', confirmNeeded); }}>
       <h4>今週の加重平均を書き写す</h4>
       <a href={source} target="_blank" rel="noopener noreferrer">日経平均プロフィルのPERを見る ↗</a>

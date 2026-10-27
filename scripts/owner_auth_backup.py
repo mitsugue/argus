@@ -28,11 +28,13 @@ def copy_database(source, destination, *, restore=False):
             tables = {r[0] for r in dst.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             registration_tables = {'owner_watchlist', 'owner_watchlist_receipts'}
             calibration_tables = {'owner_weighted_per', 'owner_weighted_per_estimates'}
+            # 2026-10-27: the official-input history (the estimate-vs-official watch).
+            calibration_history = calibration_tables | {'owner_weighted_per_history'}
             # 2026-10-17: owner-entered Nikkei 225 price adjustment factors.
             factor_tables = {'owner_index_factors'}
             extra = tables - expected - factor_tables
-            if (not expected <= tables or extra - calibration_tables not in (set(), registration_tables)
-                    or extra & calibration_tables not in (set(), calibration_tables)):
+            if (not expected <= tables or extra - calibration_history not in (set(), registration_tables)
+                    or extra & calibration_history not in (set(), calibration_tables, calibration_history)):
                 raise ValueError('database_schema')
             if restore:
                 with dst:

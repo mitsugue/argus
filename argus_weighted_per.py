@@ -32,6 +32,55 @@ def prepare(auth):
         with auth.db() as conn:
             conn.execute('CREATE TABLE IF NOT EXISTS owner_weighted_per (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)')
             conn.execute('CREATE TABLE IF NOT EXISTS owner_weighted_per_estimates (id TEXT PRIMARY KEY, body TEXT NOT NULL)')
+            conn.execute('CREATE TABLE IF NOT EXISTS owner_weighted_per_history (id TEXT PRIMARY KEY, body TEXT NOT NULL)')
+
+
+# 2026-10-27 (owner): watch the gap between the estimate and the official value.
+# Every saved official input is kept (append only) with the same-day estimate;
+# the gap is the estimated EPS against the official EPS. A large gap or a large
+# move since the previous input is flagged; nothing else is changed by it.
+DRIFT_WARN_PCT = 5.0
+DRIFT_MOVE_PCT = 3.0
+HISTORY_LIMIT = 520
+
+
+def _history_row(ref):
+    value = {'date': ref['date'], 'per': ref['per'], 'indexClose': ref['indexClose'],
+             'estimateEps': ref['estimateEps'], 'ratio': ref['ratio'], 'receivedAt': ref['receivedAt']}
+    raw = json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    return hashlib.sha256(raw.encode()).hexdigest(), raw
+
+
+def remember_reference(conn, ref):
+    """Append one official input to the history (idempotent)."""
+    if ref:
+        conn.execute('INSERT OR IGNORE INTO owner_weighted_per_history VALUES(?,?)', _history_row(ref))
+
+
+def history_records(conn):
+    rows = []
+    for row in conn.execute('SELECT id,body FROM owner_weighted_per_history ORDER BY id'):
+        raw = row['body']; value = json.loads(raw)
+        if (hashlib.sha256(raw.encode()).hexdigest() != row['id']
+                or set(value) != {'date', 'per', 'indexClose', 'estimateEps', 'ratio', 'receivedAt'}
+                or not all(number(value[k]) for k in ('per', 'indexClose', 'estimateEps', 'ratio'))):
+            raise ValueError('calibration_history_invalid')
+        date.fromisoformat(value['date']); instant(value['receivedAt'])
+        rows.append({'id': row['id'], 'body': raw})
+    return rows
+
+
+def drift(history):
+    """The estimated EPS against the official EPS at each input, latest last."""
+    points = sorted((json.loads(r['body']) for r in history), key=lambda v: (v['date'], v['receivedAt']))
+    gaps = [{'date': v['date'], 'gapPct': round((1 / v['ratio'] - 1) * 100, 2)} for v in points][-HISTORY_LIMIT:]
+    if not gaps:
+        return {'inputs': 0, 'latestPct': None, 'previousPct': None, 'warning': False, 'reason': None, 'recent': []}
+    latest = gaps[-1]['gapPct']; previous = gaps[-2]['gapPct'] if len(gaps) > 1 else None
+    reason = ('LARGE_GAP' if abs(latest) >= DRIFT_WARN_PCT else
+              'LARGE_MOVE' if previous is not None and abs(latest - previous) >= DRIFT_MOVE_PCT else None)
+    return {'inputs': len(gaps), 'latestPct': latest, 'previousPct': previous, 'latestDate': gaps[-1]['date'],
+            'warning': reason is not None, 'reason': reason, 'recent': gaps[-8:]}
 
 
 def validate(v):
@@ -90,7 +139,7 @@ def weekly_due(now):
     return friday.isoformat()
 
 
-def status(state, now):
+def status(state, now, history=None):
     ref = state['reference']
     age = 0
     if ref:
@@ -104,7 +153,8 @@ def status(state, now):
             'receivedAt': ref['receivedAt'] if ref else None, 'stale': age > 10, 'ageSessions': age,
             'inputDue': not state['disabled'] and (not ref or ref['date'] < weekly_due(now)),
             'defaultDate': latest_session(now).isoformat(), 'dueDate': weekly_due(now),
-            'automaticAcquisition': False, 'actionAuthority': False}
+            'automaticAcquisition': False, 'actionAuthority': False,
+            **({'drift': drift(history)} if history is not None else {})}
 
 
 def apply(records, state, cutoff):
@@ -131,6 +181,7 @@ def record_estimates(auth, records, cutoff):
         state = read(conn)
         if not state['reference']:
             return
+        remember_reference(conn, state['reference'])   # inputs saved before the history existed
         projected = apply(records, state, cutoff)
         for day, row in projected.items():
             if not row.get('manualCalibration') or day > instant(cutoff).astimezone(JST).date().isoformat():
@@ -164,7 +215,7 @@ def action(auth):
         now = datetime.now(timezone.utc)
         if request.method == 'GET':
             with auth.reader() as conn:
-                return jsonify(status(read(conn), now))
+                return jsonify(status(read(conn), now, history_records(conn)))
         if request.method != 'POST':
             return jsonify(error='not_found'), 404
         if request.headers.get('Origin') != auth.origin:
@@ -198,7 +249,9 @@ def action(auth):
             updated = {'schemaVersion': SCHEMA, 'revision': state['revision'] + 1,
                        'reference': ref, 'updatedAt': now.isoformat(), 'disabled': disabled}
             write(conn, updated)
-        return jsonify(status(updated, now))
+            remember_reference(conn, ref)
+            history = history_records(conn)
+        return jsonify(status(updated, now, history))
     except (ValueError, TypeError, KeyError, OverflowError):
         return jsonify(error='invalid_calibration_request'), 400
     except Exception:
@@ -215,13 +268,17 @@ def synchronize(auth, remote):
     with auth.reader() as conn:
         local = read(conn)
         records = projection_records(conn)
+        history = history_records(conn)
     raw, version = remote.get(REMOTE_PATH)
     if raw is not None and len(raw) > 512 * 1024:
         raise ValueError('calibration_backup_bound')
     saved_document = json.loads(raw) if raw is not None else None
     # v1 can lack the optional natural projection journal.
     saved_records = saved_document.get('projectionRecords', []) if saved_document else []
-    saved = validate({k:v for k,v in saved_document.items() if k != 'projectionRecords'}) if saved_document else None
+    saved = validate({k:v for k,v in saved_document.items() if k not in ('projectionRecords', 'referenceHistory')}) if saved_document else None
+    saved_history = saved_document.get('referenceHistory', []) if saved_document else []
+    if not isinstance(saved_history, list) or len(saved_history) > HISTORY_LIMIT * 2:
+        raise ValueError('calibration_history_bound')
     if not isinstance(saved_records, list) or len(saved_records) > 10000:
         raise ValueError('calibration_projection_bound')
     # Validate every remote journal row before any live state is changed.
@@ -229,6 +286,12 @@ def synchronize(auth, remote):
     staging = sqlite3.connect(':memory:'); staging.row_factory = sqlite3.Row
     try:
         staging.execute('CREATE TABLE owner_weighted_per_estimates (id TEXT PRIMARY KEY, body TEXT NOT NULL)')
+        staging.execute('CREATE TABLE owner_weighted_per_history (id TEXT PRIMARY KEY, body TEXT NOT NULL)')
+        for row in saved_history:
+            if not isinstance(row, dict) or set(row) != {'id', 'body'} or not isinstance(row['body'], str) or len(row['body']) > 1024:
+                raise ValueError('calibration_history_invalid')
+            staging.execute('INSERT INTO owner_weighted_per_history VALUES(?,?)', (row['id'], row['body']))
+        history_records(staging)
         for row in saved_records:
             if not isinstance(row, dict) or set(row) != {'id', 'body'} or not isinstance(row['body'], str) or len(row['body']) > 2048:
                 raise ValueError('calibration_projection_invalid')
@@ -236,6 +299,12 @@ def synchronize(auth, remote):
         projection_records(staging)
     finally:
         staging.close()
+    if saved_history:
+        with auth.db() as conn:
+            for row in saved_history:
+                conn.execute('INSERT OR IGNORE INTO owner_weighted_per_history VALUES(?,?)', (row['id'], row['body']))
+        with auth.reader() as conn:
+            history = history_records(conn)
     if saved_records:
         with auth.db() as conn:
             for row in saved_records:
@@ -251,8 +320,9 @@ def synchronize(auth, remote):
         return {'status': 'RESTORED', 'revision': saved['revision']}
     if saved and saved['revision'] == local['revision'] and saved != local:
         raise ValueError('calibration_revision_conflict')
-    if local['revision'] and (local != saved or records != saved_records):
-        encoded = json.dumps({**local, 'projectionRecords': records}, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+    if local['revision'] and (local != saved or records != saved_records or history != saved_history):
+        encoded = json.dumps({**local, 'projectionRecords': records, 'referenceHistory': history},
+                             sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
         if len(encoded) > 512 * 1024:
             raise ValueError('calibration_backup_bound')
         remote.put(REMOTE_PATH, encoded, expected_version=version)
