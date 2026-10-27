@@ -185,6 +185,10 @@ def test_the_first_read_after_a_start_verifies_the_originals_in_the_background(m
     results = admitted_results(scanner._jp_adopted_warning_rules({}, AT), AT)
     assert results['D03']['state'] == 'CLEAR' and results['D04']['state'] == 'CLEAR'
     assert results['D07']['reasonJa'].startswith('営業利益予想の保存原本を確認中')
+    for _ in range(100):                                          # the thread may not have begun yet
+        if reads:
+            break
+        threading.Event().wait(0.02)
     assert reads == ['jp-financial-verify']                      # only the background thread read
     scanner._jp_adopted_warning_rules({}, AT)
     assert len(runs) == 2 and reads == ['jp-financial-verify']   # not reused, no second start
