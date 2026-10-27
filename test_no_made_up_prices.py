@@ -22,6 +22,8 @@ def test_rates_fallback_has_no_values_and_no_signals(monkeypatch):
         scanner._fred_mock_series("DGS10"), scanner._fred_mock_series("VIXCLS"))
     assert pressure is None and volatility is None and "unavailable" in summary
     monkeypatch.setattr(scanner, "_RATES_CACHE", {"data": None, "expires": 0.0})
+    # Another test may leave a real Yahoo reading in the realtime cache; this one checks the fallback alone.
+    monkeypatch.setattr(scanner, "_YF_RT_CACHE", {"data": None, "expires": 0.0})
     snap = scanner._rates_snapshot_cached_only()
     assert snap["vix"].get("latestValue") is None and snap["us10y"].get("latestValue") is None
 
