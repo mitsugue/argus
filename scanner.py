@@ -2173,15 +2173,6 @@ _FRED_SERIES  = {
 }
 # Plausible "Tuesday before US CPI" mock state — used when FRED_API_KEY
 # is absent or any per-series fetch fails. Each tuple is (latest, prev).
-_FRED_MOCK = {
-    "DGS10":  (4.42, 4.30),
-    "DGS2":   (4.65, 4.60),
-    "DFII10": (1.85, 1.82),
-    "VIXCLS": (17.4, 17.0),
-    "BAMLH0A0HYM2": (3.10, 3.05),  # ~310bp HY OAS — benign/neutral mock
-    "DEXJPUS": (157.2, 156.8),     # USD/JPY mock
-}
-
 _RATE_TRUTH_KEYS = (
     "us10y", "us2y", "usReal10y", "vix", "usdJpy", "hyOas")
 _RATE_TRUTH_INSTRUMENTS = {
@@ -2517,12 +2508,23 @@ def _rates_truth_axes(snapshot):
             "completeness": completeness, "missingSeries": missing}
 
 def _fred_mock_series(series_id):
-    latest, prev = _FRED_MOCK[series_id]
-    return _fred_normalize(
-        series_id, latest, prev,
-        datetime.now().strftime("%Y-%m-%d"),
-        "mock",
-    )
+    """2026-10-27 (owner): an unreachable series carries no numbers (never a
+    made-up value); the canonical selection already ignored these rows."""
+    return {"seriesId": series_id, "label": _FRED_SERIES.get(series_id, series_id),
+            "latestValue": None, "previousValue": None, "change": None, "changeBp": None,
+            "latestDate": None, "sourceTimestamp": None, "receivedAt": _ai_now_iso(),
+            "source": "mock", "status": "mock"}
+
+
+def _rates_base_signals(us10y, vix):
+    """Pressure, volatility and summary from usable numbers only."""
+    change, level = us10y.get("change"), vix.get("latestValue")
+    pressure = _classify_rates_pressure(change) if isinstance(change, (int, float)) else None
+    volatility = _classify_risk_volatility(level) if isinstance(level, (int, float)) else None
+    if pressure is None or volatility is None or us10y.get("latestValue") is None:
+        return pressure, volatility, "Canonical rate truth is unavailable or incomplete."
+    return pressure, volatility, (f"10Y {us10y['latestValue']:.2f}% ({us10y['changeBp']:+.0f}bp), "
+                                  f"VIX {level:.1f}. Pressure: {pressure}, Vol: {volatility}.")
 
 def fetch_fred_series(series_id):
     """Fetch latest two non-missing observations for a FRED series.
@@ -2594,15 +2596,9 @@ def _rates_snapshot_base():
         series = dict(zip(_FRED_SERIES, ex.map(fetch_fred_series, _FRED_SERIES)))
     us10y  = series["DGS10"]
     vix    = series["VIXCLS"]
-    rates_pressure  = _classify_rates_pressure(us10y["change"])
-    risk_volatility = _classify_risk_volatility(vix["latestValue"])
     # Each component carries its own truth; the top-level axes below remain
     # partial/delayed if even a secondary decision input is mock or date-only.
-    summary = (
-        f"10Y {us10y['latestValue']:.2f}% ({us10y['changeBp']:+.0f}bp), "
-        f"VIX {vix['latestValue']:.1f}. "
-        f"Pressure: {rates_pressure}, Vol: {risk_volatility}."
-    )
+    rates_pressure, risk_volatility, summary = _rates_base_signals(us10y, vix)
     snapshot = {
         "us10y":          series["DGS10"],
         "us2y":           series["DGS2"],
@@ -2715,8 +2711,7 @@ def _rates_snapshot_cached_only():
     else:
         series = {sid: _fred_mock_series(sid) for sid in _FRED_SERIES}
         us10y, vix = series["DGS10"], series["VIXCLS"]
-        rates_pressure = _classify_rates_pressure(us10y["change"])
-        risk_volatility = _classify_risk_volatility(vix["latestValue"])
+        rates_pressure, risk_volatility, summary = _rates_base_signals(us10y, vix)
         snap = {
             "us10y": series["DGS10"], "us2y": series["DGS2"],
             "usReal10y": series["DFII10"], "vix": series["VIXCLS"],
@@ -2724,9 +2719,7 @@ def _rates_snapshot_cached_only():
             "hyOas": series["BAMLH0A0HYM2"],
             "ratesPressure": rates_pressure,
             "riskVolatility": risk_volatility,
-            "summary": (f"10Y {us10y['latestValue']:.2f}% "
-                        f"({us10y['changeBp']:+.0f}bp), VIX {vix['latestValue']:.1f}. "
-                        f"Pressure: {rates_pressure}, Vol: {risk_volatility}."),
+            "summary": summary,
             "status": "mock",
         }
         cache_state = "unavailable"
@@ -2752,30 +2745,31 @@ _JQUANTS_API_KEY = os.environ.get("JQUANTS_API_KEY")
 
 # The watched names. `symbol` is the TSE code passed straight to V2 (4-char
 # codes incl. the alphanumeric 285A are accepted). `name` is the Japanese display
-# name. `mock` holds plausible fallback values so the mock state renders sensibly
-# when the key is unset or a fetch fails — they are NOT real quotes.
+# name. 2026-10-27 (owner): no fallback values — an unreachable quote is a
+# "mock" row without numbers, shown as 未取得.
 # IMPORTANT: symbol↔name mapping must NOT be guessed. 8058 = 三菱商事 (Mitsubishi
 # Corporation), NOT 三菱重工 (Mitsubishi Heavy Industries, which is 7011). Verify
 # any new code against the official issue list before adding it here.
 _JP_WATCHLIST = [
-    {"symbol": "8058", "name": "三菱商事", "mock": {"price": 2900.0, "changeAbs": 26.0,  "changePct": 0.90,  "volume": 9_800_000}},
-    {"symbol": "9984", "name": "ソフトバンクグループ",              "mock": {"price": 9_800.0, "changeAbs": -180.0, "changePct": -1.80, "volume": 8_100_000}},
-    {"symbol": "5801", "name": "古河電気工業",           "mock": {"price": 6_400.0, "changeAbs": 120.0,  "changePct": 1.91,  "volume": 3_200_000}},
-    {"symbol": "5803", "name": "フジクラ",                    "mock": {"price": 7_200.0, "changeAbs": 210.0,  "changePct": 3.01,  "volume": 11_500_000}},
-    {"symbol": "6584", "name": "三櫻工業",            "mock": {"price": 1_480.0, "changeAbs": -8.0,   "changePct": -0.54, "volume": 410_000}},
-    {"symbol": "285A", "name": "キオクシアホールディングス",             "mock": {"price": 1_820.0, "changeAbs": 35.0,   "changePct": 1.96,  "volume": 5_600_000}},
-    {"symbol": "9501", "name": "東京電力ホールディングス",        "mock": {"price": 720.0,   "changeAbs": -4.0,   "changePct": -0.55, "volume": 14_200_000}},
+    {"symbol": "8058", "name": "三菱商事"},
+    {"symbol": "9984", "name": "ソフトバンクグループ"},
+    {"symbol": "5801", "name": "古河電気工業"},
+    {"symbol": "5803", "name": "フジクラ"},
+    {"symbol": "6584", "name": "三櫻工業"},
+    {"symbol": "285A", "name": "キオクシアホールディングス"},
+    {"symbol": "9501", "name": "東京電力ホールディングス"},
 ]
 
 _JP_CACHE     = {"data": None, "expires": 0.0}
 _JP_CACHE_TTL = 600
 
 def _jp_mock_quote(s):
-    m = s["mock"]
+    # 2026-10-27 (owner): never a made-up price. "mock" now means "not
+    # acquired": the row keeps its name and carries no numbers (画面は 未取得).
     return {
         "symbol": s["symbol"], "name": s["name"], "nameJa": s["name"],
-        "price": m["price"], "changeAbs": m["changeAbs"], "changePct": m["changePct"],
-        "volume": m["volume"], "date": None, "status": "mock",
+        "price": None, "changeAbs": None, "changePct": None,
+        "volume": None, "date": None, "status": "mock",
     }
 
 
@@ -3431,23 +3425,23 @@ def _owner_jp_symbols_for_warm(limit=None):
 _TWELVEDATA_API_KEY = os.environ.get("TWELVEDATA_API_KEY")
 _TWELVEDATA_QUOTE   = "https://api.twelvedata.com/quote"
 
-# `mock` holds plausible fallback values (NOT real quotes) for the mock state.
+# 2026-10-27 (owner): no fallback values; an unreachable quote carries no numbers.
 _US_WATCHLIST = [
-    {"symbol": "NVDA", "name": "NVIDIA",         "mock": {"price": 142.30, "changeAbs": -1.32, "changePct": -0.92, "volume": 240_000_000}},
-    {"symbol": "AAPL", "name": "Apple",          "mock": {"price": 218.40, "changeAbs": -0.74, "changePct": -0.34, "volume": 52_000_000}},
-    {"symbol": "TSLA", "name": "Tesla",          "mock": {"price": 178.20, "changeAbs": -5.74, "changePct": -3.12, "volume": 98_000_000}},
-    {"symbol": "META", "name": "Meta Platforms", "mock": {"price": 487.10, "changeAbs": 3.78,  "changePct": 0.78,  "volume": 14_000_000}},
+    {"symbol": "NVDA", "name": "NVIDIA"},
+    {"symbol": "AAPL", "name": "Apple"},
+    {"symbol": "TSLA", "name": "Tesla"},
+    {"symbol": "META", "name": "Meta Platforms"},
 ]
 
 _US_CACHE     = {"data": None, "expires": 0.0}
 _US_CACHE_TTL = 600
 
 def _us_mock_quote(s):
-    m = s["mock"]
+    # 2026-10-27 (owner): not acquired, never a made-up price (see _jp_mock_quote).
     return {
         "symbol": s["symbol"], "name": s["name"], "nameJa": s["name"],
-        "price": m["price"], "changeAbs": m["changeAbs"], "changePct": m["changePct"],
-        "volume": m["volume"], "date": None, "status": "mock",
+        "price": None, "changeAbs": None, "changePct": None,
+        "volume": None, "date": None, "status": "mock",
     }
 
 def _us_mock_snapshot():
@@ -6154,12 +6148,7 @@ _CRYPTO_MAX_IDS    = 15
 _CRYPTO_CACHE      = {}          # ids-tuple -> {"data":..., "expires":...}
 _CRYPTO_CACHE_MAX  = 16          # bound memory on a public endpoint
 _CRYPTO_CACHE_TTL  = 90          # ~realtime (coingecko simple/price)
-# Plausible fallback values (NOT real quotes) so the UI renders in mock state.
-_CRYPTO_MOCK = {
-    "bitcoin":  {"price": 68_200.0, "changePct": 1.2, "volume": 28_000_000_000},
-    "ethereum": {"price": 3_820.0,  "changePct": 0.8, "volume": 14_000_000_000},
-}
-
+# 2026-10-27 (owner): no made-up fallback prices; an unreachable source shows 未取得.
 # CoinGecko's keyless public API is rate-limited/blocked from datacenter IPs
 # (Render), so in production it silently fell to mock (v10.208 bug report). Two
 # fixes: (1) a free Demo API key (env COINGECKO_API_KEY, sent as the
@@ -6217,9 +6206,8 @@ def get_crypto_watchlist_snapshot(ids):
         return _canonical_quote_snapshot_age(hit["data"], "quotes")
 
     def _mock_rows():
-        return [{"id": i, "priceUsd": m["price"], "changePct": m["changePct"],
-                 "volume": int(m["volume"]), "date": None, "status": "mock"}
-                for i, m in ((i, _CRYPTO_MOCK[i]) for i in ids if i in _CRYPTO_MOCK)]
+        # 2026-10-27 (owner): no made-up prices; an unreachable source shows 未取得.
+        return []
 
     def _fallback_or_mock():
         """CoinGecko unavailable → try keyless Coinbase (real), else mock."""
