@@ -20,14 +20,14 @@ def prepare(tmp_path, monkeypatch):
     dist = repo / "web/dist"
     dist.mkdir(parents=True)
     (dist / "index.html").write_text(
-        '<script>globalThis.__ARGUS_VERSION__="13.8.192";'
-        'globalThis.__ARGUS_PRODUCT_VERSION__="v13.8.192";'
+        '<script>globalThis.__ARGUS_VERSION__="13.8.193";'
+        'globalThis.__ARGUS_PRODUCT_VERSION__="v13.8.193";'
         f'globalThis.__ARGUS_BUILD_SHA__="{CANDIDATE["commitSha"]}";</script>')
     (dist / "asset.js").write_text("export default 1")
     write_json(repo / "product-version.json", {
-        "schemaVersion": "argus-product-version-v1", "productVersion": "v13.8.192"})
-    write_json(repo / "web/package.json", {"version": "13.8.192"})
-    write_json(repo / "backend-version.json", {"version": "13.8.192"})
+        "schemaVersion": "argus-product-version-v1", "productVersion": "v13.8.193"})
+    write_json(repo / "web/package.json", {"version": "13.8.193"})
+    write_json(repo / "backend-version.json", {"version": "13.8.193"})
     paths = {name: tmp_path / f"{name}.json" for name in (
         "source", "certificate", "runtime", "retrieval")}
     for path in paths.values():
