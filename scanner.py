@@ -40949,6 +40949,79 @@ def _index_history_settled(yahoo_symbol, cached, now_utc):
         return False
 
 
+# 2026-10-27 (owner): the Nikkei official daily CSV (open/high/low/close, from
+# 2023) backs up Yahoo's Nikkei 225 bars for personal use. Yahoo stays the
+# source; the official file only fills sessions Yahoo failed to return, and is
+# read only then (at most every 10 minutes). No volume in the file: 0.
+_N225_OFFICIAL_URL = "https://indexes.nikkei.co.jp/nkave/historical/nikkei_stock_average_daily_jp.csv"
+_N225_OFFICIAL = {"rows": None, "expires": 0.0, "status": "NOT_RUN", "sha256": None, "lastAttemptAt": None}
+
+
+def _n225_official_parse(content, *, available_hour_utc, now_utc):
+    """Complete bars from the official CSV (Shift_JIS); a session counts only after its close."""
+    text = content.decode("shift_jis")
+    rows = []
+    today = now_utc.astimezone(TZ_JST).date()
+    for line in text.splitlines()[1:]:
+        cells = [cell.strip().strip('"') for cell in line.split(",")]
+        if len(cells) != 5 or not re.fullmatch(r"\d{4}/\d{2}/\d{2}", cells[0]):
+            continue                                   # the closing copyright line and blanks
+        try:
+            day = datetime.strptime(cells[0], "%Y/%m/%d").date()
+            close, opening, high, low = (float(cells[i]) for i in (1, 2, 3, 4))
+        except ValueError:
+            continue
+        if not all(math.isfinite(v) and v > 0 for v in (close, opening, high, low)) \
+                or high < max(opening, close, low) or low > min(opening, close):
+            continue
+        if day == today:
+            final_at = argus_market_clock._local_close(argus_market_clock.JP_EQUITY, day, now_utc)
+            if now_utc < final_at + timedelta(minutes=30):
+                continue                               # not final yet
+            available = now_utc.isoformat()
+        elif day > today:
+            continue
+        else:
+            available = day.isoformat() + f"T{int(available_hour_utc or 7):02d}:00:00Z"
+        rows.append({"instrumentId": "NIKKEI_225_INDEX", "date": day.isoformat(), "open": opening,
+                     "high": high, "low": low, "close": close, "volume": 0.0,
+                     "availableFrom": available, "adjusted": False,
+                     "sourceRef": "nikkei:official-daily-csv"})
+    return rows
+
+
+def _n225_official_rows(available_hour_utc):
+    now = time.time()
+    if _N225_OFFICIAL["rows"] is not None and now < _N225_OFFICIAL["expires"]:
+        return _N225_OFFICIAL["rows"]
+    _N225_OFFICIAL.update(lastAttemptAt=_ai_now_iso())
+    try:
+        r = requests.get(_N225_OFFICIAL_URL, headers={"User-Agent": "Mozilla/5.0 (argus)"}, timeout=15)
+        try:
+            if r.status_code != 200 or len(r.content) > 2_000_000:
+                raise ValueError("n225_official_http")
+            rows = _n225_official_parse(r.content, available_hour_utc=available_hour_utc,
+                                        now_utc=datetime.now(pytz.utc))
+            digest = hashlib.sha256(r.content).hexdigest()
+        finally:
+            r.close()
+        _N225_OFFICIAL.update(rows=rows, expires=now + 600, status="AVAILABLE" if rows else "EMPTY", sha256=digest)
+    except Exception as exc:
+        _N225_OFFICIAL.update(rows=[], expires=now + 600, status="FAILED:" + type(exc).__name__)
+    return _N225_OFFICIAL["rows"]
+
+
+def _n225_with_official_backup(rows, cached, available_hour_utc):
+    """Yahoo first; the official file fills only sessions after the newest Yahoo bar."""
+    base = rows or list((cached or {}).get("data") or [])
+    newest = base[-1]["date"] if base else ""
+    official = _n225_official_rows(available_hour_utc)
+    missing = [row for row in official if row["date"] > newest]
+    if not missing:
+        return rows, 0
+    return argus_index_history.merge_bars(base, missing), len(missing)
+
+
 def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
                        available_hour_utc=None, next_day_available=False, range_="2y"):
     """Complete OHLCV rows for one index from the public Yahoo v8 chart API.
@@ -41052,6 +41125,19 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
         if response is not None and hasattr(response, "close"):
             try: response.close()
             except Exception: pass
+    backup_count = 0
+    if yahoo_symbol == "^N225":
+        # Only when Yahoo failed or stops before the latest completed session.
+        try:
+            target = argus_market_clock.latest_completed_session_date(argus_market_clock.JP_EQUITY, datetime.now(pytz.utc))
+        except Exception:
+            target = None
+        newest = (rows or (cached or {}).get("data") or [{}])[-1].get("date") or ""
+        if not rows or (target is not None and newest < target.isoformat()):
+            try:
+                rows, backup_count = _n225_with_official_backup(rows, cached, available_hour_utc)
+            except Exception as exc:
+                _N225_OFFICIAL["status"] = "MERGE_FAILED:" + type(exc).__name__
     if not rows and cached and cached.get("data"):
         cached.update(expires=now+300, lastFetchStatus="FAILED", lastAttemptAt=_ai_now_iso(),
                       lastAttemptRange=range_, lastErrorClass=fetch_error or "EmptyIndexHistory")
@@ -41065,6 +41151,7 @@ def _yahoo_index_ohlcv(yahoo_symbol, instrument_id, *, fetch=False,
             else range_) if rows else None,
         "lastAttemptRange": range_,
         "lastFetchStatus": "AVAILABLE" if rows else "FAILED", "lastAttemptAt": _ai_now_iso(),
+        "officialBackupBars": backup_count, "yahooErrorClass": fetch_error,
         "acquiredAt": datetime.now(pytz.utc).isoformat() if rows else None,
         "expires": now + (_JP_MARKET_ENGINE_INDEX_OHLCV_TTL_SEC if rows else 300)}
     return rows
