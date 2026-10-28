@@ -8,6 +8,17 @@ from argus_providers.tachibana.price_runtime import GuardedTransport, TachibanaP
 from test_argus_tachibana_sensor import _session, _encrypted_session_response, _success, NOW
 
 
+@pytest.fixture(autouse=True)
+def own_session_lock(monkeypatch, tmp_path):
+    # 2026-10-28: the production lock is one host-wide file. Parallel test
+    # workers (pytest -n 4) shared it and one test saw singleton_held. Each test
+    # gets its own lock file; the lock itself and its exclusivity are unchanged.
+    import argus_providers.tachibana.usage_policy as usage_policy
+    from argus_providers.tachibana.singleton import ProcessSingletonLease
+    lock = tmp_path / 'tachibana-session.lock'
+    monkeypatch.setattr(usage_policy, 'ProcessSingletonLease', lambda _path: ProcessSingletonLease(lock))
+
+
 def test_quiet_hours_send_nothing_including_login_and_logout(tmp_path):
     for hour in (3, 4, 5):
         clock = lambda: datetime(2026, 10, 5, hour, tzinfo=__import__('zoneinfo').ZoneInfo('Asia/Tokyo'))
