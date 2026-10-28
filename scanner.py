@@ -42419,8 +42419,6 @@ def _analyst_targets_saved_company(symbols, today):
             company = argus_asset_earnings.company_summary(observations, today=today)
         except Exception:
             continue  # Preserve any saved result; never replace corruption with empty data.
-        if not company:
-            continue
         # 2026-10-27 (owner, N-07): how the stock moved after each release, from the
         # saved disclosure times and the cached daily bars (no new fetch here).
         try:
@@ -42430,6 +42428,16 @@ def _analyst_targets_saved_company(symbols, today):
                 list(_TOPIX_HIST_CACHE.get("data") or []))
         except Exception:
             reactions = None
+        if not company:
+            # 2026-10-28: an IFRS company without an operating-profit line (8058) has
+            # no summary, but its release times still give the reactions; they join
+            # an existing earnings row only (a row is never made from them alone).
+            existing = (_ANALYST_TARGETS["items"].get(key) or {}).get("earnings")
+            if reactions and reactions["rows"] and isinstance(existing, dict):
+                row = dict(_ANALYST_TARGETS["items"][key])
+                row["earnings"] = {**existing, "reactions": reactions}
+                _ANALYST_TARGETS["items"][key] = row
+            continue
         row = dict(_ANALYST_TARGETS["items"].get(key) or {"market": market, "symbol": symbol, "unavailable": True})
         earnings = dict(row.get("earnings") or {"symbol": symbol, "market": market,
             "source": "J-Quants 決算短信", "fetchedAt": company["receivedAt"], "currency": "JPY",

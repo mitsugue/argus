@@ -37,3 +37,25 @@ def test_newest_first_and_bounded():
     many = [obs(f"2026-08-0{d}", "15:30") for d in (5, 6, 7)] + [obs("2026-08-06", "15:30")]
     rows = er.reactions(many, STOCK, limit=2)["rows"]
     assert [r["disclosedDate"] for r in rows] == ["2026-08-07", "2026-08-06"]
+
+
+def test_a_company_without_an_operating_profit_line_still_gets_reactions(monkeypatch, tmp_path):
+    # 2026-10-28: 8058 (IFRS, no operating profit) had no summary, so no reactions.
+    import scanner
+    import argus_earnings_history
+    ifrs = obs("2026-08-06", "15:30", doc="FYFinancialStatements_Consolidated_IFRS")
+    monkeypatch.setattr(scanner, "_cost_policy_durable_enabled", lambda: True)
+    monkeypatch.setitem(scanner._DURABILITY_PATHS, "root", str(tmp_path))
+    monkeypatch.setattr(argus_earnings_history, "read", lambda *a, **k: [ifrs])
+    monkeypatch.setitem(scanner._JQ_HISTORY_CACHE, "8058", {"data": STOCK, "expires": 9e18})
+    monkeypatch.setitem(scanner._TOPIX_HIST_CACHE, "data", TOPIX)
+    items = {"JP:8058": {"market": "JP", "symbol": "8058",
+                         "earnings": {"symbol": "8058", "market": "JP", "source": "Yahoo Finance", "next": None}}}
+    monkeypatch.setitem(scanner._ANALYST_TARGETS, "items", items)
+    scanner._analyst_targets_saved_company([("JP", "8058")], "2026-10-28")
+    earnings = scanner._ANALYST_TARGETS["items"]["JP:8058"]["earnings"]
+    assert "company" not in earnings and earnings["reactions"]["rows"][0]["session"] == "2026-08-07"
+    # Without an existing earnings row nothing is made from the reactions alone.
+    monkeypatch.setitem(scanner._ANALYST_TARGETS, "items", {})
+    scanner._analyst_targets_saved_company([("JP", "8058")], "2026-10-28")
+    assert scanner._ANALYST_TARGETS["items"] == {}
