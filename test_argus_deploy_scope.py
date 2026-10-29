@@ -186,9 +186,9 @@ class DeployScopeTests(unittest.TestCase):
         product = json.loads((ROOT / "product-version.json").read_text())
         frontend = json.loads((ROOT / "web/package.json").read_text())["version"]
         backend = json.loads((ROOT / "backend-version.json").read_text())["version"]
-        self.assertEqual("v13.8.197", product["productVersion"])
-        self.assertEqual("13.8.197", frontend)
-        self.assertEqual("13.8.197", backend)
+        self.assertEqual("v13.8.198", product["productVersion"])
+        self.assertEqual("13.8.198", frontend)
+        self.assertEqual("13.8.198", backend)
 
     def test_release_gate_names_product_and_component_coordinates(self):
         source = (ROOT / "scripts/release_gate.sh").read_text()
@@ -263,28 +263,26 @@ def test_cache_warm_never_prints_authenticated_response_or_transport_details(tmp
     workflow = (ROOT / '.github/workflows/deploy-pages.yml').read_text()
     step = workflow.split('      - name: Warm the runtime caches immediately after the swap\n', 1)[1]
     shell = textwrap.dedent(step.split('        run: |\n', 1)[1].split('      - name:', 1)[0])
-    curl = tmp_path / 'curl'
-    curl.write_text('#!' + sys.executable + '\n' + textwrap.dedent("""
+    fake_python = tmp_path / 'python3'
+    fake_python.write_text('#!' + sys.executable + '\n' + textwrap.dedent("""
         import os, sys
         args = sys.argv[1:]
-        assert 'X-ARGUS-ADMIN-TOKEN: ' + os.environ['ARGUS_ADMIN_TOKEN'] in args
-        assert args[args.index('--max-time') + 1] == '300'
+        assert args[0] == 'scripts/run_intel_collect.py'
+        assert args[args.index('--timeout') + 1] == '300'
+        assert os.environ['ARGUS_ADMIN_TOKEN'] == 'fixture-private-token'
+        print('private-owner-response-body')
         if os.environ['FAKE_FAIL'] == '1':
             print('private-error-response', file=sys.stderr)
-            raise SystemExit(22)
-        body = 'private-owner-response-body'
-        if '--output' in args:
-            with open(args[args.index('--output') + 1], 'w') as out: out.write(body)
-        else: print(body)
+            raise SystemExit(1)
     """))
-    curl.chmod(0o700)
+    fake_python.chmod(0o700)
     for failed in ('0', '1'):
         env = dict(os.environ, PATH=str(tmp_path) + os.pathsep + os.environ['PATH'],
                    ARGUS_ADMIN_TOKEN='fixture-private-token', FAKE_FAIL=failed)
         run = subprocess.run(['/bin/bash', '-e', '-o', 'pipefail', '-c', shell],
                              env=env, text=True, capture_output=True, timeout=5)
         assert run.returncode == 0
-        assert ('起動を確認' if failed == '0' else '起動できませんでした') in run.stdout
+        assert ('完了を確認しました' if failed == '0' else '完了を確認できませんでした') in run.stdout
         assert run.stderr == ''
         for private in ('private-owner-response-body', 'private-error-response', 'fixture-private-token'):
             assert private not in run.stdout

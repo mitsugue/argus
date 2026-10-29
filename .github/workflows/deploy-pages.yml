@@ -416,12 +416,10 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          if curl -fsS -X POST --max-time 300 --output /dev/null \
-              -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-              "https://argus-backend-3j2m.onrender.com/api/argus/institutional-intelligence/collect" 2>/dev/null; then
-            echo "収集処理の起動を確認しました。応答本文は表示しません。"
+          if python3 scripts/run_intel_collect.py --base "https://argus-backend-3j2m.onrender.com" --timeout 300 > /dev/null 2>&1; then
+            echo "収集処理の完了を確認しました。応答本文は表示しません。"
           else
-            echo "::warning title=collect-warm::収集処理を起動できませんでした。次の定期実行で再確認します。"
+            echo "::warning title=collect-warm::収集処理の完了を確認できませんでした。次の定期実行で再確認します。"
           fi
       - name: Publish producer trigger evidence
         if: always()

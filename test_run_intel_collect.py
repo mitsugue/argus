@@ -86,3 +86,17 @@ def test_failed_feed_reasons_keep_fixed_codes_only():
     assert result["failedFeedReasons"] == [
         {"feed": "meti:release", "httpStatus": 403, "errorClass": "http_unavailable", "elapsedSeconds": 0.4}]
     assert "secret" not in json.dumps(result)
+
+
+def test_joining_an_existing_collection_polls_its_original_identity():
+    calls = []
+    replies = iter([{"status": "running", "runId": "already-running"},
+                    {"status": "done", "runId": "already-running", "result": {}}])
+    def request(**kwargs):
+        calls.append(json.loads(kwargs["data"]))
+        return 200, json.dumps(next(replies))
+    result = run(base="https://example.test", token="secret", request_id="new-request-1",
+                 request=request, sleep=lambda _: None)
+    assert result["status"] == "done" and result["runId"] == "already-running"
+    assert calls == [{"async": True, "requestId": "new-request-1"},
+                     {"statusOnly": True, "requestId": "already-running"}]
