@@ -220,3 +220,34 @@ def test_a_damaged_remote_leaves_an_empty_disk_empty(tmp_path):
     with pytest.raises(ValueError):
         v3.synchronize(fresh, remote)
     assert bodies(fresh) == ({}, {})
+
+
+def test_restore_commits_parts_per_pack_and_preserves_every_body(tmp_path, monkeypatch):
+    records = []
+    for day in range(1, 5):
+        at = f'2026-10-{day:02d}T00:00:00Z'
+        inputs = calculations(at[:10], day + 100, at)
+        inputs['5']['marketFeatureSnapshot']['sampleDay'] = day
+        records.append(history.make_record(brief(at), inputs))
+    local = local_file(tmp_path, 'source.sqlite3', records)
+    remote = Remote()
+    v3.synchronize(local, remote)
+    statements = []
+    connect = sqlite3.connect
+
+    def traced(path, *args, **kwargs):
+        conn = connect(path, *args, **kwargs)
+        if str(path).endswith('/parts.sqlite3'):
+            conn.set_trace_callback(statements.append)
+        return conn
+
+    monkeypatch.setattr(sqlite3, 'connect', traced)
+    target = tmp_path / 'restored.sqlite3'
+    result = v3.synchronize(target, remote)
+    commits = sum(sql == 'COMMIT' for sql in statements)
+    inserts = sum(sql.startswith('INSERT OR IGNORE INTO parts') for sql in statements)
+    assert commits == len([key for key in remote.files if '/packs/' in key])
+    assert inserts > commits > 0
+    assert sum(sql == 'BEGIN' for sql in statements) == commits
+    assert bodies(target) == bodies(local)
+    assert result['written'] == {'packs': 0, 'views': 0, 'outcomes': 0}
