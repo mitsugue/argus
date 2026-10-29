@@ -117,3 +117,112 @@ def test_failed_local_write_preserves_previous_file_and_reports_failure(monkeypa
     assert scanner._macro_analysis_persist() is None
     assert path.read_text() == '{"preserved":true}'
     assert scanner._MACRO_ANALYSIS_STATE["localPersistence"]["status"] == "failed"
+
+
+def _reaction_record(windows, updated):
+    from datetime import datetime, timedelta
+    import argus_macro_release_reaction as reaction
+    row = record(.3, A)
+    row['updatedAt'] = updated
+    at = datetime.fromisoformat(row['eventTimeUtc'].replace('Z', '+00:00'))
+    def capture(minutes):
+        stamp = (at + timedelta(minutes=minutes)).isoformat().replace('+00:00', 'Z')
+        return {'capturedAt': stamp, 'source': reaction.PROVIDER,
+                'values': {'ES=F': {'price': 100 + minutes / 1000,
+                                    'tradedAt': stamp, 'receivedAt': stamp}}}
+    row['releaseReaction'] = reaction.build(row['eventId'], row['eventTimeUtc'],
+        capture(-5), {name: capture(minutes) for name, minutes in windows.items()})
+    return row
+
+
+def test_newer_explanation_cannot_erase_already_received_reaction_windows():
+    import argus_macro_release_reaction as reaction
+    earlier = _reaction_record({'+5m': 5, '+60m': 60, '+8h': 480}, '2026-09-11T20:35:00Z')
+    later = _reaction_record({'+5m': 5, '+60m': 60}, '2026-09-12T01:00:00Z')
+    later['post'] = {'generatedAt': later['updatedAt'], 'reactionWindow': '+60m',
+                     'actualRevisionId': store.actual_revision_id(later['actual'])}
+    originals = deepcopy((earlier, later))
+    merged = store.merge_record(earlier, later, now_iso=later['updatedAt'])
+    assert merged['releaseReaction']['latestWindow'] == '+8h'
+    assert merged['releaseReaction']['windows']['+8h'] == earlier['releaseReaction']['windows']['+8h']
+    assert reaction.revalidate(merged['releaseReaction']) == merged['releaseReaction']
+    # The existing 60-minute explanation must not be relabelled as an 8-hour analysis.
+    assert merged['post']['reactionWindow'] == '+60m'
+    assert (earlier, later) == originals
+    restored = store.restore_from_snapshot(store.serialize_snapshot([merged], as_of=B))
+    assert restored[merged['eventId']]['releaseReaction'] == merged['releaseReaction']
+
+
+def test_same_baseline_unions_windows_but_invalid_replacement_does_not_win():
+    earlier = _reaction_record({'+5m': 5, '+8h': 480}, '2026-09-11T20:35:00Z')
+    later = _reaction_record({'+30m': 30, '+8h': 480}, '2026-09-12T01:00:00Z')
+    later['releaseReaction']['windows']['+8h']['values']['ES=F']['tradedAt'] = '2026-09-12T01:00:00Z'
+    merged = store.merge_record(earlier, later, now_iso=later['updatedAt'])
+    assert set(merged['releaseReaction']['windows']) == {'+5m', '+30m', '+8h'}
+    assert merged['releaseReaction']['windows']['+8h']['comparisonValues'] == earlier['releaseReaction']['windows']['+8h']['comparisonValues']
+    assert merged['releaseReaction']['actionAuthority'] is False
+
+
+def test_different_baselines_are_not_spliced_and_other_event_is_not_used():
+    earlier = _reaction_record({'+8h': 480}, '2026-09-11T20:35:00Z')
+    later = _reaction_record({'+60m': 60}, '2026-09-12T01:00:00Z')
+    later['releaseReaction']['baseline']['values']['ES=F']['price'] = 200
+    merged = store.merge_record(earlier, later, now_iso=later['updatedAt'])
+    assert merged['releaseReaction']['baseline'] == earlier['releaseReaction']['baseline']
+    assert set(merged['releaseReaction']['windows']) == {'+8h'}
+    earlier['releaseReaction']['eventId'] = 'other-event'
+    merged = store.merge_record(earlier, later, now_iso=later['updatedAt'])
+    assert merged['releaseReaction']['eventId'] == later['eventId']
+
+
+def test_macro_default_uses_existing_persistent_root_and_keeps_legacy_file(monkeypatch, tmp_path):
+    import scanner
+    legacy = tmp_path / 'legacy.json'
+    saved = _reaction_record({'+8h': 480}, '2026-09-11T20:35:00Z')
+    legacy.write_text(json.dumps({'items': {saved['eventId']: saved}, 'state': {}}))
+    original = legacy.read_bytes()
+    (tmp_path / 'durable').mkdir()
+    monkeypatch.setattr(scanner, '_MACRO_ANALYSIS_FILE', None)
+    monkeypatch.setattr(scanner, '_MACRO_ANALYSIS_LEGACY_FILE', str(legacy))
+    monkeypatch.setattr(scanner, '_DURABILITY_PATHS', {'root': str(tmp_path / 'durable')})
+    monkeypatch.setattr(scanner, '_cost_policy_durable_enabled', lambda: True)
+    monkeypatch.setattr(scanner, '_MACRO_ANALYSIS', {})
+    monkeypatch.setattr(scanner, '_MACRO_ANALYSIS_STATE', {'restored': False})
+    class Reply:
+        status_code = 200
+        text = json.dumps(store.serialize_snapshot([
+            _reaction_record({'+60m': 60}, '2026-09-12T01:00:00Z')], as_of=B))
+    monkeypatch.setattr(scanner, '_ledger_get', lambda *a, **kw: Reply())
+    scanner._macro_analysis_restore_once()
+    path = tmp_path / 'durable/argus_macro_analysis.json'
+    assert path.exists() and path.stat().st_mode & 0o777 == 0o600
+    assert json.loads(path.read_text())['items'][saved['eventId']]['releaseReaction']['latestWindow'] == '+8h'
+    assert legacy.read_bytes() == original
+    # A second boot must read the durable copy after /tmp is no longer available.
+    legacy.unlink()
+    monkeypatch.setattr(scanner, '_MACRO_ANALYSIS', {})
+    monkeypatch.setattr(scanner, '_MACRO_ANALYSIS_STATE', {'restored': False})
+    scanner._macro_analysis_restore_once()
+    assert scanner._MACRO_ANALYSIS[saved['eventId']]['releaseReaction']['latestWindow'] == '+8h'
+
+
+def test_failed_migration_write_retains_legacy_and_does_not_claim_durability(monkeypatch, tmp_path):
+    import scanner
+    legacy = tmp_path / 'legacy.json'
+    saved = _reaction_record({'+8h': 480}, '2026-09-11T20:35:00Z')
+    legacy.write_text(json.dumps({'items': {saved['eventId']: saved}, 'state': {}}))
+    original = legacy.read_bytes()
+    monkeypatch.setattr(scanner, '_MACRO_ANALYSIS_FILE', None)
+    monkeypatch.setattr(scanner, '_MACRO_ANALYSIS_LEGACY_FILE', str(legacy))
+    monkeypatch.setattr(scanner, '_DURABILITY_PATHS', {'root': str(tmp_path / 'absent-root')})
+    monkeypatch.setattr(scanner, '_cost_policy_durable_enabled', lambda: True)
+    monkeypatch.setattr(scanner, '_MACRO_ANALYSIS', {})
+    monkeypatch.setattr(scanner, '_MACRO_ANALYSIS_STATE', {'restored': False})
+    def unavailable(*a, **kw):
+        raise OSError('synthetic_unavailable')
+    monkeypatch.setattr(scanner, '_ledger_get', unavailable)
+    monkeypatch.setattr(scanner.argus_persistent_storage, 'atomic_write_json', unavailable)
+    scanner._macro_analysis_restore_once()
+    assert legacy.read_bytes() == original
+    assert scanner._MACRO_ANALYSIS[saved['eventId']]['releaseReaction']['latestWindow'] == '+8h'
+    assert scanner._MACRO_ANALYSIS_STATE['localPersistence']['status'] == 'failed'

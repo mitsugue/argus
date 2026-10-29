@@ -100,6 +100,40 @@ def _preserve_revisions(merged, existing, incoming, now_iso):
     return merged
 
 
+def _merge_reaction(older, newer, event_id, event_time):
+    """A newer explanation is not evidence that earlier measured windows vanished.
+
+    Union captures only under the exact same original baseline. Different
+    baselines remain separate: retain one complete evidence version, chosen by
+    its source-time-valid paired windows, without splicing prices or receipts.
+    """
+    import argus_macro_release_reaction as reaction
+    candidates = []
+    for value in (older, newer):
+        if (isinstance(value, dict) and value.get('schemaVersion') == reaction.SCHEMA
+                and value.get('eventId') == event_id and value.get('eventTimeUtc') == event_time):
+            candidates.append(reaction.revalidate(value))
+    if not candidates:
+        return deepcopy(newer if newer is not None else older)
+    def pairs(value, window):
+        return len(set(value['baselineComparisonValues']) & set(window.get('comparisonValues') or {}))
+    def score(value):
+        measured = [(i, pairs(value, value['windows'][name]))
+                    for i, (name, _) in enumerate(reaction.WINDOWS) if name in value['windows']]
+        valid = [(i, n) for i, n in measured if n]
+        return (*max(valid, default=(-1, 0)), sum(n for _, n in valid))
+    if (len(candidates) == 2 and
+            _snapshot_digest(candidates[0]['baseline']) == _snapshot_digest(candidates[1]['baseline'])):
+        first, last = candidates
+        captures = reaction.stored_window_captures(first)
+        incoming = reaction.stored_window_captures(last)
+        for name, capture in incoming.items():
+            if name not in captures or pairs(last, last['windows'][name]) >= pairs(first, first['windows'][name]):
+                captures[name] = capture
+        return reaction.build(event_id, event_time, last['baseline'], captures)
+    return max(enumerate(candidates), key=lambda item: (score(item[1]), item[0]))[1]
+
+
 def merge_record(existing: Optional[Dict[str, Any]], incoming: Dict[str, Any],
                  *, now_iso: str) -> Dict[str, Any]:
     """Merge one analysis record by eventId.
@@ -121,6 +155,9 @@ def merge_record(existing: Optional[Dict[str, Any]], incoming: Dict[str, Any],
     newer, older = (inc, ex) if in_upd >= ex_upd else (ex, inc)
     merged = dict(older)
     merged.update({k: v for k, v in newer.items() if v is not None})
+    if older.get('releaseReaction') is not None or newer.get('releaseReaction') is not None:
+        merged['releaseReaction'] = _merge_reaction(older.get('releaseReaction'), newer.get('releaseReaction'),
+                                                   merged.get('eventId'), merged.get('eventTimeUtc'))
     # pre: real beats blank; frozen after release
     ex_pre, in_pre = (ex.get("pre") or {}), (inc.get("pre") or {})
     released = str(merged.get("phase") or "").startswith(("released", "post"))

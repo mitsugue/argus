@@ -14972,7 +14972,8 @@ def _owner_symbols_for_events():
 # survive redeploys so post can answer-check against them), and an official-result
 # adapter (BLS NFP first — never fabricated).
 _MACRO_ANALYSIS = {}                  # eventId -> analysis record
-_MACRO_ANALYSIS_FILE = "/tmp/argus_macro_analysis.json"
+_MACRO_ANALYSIS_LEGACY_FILE = "/tmp/argus_macro_analysis.json"
+_MACRO_ANALYSIS_FILE = None  # explicit path override retained for isolated tests
 _MACRO_ANALYSIS_STATE = {"restored": False, "lastGenerateAt": None, "lastResultsAt": None,
                          "pathType": "ephemeral_tmp"}
 # v13.5.66 (stabilization item 4): one generation at a time, and its state —
@@ -14996,10 +14997,20 @@ def _macro_merge_record(eid, record, now_iso):
         return _MACRO_ANALYSIS[eid]
 
 
+def _macro_analysis_path():
+    # The persistent root is configured later during module startup. Resolve it
+    # at use time, as for the other existing durable stores.
+    if _MACRO_ANALYSIS_FILE is not None:
+        return _MACRO_ANALYSIS_FILE
+    if _cost_policy_durable_enabled():
+        return os.path.join(_DURABILITY_PATHS['root'], 'argus_macro_analysis.json')
+    return _MACRO_ANALYSIS_LEGACY_FILE
+
+
 def _macro_analysis_persist():
     with _MACRO_RECORD_LOCK:
         try:
-            receipt = argus_persistent_storage.atomic_write_json(_MACRO_ANALYSIS_FILE,
+            receipt = argus_persistent_storage.atomic_write_json(_macro_analysis_path(),
                 {"items": _MACRO_ANALYSIS,
                  "state": {k: _MACRO_ANALYSIS_STATE.get(k) for k in
                            ("lastGenerateAt", "lastResultsAt", "lastGenerate", "generateRun")}},
@@ -15020,12 +15031,21 @@ def _macro_analysis_restore_once():
 
 
 def _macro_analysis_restore_locked():
-    """tmp → ledger latest (short timeout, merge — an old snapshot can't wipe newer) → empty."""
+    """Existing durable copy (legacy tmp on first migration), then private ledger."""
     if _MACRO_ANALYSIS_STATE["restored"]:
         return
     _MACRO_ANALYSIS_STATE["restored"] = True
+    path = _macro_analysis_path()
+    migration = (_MACRO_ANALYSIS_FILE is None and path != _MACRO_ANALYSIS_LEGACY_FILE)
+    local_error = False
     try:
-        with open(_MACRO_ANALYSIS_FILE, "r") as f:
+        try:
+            f = open(path, "r")
+        except FileNotFoundError:
+            if not migration:
+                raise
+            f = open(_MACRO_ANALYSIS_LEGACY_FILE, "r")
+        with f:
             blob = json.load(f)
         if isinstance(blob.get("items"), dict):
             _MACRO_ANALYSIS.update(argus_macro_event_store.restore_from_snapshot(
@@ -15039,8 +15059,11 @@ def _macro_analysis_restore_locked():
         if isinstance(_run, dict) and _run.get("status") == "running":
             _run["status"] = "interrupted"
             _run["finishedAt"] = _ai_now_iso()
-    except Exception:
+    except FileNotFoundError:
         pass
+    except Exception as exc:
+        local_error = True
+        _MACRO_ANALYSIS_STATE['localRestoreError'] = type(exc).__name__
     try:
         r = _ledger_get(f"{_LEDGER_RAW_BASE}/macro-events/analysis/latest.json?cb={int(time.time())}",
                          timeout=6)
@@ -15054,6 +15077,10 @@ def _macro_analysis_restore_locked():
             _MACRO_ANALYSIS_STATE["pathType"] = "ledger_restored"
     except Exception:
         pass
+    if migration and _MACRO_ANALYSIS and not local_error:
+        # Save the restored evidence on the existing disk too. Keep the legacy
+        # file untouched; no provider request or AI generation is started here.
+        _macro_analysis_persist()
 
 
 def _macro_market_context_ja():
