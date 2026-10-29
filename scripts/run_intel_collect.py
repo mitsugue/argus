@@ -39,7 +39,7 @@ def private_timing_record(body):
         return None
     def seconds(value):
         return round(value, 3) if (type(value) in (int, float) and
-            math.isfinite(value) and 0 <= value <= 86400) else None
+            0 <= value <= 86400 and math.isfinite(value)) else None
     stages = []
     rows = body.get('completedStages')
     for row in (rows if isinstance(rows, list) else [])[:len(STAGES)]:
