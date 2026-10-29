@@ -8,6 +8,10 @@ import os
 import sys
 import time
 import uuid
+import math
+from datetime import datetime
+from pathlib import Path
+import tempfile
 from urllib.error import URLError
 
 if __package__ in (None, ""):
@@ -15,8 +19,58 @@ if __package__ in (None, ""):
 from scripts.workflow_http import request_json
 
 
+STAGES = frozenset(('news_feeds', 'news_translation', 'news_ranking', 'news_persist',
+    'investor_types', 'calendar', 'jsf', 'jp_watchlist', 'us_watchlist', 'extra_symbols',
+    'owner_watchlist', 'market_inputs', 'fiscal_inputs', 'pit_restore', 'pit_vix_nikkei',
+    'pit_fx_sp500', 'pit_macro_history', 'pit_credit', 'pit_future_valuation', 'pit_level_map',
+    'pit_targets_internals', 'pit_margin', 'pit_statements', 'pit_earnings', 'pit_vix_analog',
+    'pit_official', 'pit_feature_history', 'pit_research', 'pit_backup'))
+
+
+def private_timing_record(body):
+    """Closed scalar projection of the SAME tracked response; never returned on stdout."""
+    def stamp(value):
+        if isinstance(value, str) and len(value) <= 40:
+            try:
+                if datetime.fromisoformat(value.replace('Z', '+00:00')).tzinfo is not None:
+                    return value
+            except ValueError:
+                pass
+        return None
+    def seconds(value):
+        return round(value, 3) if (type(value) in (int, float) and
+            math.isfinite(value) and 0 <= value <= 86400) else None
+    stages = []
+    rows = body.get('completedStages')
+    for row in (rows if isinstance(rows, list) else [])[:len(STAGES)]:
+        if (isinstance(row, dict) and isinstance(row.get('stage'), str)
+                and row['stage'] in STAGES and seconds(row.get('elapsedSeconds')) is not None):
+            stages.append({'stage': row['stage'], 'elapsedSeconds': seconds(row['elapsedSeconds'])})
+    return {'schemaVersion': 'argus-collect-timing-v1', 'available': bool(stages),
+            'status': body.get('status') if body.get('status') in ('running', 'done', 'failed') else None,
+            'startedAt': stamp(body.get('startedAt')), 'finishedAt': stamp(body.get('finishedAt')),
+            'stage': body.get('stage') if isinstance(body.get('stage'), str) and body['stage'] in STAGES else None,
+            'stageElapsedSeconds': seconds(body.get('stageElapsedSeconds')), 'completedStages': stages}
+
+
+def save_private_timing(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise ValueError('timing_path_invalid')
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            json.dump(value, handle, ensure_ascii=False, allow_nan=False)
+            handle.write('\n')
+            handle.flush()
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
 def run(*, base: str, token: str, timeout: float = 900, request=request_json,
-        clock=time.monotonic, sleep=time.sleep, request_id: str | None = None) -> dict:
+        clock=time.monotonic, sleep=time.sleep, request_id: str | None = None,
+        private_timing=None) -> dict:
     if not token:
         return {"status": "failed", "errorClass": "admin_token_missing"}
     run_id = request_id or uuid.uuid4().hex
@@ -46,6 +100,8 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
                 if not isinstance(received_id, str) or not received_id or (started and received_id != run_id):
                     return {"status": "failed", "errorClass": "collect_run_identity_mismatch"}
                 run_id, started = received_id, True
+                if private_timing is not None:
+                    private_timing(private_timing_record(body))
                 if body["status"] in ("done", "failed"):
                     # Persist only bounded status/counts, no provider payloads.
                     result = body.get("result") or {}
@@ -79,8 +135,19 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="https://argus-backend-3j2m.onrender.com")
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument('--private-timing-output', type=Path)
     args = parser.parse_args(argv)
-    result = run(base=args.base, token=os.environ.get("ARGUS_ADMIN_TOKEN", ""), timeout=args.timeout)
+    saved = {'ok': False, 'available': False}
+    def observe(value):
+        try:
+            save_private_timing(args.private_timing_output, value)
+            saved.update(ok=True, available=value['available'])
+        except (OSError, ValueError):
+            saved.update(ok=False, available=False)
+    result = run(base=args.base, token=os.environ.get("ARGUS_ADMIN_TOKEN", ""), timeout=args.timeout,
+                 private_timing=observe if args.private_timing_output else None)
+    if args.private_timing_output:
+        result.update(privateTimingSaved=saved['ok'], privateTimingAvailable=saved['available'])
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result["status"] == "done" else 1
 

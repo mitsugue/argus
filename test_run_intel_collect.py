@@ -66,6 +66,65 @@ def test_admin_stage_details_are_not_added_to_workflow_output():
     assert "stage" not in result and "completedStages" not in result
 
 
+def test_same_tracking_responses_supply_private_timings_without_extra_requests():
+    calls, private = [], []
+    replies = iter([{'status': 'running', 'runId': 'test-run-1', 'stage': 'pit_restore'},
+                    {'status': 'done', 'runId': 'test-run-1',
+                     'completedStages': [{'stage': 'pit_restore', 'elapsedSeconds': 120.125}],
+                     'result': {'stored': 4}}])
+    def request(**kwargs):
+        calls.append(json.loads(kwargs['data']))
+        return 200, json.dumps(next(replies))
+    result = run(base='https://example.test', token='secret', request_id='test-run-1',
+                 request=request, sleep=lambda _: None, private_timing=private.append)
+    assert len(calls) == 2 and calls[1] == {'requestId': 'test-run-1', 'statusOnly': True}
+    assert result['status'] == 'done' and 'completedStages' not in result
+    assert private[0]['available'] is False
+    assert private[1]['completedStages'] == [{'stage': 'pit_restore', 'elapsedSeconds': 120.125}]
+
+
+def test_private_projection_accepts_only_fixed_stage_names_seconds_and_timestamps():
+    from scripts.run_intel_collect import private_timing_record
+    value = private_timing_record({'status': 'done', 'startedAt': '2026-10-29T00:00:00Z',
+        'finishedAt': 'secret', 'stage': ['secret'], 'token': 'secret',
+        'completedStages': [{'stage': 'news_feeds', 'elapsedSeconds': 1.25, 'body': 'secret'},
+                            {'stage': 'secret', 'elapsedSeconds': 20},
+                            {'stage': 'pit_restore', 'elapsedSeconds': True},
+                            {'stage': 'pit_backup', 'elapsedSeconds': float('nan')} ]})
+    assert value['completedStages'] == [{'stage': 'news_feeds', 'elapsedSeconds': 1.25}]
+    assert value['finishedAt'] is None and value['stage'] is None
+    assert 'secret' not in json.dumps(value) and value['available'] is True
+    assert private_timing_record({'completedStages': {'secret': 2}})['available'] is False
+
+
+def test_private_timing_file_is_separate_and_symlink_does_not_overwrite(tmp_path):
+    import pytest
+    from scripts.run_intel_collect import save_private_timing
+    target = tmp_path / 'private/timing.json'
+    save_private_timing(target, {'available': False})
+    assert target.stat().st_mode & 0o777 == 0o600
+    prior = target.read_bytes()
+    link = tmp_path / 'link'
+    link.symlink_to(target)
+    with pytest.raises(ValueError):
+        save_private_timing(link, {'available': True})
+    assert target.read_bytes() == prior
+
+
+def test_main_cannot_claim_timing_saved_after_diagnostic_write_failure(monkeypatch, tmp_path, capsys):
+    import scripts.run_intel_collect as collector
+    def fake_run(**kw):
+        kw['private_timing']({'available': True})
+        return {'status': 'done'}
+    def fail(*a):
+        raise OSError('secret')
+    monkeypatch.setattr(collector, 'run', fake_run)
+    monkeypatch.setattr(collector, 'save_private_timing', fail)
+    assert collector.main(['--private-timing-output', str(tmp_path / 'timing.json')]) == 0
+    value = json.loads(capsys.readouterr().out)
+    assert value == {'status': 'done', 'privateTimingSaved': False, 'privateTimingAvailable': False}
+
+
 def test_failed_feed_names_are_kept_for_the_private_record():
     """2026-10-19: "2 of 20 feeds failed" could not say which two."""
     result = run(base="https://example.test", token="secret", request_id="test-run-1",

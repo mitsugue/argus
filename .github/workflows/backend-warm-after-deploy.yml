@@ -59,7 +59,7 @@ jobs:
           if [ -z "$ARGUS_ADMIN_TOKEN" ]; then echo "::error::ARGUS_ADMIN_TOKEN missing"; exit 1; else
             python3 scripts/workflow_http.py --name warm-market-scan --method POST --timeout 90 --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN --url "$BE/api/argus/market-scan" > /dev/null || true
             mkdir -p "$RUNNER_TEMP/private-notes"
-            python3 scripts/run_intel_collect.py --base "$BE" --timeout 900 > "$RUNNER_TEMP/private-notes"/collect.txt || { echo "collect: failed (stored privately)"; exit 1; }
+            python3 scripts/run_intel_collect.py --base "$BE" --timeout 900 --private-timing-output "$RUNNER_TEMP/private-notes/collect-timing.json" > "$RUNNER_TEMP/private-notes"/collect.txt || { echo "collect: failed (stored privately)"; exit 1; }
             echo "collect: done (stored privately)"
           fi
           python3 scripts/warm_protected_reads.py --group runtime || exit 1
