@@ -36,4 +36,4 @@ def test_no_upload_carries_the_plain_state_and_every_consumer_opens_it():
                 assert "path: artifacts/sealed-source\n" in step, job
                 assert "owner-artifact-envelope.mjs unseal" in items[index + 1], job
                 assert "ARGUS_OWNER_ARTIFACT_KEY" in items[index + 1], job
-    assert consumers == 5
+    assert consumers == 6  # 既存5検査と、失敗時だけの非公開保全も同じ暗号化境界で読む。

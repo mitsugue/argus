@@ -535,13 +535,13 @@ jobs:
       - uses: actions/download-artifact@v5
         with:
           name: checkpoint-v2-exact-source-${{ github.sha }}
-          path: artifacts/sealed-failed-source
+          path: artifacts/sealed-source
       - name: Open the existing failed source in this private workspace
         env:
           ARGUS_OWNER_ARTIFACT_KEY: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
         run: |
           set -euo pipefail
-          node web/scripts/owner-artifact-envelope.mjs unseal artifacts/sealed-failed-source \
+          node web/scripts/owner-artifact-envelope.mjs unseal artifacts/sealed-source \
             artifacts/opened-failed-source checkpoint-source "$GITHUB_SHA" "$GITHUB_RUN_ID"
       - name: Preserve exact failed input through the existing private diagnostics store
         env:
