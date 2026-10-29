@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import threading
+import unicodedata
 import uuid
 from urllib.parse import urlsplit
 from cryptography.hazmat.primitives import serialization
@@ -202,10 +203,49 @@ class PushService:
 
     def enqueue(self, db, identity, event, now):
         if not event['due'] <= event['expires'] or event['expires'] <= now: return
+        context = event.get('newsContext')
+        prefix = ''
+        if context:
+            # Keep old claims and ambiguous sends authoritative after upgrades.
+            # Only a severity rise or a measured confirmation is a new notice.
+            prior = db.execute(
+                "SELECT id,event_key,payload,status,attempted FROM deliveries WHERE subscription_id=? "
+                "AND event_key LIKE 'news:%' AND due>=? ORDER BY due DESC LIMIT 500",
+                (identity, now-86400)).fetchall()
+            for row in prior:
+                old = json.loads(row['payload']).get('newsContext')
+                same_event = (old or {}).get('eventId') == context['eventId']
+                legacy = 'news:'+context['eventId']+':'
+                if not old and row['event_key'].startswith(legacy):
+                    old = {'severity': row['event_key'][len(legacy):].split(':')[0]}
+                    same_event = True
+                same_content = (context.get('contentId') and old
+                                and context['contentId'] == old.get('contentId'))
+                if not same_event and not same_content:
+                    continue
+                ranks = {'HIGH': 1, 'CRITICAL': 2}
+                increased = ranks.get(context['severity'], 0) > ranks.get(old.get('severity'), 0)
+                confirmed = (context['confirmed'] and old.get('confirmed') is False
+                             and context.get('measuredUpdate'))
+                if not increased and not confirmed:
+                    if (same_event and row['status'] == 'QUEUED' and row['attempted'] is None
+                            and not json.loads(row['payload']).get('newsContext')
+                            and row['event_key'] == event['key']):
+                        # Improve only an unsent old generic notice. Keep its
+                        # identity, original due/expiry and claim history.
+                        queued = json.loads(row['payload'])
+                        queued.update(title=event['title'][:100], body=event['body'][:220],
+                                      newsContext=context)
+                        db.execute('UPDATE deliveries SET payload=? WHERE id=?',
+                                   (json.dumps(queued, ensure_ascii=False), row['id']))
+                    return
+                prefix = '重要度上昇｜' if increased else '市場反応を確認｜'
         delivery_id = str(uuid.uuid4())
         payload = {'schemaVersion':'argus-web-push-v1','deliveryId':delivery_id,
-                   'title':event['title'][:100],'body':event['body'][:220],'hash':event['hash'],
+                   'title':(prefix+event['title'])[:100],'body':event['body'][:220],'hash':event['hash'],
                    'expiresAt':datetime.fromtimestamp(event['expires'],timezone.utc).isoformat()}
+        if context:
+            payload['newsContext'] = context
         db.execute('INSERT OR IGNORE INTO deliveries(id,subscription_id,event_key,payload,due,expires,status) VALUES(?,?,?,?,?,?,?)',
                    (delivery_id, identity, event['key'], json.dumps(payload,ensure_ascii=False), event['due'], event['expires'], 'QUEUED'))
 
@@ -322,6 +362,48 @@ def _move_time(item):
     return stamp.astimezone(_JST).strftime('%H:%M') + '時点の値動きです。'
 
 
+def _news_text(value, limit):
+    if not isinstance(value, str):
+        return ''
+    text = unicodedata.normalize('NFKC', value)
+    text = re.sub(r'https?://\S+|<[^>]*>', '', text)
+    text = ''.join(' ' if unicodedata.category(c) == 'Cc' else c
+                   for c in text if unicodedata.category(c) != 'Cf')
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text if len(text) <= limit else text[:limit-1]+'…'
+
+
+def _news_notice(item, source_stamp):
+    """Short stored product summary only; no raw mail, article or owner data."""
+    raw_facts = item.get('facts') if isinstance(item.get('facts'), list) else []
+    facts = [_news_text(f, 140) for f in raw_facts[:5]
+             if isinstance(f, str)]
+    facts = [f for f in facts if f]
+    headline = _news_text(item.get('headlineJa'), 140)
+    if not headline or headline in ('翻訳処理中', '要約待ち') or not re.search(r'[ぁ-ヿ一-鿿]', headline):
+        headline = facts[0] if facts else '重要報道（要約待ち）'
+    source = {'NIKKEI':'日経', 'FEDERAL_RESERVE_BOARD':'FRB', 'BANK_OF_JAPAN':'日銀',
+              'BLS':'米労働統計局', 'US_TREASURY':'米財務省', 'EIA':'米EIA'}.get(
+                  item.get('sourceFamily'), '報道')
+    confirmed = item.get('confirmationState') == 'MARKET_CONFIRMED'
+    status = '市場反応を確認' if confirmed else '市場反応は未確認'
+    detail = _news_text('。'.join(f for f in facts[:2] if f != headline), 140)
+    body = ' / '.join(x for x in (detail, status,
+        source+' '+source_stamp.astimezone(_JST).strftime('%H:%M')+'受信') if x)
+    # Never collapse separate events merely because their headlines look alike.
+    # Exact source URL + full short facts + headline identify a repeated report.
+    url = item.get('sourceUrl')
+    content_id = None
+    if facts and isinstance(url, str) and url.startswith('https://') and item.get('sourceFamily'):
+        material = [item['sourceFamily'], url, item.get('eventType'),
+                    item.get('headlineJa'), item.get('facts'),
+                    source_stamp.astimezone(_JST).date().isoformat()]
+        content_id = hashlib.sha256(json.dumps(material, ensure_ascii=False,
+            sort_keys=True).encode()).hexdigest()
+    return headline, body, {'eventId':item['eventId'], 'severity':item['severity'],
+        'confirmed':confirmed, 'contentId':content_id, 'measuredUpdate':False}
+
+
 def proposals(calendar, news, now, owner_events=()):
     result = []
     for p in calendar.get('notificationProposals',[]):
@@ -342,11 +424,30 @@ def proposals(calendar, news, now, owner_events=()):
         except Exception: continue
         # Reanalysis does not turn a days-old intake into a new notification.
         if not 0<=now-source_stamp.timestamp()<=24*3600: continue
-        if not 0<=now-due<=3600: continue
-        # Public, rights-cleared product projection is the only input; no article text on lock screen.
-        result.append({'key':'news:'+event_id+':'+item['severity'],'kind':'news',
-            'title':'重大ニュースを確認してください','body':'市場に影響し得る新しい材料があります。記事と確認状況をARGUSで確認してください。',
-            'hash':'#notifications/news/'+event_id,'due':due,'expires':due+3600})
+        headline, body, context = _news_notice(item, source_stamp)
+        reaction = item.get('marketReaction') or {}
+        update_at = None
+        if context['confirmed'] and reaction.get('confirmed') is True and reaction.get('measuredAfterNews') is True:
+            try:
+                observed = datetime.fromisoformat(str(reaction.get('at')).replace('Z', '+00:00'))
+                if observed.tzinfo and source_stamp.timestamp() <= observed.timestamp() <= now:
+                    update_at = observed.timestamp()
+            except (ValueError, TypeError):
+                pass
+        if update_at is not None:
+            context['measuredUpdate'] = True
+        # The existing one-hour window is retained for genuinely new updates.
+        if not 0 <= now-(update_at if update_at is not None else due) <= 3600:
+            continue
+        key = 'news:'+event_id+':'+item['severity']
+        if update_at is not None:
+            key += ':market-confirmed'
+        # Owner requested the content on the lock screen. Only the already
+        # stored Japanese product summary/facts are used, never raw article text.
+        result.append({'key':key,'kind':'news',
+            'title':headline,'body':body,'newsContext':context,
+            'hash':'#notifications/news/'+event_id,'due':update_at or due,
+            'expires':(update_at or due)+3600})
     paired_keys = set()
     ordered = sorted(owner_events, key=lambda item: _inverse_pair(str(item.get('symbol') or '').strip().upper())[1] is False)
     for item in ordered:
