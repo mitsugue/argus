@@ -56,7 +56,7 @@ def _scheduled_backend_workflows():
         if path.name in RECOVERY_OWNED:
             continue
         text = path.read_text(encoding="utf-8")
-        if HOST in text and re.search(r"^\s*-\s*cron:", text, re.MULTILINE):
+        if (HOST in text or "scripts/event_snapshot_read.py" in text) and re.search(r"^\s*-\s*cron:", text, re.MULTILINE):
             yield path, text
 
 
@@ -83,3 +83,26 @@ def test_the_token_is_supplied_from_the_repository_secret_not_a_literal():
         if "X-ARGUS-ADMIN-TOKEN" in text:
             assert "${{ secrets.ARGUS_ADMIN_TOKEN }}" in text, path.name
             assert not re.search(r'X-ARGUS-ADMIN-TOKEN:\s*[A-Za-z0-9]{16,}', text), path.name
+
+
+def test_event_snapshot_helper_receives_secret_and_sends_token(tmp_path):
+    from scripts.event_snapshot_read import read_snapshot
+
+    workflow = (WORKFLOWS / "event-ledger.yml").read_text(encoding="utf-8")
+    assert "ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}" in workflow
+    seen = []
+
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def read(self, size): return b'{"activeCount":0}'
+
+    def request(req, timeout):
+        seen.append(req.get_header("X-argus-admin-token"))
+        return Response()
+
+    result = read_snapshot(url="https://example.test", token="test-token",
+                           output=tmp_path / "snapshot", request=request)
+    assert result["status"] == "done"
+    assert seen == ["test-token"]
