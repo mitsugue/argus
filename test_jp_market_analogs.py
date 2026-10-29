@@ -175,5 +175,48 @@ class AnalogSelectionTest(unittest.TestCase):
         self.assertEqual(partial["status"], "PARTIAL")
 
 
+class DistanceArithmeticParityTest(unittest.TestCase):
+    def test_scaled_weighted_components_keep_exact_arithmetic_and_inputs(self):
+        import copy
+        import math
+        from dataclasses import asdict
+        from jp_market_analogs import component_distances
+        policy = AnalogPolicy(state_scales=(("credit.ratio", 2.0),),
+            component_weights=(("priceShape", 1.0), ("marketState", 2.0),
+                               ("conditionOrder", 0.0)))
+        current = {"states": {"credit.ratio": {"value": 6}}, "reactions": {}}
+        past = {"states": {"credit.ratio": {"value": 2}}, "reactions": {}}
+        before = copy.deepcopy((current, past, asdict(policy)))
+        result = component_distances(current, past, policy,
+            current_shape=[100, 102], candidate_shape=[100, 100],
+            current_order=[("rise",)], candidate_order=[("rise",)])
+        self.assertEqual(result["distances"], {"priceShape": math.sqrt(2) / 5,
+            "marketState": 2.0, "conditionOrder": 0.0, "materialReaction": None})
+        self.assertEqual(result["distance"], (math.sqrt(2) / 5 + 4) / 3)
+        self.assertEqual(before, (current, past, asdict(policy)))
+
+    def test_custom_policy_lookups_remain_authoritative(self):
+        from jp_market_analogs import component_distances, weighted_distance
+        class CustomPolicy(AnalogPolicy):
+            def scale_for(self, key):
+                return 4.0
+            def weight_for(self, key):
+                return 3.0 if key == "marketState" else 1.0
+        policy = CustomPolicy(component_weights=(("marketState", 2.0),))
+        result = component_distances(
+            {"states": {"credit.ratio": {"value": 6}}, "reactions": {}},
+            {"states": {"credit.ratio": {"value": 2}}, "reactions": {}}, policy,
+            current_shape=[100], candidate_shape=[100], current_order=[], candidate_order=[])
+        self.assertEqual(result["stateDeltas"], {"credit.ratio": 1.0})
+        self.assertEqual(weighted_distance({"priceShape": 0.0, "marketState": 1.0}, policy), 0.75)
+
+    def test_condition_order_still_distinguishes_insertions_and_reversals(self):
+        from jp_market_analogs import _edit_distance
+        self.assertEqual(_edit_distance([], []), 0.0)
+        self.assertEqual(_edit_distance([("up",)], [("up",)]), 0.0)
+        self.assertEqual(_edit_distance([("up",)], [("up",), ("down",)]), 0.5)
+        self.assertEqual(_edit_distance([("up",), ("down",)], [("down",), ("up",)]), 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

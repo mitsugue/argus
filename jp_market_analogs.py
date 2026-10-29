@@ -316,6 +316,8 @@ def _sequence(episode: Mapping[str, Any]) -> list[tuple[str, ...]]:
 
 
 def _edit_distance(left: Sequence[Any], right: Sequence[Any]) -> float:
+    if left == right:
+        return 0.0
     previous = list(range(len(right) + 1))
     for i, item in enumerate(left, 1):
         current = [i]
@@ -332,7 +334,9 @@ def weighted_distance(distances: Mapping[str, float | None], policy: AnalogPolic
     if not policy.component_weights:
         available = [v for v in distances.values() if v is not None]
         return sum(available) / len(available)
-    pairs = [(policy.weight_for(key), value) for key, value in distances.items() if value is not None]
+    weights = dict(policy.component_weights) if type(policy) is AnalogPolicy else None
+    pairs = [((weights.get(key, 1.0) if weights is not None else policy.weight_for(key)), value)
+             for key, value in distances.items() if value is not None]
     total = sum(weight for weight, _ in pairs)
     return sum(weight * value for weight, value in pairs) / total
 
@@ -350,8 +354,10 @@ def component_distances(current: Mapping[str, Any], candidate: Mapping[str, Any]
     shape_distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(current_shape, shape)) /
                                len(shape)) / policy.shape_scale_pct
     common = sorted(set(current["states"]) & set(candidate["states"]))
+    scales = dict(policy.state_scales) if type(policy) is AnalogPolicy else None
     state_deltas = {key: abs(current["states"][key]["value"] -
-                            candidate["states"][key]["value"]) / policy.scale_for(key)
+                            candidate["states"][key]["value"]) / (scales.get(key, FEATURE_DEFINITIONS[key][1])
+                            if scales is not None else policy.scale_for(key))
                     for key in common}
     state_distance = math.sqrt(sum(v * v for v in state_deltas.values()) / len(common)) if common else None
     current_order = current_order if current_order is not None else _sequence(current)
