@@ -3,7 +3,7 @@
 # restart/deploy doesn't erase active events + revisions + dossiers. Render
 # restores from events/snapshot.json on boot (raw read, no secret). Best-effort
 # durability by snapshot granularity; the event HISTORY is durable + auditable.
-# Uses the built-in GITHUB_TOKEN — NO new secret needed.
+# Reuses the existing private-ledger credential; no new storage or schedule.
 
 name: event-ledger
 
@@ -33,14 +33,15 @@ jobs:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           python3 scripts/event_snapshot_read.py
+          cp scripts/event_snapshot_read.py "$RUNNER_TEMP/event_snapshot_read.py"
 
       - name: Checkout repo
-        if: env.ACTIVE != '0'
+        if: env.STATE_ITEMS != '0'
         uses: actions/checkout@v5
         with:
-          ref: main
-      - name: Commit snapshot to ledger branch (only when events are active)
-        if: env.ACTIVE != '0'
+          ref: ${{ github.sha }}
+      - name: Commit event state and history to the existing private ledger
+        if: env.STATE_ITEMS != '0'
         run: |
           # SAFETY (v10.152): mirror prediction-ledger's safe switch. The OLD
           # `git rm -rq --cached . && git add ledger/events/` pattern silently
@@ -65,21 +66,9 @@ jobs:
             git rm -rq --cached . 2>/dev/null || true
             find . -maxdepth 1 ! -name ledger ! -name .git ! -name . -exec rm -rf {} + 2>/dev/null || true
           fi
-          mkdir -p ledger/events/log
-          cp "$RUNNER_TEMP/snap.json" ledger/events/snapshot.json
           DAY=$(TZ=Asia/Tokyo date +%F)
-          python3 - <<'PY'
-          import json, os
-          snap = json.load(open(os.environ['RUNNER_TEMP'] + '/snap.json'))
-          day = os.popen("TZ=Asia/Tokyo date +%F").read().strip()
-          # append active events to the day's history log (one JSON line each)
-          with open(f'ledger/events/log/{day}.jsonl', 'a') as f:
-              for e in snap.get('active', []):
-                  f.write(json.dumps({k: e.get(k) for k in
-                      ('eventId','eventType','symbol','market','severity','lifecycleState',
-                       'recommendedPosture','detectedAt','reasonJa')}, ensure_ascii=False) + "\n")
-          print('logged', len(snap.get('active', [])), 'active events')
-          PY
+          python3 "$RUNNER_TEMP/event_snapshot_read.py" --stage "$RUNNER_TEMP/snap.json" \
+            --ledger-root ledger/events --day "$DAY"
           git config user.name "argus-ledger[bot]"
           git config user.email "argus-ledger@users.noreply.github.com"
           git add ledger/events/
