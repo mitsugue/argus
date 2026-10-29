@@ -96,7 +96,8 @@ def test_event_snapshot_helper_receives_secret_and_sends_token(tmp_path):
         status = 200
         def __enter__(self): return self
         def __exit__(self, *args): return False
-        def read(self, size): return b'{"activeCount":0}'
+        def read(self, size):
+            return b'{"schemaVersion":"event-store-v1","snapshotAt":"2026-10-29T00:00:00Z","activeCount":0,"active":[],"log":[]}'
 
     def request(req, timeout):
         seen.append(req.get_header("X-argus-admin-token"))
