@@ -149,3 +149,40 @@ def test_calendar_effects_carry_the_measured_past_without_a_direction():
         text = event.get("pastTendencyJa") or ""
         for word in ("確率", "買い時", "売り時", "必ず"):
             assert word not in text
+
+
+def test_2027_published_rows_keep_original_sources_and_unknown_coverage():
+    import json
+    from datetime import date
+    schedule = json.loads(cal.MACRO_SCHEDULE.read_text())
+    rows, gaps = cal.macro_events(date(2027, 1, 1), date(2027, 1, 31), schedule)
+    found = {(row['kind'], row['date']): row for row in rows}
+    assert found[('JP_WAGES', '2027-01-07')]['source'] == 'https://www.e-stat.go.jp/release-calendar/statistics/00450071'
+    assert found[('JP_CPI', '2027-01-22')]['source'] == 'https://www.e-stat.go.jp/release-calendar/statistics/00200573'
+    assert found[('JP_TOKYO_CPI', '2027-01-29')]['source'] == 'https://www.e-stat.go.jp/release-calendar/statistics/00200573'
+    assert gaps == ['jp_macro_schedule_not_published_beyond_2026-12-31']
+    old, _ = cal.macro_events(date(2026, 12, 18), date(2026, 12, 18), schedule)
+    assert old[0]['source'] == schedule['sourceRef']
+
+
+def test_2027_known_rows_do_not_expand_the_certified_coverage():
+    import json
+    from datetime import date
+    schedule = json.loads(cal.MACRO_SCHEDULE.read_text())
+    rows, gaps = cal.macro_events(date(2027, 1, 1), date(2027, 3, 31), schedule)
+    assert len(rows) == 10
+    assert len({row['eventId'] for row in rows}) == 10
+    assert gaps == ['jp_macro_schedule_not_published_beyond_2026-12-31']
+    gdp = [row for row in rows if row['kind'] == 'JP_GDP']
+    assert {row['date'] for row in gdp} == {'2027-02-15', '2027-03-09'}
+    assert all(row['source'] == 'https://www.esri.cao.go.jp/jp/sna/kouhyou/kouhyou_top.html' for row in gdp)
+
+
+def test_future_received_schedule_rows_are_not_used_at_an_earlier_cutoff():
+    import json
+    from datetime import date, datetime, timezone
+    schedule = json.loads(cal.MACRO_SCHEDULE.read_text())
+    rows, gaps = cal.macro_events(date(2027, 1, 1), date(2027, 1, 31), schedule,
+                                  knowledge_at=datetime(2026, 10, 29, 5, 0, tzinfo=timezone.utc))
+    assert rows == []
+    assert gaps == ['jp_macro_schedule_not_published_beyond_2026-12-31']
