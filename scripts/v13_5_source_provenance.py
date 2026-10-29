@@ -308,7 +308,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/common/TriangleStepLoader.css': '055ab6673461550f1cc0f38577da9e261a4bc647',
     'web/src/i18n/index.ts': '933221ee4ca1f3adccdb8ebf5c950419fe7ce019',
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
-    'test_prediction_ledger_workflow.py': '43c2b42cf67c6dfa884374a271593a3546bc9755',
+    'test_prediction_ledger_workflow.py': '0b0fbc8f68b2f3624c125285d137661cf6fa14ac',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
     'web/src/hooks/useAssets.ts': '0a82da6958f58aaba4c3bd7659c2af2032b4e93f',
     'web/src/components/dialogue/OwnerOverview.tsx': 'bffc59eb134b260698646ed146fbd3871f501cf9',
