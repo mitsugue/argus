@@ -402,7 +402,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # Owner-authorized staged analysis delivery; exact tested file contents only.
     'argus_ai_usage_receipt.py': '272e2a780d26a65917210df416e6546eb1c441dc',
     'argus_ai_usage_store.py': 'bc0ccd94eeb2b601da72ecb4a847c8ba3bbf07e1',
-    'argus_macro_event_store.py': '0f3bf526a88c83a22576abbf06490bc2861af433',
+    'argus_macro_event_store.py': 'bf314de6ca6400cb3675b99e72a97e5c3ce6268e',
     'argus_macro_results.py': 'daec1b2ce20b79c3d88a045bd792a57d01b5598d',
     'test_argus_cpi_display_rounding.py': '1615a9459bf8763a1bba6978b46c8f895271a1db',
     'docs/V13_6_ANALYSIS_ACCEPTANCE.md': '1eec780bbdf73a3120cf2cf3ba7c0df16f68f4d9',
@@ -417,7 +417,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'ops/calendar/jp_index_sq_2026.json': 'd55cbf1e1362d4d86b21fe413cc2de35b035bd62',
     'test_argus_ai_usage_receipt.py': '00d50f40807d5eea8e149115e1664272b4e4408a',
     'test_argus_ai_usage_store.py': '03dce630d6b901cc3e4277c78a7a241b2fac724a',
-    'test_argus_macro_result_revisions.py': '0745614163ed8614560868201a64d117b0e77e22',
+    'test_argus_macro_result_revisions.py': '6b073b4822de5ba05d77133e171d28082ff54cf1',
     'test_argus_macro_results.py': '647520e693f5f87f902033bb1e2a0c0762bfc407',
     'test_argus_unified_brief.py': '80ac20a586d40f8da40f340095b2a07c20e0c67e',
     'test_jp_market_analogs.py': '5717118c03d35c47c979d26c2fc253af0bee0fc1',
