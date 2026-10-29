@@ -333,8 +333,10 @@ def scan(path, remote, manifest, directory, *, restore):
     partdb.execute('CREATE TABLE parts(id TEXT PRIMARY KEY, body BLOB NOT NULL)')
     pending_outcomes = []
     latest = None
+    viewdb = None
     if restore:
         history.initialize(staging)
+        viewdb = history._connect(staging)
     try:
         def body_of(identity):
             row = partdb.execute('SELECT body FROM parts WHERE id=?', (identity,)).fetchone()
@@ -342,6 +344,11 @@ def scan(path, remote, manifest, directory, *, restore):
             return json.loads(row[0])
         for values in _read_packs(remote, _all_packs(remote, manifest)):
             remote._check_deadline()
+            # This DB is disposable staging. Keep the original FULL durability
+            # setting, but commit validated parts once per bounded pack.
+            if restore:
+                partdb.execute('BEGIN')
+                viewdb.execute('BEGIN IMMEDIATE')
             for value in values:
                 kind = value['kind']
                 if kind == 'part':
@@ -359,7 +366,14 @@ def scan(path, remote, manifest, directory, *, restore):
                             if _placeholder(item) and item['$part'] not in index['parts']:
                                 raise ValueError('history_v3_part_missing')
                     if restore:
-                        if not history.append(staging, assemble(skeleton, body_of))['inserted']:
+                        # assemble performs the complete original-record and
+                        # naming validation. Stage that exact validated body;
+                        # the live DB is touched only by _merge_validated below.
+                        record = assemble(skeleton, body_of)
+                        inserted = viewdb.execute(
+                            'INSERT OR IGNORE INTO views(record_id,recorded_at,body) VALUES(?,?,?)',
+                            (record['recordId'], record['recordedAt'], history._json(record)))
+                        if inserted.rowcount != 1:
                             raise ValueError('history_v3_duplicate_view')
                     if value['recordId'] in index['views']: raise ValueError('history_v3_duplicate_view')
                     index['views'].add(value['recordId']); latest = value['recordId']
@@ -368,11 +382,16 @@ def scan(path, remote, manifest, directory, *, restore):
                     if outcome['resultId'] in index['outcomes']: raise ValueError('history_v3_duplicate_outcome')
                     index['outcomes'].add(outcome['resultId'])
                     if restore: pending_outcomes.append(outcome)
+            if restore:
+                partdb.execute('COMMIT')
+                viewdb.execute('COMMIT')
         if restore:
             for start in range(0, len(pending_outcomes), 400):
                 if history.append_outcomes(staging, pending_outcomes[start:start + 400]) != len(pending_outcomes[start:start + 400]):
                     raise ValueError('history_v3_duplicate_outcome')
     finally:
+        if viewdb is not None:
+            viewdb.close()
         partdb.close()
     counts = {k: len(v) for k, v in index.items()}
     if counts != manifest['counts'] or latest != manifest['latestRecordId']:
