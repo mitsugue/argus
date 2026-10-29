@@ -20,9 +20,9 @@ import scanner
 
 class ReleaseIdentityTests(unittest.TestCase):
     def test_version_sources_are_independent_and_current(self):
-        self.assertEqual("v13.8.197", identity.product_version())
-        self.assertEqual("13.8.197", identity.backend_version())
-        self.assertEqual("13.8.197", identity.frontend_version())
+        self.assertEqual("v13.8.198", identity.product_version())
+        self.assertEqual("13.8.198", identity.backend_version())
+        self.assertEqual("13.8.198", identity.frontend_version())
         self.assertEqual(identity.backend_version(),
                          scanner._semantic_app_version())
         self.assertEqual(identity.frontend_version(),
@@ -32,14 +32,14 @@ class ReleaseIdentityTests(unittest.TestCase):
         value = identity.release_identity(
             backend_sha="backend1", frontend_sha="frontend1")
         self.assertEqual({
-            "productVersion": "v13.8.197",
-            "backendVersion": "13.8.197",
+            "productVersion": "v13.8.198",
+            "backendVersion": "13.8.198",
             "backendBuildSha": "backend1",
-            "frontendVersion": "13.8.197",
+            "frontendVersion": "13.8.198",
             "frontendBuildSha": "frontend1",
         }, value)
         unknown = identity.release_identity(backend_sha=None)
-        self.assertEqual("v13.8.197", unknown["productVersion"])
+        self.assertEqual("v13.8.198", unknown["productVersion"])
         self.assertEqual("unknown", unknown["backendBuildSha"])
         self.assertEqual("unknown", unknown["frontendBuildSha"])
 
@@ -59,10 +59,10 @@ class ReleaseIdentityTests(unittest.TestCase):
         frontend = json.loads(identity.FRONTEND_VERSION_FILE.read_text())
         self.assertEqual({
             "schemaVersion": "argus-product-version-v1",
-            "productVersion": "v13.8.197",
+            "productVersion": "v13.8.198",
         }, product)
-        self.assertEqual({"version": "13.8.197"}, backend)
-        self.assertEqual("13.8.197", frontend["version"])
+        self.assertEqual({"version": "13.8.198"}, backend)
+        self.assertEqual("13.8.198", frontend["version"])
 
     def test_product_version_never_falls_back_to_component_version(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -70,11 +70,11 @@ class ReleaseIdentityTests(unittest.TestCase):
             for content in (
                 None,
                 "not-json",
-                '{"schemaVersion":"wrong","productVersion":"v13.8.197"}',
+                '{"schemaVersion":"wrong","productVersion":"v13.8.198"}',
                 '{"schemaVersion":"argus-product-version-v1",'
-                '"productVersion":"13.8.197"}',
+                '"productVersion":"13.8.198"}',
                 '{"schemaVersion":"argus-product-version-v1",'
-                '"productVersion":"v13.8.197","frontendVersion":"13.8.197"}',
+                '"productVersion":"v13.8.198","frontendVersion":"13.8.198"}',
             ):
                 if content is None:
                     source.unlink(missing_ok=True)
