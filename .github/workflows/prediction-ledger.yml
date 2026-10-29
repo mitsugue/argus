@@ -125,6 +125,7 @@ jobs:
             "$RUNNER_TEMP/workflow_http.py"
           install -m 0644 scripts/workflow_http.py "$RUNTIME/scripts/workflow_http.py"
           install -m 0644 scripts/persist_backup_vault.py "$RUNTIME/scripts/persist_backup_vault.py"
+          install -m 0644 scripts/private_diagnostics_store.py "$RUNTIME/scripts/private_diagnostics_store.py"
           for path in \
             argus_calibration.py \
             argus_decision_ledger.py \
@@ -143,6 +144,7 @@ jobs:
             "$RUNTIME/argus_market_clock.py" \
             "$RUNTIME/scripts/run_prediction_ledger.py" \
             "$RUNTIME/scripts/persist_backup_vault.py" \
+            "$RUNTIME/scripts/private_diagnostics_store.py" \
             "$RUNTIME/scripts/workflow_http.py" \
             "$RUNNER_TEMP/workflow_http.py" \
             "$RUNTIME/scripts/export_event_prediction_results.py" \
@@ -174,6 +176,7 @@ jobs:
           echo "ledger branch ready; historical compatibility artifacts remain untouched"
 
       - name: Append canonical Prediction Ledger v2 records
+        id: canonical_append
         if: github.event.inputs.mode != 'ai-only'
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
@@ -209,6 +212,20 @@ jobs:
             --expected-mode forward_live \
             --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
             --runner-build-sha "$GITHUB_SHA"
+
+      - name: Preserve rejected prediction snapshot privately
+        if: ${{ failure() && steps.canonical_append.outcome == 'failure' }}
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: |
+          RUNTIME="$RUNNER_TEMP/argus-prediction-ledger-runtime"
+          sha256sum -c "$RUNTIME/SHA256SUMS"
+          if test -s snap.json; then
+            python3 "$RUNTIME/scripts/private_diagnostics_store.py" \
+              --kind prediction-rejected --run-id "$GITHUB_RUN_ID" snap.json
+          else
+            echo "prediction snapshot unavailable; original run remains failed"
+          fi
 
       - name: Commit canonical ledger before auxiliary persistence
         id: canonical_commit
