@@ -10214,7 +10214,11 @@ _INTEL_COLLECT_CONTEXT = threading.local()
 _INTEL_COLLECT_STAGES = frozenset((
     "news_feeds", "news_translation", "news_ranking", "news_persist",
     "investor_types", "calendar", "jsf", "jp_watchlist", "us_watchlist",
-    "extra_symbols", "owner_watchlist", "market_inputs", "fiscal_inputs"))
+    "extra_symbols", "owner_watchlist", "market_inputs", "fiscal_inputs",
+    "pit_restore", "pit_vix_nikkei", "pit_fx_sp500", "pit_macro_history",
+    "pit_credit", "pit_future_valuation", "pit_level_map", "pit_targets_internals",
+    "pit_margin", "pit_statements", "pit_earnings", "pit_vix_analog",
+    "pit_official", "pit_feature_history", "pit_research", "pit_backup"))
 
 
 def _intel_collect_stage(name):
@@ -44887,50 +44891,71 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     memo = _JP_MARKET_ENGINE_PIT_INPUT_MEMO
     if not warm and memo["data"] is not None and now - memo["ts"] < 120:
         return memo["data"]
+    if warm:
+        _intel_collect_stage("pit_restore")
     _jp_market_stored_inputs_restore()
     if warm:
         _index_research_restore()
         _n225_analog_history_restore()
+    if warm:
+        _intel_collect_stage("pit_vix_nikkei")
     vix_rows, vix_source = _jp_market_engine_vix_rows(fetch=warm)
     nikkei_rows = _yahoo_index_ohlcv(
         "^N225", "NIKKEI_225_INDEX", fetch=warm, available_hour_utc=7)
     # Market-condition histories for the analog engine (2026-09-30): ten years
     # of USD/JPY, US 10y and TOPIX so the defined series exist on the
     # historical side as well. Cached-only on the public path.
+    if warm:
+        _intel_collect_stage("pit_fx_sp500")
     _yahoo_index_ohlcv("JPY=X", "USDJPY", fetch=warm, next_day_available=True, range_="10y")
     # 2026-10-03: the S&P 500 history behind the Japan/US relative strength
     # (D03) was two years, so its record started in December 2024.
     _yahoo_index_ohlcv("^GSPC", "SP500_INDEX", fetch=warm, next_day_available=True, range_="10y")
     if warm:
+        _intel_collect_stage("pit_macro_history")
         _fred_us10y_history_dated()
         _jquants_topix_history(fetch=True)
         _fred_history_dated("CPIAUCSL", _US_CPI_CACHE, available_days=50, n=180)
         _jp_historical_release_refresh()
+    if warm:
+        _intel_collect_stage("pit_credit")
     try:
         credit_rows = _jpx_credit_rows_effective()
     except Exception:
         credit_rows = []
     if warm:
+        _intel_collect_stage("pit_future_valuation")
         _cftc_jpy_autorefresh()
         _future_map_scoring_tick(nikkei_rows)
         _jp_index_valuation_warm()
         _jp_index_proxy_warm(nikkei_rows)
+        _intel_collect_stage("pit_level_map")
         _level_map_warm(nikkei_rows)
+        _intel_collect_stage("pit_targets_internals")
         _analyst_targets_warm()
         _jp_internals_warm()
+    if warm:
+        _intel_collect_stage("pit_margin")
     margin_rows = _jp_market_engine_margin_1570_rows(fetch=warm)
     if warm:
         _jq_margin_history_backfill()
     rs_direct = _jp_market_engine_relative_strength_direct()
     flow_rows = _jp_market_engine_foreign_flow_rows()
+    if warm:
+        _intel_collect_stage("pit_statements")
     _jp_market_engine_statements_rows(warm=warm)
+    if warm:
+        _intel_collect_stage("pit_earnings")
     earnings_event, earnings_source = _jp_market_engine_earnings_event()
     earnings_bars = (_jp_market_engine_earnings_bars(earnings_event["instrumentId"])
                      if earnings_event else [])
     if warm:
+        _intel_collect_stage("pit_vix_analog")
         _fred_vix_history_dated()
         _n225_analog_history_warm(nikkei_rows)
+        _intel_collect_stage("pit_official")
         _jp_official_sources_warm()
+        _intel_collect_stage("pit_feature_history")
         _jp_market_feature_history_warm()
     data = {
         "creditRows": credit_rows, "margin1570Rows": margin_rows,
@@ -44949,7 +44974,9 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     }
     memo["ts"], memo["data"] = now, data
     if warm:
+        _intel_collect_stage("pit_research")
         _index_research_warm()
+        _intel_collect_stage("pit_backup")
         _jp_market_inputs_backup_schedule()
     return data
 
