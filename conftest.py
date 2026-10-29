@@ -28,6 +28,26 @@ if os.environ.get("PYTEST_XDIST_WORKER") and not os.environ.get("ARGUS_PERSISTEN
         prefix="argus-test-%s-" % os.environ["PYTEST_XDIST_WORKER"])
 
 
+class _PassiveTestPoller:
+    """通常のHTTP単体検査から、終了しない外部取得スレッドを起動させない。"""
+    def is_alive(self):
+        return True
+
+
+def _isolate_implicit_provider_pollers(monkeypatch):
+    import argus_index_live
+    import argus_macro_release_watch
+    for module in (argus_index_live, argus_macro_release_watch):
+        monkeypatch.setitem(module._state, "thread", _PassiveTestPoller())
+
+
+@pytest.fixture(autouse=True)
+def _passive_provider_pollers_for_http_unit_tests(monkeypatch):
+    # 実際のbefore_requestとensure_startedの呼出しは残す。起動・巡回そのものの
+    # 検査は新しい_stateと制御したThread/get/sleepを明示して実行する。
+    _isolate_implicit_provider_pollers(monkeypatch)
+
+
 @pytest.fixture(autouse=True)
 def _reset_rate_limit_buckets():
     try:

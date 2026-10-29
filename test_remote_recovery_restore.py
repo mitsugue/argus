@@ -675,6 +675,90 @@ def test_keyed_boot_remote_newer_than_local_uses_same_pinned_pair():
         assert sum(url.endswith("/osint/memory.json") for url in urls) == 1
 
 
+@pytest.mark.parametrize('isolated', [False, True])
+def test_implicit_quote_poller_cannot_consume_recovery_mock_responses(monkeypatch, isolated):
+    """旧状態の応答不足を決定的に再現し、検査だけの分離後は厳密な1読取に戻す。"""
+    from datetime import datetime, timezone
+    from conftest import _isolate_implicit_provider_pollers
+    live = scanner.argus_index_live
+    monkeypatch.setattr(live, '_state', {**live._state, 'thread': None})
+    monkeypatch.setattr(scanner, '_news_intake_ensure_thread', lambda: None)
+    monkeypatch.setattr(scanner, '_tachibana_live_autostart', lambda: None)
+    monkeypatch.setattr(scanner.argus_macro_release_watch, 'ensure_started', lambda *a, **k: 'CONTROLLED')
+
+    class EndLoop(Exception):
+        pass
+
+    class FixedSaturday(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 3, tzinfo=timezone.utc)
+
+    pending = []
+
+    class ControlledThread:
+        def __init__(self, *, target, args, name, daemon):
+            assert target is live._loop and name == 'argus-index-live' and daemon
+            self.get = args[0]
+        def is_alive(self):
+            return False
+        def start(self):
+            # 実Threadと同じくensure_startedのロック解放後に巡回する。
+            pending.append(self)
+        def run_one_cycle(self):
+            def stop(_seconds):
+                raise EndLoop()
+            try:
+                live._loop(self.get, stop, clock=lambda: 0)
+            except EndLoop:
+                pass
+
+    monkeypatch.setattr(live, 'datetime', FixedSaturday)
+    monkeypatch.setattr(live.threading, 'Thread', ControlledThread)
+    if isolated:
+        _isolate_implicit_provider_pollers(monkeypatch)
+    with mock.patch.object(scanner.requests, 'get', side_effect=[
+            _ref_response(), FakeResponse(404), FakeResponse(404)]) as get:
+        scanner._news_intake_autostart()
+        for worker in pending:
+            worker.run_one_cycle()
+        if isolated:
+            assert scanner._pinned_ledger_restore_base()['commitSha'] == PINNED_SHA
+            assert get.call_count == 1
+            assert '/git/ref/heads/ledger' in get.call_args.args[0]
+        else:
+            with pytest.raises(scanner._RemoteRecoveryRestoreError,
+                               match='ledger_ref_resolution_transport_error'):
+                scanner._pinned_ledger_restore_base()
+            assert get.call_count == 4
+            assert all('/v8/finance/chart/' in call.args[0] for call in get.call_args_list[:3])
+
+
+@pytest.mark.parametrize('provider', ['index', 'macro'])
+def test_provider_start_contract_remains_explicitly_tested(monkeypatch, provider):
+    module = scanner.argus_index_live if provider == 'index' else scanner.argus_macro_release_watch
+    monkeypatch.setattr(module, '_state', {**module._state, 'thread': None})
+    started = []
+
+    class ControlledThread:
+        def __init__(self, *, target, args, name, daemon):
+            assert target is module._loop and daemon
+            self.alive = False
+            self.name = name
+        def start(self):
+            started.append(self.name)
+            self.alive = True
+        def is_alive(self):
+            return self.alive
+
+    monkeypatch.setattr(module.threading, 'Thread', ControlledThread)
+    invoke = (lambda: module.ensure_started(get=lambda *a, **k: None)) if provider == 'index' else (
+        lambda: module.ensure_started(lambda: [], lambda: None))
+    assert invoke() == 'STARTED'
+    assert invoke() == 'RUNNING'
+    assert started == ['argus-index-live' if provider == 'index' else 'argus-macro-release-watch']
+
+
 def test_deep_remote_outer_envelope_preserves_healthy_local_checkpoint():
     readback, envelope, targets = _artifacts(mission_count=2)
     sealed, sidecar = _sealed_local_pair(
