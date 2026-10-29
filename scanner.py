@@ -52018,15 +52018,35 @@ def _canonical_prediction_ledger_projection(
                 len(omitted_ids) > _CANONICAL_OMITTED_ID_LIMIT),
             "authorityPolicy": argus_market_data_truth.repository_authority_policy(),
         }
+    snapshot_failure = None
     try:
         market_snapshot = argus_market_data_truth.build_decision_snapshot(
             quote_observations, requests=requests, decision_at=decision_at,
             generated_at=generated_at, build_identity=build_identity)
-    except (TypeError, ValueError, OverflowError):
+    except (TypeError, ValueError, OverflowError) as exc:
         market_snapshot = None
+        # Only exact fixed codes may leave this boundary. Exception text can
+        # contain source inputs; it is never a diagnostic or evidence substitute.
+        known_codes = (
+            "future_decision_at", "invalid_snapshot_requests",
+            "invalid_snapshot_request", "invalid_snapshot_request_scope",
+            "invalid_snapshot_request_required", "duplicate_snapshot_request",
+            "snapshot_candidates_truncated", "snapshot_too_large",
+            "too_many_observations", "conflicting_revision")
+        code = (exc.args[0] if type(exc) is ValueError and
+                len(exc.args) == 1 and type(exc.args[0]) is str and
+                exc.args[0] in known_codes else "snapshot_validation_failed")
+        snapshot_failure = {
+            "stage": "BUILD", "code": code,
+            "errorType": ("ValueError" if isinstance(exc, ValueError) else
+                          "TypeError" if isinstance(exc, TypeError) else
+                          "OverflowError")}
     snapshot_verified = bool(
         market_snapshot and
         argus_market_data_truth.verify_decision_snapshot(market_snapshot)[0])
+    if market_snapshot and not snapshot_verified:
+        snapshot_failure = {
+            "stage": "VERIFY", "code": "snapshot_verification_failed"}
     selections = {
         row.get("instrumentId"): row
         for row in ((market_snapshot or {}).get("selections") or [])}
@@ -52188,6 +52208,8 @@ def _canonical_prediction_ledger_projection(
         "omittedCandidateIdsTruncated": (
             len(omitted_ids) > _CANONICAL_OMITTED_ID_LIMIT),
         "marketTruthSnapshotVerified": snapshot_verified,
+        **({"marketTruthSnapshotFailure": snapshot_failure}
+           if snapshot_failure else {}),
         "truthQualityComplete": quality_complete,
         "authorityPolicy": argus_market_data_truth.repository_authority_policy(),
     }
