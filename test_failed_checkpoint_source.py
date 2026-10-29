@@ -71,9 +71,30 @@ def test_private_store_failure_is_failure_without_input_in_public_log(tmp_path, 
             'GITHUB_SHA': args['revision'], 'CHECKPOINT_PROOF_RESULTS': json.dumps(args['needs']),
             'PRIVATE_DIAGNOSTICS_TOKEN': 'existing-test-credential'}.items(): monkeypatch.setenv(key, value)
     def fail(*args, **kwargs): raise ValueError('PRIVATE_INPUT_MARKER')
+    monkeypatch.setattr(preserve, 'require_private_destination', lambda *args: None)
     monkeypatch.setattr(preserve.private_diagnostics_store, 'store', fail)
     assert preserve.main(['--source', str(source), '--output', str(tmp_path / 'out')]) == 1
     assert capsys.readouterr().out == 'private checkpoint source: preservation failed\n'
+
+
+@pytest.mark.parametrize('private,name,accepted', [
+    (True, 'mitsugue/argus-l2b-private', True),
+    (False, 'mitsugue/argus-l2b-private', False),
+    (True, 'other/private', False), (None, 'mitsugue/argus-l2b-private', False)])
+def test_public_or_wrong_destination_is_never_admitted(private, name, accepted):
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): return None
+        def read(self, limit): return json.dumps({'private': private, 'full_name': name}).encode()
+    calls = []
+    def opener(request, timeout): calls.append(request); return Response()
+    if accepted: preserve.require_private_destination('existing-token', opener)
+    else:
+        with pytest.raises(ValueError): preserve.require_private_destination('existing-token', opener)
+    assert calls[0].get_method() == 'GET'
+    assert calls[0].full_url == 'https://api.github.com/repos/mitsugue/argus-l2b-private'
+    assert preserve.NoRedirect().redirect_request(None, None, 302, '', {}, 'https://other') is None
 
 
 def test_workflow_preserves_only_existing_failed_source_without_refetch_or_public_upload():

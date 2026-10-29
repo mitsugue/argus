@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import urllib.request
 
 from scripts import private_diagnostics_store
 
@@ -14,6 +15,30 @@ SOURCE_LIMIT = 128 * 1024 * 1024
 CHUNK_BYTES = 7 * 1024 * 1024
 PROOF_JOBS = frozenset(('linux-4gib-cgroup', 'mapping-attribution',
     'mapping-syscall-trace', 'mapping-closure-32', 'isolated-writer-closure-32'))
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, new_url):
+        return None
+
+
+def require_private_destination(token, opener):
+    if not token:
+        raise ValueError('private_token_missing')
+    request = urllib.request.Request(
+        'https://api.github.com/repos/' + private_diagnostics_store.REPOSITORY,
+        headers={'Authorization': 'Bearer ' + token,
+                 'Accept': 'application/vnd.github+json'})
+    with opener(request, timeout=30) as response:
+        if response.status != 200:
+            raise ValueError('private_destination_unverified')
+        raw = response.read(65537)
+    if len(raw) > 65536:
+        raise ValueError('private_destination_unverified')
+    value = json.loads(raw)
+    if (not isinstance(value, dict) or value.get('private') is not True
+            or value.get('full_name') != private_diagnostics_store.REPOSITORY):
+        raise ValueError('private_destination_unverified')
 
 
 def prepare(source, output, *, run_id, attempt, revision, needs):
@@ -88,9 +113,11 @@ def main(argv=None):
             attempt=os.environ.get('GITHUB_RUN_ATTEMPT', ''),
             revision=os.environ.get('GITHUB_SHA', ''),
             needs=json.loads(os.environ.get('CHECKPOINT_PROOF_RESULTS', '{}')))
+        token = os.environ.get('PRIVATE_DIAGNOSTICS_TOKEN', '')
+        opener = urllib.request.build_opener(NoRedirect()).open
+        require_private_destination(token, opener)
         count = private_diagnostics_store.store('checkpoint-failed-source',
-            os.environ['GITHUB_RUN_ID'], files,
-            os.environ.get('PRIVATE_DIAGNOSTICS_TOKEN', ''))
+            os.environ['GITHUB_RUN_ID'], files, token, opener=opener)
     except (ValueError, OSError, KeyError):
         # 元入力・応答・パス・例外本文を公開ログへ出さない。
         print('private checkpoint source: preservation failed')
