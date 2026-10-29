@@ -349,7 +349,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/lean-surface.test.mjs': 'a9b81236bc8b2828ac47c66309c28d9bb523d1fe',
     'web/scripts/ai-usage-view.test.cjs': '558e8ef36130e5a59e26f8973176ee2ce741db8a',
     'web/public/push-worker.js': '8f6d750dfa8555f9c70a523970b84f535cfb6c23',
-    'test_argus_web_push.py': 'd963f720140ee9736d7a10756a252a1a4c57a8e2',
+    'test_argus_web_push.py': 'b881f97e4162d9c7d3e96cd96b0540fb5adef62a',
     'test_argus_owner_vault.py': '64c3c8bec19581962309873e1b93fb31cdc2cbe2',
     'test_argus_ai_usage_view.py': '729a3e9155a2106069ad68d8b9efb590ab10f3a9',
     'requirements.txt': '4b5fc10866dbd75f13ade0c2281b97800c2add05',
