@@ -521,3 +521,34 @@ jobs:
             artifacts/checkpoint-v2-isolated-live-exact-validation.json
             artifacts/checkpoint-v2-isolated-production-shape-32-cycle-proof.json
             artifacts/checkpoint-v2-isolated-production-shape-validation.json
+
+  preserve-failed-exact-state:
+    # 失敗時の共有入力が1日後に消える前に、同じ非公開経路へ保全する。
+    # 新しい取得・検査の再実行はせず、失敗判定も変更しない。
+    needs: [exact-public-state, linux-4gib-cgroup, mapping-attribution,
+            mapping-syscall-trace, mapping-closure-32, isolated-writer-closure-32]
+    if: ${{ always() && needs.exact-public-state.result == 'success' && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: checkpoint-v2-exact-source-${{ github.sha }}
+          path: artifacts/sealed-failed-source
+      - name: Open the existing failed source in this private workspace
+        env:
+          ARGUS_OWNER_ARTIFACT_KEY: ${{ secrets.ARGUS_OWNER_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          node web/scripts/owner-artifact-envelope.mjs unseal artifacts/sealed-failed-source \
+            artifacts/opened-failed-source checkpoint-source "$GITHUB_SHA" "$GITHUB_RUN_ID"
+      - name: Preserve exact failed input through the existing private diagnostics store
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+          CHECKPOINT_PROOF_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          python3 -B -m scripts.preserve_failed_checkpoint_source \
+            --source artifacts/opened-failed-source/checkpoint-v2-exact-source.json \
+            --output artifacts/private-failed-checkpoint
