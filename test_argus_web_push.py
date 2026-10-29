@@ -228,6 +228,142 @@ def test_reanalysis_does_not_refresh_old_or_unknown_intake():
     assert len(push.proposals({},[record],now.timestamp()))==1
 
 
+def _news(clock, **changes):
+    stamp = datetime.fromtimestamp(clock[0], timezone.utc).isoformat()
+    return {'eventId':'nie-policy', 'severity':'HIGH', 'alertEligible':True,
+            'sourceReceivedAt':stamp, 'processedAt':stamp, 'sourceFamily':'NIKKEI',
+            'headlineJa':'米中銀が政策金利を据え置き',
+            'facts':['政策金利は据え置き', '声明は物価の高止まりを指摘'],
+            'eventType':'RATES', 'sourceUrl':'https://example.org/news/policy',
+            'confirmationState':'MARKET_CONFIRMATION_PENDING', **changes}
+
+
+def test_news_notice_names_the_material_without_raw_mail_or_private_fields(service):
+    value, clock, sent = service
+    subscribe(value)
+    record = _news(clock, rawBody='非公開の原メール本文', excerpt='有料記事の全文',
+                  ownerSymbols=['PRIVATE'], ownerQuantity=987)
+    value.tick(push.proposals({}, [record], clock[0]))
+    payload = sent[0][1]
+    assert payload['title'] == '米中銀が政策金利を据え置き'
+    assert '物価の高止まり' in payload['body']
+    assert '市場反応は未確認' in payload['body'] and '日経 ' in payload['body']
+    assert payload['hash'] == '#notifications/news/nie-policy'
+    text = json.dumps(payload, ensure_ascii=False)
+    assert all(s not in text for s in ('非公開の原メール本文', '有料記事の全文', 'PRIVATE', '987'))
+    assert 'sourceUrl' not in text and 'example.org' not in text
+
+
+def test_different_news_has_different_content_and_identical_report_is_not_resent(service):
+    value, clock, sent = service
+    subscribe(value)
+    original = _news(clock)
+    value.tick(push.proposals({}, [original], clock[0]))
+    # Same publisher, same URL, same complete facts: a repeated mail is not new.
+    duplicate = _news(clock, eventId='nie-another-mail')
+    value.tick(push.proposals({}, [duplicate], clock[0]))
+    assert len(sent) == 1
+    # An unchanged headline with a changed fact is a genuine separate report.
+    followup = _news(clock, eventId='nie-followup', facts=['議長は追加利上げを排除せず'])
+    value.tick(push.proposals({}, [followup], clock[0]))
+    assert len(sent) == 2 and '追加利上げ' in sent[-1][1]['body']
+    # A headline alone never proves that two reports are duplicates.
+    no_url = _news(clock, eventId='nie-other-source', sourceUrl=None)
+    value.tick(push.proposals({}, [no_url], clock[0]))
+    assert len(sent) == 3
+
+
+def test_news_rewrite_is_silent_and_severity_rise_explains_the_change(service):
+    value, clock, sent = service
+    subscribe(value)
+    original = _news(clock)
+    value.tick(push.proposals({}, [original], clock[0]))
+    rewritten = {**original, 'revision':2, 'headlineJa':'米中銀、政策金利を据え置いた'}
+    value.tick(push.proposals({}, [rewritten], clock[0]))
+    assert len(sent) == 1
+    escalated = {**rewritten, 'severity':'CRITICAL'}
+    value.tick(push.proposals({}, [escalated], clock[0]))
+    assert len(sent) == 2 and sent[-1][1]['title'].startswith('重要度上昇｜')
+    restarted = push.PushService(path=value.path, config=value.config, now=value.now, sender=value.sender)
+    restarted.tick(push.proposals({}, [original, escalated], clock[0]))
+    assert len(sent) == 2
+
+
+def test_measured_confirmation_after_an_hour_is_one_reasoned_update(service):
+    value, clock, sent = service
+    subscribe(value)
+    original = _news(clock)
+    value.tick(push.proposals({}, [original], clock[0]))
+    clock[0] += 3700
+    at = datetime.fromtimestamp(clock[0], timezone.utc).isoformat()
+    confirmed = {**original, 'confirmationState':'MARKET_CONFIRMED',
+                 'marketReaction':{'confirmed':True, 'measuredAfterNews':True, 'at':at}}
+    value.tick(push.proposals({}, [confirmed], clock[0]))
+    assert len(sent) == 2 and sent[-1][1]['title'].startswith('市場反応を確認｜')
+    assert '市場反応を確認' in sent[-1][1]['body']
+    value.tick(push.proposals({}, [confirmed], clock[0]))
+    assert len(sent) == 2
+    clock[0] += 3601
+    assert push.proposals({}, [confirmed], clock[0]) == []
+
+
+def test_legacy_generic_claims_are_not_replayed_by_notification_upgrade(service):
+    value, clock, sent = service
+    identity = subscribe(value)
+    value.tick([event(clock, key='news:nie-policy:HIGH', kind='news')])
+    assert len(sent) == 1
+    record = _news(clock, confirmationState='MARKET_CONFIRMED',
+        marketReaction={'confirmed':True, 'measuredAfterNews':True,
+                        'at':datetime.fromtimestamp(clock[0], timezone.utc).isoformat()})
+    value.tick(push.proposals({}, [record], clock[0]))
+    assert len(sent) == 1  # Unknown old confirmation state must not trigger a replay.
+    assert len(value.status(identity)['deliveries']) == 1
+
+
+def test_only_unsent_generic_notice_gets_content_without_moving_its_schedule(service):
+    value, clock, sent = service
+    identity = subscribe(value)
+    old = event(clock, key='news:nie-policy:HIGH', kind='news', due=clock[0]+10)
+    value.tick([old])
+    with value.db() as db:
+        before = dict(db.execute('SELECT * FROM deliveries').fetchone())
+    value.tick(push.proposals({}, [_news(clock)], clock[0]))
+    assert not sent
+    with value.db() as db:
+        after = dict(db.execute('SELECT * FROM deliveries').fetchone())
+    assert [before[k] for k in ('id','due','expires','status','attempted')] == [
+        after[k] for k in ('id','due','expires','status','attempted')]
+    assert json.loads(after['payload'])['title'] == '米中銀が政策金利を据え置き'
+    clock[0] += 11
+    value.tick([])
+    assert len(sent) == 1 and len(value.status(identity)['deliveries']) == 1
+
+
+def test_ambiguous_news_delivery_is_not_retried_with_new_wording(service):
+    value, clock, sent = service
+    identity = subscribe(value)
+    def timeout(*args):
+        raise TimeoutError()
+    value.sender = timeout
+    value.tick(push.proposals({}, [_news(clock)], clock[0]))
+    value.sender = lambda *args: sent.append(args) or 201
+    value.tick(push.proposals({}, [_news(clock, headlineJa='新しい言い回し')], clock[0]))
+    assert not sent and value.status(identity)['deliveries'][0]['status'] == 'DELIVERY_UNKNOWN'
+
+
+def test_news_text_is_bounded_and_pending_summary_never_copies_the_original(service):
+    _, clock, _ = service
+    row = push.proposals({}, [_news(clock, headlineJa='翻訳処理中', facts=[],
+                        titleOriginal='PRIVATE ENGLISH MAIL')], clock[0])[0]
+    assert row['title'] == '重要報道（要約待ち）'
+    assert 'PRIVATE' not in json.dumps(row)
+    row = push.proposals({}, [_news(clock, headlineJa='見出し\x00\u202e<b>内容</b>\n'+'長'*300,
+                        facts=['短い要点\nhttps://example.org/private'])], clock[0])[0]
+    assert '<b>' not in row['title'] and '\x00' not in row['title'] and '\u202e' not in row['title']
+    assert len(row['title']) <= 140 and len(row['body']) <= 220
+    assert 'https://' not in row['body']
+
+
 def test_worker_reads_news_store_independently_of_brief(monkeypatch):
     import copy
     import scanner
