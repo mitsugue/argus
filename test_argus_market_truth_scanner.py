@@ -961,6 +961,55 @@ def test_optional_projection_failure_has_no_legacy_route_side_effect():
     assert projection["issuedDecisions"] == []
 
 
+def test_snapshot_failure_identifies_known_cause_without_issuing_records():
+    for reason in ("snapshot_too_large", "conflicting_revision",
+                   "snapshot_candidates_truncated", "too_many_observations"):
+        with mock.patch.object(
+                scanner.argus_market_data_truth, "build_decision_snapshot",
+                side_effect=ValueError(reason)):
+            projection = _projection()
+        assert projection["marketTruthSnapshotFailure"] == {
+            "stage": "BUILD", "code": reason, "errorType": "ValueError"}
+        assert projection["marketTruthSnapshot"] is None
+        assert projection["marketTruthSnapshotVerified"] is False
+        assert projection["issuedCount"] == 0
+        assert projection["issuedDecisions"] == []
+        assert projection["reason"] == "canonical_evidence_incomplete"
+
+
+def test_snapshot_failure_never_exposes_exception_text_or_arguments():
+    for error in (ValueError("private-original-input"),
+                  ValueError("snapshot_too_large", "private-original-input"),
+                  TypeError("private-original-input"),
+                  OverflowError("private-original-input")):
+        with mock.patch.object(
+                scanner.argus_market_data_truth, "build_decision_snapshot",
+                side_effect=error):
+            projection = _projection()
+        assert projection["marketTruthSnapshotFailure"] == {
+            "stage": "BUILD", "code": "snapshot_validation_failed",
+            "errorType": type(error).__name__}
+        assert "private-original-input" not in str(projection)
+        assert projection["issuedDecisions"] == []
+
+
+def test_snapshot_verification_failure_stays_closed_and_hides_free_text():
+    with mock.patch.object(
+            scanner.argus_market_data_truth, "verify_decision_snapshot",
+            return_value=(False, "private-original-input")):
+        projection = _projection()
+    assert projection["marketTruthSnapshotFailure"] == {
+        "stage": "VERIFY", "code": "snapshot_verification_failed"}
+    assert "private-original-input" not in str(projection)
+    assert projection["issuedDecisions"] == []
+
+
+def test_verified_snapshot_has_no_failure_diagnostic():
+    projection = _projection()
+    assert projection["marketTruthSnapshotVerified"] is True
+    assert "marketTruthSnapshotFailure" not in projection
+
+
 def test_missing_exact_build_identity_issues_no_forward_live_record():
     with mock.patch.object(scanner, "_backend_exact_sha", return_value=None):
         projection = scanner._canonical_prediction_ledger_projection(
