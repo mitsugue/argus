@@ -20,6 +20,16 @@
     {"code": "JP_WAGES", "date": "2026-12-08", "time": "08:30", "referenceJa": "2026年10月分速報"},
     {"code": "JP_TANKAN", "date": "2026-12-14", "time": "08:50", "referenceJa": "2026年12月調査"},
     {"code": "JP_CPI", "date": "2026-12-18", "time": "08:30", "referenceJa": "2026年11月分"},
-    {"code": "JP_TOKYO_CPI", "date": "2026-12-25", "time": "08:30", "referenceJa": "2026年12月分(中旬速報値)"}
+    {"code": "JP_TOKYO_CPI", "date": "2026-12-25", "time": "08:30", "referenceJa": "2026年12月分(中旬速報値)"},
+    {"code": "JP_WAGES", "date": "2027-01-07", "time": "08:30", "referenceJa": "2026年11月分速報", "sourceRef": "https://www.e-stat.go.jp/release-calendar/statistics/00450071", "knownAt": "2026-10-29T05:22:20Z", "sourceEvidence": "official_web_excerpt"},
+    {"code": "JP_CPI", "date": "2027-01-22", "time": "08:30", "referenceJa": "2026年12月分", "sourceRef": "https://www.e-stat.go.jp/release-calendar/statistics/00200573", "knownAt": "2026-10-29T05:22:20Z", "sourceEvidence": "official_web_excerpt"},
+    {"code": "JP_TOKYO_CPI", "date": "2027-01-29", "time": "08:30", "referenceJa": "2027年1月分(中旬速報値)", "sourceRef": "https://www.e-stat.go.jp/release-calendar/statistics/00200573", "knownAt": "2026-10-29T05:22:20Z", "sourceEvidence": "official_web_excerpt"},
+    {"code": "JP_WAGES", "date": "2027-02-09", "time": "08:30", "referenceJa": "2026年12月分速報", "sourceRef": "https://www.e-stat.go.jp/release-calendar/statistics/00450071", "knownAt": "2026-10-29T05:22:20Z", "sourceEvidence": "official_web_excerpt"},
+    {"code": "JP_GDP", "date": "2027-02-15", "time": "08:50", "referenceJa": "2026年10〜12月期 1次速報", "sourceRef": "https://www.esri.cao.go.jp/jp/sna/kouhyou/kouhyou_top.html", "knownAt": "2026-10-29T05:22:20Z", "sourceEvidence": "official_web_excerpt"},
+    {"code": "JP_CPI", "date": "2027-02-19", "time": "08:30", "referenceJa": "2027年1月分", "sourceRef": "https://www.e-stat.go.jp/release-calendar/statistics/00200573", "knownAt": "2026-10-29T05:22:20Z", "sourceEvidence": "official_web_excerpt"},
+    {"code": "JP_TOKYO_CPI", "date": "2027-02-26", "time": "08:30", "referenceJa": "2027年2月分(中旬速報値)", "sourceRef": "https://www.e-stat.go.jp/release-calendar/statistics/00200573", "knownAt": "2026-10-29T05:22:20Z", "sourceEvidence": "official_web_excerpt"},
+    {"code": "JP_GDP", "date": "2027-03-09", "time": "08:50", "referenceJa": "2026年10〜12月期 2次速報", "sourceRef": "https://www.esri.cao.go.jp/jp/sna/kouhyou/kouhyou_top.html", "knownAt": "2026-10-29T05:22:20Z", "sourceEvidence": "official_web_excerpt"},
+    {"code": "JP_CPI", "date": "2027-03-19", "time": "08:30", "referenceJa": "2027年2月分", "sourceRef": "https://www.e-stat.go.jp/release-calendar/statistics/00200573", "knownAt": "2026-10-29T05:22:20Z", "sourceEvidence": "official_web_excerpt"},
+    {"code": "JP_TOKYO_CPI", "date": "2027-03-26", "time": "08:30", "referenceJa": "2027年3月分(中旬速報値)", "sourceRef": "https://www.e-stat.go.jp/release-calendar/statistics/00200573", "knownAt": "2026-10-29T05:22:20Z", "sourceEvidence": "official_web_excerpt"}
   ]
 }

@@ -205,7 +205,7 @@ def holiday_events(today: date, end: date) -> list[dict[str, Any]]:
     return out
 
 
-def macro_events(today: date, end: date, schedule: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+def macro_events(today: date, end: date, schedule: Mapping[str, Any], *, knowledge_at: datetime | None = None) -> tuple[list[dict[str, Any]], list[str]]:
     gaps = []
     if schedule.get("schemaVersion") != "jp-official-macro-release-schedule-v1" or not schedule.get("sourceRef"):
         raise ValueError("macro_schedule_invalid")
@@ -213,6 +213,13 @@ def macro_events(today: date, end: date, schedule: Mapping[str, Any]) -> tuple[l
         gaps.append("jp_macro_schedule_not_published_beyond_" + str(schedule.get("coverageEnd")))
     out = []
     for row in schedule.get("rows", []):
+        if row.get("knownAt") and knowledge_at is not None:
+            try:
+                known = datetime.fromisoformat(str(row["knownAt"]).replace("Z", "+00:00"))
+                if known.tzinfo is None or knowledge_at.tzinfo is None or known > knowledge_at:
+                    continue
+            except (ValueError, TypeError):
+                continue
         text = MACRO_TEXT.get(row.get("code"))
         day = date.fromisoformat(str(row.get("date")))
         if text is None or not today <= day <= end:
@@ -222,7 +229,7 @@ def macro_events(today: date, end: date, schedule: Mapping[str, Any]) -> tuple[l
             event_id=f"jp-{row['code'].lower().replace('_', '-')}-{day.isoformat()}", kind=row["code"],
             at=at, date_only=False, title_ja=f"{text['titleJa']} {row.get('referenceJa', '')}".strip(),
             importance=text["importance"], what_ja=text["whatJa"], so_what_ja=text["soWhatJa"],
-            watch_ja=text["watchJa"], source=str(schedule["sourceRef"]), today=today))
+            watch_ja=text["watchJa"], source=str(row.get("sourceRef") or schedule["sourceRef"]), today=today))
     return out, gaps
 
 
@@ -393,7 +400,7 @@ def equity_event_calendar(*, now: datetime, horizon_days: int = DEFAULT_HORIZON_
     events: list[dict[str, Any]] = []
     try:
         schedule = macro_schedule if macro_schedule is not None else json.loads(MACRO_SCHEDULE.read_text())
-        macro, macro_gaps = macro_events(today, end, schedule)
+        macro, macro_gaps = macro_events(today, end, schedule, knowledge_at=current)
         events += macro
         gaps += macro_gaps
     except (OSError, ValueError, TypeError, KeyError):

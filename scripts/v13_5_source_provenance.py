@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.198"
+PRODUCT_VERSION = "v13.8.199"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -168,7 +168,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'da20efbb76495ae75a431f2453ac7706cb6f1aab',
+    'web/scripts/owner-today-https.mjs': '60b1b8847afe8bf3fe2c0a69d4d1e2566618ebf5',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -826,6 +826,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_caos_scan_private_notes.py",
     "test_private_diagnostics_store.py",
     "scripts/private_diagnostics_store.py",
+    "scripts/event_snapshot_read.py",
+    "test_event_snapshot_read.py",
     ".github/workflows/breadth-freshness.yml",
     "test_argus_jgb_archive_original.py",
     "web/scripts/material-reaction-research.test.cjs",
