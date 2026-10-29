@@ -238,9 +238,15 @@ def _news(clock, **changes):
             'confirmationState':'MARKET_CONFIRMATION_PENDING', **changes}
 
 
-def test_news_notice_names_the_material_without_raw_mail_or_private_fields(service):
+def test_news_notice_names_the_material_without_raw_mail_or_private_fields(service, monkeypatch):
+    import uuid
     value, clock, sent = service
     subscribe(value)
+    # Force an overlap with the private quantity's digits in the independent
+    # transport UUID. Verify that exact generated ID, then EVERY other field;
+    # random ID digits must not masquerade as private-content leakage.
+    delivery_id = uuid.UUID('98700000-0000-4000-8000-000000000000')
+    monkeypatch.setattr(push.uuid, 'uuid4', lambda: delivery_id)
     record = _news(clock, rawBody='非公開の原メール本文', excerpt='有料記事の全文',
                   ownerSymbols=['PRIVATE'], ownerQuantity=987)
     value.tick(push.proposals({}, [record], clock[0]))
@@ -249,7 +255,9 @@ def test_news_notice_names_the_material_without_raw_mail_or_private_fields(servi
     assert '物価の高止まり' in payload['body']
     assert '市場反応は未確認' in payload['body'] and '日経 ' in payload['body']
     assert payload['hash'] == '#notifications/news/nie-policy'
-    text = json.dumps(payload, ensure_ascii=False)
+    assert payload['deliveryId'] == str(delivery_id)
+    assert set(payload) == {'schemaVersion', 'deliveryId', 'title', 'body', 'hash', 'expiresAt', 'newsContext'}
+    text = json.dumps({k:v for k,v in payload.items() if k != 'deliveryId'}, ensure_ascii=False)
     assert all(s not in text for s in ('非公開の原メール本文', '有料記事の全文', 'PRIVATE', '987'))
     assert 'sourceUrl' not in text and 'example.org' not in text
 
