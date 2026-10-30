@@ -1,0 +1,106 @@
+name: zz-allocator-sampler-20261030
+on:
+  push:
+    branches: [codex/allocator-sampler-20261030]
+permissions:
+  contents: read
+jobs:
+  controlled:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+        with: {path: harness}
+      - name: Verify the preserved original without printing its contents
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -m 700 input out
+          python3 -B - <<'PY'
+          import urllib.request,json,base64,pathlib,os,hashlib,tarfile,io
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,*a,**k):return None
+          opener=urllib.request.build_opener(NoRedirect)
+          token=os.environ['PRIVATE_DIAGNOSTICS_TOKEN'];repo='mitsugue/argus-l2b-private'
+          def get(path):
+              request=urllib.request.Request('https://api.github.com/repos/'+repo+('/'+path if path else ''),headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json'})
+              with opener.open(request,timeout=45) as response:
+                  raw=response.read(8*1024**2+1);assert len(raw)<=8*1024**2
+                  return json.loads(raw)
+          metadata=get('');assert metadata['private'] and metadata['full_name']==repo
+          ref='7814ac444da16015debecf3fe4469be2c131f01e'
+          value=get('contents/diagnostics/allocator-original8/20261029112001/original-input.tar.gz?ref='+ref)
+          blob=value if value.get('encoding')=='base64' else get('git/blobs/'+value['sha'])
+          raw=base64.b64decode(blob['content']);assert len(raw)==2070023
+          assert hashlib.sha1(b'blob '+str(len(raw)).encode()+bytes([0])+raw).hexdigest()==value['sha']
+          assert hashlib.sha256(raw).hexdigest()=='6f5fda1ff99381b35e1f3420d9f83eca8a7b4553df79da8e3994798fe87f574f'
+          with tarfile.open(fileobj=io.BytesIO(raw),mode='r:gz') as archive:
+              members=archive.getmembers();assert {x.name for x in members}=={'checkpoint-v2-exact-source.json','manifest.json'}
+              assert all(x.isfile() and x.size<=40*1024**2 for x in members)
+              source=archive.extractfile('checkpoint-v2-exact-source.json').read()
+          assert len(source)==38951728 and hashlib.sha256(source).hexdigest()=='bde53e2b5dc40a06e248e3a905e797b7876c4319d49a97b191b4465641b2519e'
+          pathlib.Path('input/checkpoint-v2-exact-source.json').write_bytes(source)
+          code=get('git/blobs/ba8e6ce3d22c45626c45dbc9ca6e39971bc71e20')
+          code_raw=base64.b64decode(code['content']);assert len(code_raw)==40920
+          assert hashlib.sha256(code_raw).hexdigest()=='9864fdcca7102618d0d4b629002d811335fd9b993d271b097499824bd16fa3b2'
+          allowed={'argus_checkpoint_v2.py','argus_mapping_attribution.py','argus_persistent_storage.py','argus_tick_durability.py','scripts/checkpoint_v2_mapping_probe.py','scripts/checkpoint_v2_resource_probe.py'}
+          with tarfile.open(fileobj=io.BytesIO(code_raw),mode='r:gz') as archive:
+              members=archive.getmembers();assert {x.name for x in members}==allowed
+              assert all(x.isfile() and x.size<=1024**2 for x in members)
+              for member in members:
+                  path=pathlib.Path('original')/member.name;path.parent.mkdir(parents=True,exist_ok=True)
+                  path.write_bytes(archive.extractfile(member).read())
+          pathlib.Path('out/input-identity.json').write_text(json.dumps({'incident':37712227448,'originalCode':'0949653a8bf485191db922caf440313d96b9e76a','sourceBytes':len(source),'sha256':hashlib.sha256(source).hexdigest(),'scope':'OCTOBER_8_ONLY_NOT_OCTOBER_20','privateCommit':ref})+'\n')
+          PY
+      - name: Isolate the high-frequency resource sampler with external writer measurement
+        run: |
+          set -euo pipefail
+          image=python@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
+          docker pull "$image" > out/image-pull.txt 2>&1
+          docker image inspect "$image" > out/image-identity.json
+          for arm in external boundary; do
+            mkdir -p "out/$arm"
+            set +e
+            docker run --rm --network none --memory 4g --memory-swap 4g --pids-limit 512 \
+              --volume "$PWD/original:/work:ro" --volume "$PWD/input:/input:ro" \
+              --volume "$PWD/harness/scripts/allocator_sampler_influence_20261030.py:/diag/observer.py:ro" \
+              --volume "$PWD/out:/out" --workdir /work "$image" \
+              python3 -B /diag/observer.py --mode "$arm" --source /input/checkpoint-v2-exact-source.json --code /work --out "/out/$arm" --cycles 8 \
+              > "out/$arm/stdout.txt" 2> "out/$arm/stderr.txt"
+            code=$?
+            set -e
+            printf '%s\n' "$code" > "out/$arm/exit.txt"
+            test "$code" = 0
+            test -s "out/$arm/summary.json"
+          done
+      - name: Preserve diagnostic outputs only in the existing private destination
+        if: always()
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd harness
+          python3 -B - <<'PY'
+          import os,pathlib,tarfile,hashlib,json,urllib.request,io,gzip
+          from scripts.preserve_failed_checkpoint_source import NoRedirect,require_private_destination
+          from scripts.private_diagnostics_store import store
+          out=pathlib.Path('../out');packet=pathlib.Path('../packets');packet.mkdir(exist_ok=True)
+          if not out.exists():raise RuntimeError('diagnostic_output_missing')
+          # /tmp/private-mapping-evidence と原入力は対象外。公開artifactは作らない。
+          files=sorted(x for x in out.rglob('*') if x.is_file() and not x.is_symlink())
+          buf=io.BytesIO()
+          with tarfile.open(fileobj=buf,mode='w') as archive:
+              for path in files:archive.add(path,arcname=path.relative_to(out).as_posix(),recursive=False)
+          raw=gzip.compress(buf.getvalue(),mtime=0);parts=[]
+          assert len(raw)<=18*7*1024**2
+          for offset in range(0,len(raw),7*1024**2):
+              path=packet/f'controlled-{len(parts):02d}.part';path.write_bytes(raw[offset:offset+7*1024**2])
+              parts.append({'name':path.name,'bytes':path.stat().st_size,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
+          manifest={'schema':'allocator-controlled-packets-v1','run':os.environ['GITHUB_RUN_ID'],'parts':parts,'archiveBytes':len(raw),'archiveSha256':hashlib.sha256(raw).hexdigest(),'rawProcFilesIncluded':False,'sourceIncluded':False,'fields':'original counts, timings, hashes, exit codes; no acceptance assigned'}
+          (packet/'manifest.json').write_text(json.dumps(manifest,sort_keys=True)+'\n')
+          opener=urllib.request.build_opener(NoRedirect()).open;token=os.environ['PRIVATE_DIAGNOSTICS_TOKEN']
+          require_private_destination(token,opener)
+          count=store('allocator-original8',os.environ['GITHUB_RUN_ID'],sorted(packet.iterdir()),token,opener=opener)
+          print('Private diagnostic packets stored:',count)
+          PY
