@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # 受領記録と営業日時を明示した回収検査の正確な内容。
+    'test_argus_v12_2_3.py': 'c66e88717ae7dbb360206d1179feae707432f775',
     # 日銀の公式決定文と受領・事前記録の境界を検査した正確な内容。
     'argus_boj_policy_result.py': '2b2da4cbfded245c3fd4065f974314f7a75e298b',
     'test_argus_boj_policy_result.py': 'f8efca2d1b961b6d53a7fc3ace9142f2da77d6c0',
@@ -694,7 +696,6 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
-    "test_argus_v12_2_3.py",
     "test_failed_checkpoint_source.py",
     "scripts/preserve_failed_checkpoint_source.py",
     "test_margin_reconcile.py",
