@@ -123,7 +123,8 @@ def _resolve_state(event_time_utc: Optional[str], event_date: Optional[str],
 def build_summary_item(*, important_event: Optional[Dict[str, Any]],
                        macro_record: Optional[Dict[str, Any]], now_iso: str) -> Dict[str, Any]:
     ie = important_event or {}
-    rec = macro_record or {}
+    from argus_macro_results import project_macro_result_record
+    rec = project_macro_result_record(macro_record or {})
     pre = rec.get("pre") or {}
     from argus_macro_results import project_series_timing
     actual = project_series_timing(rec.get("actual") or {})

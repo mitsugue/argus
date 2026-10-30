@@ -35,6 +35,11 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # 受領記録と営業日時を明示した回収検査の正確な内容。
+    'test_argus_v12_2_3.py': 'c66e88717ae7dbb360206d1179feae707432f775',
+    # 日銀の公式決定文と受領・事前記録の境界を検査した正確な内容。
+    'argus_boj_policy_result.py': '2b2da4cbfded245c3fd4065f974314f7a75e298b',
+    'test_argus_boj_policy_result.py': 'f8efca2d1b961b6d53a7fc3ace9142f2da77d6c0',
     # 2026-10-23 オーナー承認: 答え合わせのデータの名前に指数(INDEX)を足した正確な内容(日経平均そのものへの置き換え)。
     # 承認の言葉は argus_market_replay.py の build_context のコメントに記録。次の変更はまた止まる。
     'argus_market_replay.py': '1f84b6bcec622db9f7e0573aab16f7797b026a7c',
@@ -352,7 +357,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_web_push.py': 'b881f97e4162d9c7d3e96cd96b0540fb5adef62a',
     'test_argus_owner_vault.py': '64c3c8bec19581962309873e1b93fb31cdc2cbe2',
     'test_argus_ai_usage_view.py': '729a3e9155a2106069ad68d8b9efb590ab10f3a9',
-    'requirements.txt': '4b5fc10866dbd75f13ade0c2281b97800c2add05',
+    'requirements.txt': 'c386fa3dda67a5fa3f25752b87de62954fa8116f',
     'jp_market_valuation.py': '8813012bcab02e9269007a8850870da2ef050565',
     'docs/V13_6_INDEX_VALUATION.md': '86f949af07f9cee61e570dc11d3062542c832269',
     'argus_web_push.py': 'c6c4f17de3450bfdce8adf8b4bd26de44a84d7a6',
@@ -403,7 +408,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_ai_usage_receipt.py': '272e2a780d26a65917210df416e6546eb1c441dc',
     'argus_ai_usage_store.py': 'bc0ccd94eeb2b601da72ecb4a847c8ba3bbf07e1',
     'argus_macro_event_store.py': 'bf314de6ca6400cb3675b99e72a97e5c3ce6268e',
-    'argus_macro_results.py': 'daec1b2ce20b79c3d88a045bd792a57d01b5598d',
+    'argus_macro_results.py': '144830077d292902578f32b983e54aca4bd250e5',
     'test_argus_cpi_display_rounding.py': '1615a9459bf8763a1bba6978b46c8f895271a1db',
     'docs/V13_6_ANALYSIS_ACCEPTANCE.md': '1eec780bbdf73a3120cf2cf3ba7c0df16f68f4d9',
     'docs/V13_6_COMPUTE_CONTRACT.md': '4ad0e52d419c261b24be8775d9c635bd310e9417',
@@ -418,7 +423,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_ai_usage_receipt.py': '00d50f40807d5eea8e149115e1664272b4e4408a',
     'test_argus_ai_usage_store.py': '03dce630d6b901cc3e4277c78a7a241b2fac724a',
     'test_argus_macro_result_revisions.py': '6b073b4822de5ba05d77133e171d28082ff54cf1',
-    'test_argus_macro_results.py': '647520e693f5f87f902033bb1e2a0c0762bfc407',
+    'test_argus_macro_results.py': '36001f5c58b9f9b21f50fa08a935a7e1bd763fe7',
     'test_argus_unified_brief.py': '80ac20a586d40f8da40f340095b2a07c20e0c67e',
     'test_jp_market_analogs.py': 'c0f4d159e40bf6bdc1f24a31d63a8b74a180aa6e',
     'test_jp_market_comparison_runtime.py': '5661ce8d69b9c630b7685ac98c92d4ca6b369b24',
