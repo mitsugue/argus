@@ -115,19 +115,37 @@ def test_replay_end_to_end_labeled():
 
 
 def test_incident_open_close(monkeypatch):
+    class FixedBusinessDateTime(RealDateTime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = RealDateTime.fromisoformat(NOW)
+            return fixed.astimezone(tz) if tz is not None else fixed.replace(tzinfo=None)
+
     _admin(monkeypatch)
-    scanner._MISSIONS.clear()
-    scanner._MISSION_WINDOWS.clear()
-    scanner._INCIDENTS.clear()
+    monkeypatch.setattr(scanner, "datetime", FixedBusinessDateTime)
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: NOW)
+    for name in ("_MISSIONS", "_MISSION_WINDOWS", "_INCIDENTS",
+                 "_FORECAST_LEDGER", "_OUTCOME_LEDGER"):
+        monkeypatch.setattr(scanner, name, [])
+    # Recovery of a forecast requires a received research record. Never inherit
+    # that prerequisite from another test or the worker's previous checkpoint.
+    monkeypatch.setattr(scanner, "_OSINT_STORE", {
+        "6965": {"id": "inv-recovery", "catalystVerdict": {"verdict": "unknown"},
+                 "ownerConclusion": {"statusJa": "Gemini未満"},
+                 "researchPower": {"statusJa": "Gemini未満"},
+                 "storeWarmth": {"storeWarmth": "warming"}}})
     old = sc.mission(mission_type="post_session_snapshot", market="JP",
                      session_date="2026-07-09",
                      scheduled_for="2026-07-09T15:40:00+09:00")
     scanner._MISSIONS.append(old)
     with scanner.app.test_client() as c:
         c.post("/api/argus/admin/missions/tick", json={})
-    assert any(i.get("component") == "scheduler" for i in scanner._INCIDENTS)
-    rec = [i for i in scanner._INCIDENTS if i.get("status") == "resolved"]
-    assert rec, "回収でインシデントclose"
+    incident = next(i for i in scanner._INCIDENTS
+                    if i.get("id") == f"inc-{old['missionId']}")
+    assert old["status"] == "recovered"
+    assert incident["component"] == "scheduler"
+    assert incident["status"] == "resolved", "回収でインシデントclose"
+    assert incident["resolvedAt"] == NOW
 
 
 def test_dq_research_measurement_honest():
