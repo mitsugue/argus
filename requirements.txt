@@ -18,6 +18,7 @@ jquants-api-client==2.3.0
 moomoo-api==10.11.7108
 xlrd==2.0.2
 openpyxl==3.1.5
+pypdf==6.21.4
 gunicorn==23.0.0
 cryptography==49.0.0
 pywebpush==2.3.0

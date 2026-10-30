@@ -125,7 +125,8 @@ def test_boj_partial_no_fabrication():
     r = MR.boj_partial({"eventCode": "BOJ"}, NOW)
     assert r["available"] is False and r["status"] == "partial"
     assert r["metrics"] == {} and r["sourceUrl"]
-    assert any("捏造" in x for x in r["limitationsJa"])
+    assert r["releasedAt"] is None and r["headline"] is None
+    assert any("未受領" in x for x in r["limitationsJa"])
 
 
 def test_not_implemented_shape():

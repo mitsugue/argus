@@ -23,7 +23,7 @@ jobs:
       - name: Install minimal deps (scanner and offline SDK serialization)
         run: >-
           pip install --quiet anthropic openai==3.19.2 flask flask-cors requests pytz
-          python-dotenv json-repair pytest pytest-xdist==3.8.0 cryptography==49.0.0 pywebpush==2.3.0 webauthn==2.7.1 openpyxl==3.1.5 xlrd==2.0.2
+          python-dotenv json-repair pytest pytest-xdist==3.8.0 cryptography==49.0.0 pywebpush==2.3.0 webauthn==2.7.1 openpyxl==3.1.5 xlrd==2.0.2 pypdf==6.21.4
       - name: Syntax check
         run: |
           python -c 'import importlib.metadata as m; assert m.version("cryptography") == "49.0.0"'

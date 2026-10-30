@@ -88,6 +88,8 @@ def resolve_macro_event_phase(event_time_utc: Optional[str], now_utc: str, *,
             return "pre_watch"
         if now.date() < d:
             return "pre_watch" if (d - now.date()).days > 1 else "pre_final"
+        if now.date() == d and actual_available:
+            return "post_result"  # A verified same-event result is direct evidence.
         if now.date() == d:
             return "imminent"                      # date not ended → NEVER post
         return "post_result" if actual_available else "released_pending_result"
@@ -96,6 +98,25 @@ def resolve_macro_event_phase(event_time_utc: Optional[str], now_utc: str, *,
 
 def is_pre_phase(phase: str) -> bool:
     return phase in _PRE_PHASES
+
+
+def pre_before_release(pre, event_time_utc):
+    """Only a time-bound saved view may be scored as the pre-release view.
+
+    The original is kept in the event/revision store. This is a projection for
+    display and new answer-checks, including a date-only release whose official
+    clock was learned later.
+    """
+    if not isinstance(pre, dict):
+        return {}
+    try:
+        generated = datetime.fromisoformat(str(pre.get('generatedAt') or '').replace('Z', '+00:00'))
+        released = datetime.fromisoformat(str(event_time_utc or '').replace('Z', '+00:00'))
+        if generated.tzinfo is None or released.tzinfo is None or generated >= released:
+            return {}
+    except (ValueError, TypeError):
+        return {}
+    return dict(pre)
 
 
 def canonical_date_from_event_id(event_id: Any) -> Optional[str]:
@@ -300,7 +321,8 @@ def build_post_prompt(event: Dict[str, Any], pre: Dict[str, Any],
                             "whatWouldSurpriseJa")}, ensure_ascii=False)
     actual_txt = (_json.dumps({k: actual.get(k) for k in ("headline", "metrics", "metricDefinitions", "metricInputs", "previousMetrics",
                                 "referenceMatched", "releasedAt", "receivedAt", "availableFrom", "availabilityBasis",
-                                "historicalVintageVerified", "sourceResponseSha256", "source", "sourceUrl", "limitationsJa")},
+                                "historicalVintageVerified", "sourceResponseSha256", "sourceDocumentSha256",
+                                "publicationTimeEvidence", "source", "sourceUrl", "limitationsJa")},
                               ensure_ascii=False)
                   if actual.get("available") else "公式結果未取得")
     return (

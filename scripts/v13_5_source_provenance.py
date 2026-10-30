@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # 日銀の公式決定文と受領・事前記録の境界を検査した正確な内容。
+    'argus_boj_policy_result.py': '2b2da4cbfded245c3fd4065f974314f7a75e298b',
+    'test_argus_boj_policy_result.py': 'f8efca2d1b961b6d53a7fc3ace9142f2da77d6c0',
     # 2026-10-23 オーナー承認: 答え合わせのデータの名前に指数(INDEX)を足した正確な内容(日経平均そのものへの置き換え)。
     # 承認の言葉は argus_market_replay.py の build_context のコメントに記録。次の変更はまた止まる。
     'argus_market_replay.py': '1f84b6bcec622db9f7e0573aab16f7797b026a7c',

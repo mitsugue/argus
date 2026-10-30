@@ -332,11 +332,10 @@ def parse_fomc(raw_upper: Any, raw_lower: Any, event: Dict[str, Any], now_iso: s
 
 
 def boj_partial(event: Dict[str, Any], now_iso: str) -> Dict[str, Any]:
-    """BOJ has no reliable free numeric API for the decision; we return partial with
-    the official statement URL only — never a fabricated rate/decision."""
+    """Compatibility fallback when the official BOJ document is unavailable."""
     return {"available": False, "status": "partial", "source": "BOJ", "releasedAt": None,
             "headline": None, "metrics": {}, "sourceUrl": _SOURCE_URL["BOJ"],
-            "limitationsJa": ["日銀の政策決定は信頼できる無料数値APIが無く未実装（結果は捏造しない）。公式声明URLのみ提供。"]}
+            "limitationsJa": ["日銀の公式決定文は未受領。"]}
 
 
 def not_implemented(event_code: str, now_iso: str) -> Dict[str, Any]:
@@ -427,4 +426,15 @@ def project_macro_result_record(record):
     actual = record.get("actual")
     if record.get("eventCode") == "CPI" and isinstance(actual, dict):
         out["actual"] = project_cpi_headline(actual)
+    if (record.get("eventCode") == "BOJ" and isinstance(actual, dict) and
+            actual.get("available") and actual.get("source") == "BOJ" and
+            re.fullmatch(r"[0-9a-f]{64}", str(actual.get("sourceDocumentSha256") or ""))):
+        from argus_macro_event_analysis import pre_before_release
+        pre = record.get("pre") or {}
+        valid = pre_before_release(pre, actual.get("releasedAt"))
+        out["pre"] = valid
+        if pre and not valid:
+            out["preTimingStatus"] = "NOT_BEFORE_RELEASE"
+            out["post"] = {**(record.get("post") or {}), "verdict": "not_scoreable",
+                           "answerCheckJa": "事前記録なし"}
     return out
