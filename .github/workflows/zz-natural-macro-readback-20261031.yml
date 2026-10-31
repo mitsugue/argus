@@ -1,0 +1,52 @@
+name: zz-natural-macro-readback-20261031
+on:
+  push:
+    branches: [codex/natural-macro-readback-20261031]
+permissions:
+  contents: read
+jobs:
+  readback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: 保存済みの結果と現在の固定診断を各一回だけ読む
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os,json,urllib.request,hashlib,datetime
+          from pathlib import Path
+          p=Path('artifacts/natural-macro-readback');p.mkdir(parents=True)
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,*a,**k):return None
+          opener=urllib.request.build_opener(NoRedirect)
+          routes=(('health.json','/healthz'),
+                  ('macro.json','/api/argus/macro-event-analysis?limit=50'),
+                  ('memory.json','/api/argus/admin/memory-attribution?threads=1'),
+                  ('future.json','/api/argus/future-map'))
+          records=[]
+          for name,path in routes:
+              record={'name':name,'at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+              try:
+                  req=urllib.request.Request('https://argus-backend-3j2m.onrender.com'+path,
+                      headers={'X-ARGUS-ADMIN-TOKEN':os.environ['ARGUS_ADMIN_TOKEN']})
+                  with opener.open(req,timeout=60) as response:
+                      raw=response.read(8*1024*1024+1);assert response.status==200 and len(raw)<=8*1024*1024
+                  assert isinstance(json.loads(raw),dict)
+                  (p/name).write_bytes(raw)
+                  record.update(status=200,bytes=len(raw),sha256=hashlib.sha256(raw).hexdigest())
+              except Exception as exc:
+                  record.update(status='UNOBSERVED',errorClass=type(exc).__name__)
+              records.append(record)
+          (p/'receipt.json').write_text(json.dumps({'reads':records,'getCount':4,
+              'postOrGeneration':0,'newClock':0},indent=2)+'\n')
+          print('GET attempted=4; response contents private only')
+          PY
+      - name: 既存の非公開診断保存へ保全
+        if: always()
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: python3 -B scripts/private_diagnostics_store.py --kind legacy-readback --run-id "${{ github.run_id }}" artifacts/natural-macro-readback
