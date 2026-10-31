@@ -600,8 +600,31 @@ def zigzag(bars: Sequence[Mapping[str, Any]], threshold: float = ZIGZAG_THRESHOL
 
 # --- EPS series ------------------------------------------------------------------
 
+class _ScoringEpsSeries(Mapping):
+    """一回の採点内だけ、同じ日の厳密な前日EPSを再利用する。"""
+    def __init__(self, source):
+        self._source = source
+        self._before = {}
+
+    def __getitem__(self, key):
+        return self._source[key]
+
+    def __iter__(self):
+        return iter(self._source)
+
+    def __len__(self):
+        return len(self._source)
+
+    def before(self, day):
+        if day not in self._before:
+            self._before[day] = eps_before(self._source, day)
+        return self._before[day]
+
+
 def eps_before(eps_series: Mapping[str, float], day: str) -> Optional[tuple]:
     """(date, eps) of the latest estimate dated strictly before `day`."""
+    if isinstance(eps_series, _ScoringEpsSeries):
+        return eps_series.before(day)
     earlier = [d for d in eps_series if d < day and _finite(eps_series[d])]
     if not earlier:
         return None
@@ -815,6 +838,7 @@ def score_records(mornings: Sequence[Mapping[str, Any]], price_rows: Sequence[Ma
     date; +/-1 % is a hit. The +/-2 ATR guide and shifted fake lines are the
     baselines. Nothing here is a probability.
     """
+    eps_series = _ScoringEpsSeries(eps_series)
     bars = _bars(price_rows)
     index_of = {bar["date"]: i for i, bar in enumerate(bars)}
     pivots = zigzag(bars)
