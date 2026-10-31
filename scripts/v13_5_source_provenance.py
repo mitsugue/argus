@@ -35,9 +35,13 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_jp_market_feature_replay_prefix.py': '7d7ef840dab5fffaf018f9f941d1277ed808fd64',
     # 予測失敗の正規化入力を既存の非公開保存へ渡す正確な内容。
     'argus_prediction_failure_input.py': 'e7ebebf90f17a248d7c0d3fb986c000f2c039fd8',
     'test_argus_comparison_calibration_restore.py': 'edcff6b9c5e2b2678ee5e95016a18d72fb2645a8',
+    'test_argus_analog_series_glue.py': '0255c2e5d6a03263a02b2b71b2e69ed9c0b2e46c',
+    'test_jp_market_feature_tail_reuse.py': '54d327baedad7ca588d6c76241b0aa6f3a00e0fc',
+    'test_argus_market_input_warm_coalescing.py': '901a0e02f6563dce7fcbe4169ec4ace30fac982e',
     'test_argus_prediction_failure_input.py': '332caa0f400965585cf5293f6fd00e2b298ab8b2',
     # 受領記録と営業日時を明示した回収検査の正確な内容。
     'test_argus_v12_2_3.py': 'c66e88717ae7dbb360206d1179feae707432f775',
@@ -419,7 +423,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_analogs.py': '06e435fc3d8cdef86bc1759d8b41e94c910b1912',
     'jp_market_dynamics.py': '36624677a01861c4adfa706e4d5b9dfa405212dd',
     'jp_market_events.py': '9798f7172c58c3d94748641d4ca67fd4dde6f4cf',
-    'jp_market_features.py': '08a8fdfaeab78b9c199baa7900cfbdd67274f10f',
+    'jp_market_features.py': '8fabe12cd8e02abf55af2ef7e0a46e79ffcc65ed',
     'jp_market_price_paths.py': '1e8ac78677ebd5072de9a725ace3beaff31760af',
     'test_jp_market_current_per.py': '0ee8c8c8f6fe2631dccd7e829abbfdc673503209',
     'jp_market_source_adapters.py': 'f5950ba0ff80f98b8a121cfd08d5eef691e81af0',

@@ -346,7 +346,10 @@ class TenYearIndexHistoryTest(unittest.TestCase):
         self.assertEqual(rows[-1]["availableFrom"], "2026-10-03T00:00:00Z")
         import inspect
         self.assertIn('_yahoo_index_ohlcv("^GSPC", "SP500_INDEX", fetch=warm, next_day_available=True, range_="10y")',
-                      inspect.getsource(scanner._jp_market_engine_pit_inputs))
+                      inspect.getsource(scanner._jp_market_engine_pit_inputs_impl))
+        wrapper = inspect.getsource(scanner._jp_market_engine_pit_inputs)
+        self.assertIn("_jp_market_engine_pit_inputs_impl(warm=False)", wrapper)
+        self.assertIn("_jp_market_engine_pit_inputs_impl(warm=True)", wrapper)
 
     def test_a_shorter_refetch_keeps_the_longer_history(self):
         with mock.patch.object(scanner.requests, "get",

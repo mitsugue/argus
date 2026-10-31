@@ -44963,6 +44963,22 @@ def _jp_market_feature_history_warm():
 
 
 def _jp_market_engine_pit_inputs(*, warm=False):
+    """起動と通常収集の同時更新は、既存の実行中処理へ合流する。"""
+    if not warm:
+        # 公開読取は待ち合わせず、従来どおり保存済み入力だけを読む。
+        return _jp_market_engine_pit_inputs_impl(warm=False)
+    result, mode = _single_flight(
+        "internal:jp-market-input-warm",
+        lambda: _jp_market_engine_pit_inputs_impl(warm=True),
+        # 合流待ちも既存の収集上限900秒以内。外側の収集900秒と
+        # 公開読取45秒は不変。完了結果を次の更新へ持ち越さない。
+        wait_sec=900.0)
+    if mode == "busy":
+        raise TimeoutError("market_input_warm_in_progress")
+    return result
+
+
+def _jp_market_engine_pit_inputs_impl(*, warm=False):
     """Market-level JP_MARKET_ENGINE CORE inputs (D01-D07 + reversal axes).
 
     Cached-only on the public path; warm=True (collect cron) refreshes the

@@ -324,11 +324,27 @@ def _reusable_cutoffs(history, ordered, sources, *, diagnostic=None):
     if set(manifest) != set(sources):
         return reject("source_set_changed")
     bounded_sources = []
+    tail_sources = []
+    reusable = shared
     for key, rows in sources.items():
         source = manifest[key]
         reason = _prefix_reuse_rejection(source, rows, key, boundary)
         if reason is None:
             continue
+        count = source.get('count') if isinstance(source, dict) else None
+        if (reason == 'append_can_affect_prior_cutoff'
+                and type(count) is int and 0 <= count < len(rows)
+                and all(isinstance(row, Mapping) and row.get('revision', 0) == 0
+                        for row in rows[count:])):
+            appended_times = [_effective_knowledge(row, key) for row in rows[count:]]
+            if all(at is not None for at in appended_times):
+                first_new = min(appended_times)
+                # Unchanged saved rows prove earlier cutoffs exactly; only
+                # replay the tail the new observations could affect.
+                reusable = [at for at in reusable if _instant(at) < first_new]
+                if first_new <= boundary:
+                    tail_sources.append(key)
+                continue
         # Rows first knowable after the boundary cannot change any reused
         # cutoff, wherever they sit in the list: an SQ distance stamped with
         # its calculation instant, a VIX session still forming in place, a
@@ -345,7 +361,9 @@ def _reusable_cutoffs(history, ordered, sources, *, diagnostic=None):
         diagnostic.update(reason="unchanged_source_prefix", source=None)
         if bounded_sources:
             diagnostic.update(reason="unchanged_known_inputs", boundedSources=sorted(bounded_sources))
-    return shared
+        if tail_sources:
+            diagnostic.update(reason='appended_rows_replay_tail', sources=sorted(tail_sources))
+    return reusable
 
 
 # A source that held rows in the verified history and now holds less than
@@ -766,14 +784,20 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
     if len(vix) >= sum(ARGUS_MACD_BASELINE[:2]):
         macd = _macd([row["numericValue"] for row in vix], ARGUS_MACD_BASELINE)
         emit("vix.macd_histogram", macd[-1]["histogram"], vix)
+        # A crossing refers to the whole prefix, including late receipts.
+        # Build its exact maximum once instead of rescanning every prefix
+        # at every historical cutoff.
+        known_prefix = []
+        for row in vix:
+            known = _knowledge_time(row)
+            known_prefix.append(max(known_prefix[-1], known) if known_prefix else known)
         for index in range(sum(ARGUS_MACD_BASELINE[:2]), len(vix)):
             previous, current = macd[index - 1]["histogram"], macd[index]["histogram"]
             direction = 1 if previous <= 0 < current else -1 if previous >= 0 > current else None
             if direction:
-                inputs = vix[:index + 1]
                 conditions.append({"instrumentId": INSTRUMENT, "seriesId": "vix_macd_cross",
                                    "date": _day(vix[index]), "value": direction, "unit": "DIRECTION",
-                                   "availableFrom": max(_knowledge_time(row) for row in inputs).isoformat(),
+                                   "availableFrom": known_prefix[index].isoformat(),
                                    "sourceRef": "derived:vix-macd-12-26-9", "validationStatus": "UNVALIDATED"})
 
     nikkei = _history(price_series.get("nikkei", ()), INSTRUMENT, cutoff)
