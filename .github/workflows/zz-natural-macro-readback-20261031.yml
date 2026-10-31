@@ -24,8 +24,7 @@ jobs:
               def redirect_request(self,*a,**k):return None
           opener=urllib.request.build_opener(NoRedirect)
           routes=(('health.json','/healthz'),
-                  ('memory.json','/api/argus/admin/memory-attribution?threads=1'),
-                  ('comparison.json','/api/argus/index-chart?index=N225&comparison=1&horizon=5'))
+                  ('memory.json','/api/argus/admin/memory-attribution?threads=1'))
           records=[]
           for name,path in routes:
               record={'name':name,'at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
@@ -40,9 +39,9 @@ jobs:
               except Exception as exc:
                   record.update(status='UNOBSERVED',errorClass=type(exc).__name__)
               records.append(record)
-          (p/'receipt.json').write_text(json.dumps({'reads':records,'getCount':3,
+          (p/'receipt.json').write_text(json.dumps({'reads':records,'getCount':2,
               'postOrGeneration':0,'newClock':0},indent=2)+'\n')
-          print('GET attempted=3; response contents private only')
+          print('GET attempted=2; response contents private only')
           PY
       - name: 既存の非公開診断保存へ保全
         if: always()
@@ -57,3 +56,5 @@ jobs:
 # 206配信後、通常の30分巡回の開始状態を固定診断だけで照合。収集は起動しない。
 
 # 予定到来後の常駐巡回を一度だけ照合。配信再起動前に進行中かを確認。
+
+# 自然巡回の終端をhealthと固定診断だけで一回照合。比較計算GETは繰り返さない。
