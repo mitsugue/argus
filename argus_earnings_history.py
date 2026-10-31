@@ -399,7 +399,7 @@ def read_coverage(path, *, cutoff):
     if location.is_symlink() or not location.is_file():raise ValueError('financial_store_regular_file_required')
     db=sqlite3.connect(location.resolve().as_uri()+'?mode=ro',uri=True)
     output={}
-    # Bounded originals, scoped to this SQLite read snapshot and call.
+    # 同じSQLite読取と呼出しの中だけ、上限付きで原本を共用する。
     from collections import OrderedDict
     source_cache, source_cache_bytes = OrderedDict(), 0
     try:
@@ -440,8 +440,7 @@ def read_coverage(path, *, cutoff):
                     validate_composite_coverage(row, source[0])
                     if raw_id not in source_cache and len(source[0])<=1024*1024:
                         while source_cache and (len(source_cache)>=16 or source_cache_bytes+len(source[0])>1024*1024):
-                            _,removed=source_cache.popitem(last=False)
-                            source_cache_bytes-=len(removed[0])
+                            source_cache_bytes-=len(source_cache.popitem(last=False)[1][0])
                         source_cache[raw_id]=source
                         source_cache_bytes+=len(source[0])
                     remember_coverage_content(digest)
