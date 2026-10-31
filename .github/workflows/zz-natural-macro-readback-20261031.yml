@@ -25,8 +25,7 @@ jobs:
           opener=urllib.request.build_opener(NoRedirect)
           routes=(('health.json','/healthz'),
                   ('memory.json','/api/argus/admin/memory-attribution?threads=1'),
-                  ('comparison.json','/api/argus/index-chart?index=N225&comparison=1&horizon=5'),
-                  ('future-map.json','/api/argus/future-map'))
+                  ('comparison.json','/api/argus/index-chart?index=N225&comparison=1&horizon=5'))
           records=[]
           for name,path in routes:
               record={'name':name,'at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
@@ -41,9 +40,9 @@ jobs:
               except Exception as exc:
                   record.update(status='UNOBSERVED',errorClass=type(exc).__name__)
               records.append(record)
-          (p/'receipt.json').write_text(json.dumps({'reads':records,'getCount':4,
+          (p/'receipt.json').write_text(json.dumps({'reads':records,'getCount':3,
               'postOrGeneration':0,'newClock':0},indent=2)+'\n')
-          print('GET attempted=4; response contents private only')
+          print('GET attempted=3; response contents private only')
           PY
       - name: 既存の非公開診断保存へ保全
         if: always()
@@ -54,3 +53,5 @@ jobs:
 # 長時間継続した入力準備の終了状態を既存GETで一回確認。
 
 # 新しい入力準備修復の実工程と、既存地図保存版の到着を読取限定で照合。
+
+# 206配信後、通常の30分巡回の開始状態を固定診断だけで照合。収集は起動しない。
