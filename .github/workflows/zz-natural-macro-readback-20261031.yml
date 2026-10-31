@@ -23,8 +23,7 @@ jobs:
           class NoRedirect(urllib.request.HTTPRedirectHandler):
               def redirect_request(self,*a,**k):return None
           opener=urllib.request.build_opener(NoRedirect)
-          routes=(('targets.json','/api/argus/analyst-targets'),
-                  ('calendar.json','/api/argus/jp-equity-calendar'),
+          routes=(('health.json','/healthz'),
                   ('memory.json','/api/argus/admin/memory-attribution?threads=1'))
           records=[]
           for name,path in routes:
@@ -40,9 +39,9 @@ jobs:
               except Exception as exc:
                   record.update(status='UNOBSERVED',errorClass=type(exc).__name__)
               records.append(record)
-          (p/'receipt.json').write_text(json.dumps({'reads':records,'getCount':3,
+          (p/'receipt.json').write_text(json.dumps({'reads':records,'getCount':2,
               'postOrGeneration':0,'newClock':0},indent=2)+'\n')
-          print('GET attempted=3; response contents private only')
+          print('GET attempted=2; response contents private only')
           PY
       - name: 既存の非公開診断保存へ保全
         if: always()
