@@ -10218,7 +10218,8 @@ _INTEL_COLLECT_STAGES = frozenset((
     "pit_restore", "pit_vix_nikkei", "pit_fx_sp500", "pit_macro_history",
     "pit_credit", "pit_future_valuation", "pit_level_map", "pit_targets_internals",
     "pit_margin", "pit_statements", "pit_earnings", "pit_vix_analog",
-    "pit_official", "pit_feature_history", "pit_research", "pit_backup"))
+    "pit_official", "pit_feature_history", "pit_feature_sources", "pit_feature_ledger",
+    "pit_feature_reconcile", "pit_feature_build", "pit_feature_persist", "pit_research", "pit_backup"))
 
 
 def _intel_collect_stage(name):
@@ -44790,6 +44791,7 @@ def _jp_market_feature_history_warm():
                 _JP_MARKET_FEATURE_CACHE_STATUS["restoreStatus"] = "MISSING"
             except Exception as exc:
                 _JP_MARKET_FEATURE_CACHE_STATUS.update(restoreStatus="REJECTED", restoreError=type(exc).__name__)
+        _intel_collect_stage("pit_feature_sources")
         price_series = {}
         for name, symbols in (("nikkei", ("^N225",)), ("sp500", ("^GSPC",)),
                               ("vix", ("^VIX",)), ("topix", ("^TPX", "998405.T")),
@@ -44836,6 +44838,7 @@ def _jp_market_feature_history_warm():
         oldest = (datetime.fromisoformat(min(r["date"] for r in bars)) - timedelta(days=100)).date().isoformat()
         # Preserve source units and receipt/publication times, including revisions.
         # A legacy CSV has only conservative availability, not vintage proof.
+        _intel_collect_stage("pit_feature_ledger")
         import csv
         with open(_JPX_CREDIT_CSV_PATH, newline="", encoding="utf-8") as handle:
             credit = [{**r, "value": float(r["value"]), "instrumentId": "MARKET"}
@@ -44886,6 +44889,7 @@ def _jp_market_feature_history_warm():
                   "sq_events": sq_events}
         # 2026-10-04: what each calculation actually received, so a series that
         # is held but invisible to past cutoffs is named (VIX, D05).
+        _intel_collect_stage("pit_feature_reconcile")
         try:
             _JP_MARKET_FEATURE_INPUT_SPANS.clear()
             _JP_MARKET_FEATURE_INPUT_SPANS.update(jp_market_features.input_spans(inputs), measuredAt=now)
@@ -44905,9 +44909,11 @@ def _jp_market_feature_history_warm():
         if identity == _JP_MARKET_FEATURE_HISTORY.get("inputIdentity") and \
                 now[:10] == str(_JP_MARKET_FEATURE_HISTORY.get("lastSuccessfulCalculationAt", ""))[:10]:
             if _JP_MARKET_FEATURE_CACHE_STATUS.get("persistenceStatus") == "FAILED":
+                _intel_collect_stage("pit_feature_persist")
                 _jp_market_feature_history_persist(cache_path, method, now)
             return
         cutoffs = sorted({r["date"] + "T23:59:59Z" for r in bars if r["date"] < now[:10]})
+        _intel_collect_stage("pit_feature_build")
         history = jp_market_features.build_feature_history(cutoffs=[*cutoffs, now],
             previous_history=_JP_MARKET_FEATURE_HISTORY, **inputs)
         if history.get("sourceWarming"):
@@ -44924,6 +44930,7 @@ def _jp_market_feature_history_warm():
         # otherwise the chart kept the price-shape-only comparison until the
         # next scheduled collection, hours later (2026-10-01).
         _INDEX_RESEARCH_STATUS["lastAttemptMonotonic"] = None
+        _intel_collect_stage("pit_feature_persist")
         _jp_market_feature_history_persist(cache_path, method, now)
     except Exception as exc:
         # The raise sites in this path carry fixed reason tokens; the first
@@ -52046,6 +52053,7 @@ def _canonical_prediction_ledger_projection(
             "authorityPolicy": argus_market_data_truth.repository_authority_policy(),
         }
     snapshot_failure = None
+    snapshot_failure_input = None
     try:
         market_snapshot = argus_market_data_truth.build_decision_snapshot(
             quote_observations, requests=requests, decision_at=decision_at,
@@ -52068,6 +52076,11 @@ def _canonical_prediction_ledger_projection(
             "errorType": ("ValueError" if isinstance(exc, ValueError) else
                           "TypeError" if isinstance(exc, TypeError) else
                           "OverflowError")}
+        if code == "conflicting_revision":
+            import argus_prediction_failure_input
+            snapshot_failure_input = argus_prediction_failure_input.capture(
+                quote_observations, requests, decision_at=decision_at,
+                generated_at=generated_at, build_identity=build_identity)
     snapshot_verified = bool(
         market_snapshot and
         argus_market_data_truth.verify_decision_snapshot(market_snapshot)[0])
@@ -52237,6 +52250,8 @@ def _canonical_prediction_ledger_projection(
         "marketTruthSnapshotVerified": snapshot_verified,
         **({"marketTruthSnapshotFailure": snapshot_failure}
            if snapshot_failure else {}),
+        **({"marketTruthSnapshotFailureInput": snapshot_failure_input}
+           if snapshot_failure_input else {}),
         "truthQualityComplete": quality_complete,
         "authorityPolicy": argus_market_data_truth.repository_authority_policy(),
     }

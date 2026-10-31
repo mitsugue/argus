@@ -1008,6 +1008,35 @@ def test_verified_snapshot_has_no_failure_diagnostic():
     projection = _projection()
     assert projection["marketTruthSnapshotVerified"] is True
     assert "marketTruthSnapshotFailure" not in projection
+    assert "marketTruthSnapshotFailureInput" not in projection
+
+
+def test_genuine_conflict_preserves_exact_failed_builder_input_without_issuing():
+    import pytest
+    quotes = [("JP", "jquants", _jquants_row()),
+              ("JP", "jquants", _jquants_row(price=2801.0))]
+    original = copy.deepcopy(quotes)
+    projection = _projection(quote_rows=quotes)
+    assert projection['marketTruthSnapshotFailure'] == {
+        'stage': 'BUILD', 'code': 'conflicting_revision', 'errorType': 'ValueError'}
+    captured = projection['marketTruthSnapshotFailureInput']
+    assert captured['complete'] is True and captured['observationCount'] == 2
+    assert captured['input']['values'] == scanner._canonical_quote_observations(quotes, DECISION_AT)
+    with pytest.raises(ValueError, match='^conflicting_revision$'):
+        argus_market_data_truth.build_decision_snapshot(**captured['input'])
+    assert projection['marketTruthSnapshot'] is None and projection['issuedCount'] == 0
+    assert projection['issuedDecisions'] == [] and quotes == original
+
+
+def test_other_failures_do_not_capture_input_or_retry_builder():
+    for reason in ('snapshot_too_large', 'snapshot_candidates_truncated',
+                   'too_many_observations', 'private-original-input'):
+        with mock.patch.object(scanner.argus_market_data_truth, 'build_decision_snapshot',
+                               side_effect=ValueError(reason)) as builder:
+            projection = _projection()
+        assert builder.call_count == 1
+        assert 'marketTruthSnapshotFailureInput' not in projection
+        assert projection['issuedDecisions'] == []
 
 
 def test_missing_exact_build_identity_issues_no_forward_live_record():

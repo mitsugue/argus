@@ -250,3 +250,23 @@ and acceptance clocks remain unarmed.
 After the exact-head Draft PR gates pass, development stops at
 `JP_MARKET_ENGINE_CANONICAL_SPEC_REQUIRED`. The latest owner-supplied Canonical JP_MARKET_ENGINE
 Instruction is required before any JP_MARKET_ENGINE implementation.
+
+## 予測失敗と入力準備の診断（2026-10-31）
+
+実スナップショットの作成が `conflicting_revision` で失敗した場合だけ、
+その呼出しに渡した正規化済み観測・要求・利用時点・生成時点・実行版を
+`marketTruthSnapshotFailureInput` に保全する。既存の本人認証と、却下した
+予測応答の非公開診断保存を共用する。取得・再計算・AI生成・発行の再試行は行わない。
+矛盾を消したり、価格を選んだりして発行を通す変更ではない。
+
+全入力は512観測・64要求・512KiB以内。閉じた正規化スキーマを再検証し、
+要求は予測側が生成した価格要求の固定項目だけに限定する。上限・形式違反では
+固定理由だけを残し、途中までの入力や部分ハッシュを完全な原本として返さない。
+元HTTP本文・ヘッダー・認証情報・例外本文は含めない。
+成功時の応答と売買権限は変えず、過去の未保存入力は復元した扱いにしない。
+
+収集の既存工程記録には、特徴履歴の入力読取・台帳整理・日付照合・計算・保存を
+固定名で追加する。以前の `pit_feature_history` の所要時間との比較には、その工程と
+新しい5工程の合計を使う。記録は同じ収集IDと非公開の時間記録だけへ渡し、
+新しい監視処理・収集要求・時計・保存基盤は作らない。
+内訳の計測だけを遅延の修復や自然巡回の受入とはしない。

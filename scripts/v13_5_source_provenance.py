@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # 予測失敗の正規化入力を既存の非公開保存へ渡す正確な内容。
+    'argus_prediction_failure_input.py': 'e7ebebf90f17a248d7c0d3fb986c000f2c039fd8',
+    'test_argus_prediction_failure_input.py': '332caa0f400965585cf5293f6fd00e2b298ab8b2',
     # 受領記録と営業日時を明示した回収検査の正確な内容。
     'test_argus_v12_2_3.py': 'c66e88717ae7dbb360206d1179feae707432f775',
     # 日銀の公式決定文と受領・事前記録の境界を検査した正確な内容。
