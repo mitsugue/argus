@@ -24,7 +24,8 @@ STAGES = frozenset(('news_feeds', 'news_translation', 'news_ranking', 'news_pers
     'owner_watchlist', 'market_inputs', 'fiscal_inputs', 'pit_restore', 'pit_vix_nikkei',
     'pit_fx_sp500', 'pit_macro_history', 'pit_credit', 'pit_future_valuation', 'pit_level_map',
     'pit_targets_internals', 'pit_margin', 'pit_statements', 'pit_earnings', 'pit_vix_analog',
-    'pit_official', 'pit_feature_history', 'pit_research', 'pit_backup'))
+    'pit_official', 'pit_feature_history', 'pit_feature_sources', 'pit_feature_ledger',
+    'pit_feature_reconcile', 'pit_feature_build', 'pit_feature_persist', 'pit_research', 'pit_backup'))
 
 
 def private_timing_record(body):

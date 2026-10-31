@@ -97,6 +97,25 @@ def test_private_projection_accepts_only_fixed_stage_names_seconds_and_timestamp
     assert private_timing_record({'completedStages': {'secret': 2}})['available'] is False
 
 
+def test_feature_substages_survive_only_the_private_timing_projection():
+    from scripts.run_intel_collect import private_timing_record
+    import scanner
+    names = ['pit_feature_sources', 'pit_feature_ledger', 'pit_feature_reconcile',
+             'pit_feature_build', 'pit_feature_persist']
+    assert set(names) <= scanner._INTEL_COLLECT_STAGES
+    tracked = {'status': 'done', 'runId': 'test-run-1', 'stage': names[-1],
+               'result': {'stored': 4}, 'completedStages': [
+                   {'stage': name, 'elapsedSeconds': i + 0.25, 'body': 'private-test-value'}
+                   for i, name in enumerate(names)]}
+    private = private_timing_record(tracked)
+    assert [r['stage'] for r in private['completedStages']] == names
+    assert [r['elapsedSeconds'] for r in private['completedStages']] == [i + .25 for i in range(5)]
+    assert 'private-test-value' not in json.dumps(private)
+    public = run(base='https://example.test', token='secret', request_id='test-run-1',
+                 request=lambda **kw: (200, json.dumps(tracked)))
+    assert public['status'] == 'done' and 'completedStages' not in public and 'stage' not in public
+
+
 def test_private_timing_file_is_separate_and_symlink_does_not_overwrite(tmp_path):
     import pytest
     from scripts.run_intel_collect import save_private_timing
