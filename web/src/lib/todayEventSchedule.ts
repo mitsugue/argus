@@ -25,7 +25,11 @@ export function todayEventSchedule(dashboard:DashboardEvent[],legacy:ImportantEv
   const today=jpDay(new Date(now).toISOString());
   const end=jpDay(new Date(now+45*86400000).toISOString());
   const add=(row:TodayScheduledEvent) => {
-    if (row.day && !row.released && (row.day<today || row.day>end)) return;
+    const corporate = row.kind==='equity' && row.event.kind==='CORPORATE_EARNINGS';
+    if (corporate) {
+      const endAt=Date.parse(row.event.rangeEndAt||'');
+      if (!Number.isFinite(endAt)||endAt<now||row.at>now+45*86400000) return;
+    } else if (row.day && !row.released && (row.day<today || row.day>end)) return;
     if (row.released && row.day && row.at<now-7*86400000) return;
     if(seen.has(row.key)) return;
     seen.add(row.key);rows.push(row);
@@ -47,7 +51,7 @@ export function todayEventSchedule(dashboard:DashboardEvent[],legacy:ImportantEv
   }
   for(const event of equity) {
     const at=Date.parse(event.at.length===10?`${event.date}T23:59:59+09:00`:event.at);
-    add({kind:'equity',event,day:event.date,at,key:identity(event.kind,event.date,event.titleJa),released:false});
+    add({kind:'equity',event,day:event.date,at,key:event.kind==='CORPORATE_EARNINGS'?event.eventId:identity(event.kind,event.date,event.titleJa),released:false});
   }
   return rows.sort((a,b)=>Number(prominentResult(b,now))-Number(prominentResult(a,now)) || Number(a.released)-Number(b.released)
     || (a.released?b.at-a.at:a.at-b.at) || a.key.localeCompare(b.key));

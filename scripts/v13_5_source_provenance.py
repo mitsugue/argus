@@ -35,6 +35,11 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'docs/operations/saved-corporate-earnings-calendar.md': 'c7c8e5b5dc946e1ac0042e8c955a0dce10f01e95',
+    'test_argus_financial_verification_timing.py': 'cdd13a83254f5fb6ce35606116367f22492ab130',
+    'test_argus_corporate_earnings_calendar.py': '1523b025ec4de91d171c1527af6f9475da527d67',
+    'test_argus_corporate_calendar_route.py': '5f3b6ca1f80c434da727659955701a23277cfbd1',
+    'argus_corporate_earnings_calendar.py': '6a2b727c3f8939bbb839c9c0ef81fc2a8fd77add',
     'test_jp_market_feature_replay_prefix.py': '7d7ef840dab5fffaf018f9f941d1277ed808fd64',
     # 予測失敗の正規化入力を既存の非公開保存へ渡す正確な内容。
     'argus_prediction_failure_input.py': 'e7ebebf90f17a248d7c0d3fb986c000f2c039fd8',
