@@ -192,9 +192,9 @@ def _receipt(row: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _visible(rows: Iterable[Mapping[str, Any]], cutoff: str) -> list[dict[str, Any]]:
-    # Borrow only while reading this episode; retained receipts are owned.
-    # Keep all temporal/content checks, without building an unused PIT proof.
-    return point_in_time_rows(rows, cutoff, _materialize_rows=False, _include_proof=False)[0]
+    # Keep owned mutable values and all temporal/content checks. Immutable
+    # scalars need no deep copy; the PIT proof is unused by this consumer.
+    return point_in_time_rows(rows, cutoff, _reuse_immutable_scalars=True, _include_proof=False)[0]
 
 
 def build_episode(*, cutoff: str, bars: Sequence[Mapping[str, Any]],

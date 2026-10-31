@@ -221,7 +221,26 @@ class DistanceArithmeticParityTest(unittest.TestCase):
 
 
 class EpisodeOwnershipTest(unittest.TestCase):
-    def test_borrowed_read_keeps_default_pit_admission_and_conflict_checks(self):
+    def test_source_update_after_admission_cannot_change_retained_receipt(self):
+        import jp_market_analogs as analogs
+        price = bars(0, 84)
+        price[-1]['source'] = {'refs': ['admitted']}
+        receipt = analogs._receipt
+        changed = False
+
+        def after_admission(row):
+            nonlocal changed
+            if not changed:
+                price[-1]['source']['refs'].append('after-admission')
+                changed = True
+            return receipt(row)
+
+        with patch.object(analogs, '_receipt', side_effect=after_admission):
+            result = episode(83, price_rows=price)
+        self.assertEqual(price[-1]['source']['refs'], ['admitted', 'after-admission'])
+        self.assertEqual(result['window'][-1]['source']['refs'], ['admitted'])
+
+    def test_optimized_read_keeps_default_pit_admission_and_conflict_checks(self):
         import jp_market_engine as engine
         original = fact('vix.level', 20, 60, 'INDEX_POINTS')
         correction = {**original, 'value': 22, 'revision': 1,
@@ -237,17 +256,17 @@ class EpisodeOwnershipTest(unittest.TestCase):
             with self.subTest(day=day):
                 expected, proof = engine.point_in_time_rows(rows, cutoff)
                 actual, unused = engine.point_in_time_rows(rows, cutoff,
-                    _materialize_rows=False, _include_proof=False)
+                    _reuse_immutable_scalars=True, _include_proof=False)
                 self.assertEqual(actual, expected)
                 self.assertTrue(proof['proofId'])
                 self.assertEqual(unused, {})
         conflict = {**original, 'value': 999}
-        for materialize in (True, False):
-            with self.subTest(materialize=materialize):
+        for optimized in (False, True):
+            with self.subTest(optimized=optimized):
                 with self.assertRaisesRegex(ValueError, 'conflicting_row_revision'):
                     engine.point_in_time_rows([original, correction, conflict],
-                        DAYS[90] + 'T23:00:00Z', _materialize_rows=materialize,
-                        _include_proof=materialize)
+                        DAYS[90] + 'T23:00:00Z', _reuse_immutable_scalars=optimized,
+                        _include_proof=not optimized)
 
     def test_episode_owns_nested_receipts_and_reaction_identity(self):
         price = bars(0, 84)

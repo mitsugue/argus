@@ -500,17 +500,27 @@ def coverage_artifact() -> Dict[str, Any]:
     return {**body, "artifactId": "jp-market-engine-coverage-" + _sha256(body)}
 
 
+_PIT_IMMUTABLE_SCALARS = (str, int, float, bool, type(None))
+
+
+def _copy_row_reusing_scalars(raw):
+    memo = {}
+    return {key if type(key) in _PIT_IMMUTABLE_SCALARS else copy.deepcopy(key, memo):
+            value if type(value) in _PIT_IMMUTABLE_SCALARS else copy.deepcopy(value, memo)
+            for key, value in raw.items()}
+
+
 def point_in_time_rows(rows: Iterable[Mapping[str, Any]], cutoff: str, *,
-                       _materialize_rows: bool = True, _include_proof: bool = True) \
+                       _reuse_immutable_scalars: bool = False, _include_proof: bool = True) \
         -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Select the newest knowable revision per logical observation.
 
     At least one explicit publication/availability/knowledge time is required.
     Malformed, future, and ambiguous rows are excluded, never coerced.
 
-    Internal read-only consumers may borrow nested values until they build an
-    owned result, and omit an unused proof. Row admission and revision-content
-    checks still run on every row. Ordinary callers keep owned rows and proof.
+    Internal consumers may reuse immutable scalars and omit an unused proof.
+    Mutable values are always copied before validation. Row admission and
+    revision-content checks still run on every row; ordinary calls keep proof.
     """
     limit = _cutoff(cutoff)
     source = list(rows or [])
@@ -565,7 +575,8 @@ def point_in_time_rows(rows: Iterable[Mapping[str, Any]], cutoff: str, *,
             excluded_future += 1
             continue
         key = (instrument.upper(), field, period)
-        candidate = (known, revision, copy.deepcopy(dict(raw)) if _materialize_rows else dict(raw))
+        candidate = (known, revision, _copy_row_reusing_scalars(raw)
+                     if _reuse_immutable_scalars else copy.deepcopy(dict(raw)))
         try:
             candidate_hash = _sha256(candidate[2])
         except (TypeError, ValueError, OverflowError):
