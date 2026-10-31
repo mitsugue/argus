@@ -34,3 +34,14 @@ assert.equal(todayEventSchedule([laterEvent,releasedCpi],[],[],Date.parse('2026-
 const {prominentResult}=require('../src/lib/todayEventSchedule.ts');
 assert.equal(prominentResult(todayEventSchedule([macro('CPI','2026-10-14','date only','post_result')],[],[],clock)[0],clock),false,'date only never invents an exact release time');
 assert.equal(prominentResult(todayEventSchedule([{...releasedCpi,eventTimeUtc:'2026-10-15T12:30:00Z'}],[],[],clock)[0],clock),false,'future timestamp is not a recent result');
+
+const event=(symbol)=>({eventId:'earnings-'+symbol,kind:'CORPORATE_EARNINGS',date:'2026-10-30',dateOnly:true,at:'2026-10-30T00:00:00-04:00',rangeEndAt:'2026-10-30T23:59:59.999999-04:00',sourceFromDate:'2026-10-30',sourceToDate:'2026-10-30',market:'US',titleJa:symbol+' 決算（推定）'});
+const corporateNow=Date.parse('2026-10-31T01:00:00Z');
+const corporateValues=[event('AAA'),event('BBB')];const corporateOriginal=JSON.stringify(corporateValues);const corporateRows=todayEventSchedule([],[],corporateValues,corporateNow);
+assert.equal(corporateRows.length,2,'same day companies stay distinct');assert.equal(JSON.stringify(corporateValues),corporateOriginal);
+assert(corporateRows.every(r=>!r.released&&!prominentResult(r,corporateNow)),'unknown time never becomes actual release');
+assert.equal(todayEventSchedule([],[],corporateValues,Date.parse('2026-10-31T04:01:00Z')).length,0,'past local date range is removed');
+assert.equal(require('../src/lib/japanEquityCalendar.ts').equityEventWhen(corporateValues[0]),'10/30 米国');
+assert.equal(require('../src/lib/japanEquityCalendar.ts').equityEventWhen({...corporateValues[0],sourceToDate:'2026-11-02'}),'10/30〜11/02 米国');
+assert.equal(require('../src/lib/japanEquityCalendar.ts').equityEventWhen({kind:'SQ',date:'2026-11-13',dateOnly:true}),'11/13(金)','existing calendars unchanged');
+console.log('同日複数社・米国日付の末尾・推定範囲・発表未確認・既存の表示を確認');

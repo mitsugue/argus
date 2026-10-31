@@ -138,6 +138,7 @@ import argus_macro_release_reaction
 import argus_market_position_memory
 import argus_ex_dividend
 import jp_equity_event_calendar
+import argus_corporate_earnings_calendar
 import argus_owner_dialogue_api
 import argus_web_push
 import argus_owner_vault
@@ -7308,7 +7309,21 @@ def api_argus_jp_equity_calendar():
         estimates = _jp_ex_dividend_estimates(now.astimezone(TZ_JST).date())
     except Exception:
         estimates = {}
-    return jsonify(jp_equity_event_calendar.equity_event_calendar(now=now, ex_dividend=estimates))
+    result = jp_equity_event_calendar.equity_event_calendar(now=now, ex_dividend=estimates)
+    # Public calendar: only the fixed shared universe, never owner registrations.
+    _analyst_targets_load_saved()
+    saved = dict(_ANALYST_TARGETS.get("items") or {})
+    shared = [(market, str(row["symbol"]), str(row.get("name") or row["symbol"]))
+              for market, rows in (("JP", _JP_WATCHLIST), ("US", _US_WATCHLIST))
+              for row in rows if row.get("symbol")]
+    events, gaps = argus_corporate_earnings_calendar.scheduled_events(
+        saved, shared_symbols=shared, now=now)
+    result["events"] = sorted([*result["events"], *events],
+                              key=lambda row: (row["at"][:10], row["at"], row["eventId"]))
+    result["gaps"] = sorted(set(result["gaps"]) | set(gaps))
+    if result["gaps"]:
+        result["status"] = "PARTIAL"
+    return jsonify(result)
 
 
 @app.route("/api/argus/jp-sq-calendar")
@@ -45123,7 +45138,8 @@ _JP_ADOPTED_RULES_MEMO_LOCK = threading.Lock()
 # verification now runs once in the background; until it has finished, D07
 # says it is being checked and D03/D04 are shown as usual. Nothing is skipped.
 _JP_FINANCIAL_VERIFY = {"state": "NOT_STARTED", "startedAt": None, "finishedAt": None,
-                        "seconds": None, "errorClass": None}
+                        "seconds": None, "errorClass": None, "cpuSeconds": None,
+                        "phaseSeconds": {}, "phaseCpuSeconds": {}}
 _JP_FINANCIAL_VERIFY_LOCK = threading.Lock()
 
 
@@ -45142,22 +45158,43 @@ _JP_FINANCIAL_RETRY_SEC = 300
 def _jp_financial_verify_worker(path, scope, cutoff, key=None):
     import argus_earnings_history
     started = time.monotonic()
+    def cpu_time():
+        try:
+            return time.thread_time()
+        except (AttributeError, OSError, NotImplementedError):
+            return None
+    cpu_started = cpu_time()
+    phase_seconds, phase_cpu_seconds = {}, {}
+    def read_stage(name, callback):
+        def measured():
+            at, cpu = time.monotonic(), cpu_time()
+            try:
+                return callback()
+            finally:
+                phase_seconds[name] = round(max(0, time.monotonic() - at), 3)
+                end_cpu = cpu_time()
+                phase_cpu_seconds[name] = (round(max(0, end_cpu - cpu), 3)
+                    if cpu is not None and end_cpu is not None else None)
+        return _decision_evidence_stage("adopted." + name, measured)
     kept = None
     try:
-        financial = _decision_evidence_stage("adopted.financial_read", lambda:
+        financial = read_stage("financial_read", lambda:
             argus_earnings_history.read(path, cutoff=cutoff, member_codes=scope) if scope else [])
-        coverage = _decision_evidence_stage("adopted.financial_coverage", lambda:
+        coverage = read_stage("financial_coverage", lambda:
             argus_earnings_history.read_coverage(path, cutoff=cutoff))
-        company = _decision_evidence_stage("adopted.company_coverage", lambda:
+        company = read_stage("company_coverage", lambda:
             argus_earnings_history.read_company_coverage(path, cutoff=cutoff, member_codes=scope) if scope else {})
         kept = (financial, coverage, company)
         outcome = {"state": "DONE", "errorClass": None}
     except Exception as exc:
-        # The next request reports the failure (D07 cannot be verified).
         outcome = {"state": "FAILED", "errorClass": type(exc).__name__}
+    cpu_finished = cpu_time()
     with _JP_FINANCIAL_VERIFY_LOCK:
         _JP_FINANCIAL_VERIFY.update(outcome, finishedAt=_ai_now_iso(),
-                                    seconds=round(time.monotonic() - started, 1))
+            seconds=round(time.monotonic() - started, 1),
+            cpuSeconds=(round(max(0, cpu_finished - cpu_started), 3)
+                        if cpu_started is not None and cpu_finished is not None else None),
+            phaseSeconds=phase_seconds, phaseCpuSeconds=phase_cpu_seconds)
         if kept is not None:
             _JP_FINANCIAL_INPUTS.update(key=key, data=kept, failedKey=None)
         else:
@@ -45182,7 +45219,8 @@ def _jp_financial_inputs(path, scope, cutoff, identity):
         if _JP_FINANCIAL_VERIFY["state"] == "RUNNING":
             return None
         _JP_FINANCIAL_VERIFY.update(state="RUNNING", startedAt=_ai_now_iso(), finishedAt=None,
-                                    seconds=None, errorClass=None)
+                                    seconds=None, errorClass=None, cpuSeconds=None,
+                                    phaseSeconds={}, phaseCpuSeconds={})
     try:
         _jp_financial_start(_jp_financial_verify_worker, (path, sorted(scope), cutoff, key))
     except RuntimeError:
