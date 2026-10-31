@@ -7,7 +7,7 @@ permissions:
 jobs:
   controlled:
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
         with: {path: harness, persist-credentials: false}
@@ -18,8 +18,8 @@ jobs:
           image=python@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
           docker pull "$image" > out/image-pull.txt 2>&1
           docker image inspect "$image" > out/image-identity.json
-          docker run --rm --volume "$PWD/tool:/tool" --volume "$PWD/out:/out" "$image" \
-            sh -c 'python3 -m pip install --only-binary=:all: --no-compile --disable-pip-version-check --index-url https://pypi.org/simple --target /tool --report /out/tool-install-report.json memray==1.20.0 > /out/tool-install.txt 2>&1'
+          docker run --rm --volume "$PWD/tool:/tool" --volume "$PWD/out:/out" --volume "$PWD/harness/scripts/allocator_retainer_requirements_20261031.txt:/requirements.txt:ro" "$image" \
+            sh -c 'python3 -m pip install --only-binary=:all: --no-compile --disable-pip-version-check --index-url https://pypi.org/simple --target /tool --report /out/tool-install-report.json --require-hashes --requirement /requirements.txt > /out/tool-install.txt 2>&1'
           docker run --rm --network none --volume "$PWD/tool:/tool:ro" --env PYTHONPATH=/tool -i "$image" python3 -B - <<'PY'
           import memray,tempfile,importlib.metadata
           from pathlib import Path
@@ -37,14 +37,12 @@ jobs:
               assert len(kept)==8
           print('Synthetic profiler API contract passed; no private input mounted')
           PY
-      - name: Verify the preserved original without printing its contents
+      - name: Read only the preserved partial allocation capture
         env:
           PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
         run: |
-          set -euo pipefail
-          test -d input && test -d out
           python3 -B - <<'PY'
-          import urllib.request,json,base64,pathlib,os,hashlib,tarfile,io
+          import urllib.request,json,base64,pathlib,os,hashlib,tarfile,io,re
           class NoRedirect(urllib.request.HTTPRedirectHandler):
               def redirect_request(self,*a,**k):return None
           opener=urllib.request.build_opener(NoRedirect)
@@ -52,54 +50,38 @@ jobs:
           def get(path):
               request=urllib.request.Request('https://api.github.com/repos/'+repo+('/'+path if path else ''),headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json'})
               with opener.open(request,timeout=45) as response:
-                  raw=response.read(8*1024**2+1);assert len(raw)<=8*1024**2
+                  raw=response.read(12*1024**2+1);assert len(raw)<=12*1024**2
                   return json.loads(raw)
           metadata=get('');assert metadata['private'] and metadata['full_name']==repo
-          ref='7814ac444da16015debecf3fe4469be2c131f01e'
-          value=get('contents/diagnostics/allocator-original8/20261029112001/original-input.tar.gz?ref='+ref)
-          blob=value if value.get('encoding')=='base64' else get('git/blobs/'+value['sha'])
-          raw=base64.b64decode(blob['content']);assert len(raw)==2070023
-          assert hashlib.sha1(b'blob '+str(len(raw)).encode()+bytes([0])+raw).hexdigest()==value['sha']
-          assert hashlib.sha256(raw).hexdigest()=='6f5fda1ff99381b35e1f3420d9f83eca8a7b4553df79da8e3994798fe87f574f'
+          def saved(name):
+              assert re.fullmatch(r'[A-Za-z0-9._-]{1,80}',name)
+              value=get('contents/diagnostics/allocator-original8/41166376788/'+name+'?ref=main')
+              blob=value if value.get('encoding')=='base64' else get('git/blobs/'+value['sha'])
+              raw=base64.b64decode(blob['content']);assert len(raw)==value['size']
+              assert hashlib.sha1(b'blob '+str(len(raw)).encode()+bytes([0])+raw).hexdigest()==value['sha']
+              return raw
+          manifest=json.loads(saved('manifest.json'));assert manifest['run']=='41166376788'
+          assert len(manifest['parts'])==1 and manifest['archiveSha256']=='5248288fce377f9b16f2827d9fd90b03750fda93ddc953b46ca65b7eddd81ef1'
+          parts=[]
+          for part in manifest['parts']:
+              raw=saved(part['name']);assert len(raw)==part['bytes'] and hashlib.sha256(raw).hexdigest()==part['sha256'];parts.append(raw)
+          raw=b''.join(parts);assert len(raw)==manifest['archiveBytes'] and hashlib.sha256(raw).hexdigest()==manifest['archiveSha256']
           with tarfile.open(fileobj=io.BytesIO(raw),mode='r:gz') as archive:
-              members=archive.getmembers();assert {x.name for x in members}=={'checkpoint-v2-exact-source.json','manifest.json'}
-              assert all(x.isfile() and x.size<=40*1024**2 for x in members)
-              source=archive.extractfile('checkpoint-v2-exact-source.json').read()
-          assert len(source)==38951728 and hashlib.sha256(source).hexdigest()=='bde53e2b5dc40a06e248e3a905e797b7876c4319d49a97b191b4465641b2519e'
-          pathlib.Path('input/checkpoint-v2-exact-source.json').write_bytes(source)
-          code=get('git/blobs/ba8e6ce3d22c45626c45dbc9ca6e39971bc71e20')
-          code_raw=base64.b64decode(code['content']);assert len(code_raw)==40920
-          assert hashlib.sha256(code_raw).hexdigest()=='9864fdcca7102618d0d4b629002d811335fd9b993d271b097499824bd16fa3b2'
-          allowed={'argus_checkpoint_v2.py','argus_mapping_attribution.py','argus_persistent_storage.py','argus_tick_durability.py','scripts/checkpoint_v2_mapping_probe.py','scripts/checkpoint_v2_resource_probe.py'}
-          with tarfile.open(fileobj=io.BytesIO(code_raw),mode='r:gz') as archive:
-              members=archive.getmembers();assert {x.name for x in members}==allowed
-              assert all(x.isfile() and x.size<=1024**2 for x in members)
-              for member in members:
-                  path=pathlib.Path('original')/member.name;path.parent.mkdir(parents=True,exist_ok=True)
-                  path.write_bytes(archive.extractfile(member).read())
-          pathlib.Path('out/input-identity.json').write_text(json.dumps({'incident':37712227448,'originalCode':'0949653a8bf485191db922caf440313d96b9e76a','sourceBytes':len(source),'sha256':hashlib.sha256(source).hexdigest(),'scope':'OCTOBER_8_ONLY_NOT_OCTOBER_20','privateCommit':ref})+'\n')
+              member=archive.getmember('native/native.bin');assert member.isfile() and member.size==127788
+              profile=archive.extractfile(member).read()
+          assert hashlib.sha256(profile).hexdigest()=='25ce551a3a123d77efcbad26818a94454e8f5df393b4d1d8d67604c4916aea2a'
+          pathlib.Path('input/native.bin').write_bytes(profile)
+          pathlib.Path('out/original-profile-identity.json').write_text(json.dumps({'originalRun':41166376788,'originalRunConclusion':'failure','completedWrites':1,'fullRestoreObserved':False,'profileBytes':len(profile),'profileSha256':hashlib.sha256(profile).hexdigest(),'originalInputDownloaded':False,'replayCount':0})+'\n')
           PY
-      - name: Observe remaining native and Python allocations once in isolation
+      - name: Analyze the existing capture without replay or network
         run: |
           set -euo pipefail
-          mkdir -p out/native
           image=python@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
-          set +e
-          timeout --signal=TERM --kill-after=10s 600s docker run --rm --network none \
-            --memory 4g --memory-swap 4g --pids-limit 512 \
-            --volume "$PWD/original:/work:ro" --volume "$PWD/input:/input:ro" \
-            --volume "$PWD/tool:/tool:ro" --env PYTHONPATH=/tool \
-            --volume "$PWD/harness/scripts/allocator_native_retainer_20261031.py:/diag/observer.py:ro" \
-            --volume "$PWD/out:/out" --workdir /work "$image" \
-            python3 -B /diag/observer.py --mode external --source /input/checkpoint-v2-exact-source.json \
-            --code /work --out /out/native --cycles 4 > out/native/stdout.txt 2> out/native/stderr.txt
-          code=$?
-          set -e
-          printf '%s\n' "$code" > out/native/exit.txt
-          docker run --rm --network none --volume "$PWD/out:/out" "$image" chmod -R a+rX /out/native
-          test "$code" = 0
-          test -s out/native/summary.json
-          test -s out/native/retainers.json
+          docker run --rm --network none --memory 4g --memory-swap 4g --pids-limit 128 \
+            --volume "$PWD/input:/input:ro" --volume "$PWD/tool:/tool:ro" --env PYTHONPATH=/tool \
+            --volume "$PWD/harness/scripts/allocator_read_retained_20261031.py:/diag/read.py:ro" \
+            --volume "$PWD/out:/out" "$image" python3 -B /diag/read.py \
+            > out/analysis-stdout.txt 2> out/analysis-stderr.txt
       - name: Preserve diagnostic outputs only in the existing private destination
         if: always()
         env:
@@ -123,7 +105,7 @@ jobs:
           for offset in range(0,len(raw),7*1024**2):
               path=packet/f'controlled-{len(parts):02d}.part';path.write_bytes(raw[offset:offset+7*1024**2])
               parts.append({'name':path.name,'bytes':path.stat().st_size,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
-          manifest={'schema':'allocator-controlled-packets-v1','run':os.environ['GITHUB_RUN_ID'],'parts':parts,'archiveBytes':len(raw),'archiveSha256':hashlib.sha256(raw).hexdigest(),'rawProcFilesIncluded':False,'sourceIncluded':False,'fields':'original counts, timings, hashes, exit codes; no acceptance assigned'}
+          manifest={'schema':'allocator-controlled-packets-v1','run':os.environ['GITHUB_RUN_ID'],'parts':parts,'archiveBytes':len(raw),'archiveSha256':hashlib.sha256(raw).hexdigest(),'rawProcFilesIncluded':False,'sourceIncluded':False,'fields':'allocation counts and call frames; preserved capture only; no replay or acceptance assigned'}
           (packet/'manifest.json').write_text(json.dumps(manifest,sort_keys=True)+'\n')
           opener=urllib.request.build_opener(NoRedirect()).open;token=os.environ['PRIVATE_DIAGNOSTICS_TOKEN']
           require_private_destination(token,opener)
