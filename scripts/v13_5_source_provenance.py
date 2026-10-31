@@ -716,6 +716,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "docs/operations/level-map-scoring-eps-reuse.md",
     "test_argus_level_map_scoring_eps_reuse.py",
     "docs/operations/analog-calibration-scale-scope.md",
+    "docs/operations/collect-runtime-attribution.md",
+    "test_argus_collect_runtime_attribution.py",
     "test_jp_market_calibration_scale_scope.py",
     "test_argus_financial_coverage_original_reads.py",
     "docs/operations/financial-coverage-original-reads.md",

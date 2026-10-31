@@ -10287,7 +10287,8 @@ def _intel_collect_tracked(request_id, *, status_only=False, trigger="request"):
             return copy.deepcopy(current), 200
         current.clear()
         current.update(runId=request_id, status="running", startedAt=_ai_now_iso(),
-                       finishedAt=None, errorClass=None)
+                       finishedAt=None, errorClass=None, trigger=trigger,
+                       previousFinishedAt=_INTEL_COLLECT_LAST.get("finishedAt"))
 
         def work():
             _INTEL_COLLECT_CONTEXT.run_id = request_id
@@ -35637,13 +35638,16 @@ def api_argus_admin_memory_attribution():
     payload["financialVerify"] = dict(_JP_FINANCIAL_VERIFY)
     payload["analysisHistoryForm"] = copy.deepcopy(_ANALYSIS_HISTORY_FORM)
     payload["materialReactionResearch"] = _material_research_diagnostics()
+    from scripts.run_intel_collect import private_timing_record
     with _INTEL_COLLECT_LOCK:
         payload["intelCollect"] = {"lastFinishedAt": _INTEL_COLLECT_LAST.get("finishedAt"),
                                    "lastStatus": _INTEL_COLLECT_LAST.get("status"),
                                    "lastTrigger": _INTEL_COLLECT_LAST.get("trigger"),
                                    "residentStarted": _INTEL_COLLECT_LAST.get("residentStarted"),
                                    "running": _INTEL_COLLECT_RUN.get("status") == "running",
-                                   "intervalSeconds": INTEL_COLLECT_RESIDENT_INTERVAL_SECONDS}
+                                   "intervalSeconds": INTEL_COLLECT_RESIDENT_INTERVAL_SECONDS,
+                                   "currentRun": private_timing_record(
+                                       _INTEL_COLLECT_RUN, include_run_context=True)}
         payload["indexOfficialFactors"] = _jp_index_official_factor_status()
         payload["jsfDaily"] = dict(_JSF_DAILY_STATUS)
         payload["usdJpyTokyoClose"] = {k: v for k, v in _USDJPY_TOKYO_CLOSE.items() if k != "lastAttemptMonotonic"}
@@ -43475,10 +43479,16 @@ def _index_research_warm():
         last = _INDEX_RESEARCH_STATUS.get("lastAttemptMonotonic")
         if last is not None and time.monotonic() - last < 1800:
             return
-        _INDEX_RESEARCH_STATUS.update(status="RUNNING", lastAttemptMonotonic=time.monotonic())
+        _INDEX_RESEARCH_STATUS.update(status="RUNNING", lastAttemptMonotonic=time.monotonic(),
+                                      lastStartedAt=_ai_now_iso(), currentTarget=None)
         failures = []; updated = []; retained = {}; outcomes = {}
         # Fixed existing index universe; no provider requests or LLM calls here.
         for key in sorted(argus_index_research_cache.KEYS):
+            _INDEX_RESEARCH_STATUS["currentTarget"] = key
+            key_started = time.monotonic()
+            key_cpu_started = time.thread_time()
+            calibration_key_before = _JP_ANALOG_BACKTEST_CACHE.get("key")
+            kind = None
             try:
                 kind, index, interval = key.split(":")
                 result = (_index_chart_calculate(index, interval) if kind == "chart"
@@ -43510,9 +43520,22 @@ def _index_research_warm():
                 failures.append(key)
                 outcomes[key] = {"status": "exception", "reason": type(exc).__name__,
                                  "detail": str(exc)[:120] if isinstance(exc, (ValueError, KeyError)) else None}
+            finally:
+                outcome = outcomes.get(key)
+                if outcome is not None:
+                    outcome["elapsedSeconds"] = round(max(0, time.monotonic() - key_started), 3)
+                    outcome["cpuSeconds"] = round(max(0, time.thread_time() - key_cpu_started), 3)
+                    if kind == "comparison":
+                        calibration_key_after = _JP_ANALOG_BACKTEST_CACHE.get("key")
+                        complete = (outcome.get("status") == "available"
+                                    and isinstance(calibration_key_after, str) and bool(calibration_key_after)
+                                    and isinstance(_JP_ANALOG_BACKTEST_CACHE.get("result"), dict))
+                        outcome["calibrationStatus"] = (
+                            "REUSED" if calibration_key_before == calibration_key_after else "CALCULATED"
+                        ) if complete else "NOT_EVALUABLE"
         _INDEX_RESEARCH_STATUS.update(status="PARTIAL" if failures else "AVAILABLE",
             updated=updated, unavailable=failures, retained=retained, lastCompletedAt=_ai_now_iso(),
-            outcomes=outcomes)
+            outcomes=outcomes, currentTarget=None)
         path = _index_research_path()
         if path and updated:
             calibration = None
@@ -43535,7 +43558,7 @@ def _index_research_warm():
                 raise ValueError('research_calibration_readback_mismatch')
             _INDEX_RESEARCH_STATUS["persistenceStatus"] = "VERIFIED"
     except Exception as exc:
-        _INDEX_RESEARCH_STATUS.update(status="FAILED", errorClass=type(exc).__name__)
+        _INDEX_RESEARCH_STATUS.update(status="FAILED", errorClass=type(exc).__name__, currentTarget=None)
     finally:
         _INDEX_RESEARCH_LOCK.release()
 
