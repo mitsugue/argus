@@ -1,10 +1,12 @@
 import copy
 import math
 import unittest
+import weakref
 from datetime import date, timedelta
+from unittest.mock import patch
 
 from jp_market_analogs import (AnalogPolicy, FEATURE_DEFINITIONS, INSTRUMENT,
-                               build_episode, reference_path, select_episodes)
+                               build_episode, reference_path, reference_paths, select_episodes)
 
 POLICY = AnalogPolicy(lookback_sessions=5, minimum_separation_sessions=6)
 DAYS = [(date(2026, 1, 1) + timedelta(days=i)).isoformat() for i in range(120)]
@@ -216,6 +218,103 @@ class DistanceArithmeticParityTest(unittest.TestCase):
         self.assertEqual(_edit_distance([("up",)], [("up",)]), 0.0)
         self.assertEqual(_edit_distance([("up",)], [("up",), ("down",)]), 0.5)
         self.assertEqual(_edit_distance([("up",), ("down",)], [("down",), ("up",)]), 1.0)
+
+
+class ReferenceBatchTest(unittest.TestCase):
+    def invoke(self, episodes=None, rows=None, cutoff=None, horizon=5):
+        return reference_paths(episodes if episodes is not None else [episode(11), episode(23)],
+            later_bars=rows if rows is not None else bars(0, 84),
+            display_cutoff=cutoff or DAYS[83] + "T23:00:00Z", session_dates=DAYS,
+            horizon_sessions=horizon, policy=POLICY)
+
+    def test_all_horizons_keep_exact_paths_and_check_full_prices_once(self):
+        import jp_market_analogs as analogs
+        past, rows = [episode(11), episode(23)], bars(0, 84)
+        original = copy.deepcopy((past, rows))
+        for horizon in (1, 5, 10, 20):
+            with self.subTest(horizon=horizon):
+                with patch.object(analogs, 'point_in_time_rows', wraps=analogs.point_in_time_rows) as verify:
+                    paths = self.invoke(past, rows, horizon=horizon)
+                self.assertEqual(verify.call_count, 1)
+                for index, anchor in enumerate((11, 23)):
+                    path = paths[index]
+                    self.assertEqual(path['snapshotId'], past[index]['snapshotId'])
+                    self.assertEqual(path['status'], 'AVAILABLE')
+                    self.assertEqual(path['subsequentReference'], [
+                        {'offsetSessions': offset, 'date': DAYS[anchor + offset],
+                         'value': (100 + (anchor + offset) % 6) / (100 + anchor % 6) * 100}
+                        for offset in range(horizon + 1)])
+                    self.assertEqual(path, reference_path(past[index], later_bars=rows,
+                        display_cutoff=DAYS[83] + 'T23:00:00Z', session_dates=DAYS,
+                        horizon_sessions=horizon, policy=POLICY))
+        self.assertEqual((past, rows), original)
+
+    def test_later_episode_is_verified_even_after_prices_are_admitted(self):
+        past = [episode(11), episode(23)]
+        past[1]['window'][-1]['close'] *= 2
+        with self.assertRaisesRegex(ValueError, '^episode_content_changed$'):
+            self.invoke(past)
+
+    def test_conflicting_prices_outside_selected_paths_still_fail(self):
+        rows = bars(0, 84)
+        rows.append({**rows[-1], 'close': rows[-1]['close'] * 2})
+        with self.assertRaisesRegex(ValueError, '^conflicting_row_revision:'):
+            self.invoke(rows=rows)
+
+    def test_future_receipt_and_missing_session_cannot_fill_path(self):
+        rows = bars(0, 84)
+        rows[13]['availableFrom'] = DAYS[90] + 'T07:00:00Z'
+        result = self.invoke(rows=rows)[0]
+        self.assertEqual(result['status'], 'PARTIAL')
+        self.assertEqual([row['date'] for row in result['subsequentReference']], DAYS[11:13])
+
+    def test_next_batch_admits_correction_only_at_its_new_cutoff(self):
+        rows = bars(0, 84)
+        rows.append({**rows[13], 'revision': 1, 'close': 777,
+                     'knownAt': DAYS[90] + 'T07:00:00Z'})
+        before = self.invoke(rows=rows)[0]
+        after = self.invoke(rows=rows, cutoff=DAYS[91] + 'T07:00:00Z')[0]
+        self.assertEqual(before['subsequentReference'][2]['value'], 101 / 105 * 100)
+        self.assertEqual(after['subsequentReference'][2]['value'], 777 / 105 * 100)
+        self.assertEqual(before['snapshotId'], after['snapshotId'])
+
+    def test_unavailable_and_empty_batches_do_not_read_prices(self):
+        import jp_market_analogs as analogs
+        unavailable = build_episode(cutoff=DAYS[1] + 'T23:00:00Z', bars=bars(0, 2), policy=POLICY)
+        with patch.object(analogs, 'point_in_time_rows', side_effect=AssertionError('unexpected read')):
+            self.assertEqual(self.invoke([]), [])
+            self.assertEqual(self.invoke([unavailable]),
+                             [{'status': 'UNAVAILABLE', 'comparison': [], 'subsequentReference': []}])
+
+    def test_admitted_scale_rows_are_released_before_candidate_selection(self):
+        import jp_market_engine as engine
+        import jp_market_analogs as analogs
+        from jp_market_price_paths import cached_index_comparison
+        admitted = []
+        original = engine.point_in_time_rows
+        select = analogs.select_episodes
+
+        class ScaleRows(list):
+            pass
+
+        def visible(rows, cutoff):
+            data, proof = original(rows, cutoff)
+            if rows and rows[0].get('field') == 'credit.loss_pct':
+                data = ScaleRows(data)
+                admitted.append(weakref.ref(data))
+            return data, proof
+
+        def selection(*args, **kwargs):
+            self.assertEqual(len(admitted), 1)
+            self.assertIsNone(admitted[0]())
+            return select(*args, **kwargs)
+
+        with patch.object(engine, 'point_in_time_rows', new=visible), \
+                patch.object(analogs, 'select_episodes', new=selection):
+            result = cached_index_comparison(bars(0, 84), cutoff=DAYS[83] + 'T23:00:00Z',
+                session_dates=DAYS, policy=POLICY,
+                state_rows=[fact('credit.loss_pct', -1, 60, 'PERCENT')])
+        self.assertEqual(result['status'], 'available')
 
 
 if __name__ == "__main__":
