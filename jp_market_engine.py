@@ -500,12 +500,17 @@ def coverage_artifact() -> Dict[str, Any]:
     return {**body, "artifactId": "jp-market-engine-coverage-" + _sha256(body)}
 
 
-def point_in_time_rows(rows: Iterable[Mapping[str, Any]], cutoff: str) \
+def point_in_time_rows(rows: Iterable[Mapping[str, Any]], cutoff: str, *,
+                       _materialize_rows: bool = True, _include_proof: bool = True) \
         -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Select the newest knowable revision per logical observation.
 
     At least one explicit publication/availability/knowledge time is required.
     Malformed, future, and ambiguous rows are excluded, never coerced.
+
+    Internal read-only consumers may borrow nested values until they build an
+    owned result, and omit an unused proof. Row admission and revision-content
+    checks still run on every row. Ordinary callers keep owned rows and proof.
     """
     limit = _cutoff(cutoff)
     source = list(rows or [])
@@ -560,7 +565,7 @@ def point_in_time_rows(rows: Iterable[Mapping[str, Any]], cutoff: str) \
             excluded_future += 1
             continue
         key = (instrument.upper(), field, period)
-        candidate = (known, revision, copy.deepcopy(dict(raw)))
+        candidate = (known, revision, copy.deepcopy(dict(raw)) if _materialize_rows else dict(raw))
         try:
             candidate_hash = _sha256(candidate[2])
         except (TypeError, ValueError, OverflowError):
@@ -592,6 +597,8 @@ def point_in_time_rows(rows: Iterable[Mapping[str, Any]], cutoff: str) \
         str(row.get("seriesId") or row.get("field") or row.get("kind") or ""),
         int(row.get("revision") or 0),
     ))
+    if not _include_proof:
+        return selected, {}
     proof_body = {
         "policyId": "jp-market-engine-explicit-publication-pit-v1",
         "cutoff": cutoff,
