@@ -713,6 +713,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     "test_argus_financial_receipt_hash.py",
     "docs/operations/us-macro-calendar-2027.md",
     "docs/operations/financial-receipt-hash-scheduling.md",
+    "docs/operations/level-map-scoring-eps-reuse.md",
+    "test_argus_level_map_scoring_eps_reuse.py",
     "test_argus_financial_coverage_original_reads.py",
     "docs/operations/financial-coverage-original-reads.md",
     "test_failed_checkpoint_source.py",
