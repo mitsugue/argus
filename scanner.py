@@ -7081,7 +7081,9 @@ _FOMC_2026 = ["2026-06-17", "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-0
 # Reserve (federalreserve.gov/monetarypolicy/fomccalendars.htm, checked
 # 2026-10-03): Jan 26-27, Mar 16-17, Apr 27-28, Jun 8-9, Jul 27-28, Sep 14-15,
 # Oct 26-27, Dec 7-8. The Fed marks each date tentative until confirmed at the
-# meeting before it. The 2027 BLS/BEA releases are not yet published.
+# meeting before it. Only the separately verified 2027 BLS CPI/PPI/NFP
+# schedule and separately retained BEA PCE/GDP schedule are included below.
+# Unverified JOLTS dates remain absent.
 _FOMC_2027 = ["2027-01-27", "2027-03-17", "2027-04-28", "2027-06-09", "2027-07-28",
               "2027-09-15", "2027-10-27", "2027-12-08"]
 _BOJ_2026  = ["2026-06-16", "2026-07-31", "2026-09-18", "2026-10-30", "2026-12-18"]
@@ -7101,6 +7103,19 @@ _PCE_2026  = ["2026-06-25", "2026-07-30", "2026-08-26", "2026-09-30", "2026-10-2
 _GDP_2026  = ["2026-06-25", "2026-07-30", "2026-08-26", "2026-09-30", "2026-10-29", "2026-11-25", "2026-12-23"]
 _JOLTS_2026 = ["2026-06-30", "2026-08-04", "2026-09-01", "2026-09-29", "2026-11-03", "2026-12-01"]
 
+# BLS公式年次日程のWeb読取を2026-10-31に照合。予定であり実公表・当時受領ではない。
+_CPI_2027 = ['2027-01-13', '2027-02-11', '2027-03-10', '2027-04-13', '2027-05-12', '2027-06-10', '2027-07-14', '2027-08-11', '2027-09-14', '2027-10-14', '2027-11-10', '2027-12-10']
+_PPI_2027 = ['2027-01-14', '2027-02-12', '2027-03-12', '2027-04-14', '2027-05-13', '2027-06-11', '2027-07-15', '2027-08-10', '2027-09-10', '2027-10-15', '2027-11-12', '2027-12-15']
+_NFP_2027 = ['2027-01-08', '2027-02-05', '2027-03-05', '2027-04-02', '2027-05-07', '2027-06-04', '2027-07-02', '2027-08-06', '2027-09-03', '2027-10-08', '2027-11-05', '2027-12-03']
+_BLS_2027_SCHEDULE_SOURCE = {'sourceScheduleRef': 'https://www.bls.gov/schedule/2027/home.htm',
+    'sourceScheduleCheckedAt': '2026-10-31T04:36:36.770869+00:00', 'sourceScheduleEvidence': 'OFFICIAL_PAGE_WEB_READ'}
+
+_PCE_2027 = ['2027-01-28', '2027-02-25', '2027-03-31', '2027-04-29', '2027-05-27', '2027-06-25', '2027-07-29', '2027-08-25', '2027-09-30', '2027-10-28', '2027-11-24', '2027-12-22']
+_GDP_2027 = ['2027-01-28', '2027-02-25', '2027-03-31', '2027-04-29', '2027-05-27', '2027-06-25', '2027-07-29', '2027-08-25', '2027-09-30', '2027-10-28', '2027-11-24', '2027-12-22']
+_BEA_2027_SCHEDULE_SOURCE = {'sourceScheduleRef': 'https://www.bea.gov/news/schedule/next-year',
+    'sourceScheduleCheckedAt': '2026-10-31T04:42:00.542582+00:00', 'sourceScheduleEvidence': 'OFFICIAL_HTTP_RETAINED',
+    'sourceScheduleResponseSha256': '4ff384aceae653f67d773e03aca8fa93f4b8b1e476134ad84b1a57baf0bd8c02'}
+
 _EVENT_RATIONALE = {
     "fomc":    "金利・ドル円・米国グロース株のリスク許容度を左右するため、イベント前後はポジションサイズと追いかけ買いを抑える。",
     "cpi":     "インフレ再加速は米金利上昇とグロース株のバリュエーション圧迫につながるため、発表前後の指数・金利・為替を確認する。",
@@ -7116,12 +7131,12 @@ _EVENT_RATIONALE = {
 # (dates, et_time, kind, title, category, country, source, impact, linkedAssets)
 _EVENT_SPECS = [
     (_FOMC_2026 + _FOMC_2027, "14:00", "fomc", "FOMC Rate Decision",                "central_bank", "US", "Federal Reserve",             "high",   ["USDJPY", "US10Y", "US2Y", "QQQ", "NVDA"]),
-    (_CPI_2026,  "08:30", "cpi",  "US CPI (Consumer Price Index)",     "inflation",    "US", "Bureau of Labor Statistics",  "high",   ["US10Y", "USDJPY", "QQQ", "SPY"]),
-    (_NFP_2026,  "08:30", "nfp",  "US Employment Situation",           "jobs",         "US", "Bureau of Labor Statistics",  "high",   ["US10Y", "USDJPY", "SPY", "QQQ"]),
+    (_CPI_2026 + _CPI_2027,  "08:30", "cpi",  "US CPI (Consumer Price Index)",     "inflation",    "US", "Bureau of Labor Statistics",  "high",   ["US10Y", "USDJPY", "QQQ", "SPY"]),
+    (_NFP_2026 + _NFP_2027,  "08:30", "nfp",  "US Employment Situation",           "jobs",         "US", "Bureau of Labor Statistics",  "high",   ["US10Y", "USDJPY", "SPY", "QQQ"]),
     (_JOLTS_2026, "10:00", "jolts", "US JOLTS Job Openings",           "jobs",         "US", "Bureau of Labor Statistics",  "medium", ["US10Y", "USDJPY", "SPY", "QQQ"]),
-    (_PPI_2026,  "08:30", "ppi",  "US PPI (Producer Price Index)",     "inflation",    "US", "Bureau of Labor Statistics",  "medium", ["US10Y", "QQQ"]),
-    (_PCE_2026,  "08:30", "pce",  "US PCE / Personal Income & Outlays", "inflation",   "US", "Bureau of Economic Analysis", "high",   ["US10Y", "USDJPY", "QQQ"]),
-    (_GDP_2026,  "08:30", "gdp",  "US GDP",                            "growth",       "US", "Bureau of Economic Analysis", "high",   ["US10Y", "SPY", "USDJPY"]),
+    (_PPI_2026 + _PPI_2027,  "08:30", "ppi",  "US PPI (Producer Price Index)",     "inflation",    "US", "Bureau of Labor Statistics",  "medium", ["US10Y", "QQQ"]),
+    (_PCE_2026 + _PCE_2027,  "08:30", "pce",  "US PCE / Personal Income & Outlays", "inflation",   "US", "Bureau of Economic Analysis", "high",   ["US10Y", "USDJPY", "QQQ"]),
+    (_GDP_2026 + _GDP_2027,  "08:30", "gdp",  "US GDP",                            "growth",       "US", "Bureau of Economic Analysis", "high",   ["US10Y", "SPY", "USDJPY"]),
     (_BOJ_2026 + _BOJ_2027, None, "boj",  "BOJ Monetary Policy Meeting",       "central_bank", "JP", "Bank of Japan",               "high",   ["USDJPY", "JP10Y", "9984", "8058"]),
 ]
 
@@ -7173,6 +7188,8 @@ def _build_curated_events(today_jst):
                 "localTimeJst": jst_local, "daysUntil": days,
                 "escalation": _escalation(days), "rationaleJa": _EVENT_RATIONALE[kind],
                 "linkedAssets": assets, "status": "live",
+                **(_BLS_2027_SCHEDULE_SOURCE if d.startswith("2027-") and kind in ("cpi", "ppi", "nfp") else {}),
+                **(_BEA_2027_SCHEDULE_SOURCE if d.startswith("2027-") and kind in ("pce", "gdp") else {}),
             })
     return out
 
