@@ -28,7 +28,7 @@ STAGES = frozenset(('news_feeds', 'news_translation', 'news_ranking', 'news_pers
     'pit_feature_reconcile', 'pit_feature_build', 'pit_feature_persist', 'pit_research', 'pit_backup'))
 
 
-def private_timing_record(body):
+def private_timing_record(body, *, include_run_context=False):
     """Closed scalar projection of the SAME tracked response; never returned on stdout."""
     def stamp(value):
         if isinstance(value, str) and len(value) <= 40:
@@ -47,11 +47,17 @@ def private_timing_record(body):
         if (isinstance(row, dict) and isinstance(row.get('stage'), str)
                 and row['stage'] in STAGES and seconds(row.get('elapsedSeconds')) is not None):
             stages.append({'stage': row['stage'], 'elapsedSeconds': seconds(row['elapsedSeconds'])})
-    return {'schemaVersion': 'argus-collect-timing-v1', 'available': bool(stages),
+    projection = {'schemaVersion': 'argus-collect-timing-v1', 'available': bool(stages),
             'status': body.get('status') if body.get('status') in ('running', 'done', 'failed') else None,
             'startedAt': stamp(body.get('startedAt')), 'finishedAt': stamp(body.get('finishedAt')),
             'stage': body.get('stage') if isinstance(body.get('stage'), str) and body['stage'] in STAGES else None,
             'stageElapsedSeconds': seconds(body.get('stageElapsedSeconds')), 'completedStages': stages}
+    if include_run_context:
+        projection.update(schemaVersion='argus-collect-timing-v2',
+            trigger=body.get('trigger') if body.get('trigger') in ('request', 'resident') else None,
+            previousFinishedAt=stamp(body.get('previousFinishedAt')),
+            stageStartedAt=stamp(body.get('stageStartedAt')))
+    return projection
 
 
 def save_private_timing(path, value):
