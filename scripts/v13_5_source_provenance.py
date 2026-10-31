@@ -38,6 +38,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # 予測失敗の正規化入力を既存の非公開保存へ渡す正確な内容。
     'argus_prediction_failure_input.py': 'e7ebebf90f17a248d7c0d3fb986c000f2c039fd8',
     'test_argus_comparison_calibration_restore.py': 'edcff6b9c5e2b2678ee5e95016a18d72fb2645a8',
+    'test_argus_market_input_warm_coalescing.py': '901a0e02f6563dce7fcbe4169ec4ace30fac982e',
     'test_argus_prediction_failure_input.py': '332caa0f400965585cf5293f6fd00e2b298ab8b2',
     # 受領記録と営業日時を明示した回収検査の正確な内容。
     'test_argus_v12_2_3.py': 'c66e88717ae7dbb360206d1179feae707432f775',
