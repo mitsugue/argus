@@ -425,6 +425,25 @@ def comparison_document(current: Mapping[str, Any], selection: Mapping[str, Any]
     }
 
 
+def _calibration_scale_history(state_rows, candidates):
+    """Keep the complete input of every yearly calibration yardstick.
+
+    Each study consumes state rows only through ``yearly_policies``: rows
+    known before 1 January of each candidate year. Current scales and sealed
+    candidate IDs remain separate cache inputs. A receipt after the last
+    yearly boundary cannot change those past yardsticks.
+    """
+    from jp_market_engine import _knowledge_time
+    years = [episode["anchorDate"][:4] for episode in candidates]
+    if not years:
+        return []
+    boundary = _instant(f"{max(years)}-01-01T00:00:00Z")
+    # Match yearly_policies exactly, including missing-knowledge exclusion.
+    # Keep all eligible revisions, not only the latest at today's cutoff.
+    return [row for row in state_rows if isinstance(row, Mapping)
+            and (_knowledge_time(row) or boundary) < boundary]
+
+
 def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                             session_dates: Sequence[str], horizon_sessions: int = 5,
                             acquired_at: str | None = None,
@@ -598,13 +617,12 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                      # without changing row counts. Validate the same sealed
                      # episodes, price outcomes, calendar and knowable scale
                      # history that the cached study actually consumes.
-                     "cacheSchema": "sealed-input-content-v1",
+                     "cacheSchema": "sealed-input-content-v2-yearly-scales",
                      "priceHistory": _hash(visible),
                      "sessionCalendar": _hash(list(session_dates)),
                      "candidateSnapshots": [episode["snapshotId"] for episode in candidates],
                      "componentWeights": list(policy.component_weights),
-                     "stateHistory": _hash(point_in_time_rows(
-                         [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0]),
+                     "stateHistory": _hash(_calibration_scale_history(state_rows, candidates)),
                      "valuationBasis": (valuation or {}).get("basis"),
                      "researchReactions": _hash([episode["snapshotId"] for episode in candidates_with]) if research else None,
                      "recentScaleYears": dict(RECENT_SCALE_YEARS)})
