@@ -39,7 +39,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_prediction_failure_input.py': 'e7ebebf90f17a248d7c0d3fb986c000f2c039fd8',
     'test_argus_comparison_calibration_restore.py': 'edcff6b9c5e2b2678ee5e95016a18d72fb2645a8',
     'test_argus_analog_series_glue.py': '0255c2e5d6a03263a02b2b71b2e69ed9c0b2e46c',
-    'test_jp_market_feature_tail_reuse.py': '27a88df7975d97e0e45540b1622e416c609edde9',
+    'test_jp_market_feature_tail_reuse.py': '54d327baedad7ca588d6c76241b0aa6f3a00e0fc',
     'test_argus_market_input_warm_coalescing.py': '901a0e02f6563dce7fcbe4169ec4ace30fac982e',
     'test_argus_prediction_failure_input.py': '332caa0f400965585cf5293f6fd00e2b298ab8b2',
     # 受領記録と営業日時を明示した回収検査の正確な内容。

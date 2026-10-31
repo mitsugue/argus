@@ -328,22 +328,23 @@ def _reusable_cutoffs(history, ordered, sources, *, diagnostic=None):
     reusable = shared
     for key, rows in sources.items():
         source = manifest[key]
+        reason = _prefix_reuse_rejection(source, rows, key, boundary)
+        if reason is None:
+            continue
         count = source.get('count') if isinstance(source, dict) else None
-        if (type(count) is int and 0 <= count < len(rows)
-                and _history_digest(rows[:count]) == source.get('sha256')):
+        if (reason == 'append_can_affect_prior_cutoff'
+                and type(count) is int and 0 <= count < len(rows)
+                and all(isinstance(row, Mapping) and row.get('revision', 0) == 0
+                        for row in rows[count:])):
             appended_times = [_effective_knowledge(row, key) for row in rows[count:]]
             if all(at is not None for at in appended_times):
                 first_new = min(appended_times)
                 # Unchanged saved rows prove earlier cutoffs exactly; only
                 # replay the tail the new observations could affect.
                 reusable = [at for at in reusable if _instant(at) < first_new]
-                bounded_sources.append(key)
                 if first_new <= boundary:
                     tail_sources.append(key)
                 continue
-        reason = _prefix_reuse_rejection(source, rows, key, boundary)
-        if reason is None:
-            continue
         # Rows first knowable after the boundary cannot change any reused
         # cutoff, wherever they sit in the list: an SQ distance stamped with
         # its calculation instant, a VIX session still forming in place, a

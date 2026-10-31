@@ -39,7 +39,8 @@ def test_new_correction_is_not_applied_before_its_actual_knowledge_time():
  baseline=new.build_feature_history(cutoffs=ATS,**after)
  actual=new.build_feature_history(cutoffs=ATS,previous_history=saved(before),**after)
  assert semantic(actual)==semantic(baseline)
- assert actual['calculationWork']['reusedCutoffs']==58
+ assert actual['calculationWork']['reusedCutoffs']==0
+ assert actual['reuseDecision']=={'reason':'append_can_affect_prior_cutoff','source':'price_series:vix'}
 
 
 def test_future_append_refreshes_endpoint_audit_without_replaying_earlier_features():
@@ -47,7 +48,7 @@ def test_future_append_refreshes_endpoint_audit_without_replaying_earlier_featur
  baseline=new.build_feature_history(cutoffs=ATS,**after)
  actual=new.build_feature_history(cutoffs=ATS,previous_history=saved(before),**after)
  assert semantic(actual)==semantic(baseline)
- assert actual['calculationWork']['reusedCutoffs']==len(ATS)-1
+ assert actual['calculationWork']['reusedCutoffs']==len(ATS)
 
 
 def test_multiple_append_sources_use_earliest_possible_effect():
