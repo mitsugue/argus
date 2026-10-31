@@ -69,6 +69,9 @@ if a.worker:
    info={'phase':'after','cycle':i,'verified':result['verified'],'consumed':consumed,'sourceBytes':result['sourceSerializedBytes'],'sections':result['sectionCount'],'rows':result['resourceTelemetry']['rowCount']}
    del value,result
    send(info)
+   # 直前の記録はGC前で、残った循環参照を保持物と区別できなかった。
+   # 今回は同じ保存の後、計測中に回収してから割当て記録を閉じる。
+   gc.collect()
   gc.collect();time.sleep(.25)
   if a.mode=='postgc' and not a.protocol_test:
    v2._release_unused_allocator_memory(38887032)
@@ -136,7 +139,8 @@ try:
    profiles.append({'cycle':i,'records':count,'allocatorTotals':dict(totals),'largestRemaining':largest,
        'profileBytes':capture.stat().st_size,'profileSha256':digest(capture)})
   native={'schema':'allocator-native-per-cycle-v1','toolVersion':'1.20.0',
-      'profiles':profiles,'statisticsWithHookDetached':True,
+      'profiles':profiles,'statisticsWithHookDetached':True,'captureIncludesPostGc':True,
+      'comparisonRunBeforeGc':41167424470,
       'capturesObjectValues':False,'formalAcceptance':False,'rootCauseProven':False,
       'originalFailureRun':41166376788,'originalFailurePreserved':True,
       'scope':'OCTOBER_8_ONLY_NOT_OCTOBER_20','newProviderAiOrProductionWrites':0}

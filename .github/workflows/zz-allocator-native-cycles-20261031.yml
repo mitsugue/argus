@@ -133,3 +133,5 @@ jobs:
           count=store('allocator-original8',os.environ['GITHUB_RUN_ID'],sorted(packet.iterdir()),token,opener=opener)
           print('Private diagnostic packets stored:',count)
           PY
+
+# 同じ3周の保存後、計測内GCを済ませた残留割当てを前回のGC前記録と分離する。
