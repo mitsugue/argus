@@ -6,6 +6,7 @@ candidate method has no trading authority or demonstrated predictive benefit.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -185,14 +186,15 @@ def _field(row: Mapping[str, Any]) -> str:
 
 
 def _receipt(row: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: row[key] for key in ("publishedAt", "availableFrom", "knownAt",
+    return copy.deepcopy({key: row[key] for key in ("publishedAt", "availableFrom", "knownAt",
                                      "observedAt", "sourceRef", "source", "revision",
-                                     "availabilityBasis", "vintageStatus", "derivationBasis") if key in row}
+                                     "availabilityBasis", "vintageStatus", "derivationBasis") if key in row})
 
 
 def _visible(rows: Iterable[Mapping[str, Any]], cutoff: str) -> list[dict[str, Any]]:
-    # Keep the temporal verifier common with the existing evidence engine.
-    return point_in_time_rows(rows, cutoff)[0]
+    # Keep owned mutable values and all temporal/content checks. Immutable
+    # scalars need no deep copy; the PIT proof is unused by this consumer.
+    return point_in_time_rows(rows, cutoff, _reuse_immutable_scalars=True, _include_proof=False)[0]
 
 
 def build_episode(*, cutoff: str, bars: Sequence[Mapping[str, Any]],
@@ -239,8 +241,10 @@ def build_episode(*, cutoff: str, bars: Sequence[Mapping[str, Any]],
         if definition and anchor and _period(row) <= information_day and value is not None \
                 and row.get("unit") == definition[0] and (date.fromisoformat(information_day) -
                     date.fromisoformat(_period(row))).days <= FEATURE_MAX_AGE_DAYS[field]:
-            states[field] = {"value": value, "unit": definition[0],
-                             "date": _period(row), **_receipt(row)}
+            states[field] = (value, definition[0], _period(row), row)
+    # Only the final valid observation per field survives in the episode.
+    states = {field: {"value": value, "unit": unit, "date": period, **_receipt(row)}
+              for field, (value, unit, period, row) in states.items()}
     conditions = []
     for row in _visible([dict(r) for r in condition_rows if isinstance(r, Mapping)
                          and _identity(r) == INSTRUMENT], cutoff):
@@ -271,7 +275,7 @@ def _episode_reactions(reaction_rows, cutoff, first, anchor, information_day) ->
                 and row.get("reactionWindowSessions") in (1, 3, 5):
             key = str(row["eventType"]) + ":" + str(row["reactionWindowSessions"])
             reactions[key] = {"value": value, "date": _period(row),
-                              "eventId": row["eventId"], "unit": "PERCENT", **_receipt(row)}
+                              "eventId": copy.deepcopy(row["eventId"]), "unit": "PERCENT", **_receipt(row)}
     return reactions
 
 

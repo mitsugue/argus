@@ -220,6 +220,97 @@ class DistanceArithmeticParityTest(unittest.TestCase):
         self.assertEqual(_edit_distance([("up",), ("down",)], [("down",), ("up",)]), 1.0)
 
 
+class EpisodeOwnershipTest(unittest.TestCase):
+    def test_source_update_after_admission_cannot_change_retained_receipt(self):
+        import jp_market_analogs as analogs
+        price = bars(0, 84)
+        price[-1]['source'] = {'refs': ['admitted']}
+        receipt = analogs._receipt
+        changed = False
+
+        def after_admission(row):
+            nonlocal changed
+            if not changed:
+                price[-1]['source']['refs'].append('after-admission')
+                changed = True
+            return receipt(row)
+
+        with patch.object(analogs, '_receipt', side_effect=after_admission):
+            result = episode(83, price_rows=price)
+        self.assertEqual(price[-1]['source']['refs'], ['admitted', 'after-admission'])
+        self.assertEqual(result['window'][-1]['source']['refs'], ['admitted'])
+
+    def test_optimized_read_keeps_default_pit_admission_and_conflict_checks(self):
+        import jp_market_engine as engine
+        original = fact('vix.level', 20, 60, 'INDEX_POINTS')
+        correction = {**original, 'value': 22, 'revision': 1,
+                      'knownAt': DAYS[62] + 'T08:00:00Z'}
+        rows = [original, correction,
+                {**original, 'field': 'future', 'date': DAYS[90]},
+                {**original, 'field': 'malformed', 'date': 'not-a-date'},
+                {**original, 'field': 'missing-receipt', 'availableFrom': None},
+                {**original, 'field': 'missing-revision-receipt', 'revision': 1},
+                {**original, 'field': 'not-json', 'value': float('nan')}]
+        for day in (61, 62, 90):
+            cutoff = DAYS[day] + 'T23:00:00Z'
+            with self.subTest(day=day):
+                expected, proof = engine.point_in_time_rows(rows, cutoff)
+                actual, unused = engine.point_in_time_rows(rows, cutoff,
+                    _reuse_immutable_scalars=True, _include_proof=False)
+                self.assertEqual(actual, expected)
+                self.assertTrue(proof['proofId'])
+                self.assertEqual(unused, {})
+        conflict = {**original, 'value': 999}
+        for optimized in (False, True):
+            with self.subTest(optimized=optimized):
+                with self.assertRaisesRegex(ValueError, 'conflicting_row_revision'):
+                    engine.point_in_time_rows([original, correction, conflict],
+                        DAYS[90] + 'T23:00:00Z', _reuse_immutable_scalars=optimized,
+                        _include_proof=not optimized)
+
+    def test_episode_owns_nested_receipts_and_reaction_identity(self):
+        price = bars(0, 84)
+        price[-1]['source'] = {'refs': ['price']}
+        state = fact('vix.level', 22, 83, 'INDEX_POINTS', source={'refs': ['state']})
+        condition = fact('cross', 1, 82, 'DIRECTION', source={'refs': ['condition']})
+        reaction = fact('reaction', 1, 83, 'PERCENT', source={'refs': ['reaction']},
+                        eventId={'refs': ['event']}, eventType='POLICY', reactionWindowSessions=1)
+        args = dict(cutoff=DAYS[83] + 'T23:00:00Z', bars=price, state_rows=[state],
+                    condition_rows=[condition], reaction_rows=[reaction], policy=POLICY)
+        first = build_episode(**args)
+        saved = copy.deepcopy(first)
+        for row in (price[-1], state, condition, reaction):
+            row['source']['refs'].append('later-source-change')
+        reaction['eventId']['refs'].append('later-event-change')
+        self.assertEqual(first, saved)
+        second = build_episode(**args)
+        self.assertNotEqual(second['snapshotId'], first['snapshotId'])
+        before = copy.deepcopy(args)
+        first['window'][-1]['source']['refs'].append('output-change')
+        first['states']['vix.level']['source']['refs'].append('output-change')
+        first['conditions'][0]['source']['refs'].append('output-change')
+        first['reactions']['POLICY:1']['source']['refs'].append('output-change')
+        first['reactions']['POLICY:1']['eventId']['refs'].append('output-change')
+        self.assertEqual(args, before)
+
+    def test_newest_invalid_state_does_not_erase_previous_valid_observation(self):
+        states = [fact('vix.level', 20, 80, 'INDEX_POINTS'),
+                  fact('vix.level', 999, 83, 'WRONG_UNIT')]
+        result = episode(83, changes={'state_rows': states})
+        self.assertEqual(result['states']['vix.level']['value'], 20)
+        self.assertEqual(result['states']['vix.level']['date'], DAYS[80])
+
+    def test_default_pit_returns_owned_rows_and_unchanged_proof(self):
+        import jp_market_engine as engine
+        row = fact('vix.level', 20, 80, 'INDEX_POINTS', source={'refs': ['original']})
+        result, proof = engine.point_in_time_rows([row], DAYS[83] + 'T23:00:00Z')
+        row['source']['refs'].append('changed')
+        self.assertEqual(result[0]['source'], {'refs': ['original']})
+        self.assertEqual(proof['includedCount'], 1)
+        self.assertEqual(proof['excludedMalformedCount'], 0)
+        self.assertFalse(proof['futureRowsAdmitted'])
+
+
 class ReferenceBatchTest(unittest.TestCase):
     def invoke(self, episodes=None, rows=None, cutoff=None, horizon=5):
         return reference_paths(episodes if episodes is not None else [episode(11), episode(23)],
