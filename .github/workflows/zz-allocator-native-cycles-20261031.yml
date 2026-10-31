@@ -1,7 +1,7 @@
 name: zz-allocator-native-cycles-20261031
 on:
   push:
-    branches: [codex/allocator-native-per-cycle-20261031]
+    branches: [codex/allocator-native-addresses-20261031]
 permissions:
   contents: read
 jobs:
@@ -85,7 +85,7 @@ jobs:
                   path.write_bytes(archive.extractfile(member).read())
           pathlib.Path('out/input-identity.json').write_text(json.dumps({'incident':37712227448,'originalCode':'0949653a8bf485191db922caf440313d96b9e76a','sourceBytes':len(source),'sha256':hashlib.sha256(source).hexdigest(),'scope':'OCTOBER_8_ONLY_NOT_OCTOBER_20','privateCommit':ref})+'\n')
           PY
-      - name: Measure three separate cycles and allocator state outside the hook
+      - name: 同じ原入力二周のGC後割当先を記録
         run: |
           set -euo pipefail
           image=python@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
@@ -94,9 +94,10 @@ jobs:
           docker run --rm --network none --memory 4g --memory-swap 4g --pids-limit 512 \
             --volume "$PWD/original:/work:ro" --volume "$PWD/input:/input:ro" \
             --volume "$PWD/tool:/tool:ro" --env PYTHONPATH=/tool \
-            --volume "$PWD/harness/scripts/allocator_native_cycles_20261031.py:/diag/observer.py:ro" \
+            --volume "$PWD/harness/scripts/allocator_native_addresses_20261031.py:/diag/observer.py:ro" \
+            --volume "$PWD/harness/scripts/allocator_address_summary_20261031.py:/diag/allocator_address_summary_20261031.py:ro" \
             --volume "$PWD/out:/out" --workdir /work "$image" \
-            python3 -B /diag/observer.py --mode external --source /input/checkpoint-v2-exact-source.json --code /work --out /out/per-cycle --cycles 3 \
+            python3 -B /diag/observer.py --mode external --source /input/checkpoint-v2-exact-source.json --code /work --out /out/per-cycle --cycles 2 \
             > out/per-cycle/stdout.txt 2> out/per-cycle/stderr.txt
           code=$?
           set -e
@@ -135,3 +136,5 @@ jobs:
           PY
 
 # 同じ3周の保存後、計測内GCを済ませた残留割当てを前回のGC前記録と分離する。
+
+# 集計形式にない割当先を二周だけ記録。原入力・元6コード・4GiB・32MiB/記録上限は不変。
