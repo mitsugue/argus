@@ -399,6 +399,9 @@ def read_coverage(path, *, cutoff):
     if location.is_symlink() or not location.is_file():raise ValueError('financial_store_regular_file_required')
     db=sqlite3.connect(location.resolve().as_uri()+'?mode=ro',uri=True)
     output={}
+    # Bounded originals, scoped to this SQLite read snapshot and call.
+    from collections import OrderedDict
+    source_cache, source_cache_bytes = OrderedDict(), 0
     try:
         for key,raw in db.execute("SELECT key,value FROM metadata WHERE key LIKE 'financial-summary-date:%'"):
             # 2026-10-21: every read parsed, re-serialized and hashed each
@@ -426,10 +429,21 @@ def read_coverage(path, *, cutoff):
                 # 2026-10-21: remembered by the receipt's content (the digest
                 # binds rawId and sourceResponseSha256), not by its key.
                 if not coverage_content_verified(digest):
-                    source=db.execute('SELECT raw,sha256 FROM raw_sources WHERE id=?',(row.get('rawId'),)).fetchone()
+                    raw_id=row.get('rawId')
+                    source=source_cache.get(raw_id)
+                    if source is None:
+                        source=db.execute('SELECT raw,sha256 FROM raw_sources WHERE id=?',(raw_id,)).fetchone()
+                    else:
+                        source_cache.move_to_end(raw_id)
                     if not source or hashlib.sha256(source[0]).hexdigest()!=source[1] or source[1]!=row.get('sourceResponseSha256'):
                         raise ValueError('financial_coverage_integrity')
                     validate_composite_coverage(row, source[0])
+                    if raw_id not in source_cache and len(source[0])<=1024*1024:
+                        while source_cache and (len(source_cache)>=16 or source_cache_bytes+len(source[0])>1024*1024):
+                            _,removed=source_cache.popitem(last=False)
+                            source_cache_bytes-=len(removed[0])
+                        source_cache[raw_id]=source
+                        source_cache_bytes+=len(source[0])
                     remember_coverage_content(digest)
                 fields=(row['receivedAt'],row['knownAt'],row.get('queryDate'))
                 _remember_receipt(('date-text',stored),fields)
