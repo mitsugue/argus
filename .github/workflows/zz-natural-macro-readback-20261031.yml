@@ -24,7 +24,7 @@ jobs:
               def redirect_request(self,*a,**k):return None
           opener=urllib.request.build_opener(NoRedirect)
           routes=(('health.json','/healthz'),
-                  ('memory.json','/api/argus/admin/memory-attribution?threads=1'))
+                  ('memory.json','/api/argus/admin/memory-attribution?threads=1&analog-inputs=1'))
           records=[]
           for name,path in routes:
               record={'name':name,'at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
@@ -89,3 +89,5 @@ jobs:
 # 210の既存保護入力を圧縮応答で一回読む。8MiBの通信/保存上限は不変、展開は16MiBに制限。
 
 # 210の次の通常巡回が開始したか固定状態だけを読む。収集の開始は要求しない。
+
+# 自然巡回1回目で研究工程へ進んだため、その実入力を一度だけ照合する。
