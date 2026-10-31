@@ -391,6 +391,20 @@ def read(path, *, cutoff, member_codes):
         db.close()
 
 
+def _receipt_sha256(data):
+    """全バイトを同じSHA-256で検査し、短い検証の反復で処理権を明け渡し過ぎない。"""
+    # 2048バイト以上の一括入力ではPythonがGILを解放する。
+    # 別の重い処理があると、短い検証ごとの復帰待ちが積み重なる。
+    # 同じ連結バイト列を小分けで渡すだけで、検証の対象も結果も変えない。
+    if len(data)<=2047:
+        return hashlib.sha256(data)
+    result=hashlib.sha256()
+    view=memoryview(data)
+    for offset in range(0,len(view),2047):
+        result.update(view[offset:offset+2047])
+    return result
+
+
 def read_coverage(path, *, cutoff):
     from pathlib import Path
     import sqlite3
@@ -413,7 +427,7 @@ def read_coverage(path, *, cutoff):
             # check. A receipt is parsed for output only when it becomes the
             # newest one seen for its date.
             row=None
-            stored=hashlib.sha256(raw.encode() if isinstance(raw,str) else bytes(raw)).digest()
+            stored=_receipt_sha256(raw.encode() if isinstance(raw,str) else bytes(raw)).digest()
             with _VERIFIED_LOCK:
                 fields=_VERIFIED_RECEIPTS.get(('date-text',stored))
             if fields is None:
@@ -421,7 +435,7 @@ def read_coverage(path, *, cutoff):
                 if digest is None:
                     _remember_receipt(('date-text',stored),False)
                     continue  # Older receipts did not certify a 225-member scope.
-                if hashlib.sha256(sources._json(row).encode()).hexdigest()!=digest:
+                if _receipt_sha256(sources._json(row).encode()).hexdigest()!=digest:
                     raise ValueError('financial_coverage_integrity')
                 # Owner decision 2026-10-16: the original behind a receipt is
                 # verified once per process; the receipt's own digest on every
@@ -435,7 +449,7 @@ def read_coverage(path, *, cutoff):
                         source=db.execute('SELECT raw,sha256 FROM raw_sources WHERE id=?',(raw_id,)).fetchone()
                     else:
                         source_cache.move_to_end(raw_id)
-                    if not source or hashlib.sha256(source[0]).hexdigest()!=source[1] or source[1]!=row.get('sourceResponseSha256'):
+                    if not source or _receipt_sha256(source[0]).hexdigest()!=source[1] or source[1]!=row.get('sourceResponseSha256'):
                         raise ValueError('financial_coverage_integrity')
                     validate_composite_coverage(row, source[0])
                     if raw_id not in source_cache and len(source[0])<=1024*1024:
