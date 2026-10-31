@@ -17,25 +17,32 @@ jobs:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
           python3 - <<'PY'
-          import os,json,urllib.request,hashlib,datetime
+          import os,json,urllib.request,hashlib,datetime,gzip,io
           from pathlib import Path
           p=Path('artifacts/natural-macro-readback');p.mkdir(parents=True)
           class NoRedirect(urllib.request.HTTPRedirectHandler):
               def redirect_request(self,*a,**k):return None
           opener=urllib.request.build_opener(NoRedirect)
           routes=(('health.json','/healthz'),
-                  ('memory.json','/api/argus/admin/memory-attribution?threads=1'))
+                  ('memory.json','/api/argus/admin/memory-attribution?threads=1&analog-inputs=1'))
           records=[]
           for name,path in routes:
               record={'name':name,'at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
               try:
                   req=urllib.request.Request('https://argus-backend-3j2m.onrender.com'+path,
-                      headers={'X-ARGUS-ADMIN-TOKEN':os.environ['ARGUS_ADMIN_TOKEN']})
+                      headers={'X-ARGUS-ADMIN-TOKEN':os.environ['ARGUS_ADMIN_TOKEN'],'Accept-Encoding':'gzip'})
                   with opener.open(req,timeout=60) as response:
                       raw=response.read(8*1024*1024+1);assert response.status==200 and len(raw)<=8*1024*1024
-                  assert isinstance(json.loads(raw),dict)
-                  (p/name).write_bytes(raw)
-                  record.update(status=200,bytes=len(raw),sha256=hashlib.sha256(raw).hexdigest())
+                      encoding=response.headers.get('Content-Encoding','').lower();assert encoding in ('','gzip')
+                  if encoding=='gzip':
+                      with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:decoded=stream.read(16*1024*1024+1)
+                      assert len(decoded)<=16*1024*1024
+                  else:decoded=raw
+                  assert isinstance(json.loads(decoded),dict)
+                  saved=name+('.gz' if encoding=='gzip' else '')
+                  (p/saved).write_bytes(raw)
+                  record.update(status=200,bytes=len(raw),sha256=hashlib.sha256(raw).hexdigest(),
+                      savedAs=saved,contentEncoding=encoding,decodedBytes=len(decoded),decodedSha256=hashlib.sha256(decoded).hexdigest())
               except Exception as exc:
                   record.update(status='UNOBSERVED',errorClass=type(exc).__name__)
               records.append(record)
@@ -78,3 +85,5 @@ jobs:
 # 193の前回読取は通常処理開始前だった。Pagesの既存業務処理開始後の終端を一度照合。
 
 # 210の配信時収集開始後、研究校正の復元可否と固定内訳を一回確認。
+
+# 210の既存保護入力を圧縮応答で一回読む。8MiBの通信/保存上限は不変、展開は16MiBに制限。
