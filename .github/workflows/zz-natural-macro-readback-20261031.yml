@@ -24,8 +24,7 @@ jobs:
               def redirect_request(self,*a,**k):return None
           opener=urllib.request.build_opener(NoRedirect)
           routes=(('health.json','/healthz'),
-                  ('memory.json','/api/argus/admin/memory-attribution?threads=1'),
-                  ('calendar.json','/api/argus/jp-equity-calendar'))
+                  ('memory.json','/api/argus/admin/memory-attribution?threads=1'))
           records=[]
           for name,path in routes:
               record={'name':name,'at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
@@ -40,9 +39,9 @@ jobs:
               except Exception as exc:
                   record.update(status='UNOBSERVED',errorClass=type(exc).__name__)
               records.append(record)
-          (p/'receipt.json').write_text(json.dumps({'reads':records,'getCount':3,
+          (p/'receipt.json').write_text(json.dumps({'reads':records,'getCount':2,
               'postOrGeneration':0,'newClock':0},indent=2)+'\n')
-          print('GET attempted=3; response contents private only')
+          print('GET attempted=2; response contents private only')
           PY
       - name: 既存の非公開診断保存へ保全
         if: always()
@@ -63,3 +62,5 @@ jobs:
 # 研究工程に進んだ通常巡回の完了だけを一度確認。保存や収集は起動しない。
 
 # 187の保存済み会社予定接続と金融検証の固定CPU内訳だけを初回読戻し。
+
+# 実検証が完了した時のCPU/経過時間を照合。受入済み会社予定GETは繰り返さない。
