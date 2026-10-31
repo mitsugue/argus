@@ -324,8 +324,23 @@ def _reusable_cutoffs(history, ordered, sources, *, diagnostic=None):
     if set(manifest) != set(sources):
         return reject("source_set_changed")
     bounded_sources = []
+    tail_sources = []
+    reusable = shared
     for key, rows in sources.items():
         source = manifest[key]
+        count = source.get('count') if isinstance(source, dict) else None
+        if (type(count) is int and 0 <= count < len(rows)
+                and _history_digest(rows[:count]) == source.get('sha256')):
+            appended_times = [_effective_knowledge(row, key) for row in rows[count:]]
+            if all(at is not None for at in appended_times):
+                first_new = min(appended_times)
+                # Unchanged saved rows prove earlier cutoffs exactly; only
+                # replay the tail the new observations could affect.
+                reusable = [at for at in reusable if _instant(at) < first_new]
+                bounded_sources.append(key)
+                if first_new <= boundary:
+                    tail_sources.append(key)
+                continue
         reason = _prefix_reuse_rejection(source, rows, key, boundary)
         if reason is None:
             continue
@@ -345,7 +360,9 @@ def _reusable_cutoffs(history, ordered, sources, *, diagnostic=None):
         diagnostic.update(reason="unchanged_source_prefix", source=None)
         if bounded_sources:
             diagnostic.update(reason="unchanged_known_inputs", boundedSources=sorted(bounded_sources))
-    return shared
+        if tail_sources:
+            diagnostic.update(reason='appended_rows_replay_tail', sources=sorted(tail_sources))
+    return reusable
 
 
 # A source that held rows in the verified history and now holds less than
