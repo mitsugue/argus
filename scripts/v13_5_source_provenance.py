@@ -37,6 +37,7 @@ HISTORICAL_REPLACED_BLOBS = {
 REVIEWED_EXTENSION_BLOBS = {
     # 予測失敗の正規化入力を既存の非公開保存へ渡す正確な内容。
     'argus_prediction_failure_input.py': 'e7ebebf90f17a248d7c0d3fb986c000f2c039fd8',
+    'test_argus_comparison_calibration_restore.py': 'edcff6b9c5e2b2678ee5e95016a18d72fb2645a8',
     'test_argus_prediction_failure_input.py': '332caa0f400965585cf5293f6fd00e2b298ab8b2',
     # 受領記録と営業日時を明示した回収検査の正確な内容。
     'test_argus_v12_2_3.py': 'c66e88717ae7dbb360206d1179feae707432f775',
@@ -278,7 +279,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "docs/V13_7_NUMERICAL_RESEARCH_INVENTORY.md": "827158b6cc590cd7aebc60b8539806c50c82ef91",
     "test_jp_market_valuation.py": "2aa3093796fa2b75e10525bde18cd19922fb43ef",
     "test_argus_index_research_cache.py": "276f27505aa1066cea06d3973a6cecdf92742eb9",
-    "argus_index_research_cache.py": "1f87de5c120025cbab591573b673352e39e2e379",
+    "argus_index_research_cache.py": "ff395903a8217425c8ddb2a959082399c3ed2937",
     'test_argus_research_calculation_reuse.py': '0aec958de8cffbd8caca9e1e56c9c52dc3227cad',
     'web/src/components/today/NumericalResearchDetails.tsx': '51154691504cfeb1ed08891a450c9e746f161a95',
     'test_argus_jp_market_research.py': '8a05e5b7f1f514f6d16b3541fbf1d5c11484ccad',
