@@ -784,14 +784,20 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
     if len(vix) >= sum(ARGUS_MACD_BASELINE[:2]):
         macd = _macd([row["numericValue"] for row in vix], ARGUS_MACD_BASELINE)
         emit("vix.macd_histogram", macd[-1]["histogram"], vix)
+        # A crossing refers to the whole prefix, including late receipts.
+        # Build its exact maximum once instead of rescanning every prefix
+        # at every historical cutoff.
+        known_prefix = []
+        for row in vix:
+            known = _knowledge_time(row)
+            known_prefix.append(max(known_prefix[-1], known) if known_prefix else known)
         for index in range(sum(ARGUS_MACD_BASELINE[:2]), len(vix)):
             previous, current = macd[index - 1]["histogram"], macd[index]["histogram"]
             direction = 1 if previous <= 0 < current else -1 if previous >= 0 > current else None
             if direction:
-                inputs = vix[:index + 1]
                 conditions.append({"instrumentId": INSTRUMENT, "seriesId": "vix_macd_cross",
                                    "date": _day(vix[index]), "value": direction, "unit": "DIRECTION",
-                                   "availableFrom": max(_knowledge_time(row) for row in inputs).isoformat(),
+                                   "availableFrom": known_prefix[index].isoformat(),
                                    "sourceRef": "derived:vix-macd-12-26-9", "validationStatus": "UNVALIDATED"})
 
     nikkei = _history(price_series.get("nikkei", ()), INSTRUMENT, cutoff)

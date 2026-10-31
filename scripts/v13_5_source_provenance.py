@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_jp_market_feature_replay_prefix.py': '7d7ef840dab5fffaf018f9f941d1277ed808fd64',
     # 予測失敗の正規化入力を既存の非公開保存へ渡す正確な内容。
     'argus_prediction_failure_input.py': 'e7ebebf90f17a248d7c0d3fb986c000f2c039fd8',
     'test_argus_comparison_calibration_restore.py': 'edcff6b9c5e2b2678ee5e95016a18d72fb2645a8',
@@ -422,7 +423,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_analogs.py': '06e435fc3d8cdef86bc1759d8b41e94c910b1912',
     'jp_market_dynamics.py': '36624677a01861c4adfa706e4d5b9dfa405212dd',
     'jp_market_events.py': '9798f7172c58c3d94748641d4ca67fd4dde6f4cf',
-    'jp_market_features.py': 'bc09163c35f5e0a16d186ba27391e812124b0af7',
+    'jp_market_features.py': '8fabe12cd8e02abf55af2ef7e0a46e79ffcc65ed',
     'jp_market_price_paths.py': '1e8ac78677ebd5072de9a725ace3beaff31760af',
     'test_jp_market_current_per.py': '0ee8c8c8f6fe2631dccd7e829abbfdc673503209',
     'jp_market_source_adapters.py': 'f5950ba0ff80f98b8a121cfd08d5eef691e81af0',
