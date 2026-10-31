@@ -25,8 +25,7 @@ jobs:
           opener=urllib.request.build_opener(NoRedirect)
           routes=(('health.json','/healthz'),
                   ('macro.json','/api/argus/macro-event-analysis?limit=50'),
-                  ('memory.json','/api/argus/admin/memory-attribution?threads=1'),
-                  ('future.json','/api/argus/future-map'))
+                  ('memory.json','/api/argus/admin/memory-attribution?threads=1'))
           records=[]
           for name,path in routes:
               record={'name':name,'at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
@@ -41,9 +40,9 @@ jobs:
               except Exception as exc:
                   record.update(status='UNOBSERVED',errorClass=type(exc).__name__)
               records.append(record)
-          (p/'receipt.json').write_text(json.dumps({'reads':records,'getCount':4,
+          (p/'receipt.json').write_text(json.dumps({'reads':records,'getCount':3,
               'postOrGeneration':0,'newClock':0},indent=2)+'\n')
-          print('GET attempted=4; response contents private only')
+          print('GET attempted=3; response contents private only')
           PY
       - name: 既存の非公開診断保存へ保全
         if: always()
