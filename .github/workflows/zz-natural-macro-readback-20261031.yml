@@ -23,8 +23,8 @@ jobs:
           class NoRedirect(urllib.request.HTTPRedirectHandler):
               def redirect_request(self,*a,**k):return None
           opener=urllib.request.build_opener(NoRedirect)
-          routes=(('health.json','/healthz'),
-                  ('macro.json','/api/argus/macro-event-analysis?limit=50'),
+          routes=(('targets.json','/api/argus/analyst-targets'),
+                  ('calendar.json','/api/argus/jp-equity-calendar'),
                   ('memory.json','/api/argus/admin/memory-attribution?threads=1'))
           records=[]
           for name,path in routes:
