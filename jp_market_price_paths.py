@@ -461,7 +461,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     cannot silently compress a twenty-session comparison window.
     """
     from jp_market_analogs import (AnalogPolicy, INSTRUMENT, FEATURE_MAX_AGE_DAYS, _hash, build_episode,
-                                  reference_path, select_episodes, with_reactions)
+                                  reference_paths, select_episodes, with_reactions)
     from jp_market_engine import point_in_time_rows
 
     current_per_context = isinstance(valuation, Mapping) and valuation.get("basis") == CURRENT_BASIS
@@ -483,13 +483,13 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     # Only rows knowable at this cutoff enter the yardstick: a correction
     # received later must not move the unit a past comparison was measured in.
     from jp_market_analogs import robust_feature_scales
-    scales = robust_feature_scales(point_in_time_rows(
-        [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0])
+    visible_states = point_in_time_rows(
+        [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0]
+    scales = robust_feature_scales(visible_states)
     policy = policy or AnalogPolicy.with_scales(scales)
     from dataclasses import replace as _replace
     from jp_market_analogs import RECENT_SCALE_YEARS, recent_scale_windows
-    recent_policy = _replace(policy, state_scales=AnalogPolicy.with_scales(robust_feature_scales(point_in_time_rows(
-        [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0],
+    recent_policy = _replace(policy, state_scales=AnalogPolicy.with_scales(robust_feature_scales(visible_states,
         windows=recent_scale_windows(cutoff, RECENT_SCALE_YEARS))).state_scales)
     visible, visibility = point_in_time_rows(
         [dict(row) for row in bars if row.get("instrumentId") == INSTRUMENT], cutoff)
@@ -669,16 +669,16 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     selection = select_episodes(current, candidates, session_dates=session_dates, policy=policy,
                                 ranking_policy=selection_policy)
     selected = {row["snapshotId"] for row in selection["selected"]}
-    paths = [reference_path(episode, later_bars=visible, display_cutoff=cutoff,
-                            session_dates=session_dates, horizon_sessions=horizon_sessions, policy=policy)
-             for episode in candidates if episode["snapshotId"] in selected]
+    paths = reference_paths([episode for episode in candidates if episode["snapshotId"] in selected],
+                            later_bars=visible, display_cutoff=cutoff, session_dates=session_dates,
+                            horizon_sessions=horizon_sessions, policy=policy)
     ensemble = reference_ensemble(selection, paths, horizon_sessions=horizon_sessions)
     scale = index_valuation_scale(valuation, cutoff=cutoff, anchor_date=current["anchorDate"],
                                   anchor_price=current["window"][-1]["close"])
     nearest_ids = {row["snapshotId"] for row in selection.get("nearestRejected") or []}
-    nearest_paths = [reference_path(episode, later_bars=visible, display_cutoff=cutoff,
-                                    session_dates=session_dates, horizon_sessions=horizon_sessions, policy=policy)
-                     for episode in candidates if episode["snapshotId"] in nearest_ids] if not selected else []
+    nearest_paths = reference_paths([episode for episode in candidates if episode["snapshotId"] in nearest_ids],
+                                    later_bars=visible, display_cutoff=cutoff, session_dates=session_dates,
+                                    horizon_sessions=horizon_sessions, policy=policy) if not selected else []
     document = comparison_document(current, selection, paths, ensemble, scale=scale, nearest_paths=nearest_paths)
     if research:
         result = backtest_cache.get("materialReactionResearch") or {}

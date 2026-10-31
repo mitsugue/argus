@@ -547,6 +547,34 @@ def reference_path(episode: Mapping[str, Any], *, later_bars: Sequence[Mapping[s
                    display_cutoff: str, session_dates: Sequence[str], horizon_sessions: int = 5,
                    policy: AnalogPolicy = AnalogPolicy()) -> dict[str, Any]:
     """Display an already selected past outcome. It cannot change selection."""
+    return reference_paths([episode], later_bars=later_bars, display_cutoff=display_cutoff,
+                           session_dates=session_dates, horizon_sessions=horizon_sessions,
+                           policy=policy)[0]
+
+
+def reference_paths(episodes: Sequence[Mapping[str, Any]], *, later_bars: Sequence[Mapping[str, Any]],
+                    display_cutoff: str, session_dates: Sequence[str], horizon_sessions: int = 5,
+                    policy: AnalogPolicy = AnalogPolicy()) -> list[dict[str, Any]]:
+    """Check every episode; share one full price visibility check in this batch.
+
+    The admitted rows live only for this call. Nothing is reused across a new
+    cutoff or a corrected input, and each episode keeps its content verification.
+    """
+    visible = None
+
+    def visible_prices():
+        nonlocal visible
+        if visible is None:
+            visible = _visible([dict(row) for row in later_bars if isinstance(row, Mapping) and
+                                _identity(row) == INSTRUMENT], display_cutoff)
+        return visible
+
+    return [_reference_path(episode, visible_prices=visible_prices, display_cutoff=display_cutoff,
+                            session_dates=session_dates, horizon_sessions=horizon_sessions, policy=policy)
+            for episode in episodes]
+
+
+def _reference_path(episode, *, visible_prices, display_cutoff, session_dates, horizon_sessions, policy):
     _verify_episode(episode, policy)
     if isinstance(horizon_sessions, bool) or horizon_sessions not in (1, 5, 10, 20):
         raise ValueError("unsupported_reference_horizon")
@@ -556,8 +584,7 @@ def reference_path(episode: Mapping[str, Any], *, later_bars: Sequence[Mapping[s
     comparison = [{"offsetSessions": index - policy.lookback_sessions,
                    "date": row["date"], "value": row["close"] / anchor_price * 100}
                   for index, row in enumerate(episode["window"])]
-    visible = _visible([dict(row) for row in later_bars if isinstance(row, Mapping) and
-                        _identity(row) == INSTRUMENT], display_cutoff)
+    visible = visible_prices()
     if list(session_dates) != sorted(set(session_dates)) or episode["anchorDate"] not in session_dates:
         raise ValueError("reference_exchange_calendar_required")
     expected_dates = list(session_dates[session_dates.index(episode["anchorDate"]) + 1:])[:horizon_sessions]
