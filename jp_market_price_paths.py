@@ -491,6 +491,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     from jp_market_analogs import RECENT_SCALE_YEARS, recent_scale_windows
     recent_policy = _replace(policy, state_scales=AnalogPolicy.with_scales(robust_feature_scales(visible_states,
         windows=recent_scale_windows(cutoff, RECENT_SCALE_YEARS))).state_scales)
+    del visible_states
     visible, visibility = point_in_time_rows(
         [dict(row) for row in bars if row.get("instrumentId") == INSTRUMENT], cutoff)
     visible.sort(key=lambda row: row.get("date", ""))

@@ -1,6 +1,7 @@
 import copy
 import math
 import unittest
+import weakref
 from datetime import date, timedelta
 from unittest.mock import patch
 
@@ -284,6 +285,36 @@ class ReferenceBatchTest(unittest.TestCase):
             self.assertEqual(self.invoke([]), [])
             self.assertEqual(self.invoke([unavailable]),
                              [{'status': 'UNAVAILABLE', 'comparison': [], 'subsequentReference': []}])
+
+    def test_admitted_scale_rows_are_released_before_candidate_selection(self):
+        import jp_market_engine as engine
+        import jp_market_analogs as analogs
+        from jp_market_price_paths import cached_index_comparison
+        admitted = []
+        original = engine.point_in_time_rows
+        select = analogs.select_episodes
+
+        class ScaleRows(list):
+            pass
+
+        def visible(rows, cutoff):
+            data, proof = original(rows, cutoff)
+            if rows and rows[0].get('field') == 'credit.loss_pct':
+                data = ScaleRows(data)
+                admitted.append(weakref.ref(data))
+            return data, proof
+
+        def selection(*args, **kwargs):
+            self.assertEqual(len(admitted), 1)
+            self.assertIsNone(admitted[0]())
+            return select(*args, **kwargs)
+
+        with patch.object(engine, 'point_in_time_rows', new=visible), \
+                patch.object(analogs, 'select_episodes', new=selection):
+            result = cached_index_comparison(bars(0, 84), cutoff=DAYS[83] + 'T23:00:00Z',
+                session_dates=DAYS, policy=POLICY,
+                state_rows=[fact('credit.loss_pct', -1, 60, 'PERCENT')])
+        self.assertEqual(result['status'], 'available')
 
 
 if __name__ == "__main__":
