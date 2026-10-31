@@ -43383,9 +43383,17 @@ def _index_research_restore():
     if not path:
         return
     try:
-        restored = argus_index_research_cache.load(path, method=_INDEX_RESEARCH_METHOD, now=_ai_now_iso())
+        restored, calibration = argus_index_research_cache.load_with_calibration(
+            path, method=_INDEX_RESEARCH_METHOD, now=_ai_now_iso(),
+            calibration_method=argus_index_research_cache.calibration_method())
         argus_product_naming.require_allowed(restored)
+        argus_product_naming.require_allowed(calibration)
         _INDEX_RESEARCH_REPORTS.update(restored)
+        # The numerical engine still checks the complete current input key.
+        # Do not replace a study already computed in this process.
+        if calibration and not _JP_ANALOG_BACKTEST_CACHE:
+            _JP_ANALOG_BACKTEST_CACHE.update(calibration)
+            _INDEX_RESEARCH_STATUS['calibrationRestored'] = True
         _INDEX_RESEARCH_STATUS["restoredCount"] = len(restored)
     except FileNotFoundError:
         pass
@@ -43475,12 +43483,24 @@ def _index_research_warm():
             outcomes=outcomes)
         path = _index_research_path()
         if path and updated:
-            doc = argus_index_research_cache.envelope(_INDEX_RESEARCH_REPORTS)
+            calibration = None
+            try:
+                calibration = argus_index_research_cache.calibration_record(
+                    _JP_ANALOG_BACKTEST_CACHE,
+                    method=argus_index_research_cache.calibration_method(), at=_ai_now_iso())
+            except (ValueError, TypeError, OSError) as exc:
+                # Optional acceleration must not prevent saving good reports.
+                _INDEX_RESEARCH_STATUS['calibrationSaveError'] = type(exc).__name__
+            doc = argus_index_research_cache.envelope(_INDEX_RESEARCH_REPORTS, calibration=calibration)
             argus_persistent_storage.atomic_write_json(path, doc,
                 maximum_bytes=argus_index_research_cache.MAX_BYTES, file_mode=0o600)
-            restored = argus_index_research_cache.load(path, method=_INDEX_RESEARCH_METHOD, now=_ai_now_iso())
+            restored, checked_calibration = argus_index_research_cache.load_with_calibration(
+                path, method=_INDEX_RESEARCH_METHOD, now=_ai_now_iso(),
+                calibration_method=argus_index_research_cache.calibration_method())
             if restored != _INDEX_RESEARCH_REPORTS:
                 raise ValueError("index_research_readback_mismatch")
+            if checked_calibration != (doc.get('comparisonCalibration') or {}).get('state', {}):
+                raise ValueError('research_calibration_readback_mismatch')
             _INDEX_RESEARCH_STATUS["persistenceStatus"] = "VERIFIED"
     except Exception as exc:
         _INDEX_RESEARCH_STATUS.update(status="FAILED", errorClass=type(exc).__name__)

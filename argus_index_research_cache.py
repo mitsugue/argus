@@ -1,14 +1,57 @@
 """Bounded derived index reports; numerical engines and original histories stay authoritative."""
 from copy import deepcopy
 from datetime import datetime
+from functools import lru_cache
 import hashlib
 import json
 from pathlib import Path
+import sys
 
 SCHEMA = 'argus-index-research-cache-v1'
 MAX_BYTES = 24 * 1024 * 1024
 KEYS = {f'chart:{index}:{frame}' for index in ('N225', 'TOPIX', 'SPX', 'NDX')
         for frame in ('daily', 'weekly')} | {f'comparison:N225:{h}' for h in (1, 5, 10, 20)}
+
+# Only small completed studies are retained. Sealed episodes can exceed the
+# existing file bound; rebuild them from current inputs and validate the
+# engine's content key before reusing any study. No chart or original is added.
+CALIBRATION_FIELDS = frozenset(('key', 'result', 'search', 'materialReactionResearch', 'yardstickResearch'))
+CALIBRATION_MAX_BYTES = 2 * 1024 * 1024
+
+
+@lru_cache(maxsize=1)
+def calibration_method():
+    root = Path(__file__).resolve().parent
+    modules = ('argus_index_research_cache.py', 'jp_market_price_paths.py', 'jp_market_analog_backtest.py',
+               'jp_market_analogs.py', 'jp_market_engine.py', 'jp_market_level_map.py')
+    return digest({'schema': 'comparison-calibration-v1',
+                   'python': list(sys.version_info[:3]),
+                   'platform': sys.platform,
+                   'sources': {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+                               for name in modules}})
+
+
+def calibration_record(state, *, method, at):
+    if not state:
+        return None
+    if not CALIBRATION_FIELDS <= state.keys():
+        raise ValueError('research_calibration_incomplete')
+    selected = {key: state[key] for key in CALIBRATION_FIELDS}
+    key = selected['key']
+    if not isinstance(key, str) or len(key) != 64 or any(c not in '0123456789abcdef' for c in key):
+        raise ValueError('research_calibration_identity')
+    if not isinstance(selected['result'], dict) or any(
+            selected[k] is not None and not isinstance(selected[k], dict)
+            for k in ('search', 'materialReactionResearch', 'yardstickResearch')):
+        raise ValueError('research_calibration_result')
+    raw = json.dumps(selected, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+    if len(raw.encode()) > CALIBRATION_MAX_BYTES:
+        raise ValueError('research_calibration_size_bound')
+    stamp(at)
+    if not method:
+        raise ValueError('research_calibration_method')
+    body = {'methodVersion': method, 'savedAt': at, 'state': json.loads(raw)}
+    return {**body, 'sha256': digest(body)}
 
 
 def digest(value):
@@ -53,13 +96,22 @@ def read(records, key, *, method, now):
     return deepcopy(value)
 
 
-def envelope(records):
+def envelope(records, *, calibration=None):
     if set(records) - KEYS:
         raise ValueError('research_cache_key_bound')
-    return {'schemaVersion': SCHEMA, 'records': records, 'sha256': digest(records)}
+    doc = {'schemaVersion': SCHEMA, 'records': records, 'sha256': digest(records)}
+    if calibration is not None:
+        doc['comparisonCalibration'] = calibration
+        if len(json.dumps(doc, ensure_ascii=False, allow_nan=False).encode()) > MAX_BYTES:
+            del doc['comparisonCalibration']
+    return doc
 
 
 def load(path, *, method, now):
+    return load_with_calibration(path, method=method, now=now)[0]
+
+
+def load_with_calibration(path, *, method, now, calibration_method=None):
     path = Path(path)
     if path.is_symlink():
         raise ValueError('research_cache_symlink')
@@ -81,7 +133,18 @@ def load(path, *, method, now):
         admitted = read({key: value}, key, method=method, now=now)
         if admitted:
             restored[key] = admitted
-    return restored
+    saved = doc.get('comparisonCalibration')
+    calibration = {}
+    if saved is not None:
+        if not isinstance(saved, dict):
+            raise ValueError('research_calibration_schema')
+        expected = calibration_record(saved['state'], method=saved['methodVersion'], at=saved['savedAt'])
+        if saved != expected:
+            raise ValueError('research_calibration_integrity')
+        if (calibration_method and saved['methodVersion'] == calibration_method
+                and stamp(saved['savedAt']) <= stamp(now)):
+            calibration = saved['state']
+    return restored, calibration
 
 
 def comparison_availability_improved(records, previous, *, method, now):
