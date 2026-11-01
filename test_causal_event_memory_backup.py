@@ -2,6 +2,7 @@
 private store and restored when the disk copy is lost."""
 import json
 import os
+import tracemalloc
 
 import pytest
 
@@ -93,6 +94,107 @@ def test_a_real_hash_chained_ledger_round_trips(tmp_path):
     assert backup.synchronize(path, store, read_ledger=memory.read_ledger)["status"] == "RESTORED"
     assert open(path, "rb").read() == original
     assert memory.read_ledger(path)["status"] == "VERIFIED"
+
+
+@pytest.mark.parametrize("case", ["valid", "empty", "missing", "json", "utf8",
+                                  "previous", "sequence", "payload", "tail", "bytes", "records"])
+def test_stream_verifier_keeps_complete_chain_checks_and_limits(tmp_path, monkeypatch, case):
+    path = tmp_path / "stream.jsonl"
+    memory.append_record(str(path), build_event())
+    memory.append_record(str(path), build_event(news(event_id="synthetic:second")))
+    raw = path.read_bytes()
+    if case == "empty":
+        path.write_bytes(b"")
+    elif case == "missing":
+        path.unlink()
+    elif case == "json":
+        path.write_bytes(b"invalid-json\n")
+    elif case == "utf8":
+        path.write_bytes(b"\xff\n")
+    elif case in ("previous", "sequence", "payload"):
+        rows = [json.loads(line) for line in raw.splitlines()]
+        if case == "previous":
+            rows[1]["previousRecordHash"] = "0" * 64
+        elif case == "sequence":
+            rows[1]["sequence"] = 9
+        else:
+            rows[1]["payload"]["headline"] = "synthetic:tampered"
+        path.write_bytes(b"".join(memory._canonical(row) + b"\n" for row in rows))
+    elif case == "tail":
+        path.write_bytes(raw + b'{"incomplete":')
+    elif case == "bytes":
+        monkeypatch.setattr(memory, "MAX_LEDGER_BYTES", len(raw) - 1)
+    elif case == "records":
+        monkeypatch.setattr(memory, "MAX_LEDGER_RECORDS", 1)
+    before = path.read_bytes() if path.exists() else None
+    full = memory.read_ledger(str(path))
+    streamed = memory.verify_ledger(str(path))
+    assert {key: streamed[key] for key in ("status", "reason", "corruptLine")} == {
+        key: full[key] for key in ("status", "reason", "corruptLine")}
+    assert streamed["recordCount"] == len(full["records"])
+    assert streamed["lastRecordHash"] == (full["records"][-1]["recordHash"] if full["records"] else None)
+    assert "records" not in streamed
+    assert (path.read_bytes() if path.exists() else None) == before
+
+
+def test_stream_backup_keeps_all_manifest_and_chunk_bytes_and_restored_records(tmp_path):
+    path = tmp_path / "source.jsonl"
+    for index in range(8):
+        memory.append_record(str(path), build_event(news(event_id="synthetic:" + str(index))))
+    raw = path.read_bytes()
+    retained_reader = lambda file: memory.read_ledger(file)
+    first, second = Store(), Store()
+    assert backup.synchronize(str(path), first, read_ledger=retained_reader) == backup.synchronize(
+        str(path), second, read_ledger=memory.read_ledger)
+    assert first.files == second.files
+    assert path.read_bytes() == raw
+    for index, (store, reader) in enumerate(((first, retained_reader), (second, memory.read_ledger))):
+        restored = tmp_path / ("restored-" + str(index) + ".jsonl")
+        assert backup.synchronize(str(restored), store, read_ledger=reader)["status"] == "RESTORED"
+        assert restored.read_bytes() == raw
+        assert len(memory.read_ledger(str(restored))["records"]) == 8
+
+
+def test_backup_summary_derives_injected_reader_count_and_tail_from_records(tmp_path):
+    supplied = {"status": "VERIFIED", "records": [{"recordHash": "actual"}],
+                "recordCount": 999, "lastRecordHash": "unverified"}
+    result = backup._verify(b"synthetic\n", str(tmp_path), lambda _: supplied)
+    assert result["recordCount"] == 1 and result["lastRecordHash"] == "actual"
+    assert "records" not in result
+
+
+def test_backup_chunk_bound_is_checked_before_any_remote_write(tmp_path, monkeypatch):
+    path = tmp_path / "bounded.jsonl"
+    path.write_bytes(b"x" * (backup.CHUNK_TARGET - 1) + b"\n" + b"y\n")
+    monkeypatch.setattr(backup, "MAX_CHUNKS", 1)
+    store = Store()
+    with pytest.raises(ValueError, match="event_memory_backup_bound"):
+        backup.synchronize(str(path), store, read_ledger=_lines)
+    assert store.files == {} and store.puts == 0
+
+
+def test_backup_verification_avoids_retaining_full_parsed_ledger(tmp_path):
+    path = tmp_path / "large.jsonl"
+    for index in range(64):
+        memory.append_record(str(path), build_event(news(event_id="synthetic-memory:" + str(index))))
+    raw = path.read_bytes()
+    results = []
+    for reader in (lambda file: memory.read_ledger(file), memory.read_ledger):
+        already_tracing = tracemalloc.is_tracing()
+        if not already_tracing:
+            tracemalloc.start()
+        try:
+            tracemalloc.reset_peak()
+            baseline = tracemalloc.get_traced_memory()[0]
+            result = backup._verify(raw, str(tmp_path), reader)
+            results.append((result, tracemalloc.get_traced_memory()[1] - baseline))
+        finally:
+            if not already_tracing:
+                tracemalloc.stop()
+    assert results[0][0] == results[1][0]
+    assert results[0][0]["recordCount"] == 64
+    assert results[1][1] < results[0][1] // 2
+    assert path.read_bytes() == raw
 
 
 def test_scanner_copies_hourly_and_reloads_after_a_restore(tmp_path, monkeypatch):

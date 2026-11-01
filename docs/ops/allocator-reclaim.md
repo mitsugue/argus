@@ -23,6 +23,30 @@ copy together with the resident history. Normalization, every field, array
 order, scalar encoding and the stored hash remain unchanged. Individual row
 encodings are temporary; no archive, row, receipt or restore check is omitted.
 
+Chart, Today and replay state hashes also use the existing artifact chunk
+encoder, with each consumer explicitly retaining its legacy JSON options.
+Chart state keeps its default string fallback; the other state codecs retain
+their own prior behavior. Artifact writing and verification keep their strict
+default codec. Normalization and array order are unchanged. The existing
+private collection record additionally projects only the already reported
+cgroup anon/file/kernel counters and startup RSS integers, without another
+request, to distinguish file cache from process resident memory.
+
+The existing event-ledger backup shares the complete line/sequence/hash-chain
+validator with restoration. Restoration still receives every record; backup
+verification retains only count, tail hash and status. Only the exact trusted
+reader selects that streaming path. Injected readers keep their verification
+behavior, with summaries derived from their records. Chunk boundaries, bytes,
+limits and manifest encoding remain identical. All chunk descriptors and the
+limit are checked before a remote write, then one outgoing piece is retained.
+No record or validation step is removed and no authority is switched.
+
+Only when the operation view is read, the existing bounded native reader
+also supplies five Python arena reservation counters outside the recorder
+lock. Event snapshots do not perform this read. The closed private projection
+retains no native table, raw text, addresses or exception details. Unsupported,
+missing or malformed results stay UNAVAILABLE with unknown counters, not zero.
+
 The existing operation view samples current OS/allocator scalars once when
 read, outside its lock, and carries an opaque process instance plus PID.
 The instance changes across interpreter replacement and survives recorder

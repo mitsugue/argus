@@ -128,8 +128,10 @@ def test_cgroup_v2_parser_marks_optional_fields_unknown(tmp_path):
 
 
 def test_current_memory_view_observes_same_process_across_telemetry_reset_without_lock(monkeypatch):
+    import argus_allocator_policy as policy
     recorder = memory.OperationAttributionRecorder()
     calls = []
+    native_calls = []
     main = memory.sys.modules["__main__"]
     monkeypatch.setattr(main, "_STARTUP", {"state": "ready", "restoreOutcome": "restored",
         "restoreCompletedAt": "2026-11-01T00:01:00Z", "token": "private-memory-sentinel"}, raising=False)
@@ -140,6 +142,12 @@ def test_current_memory_view_observes_same_process_across_telemetry_reset_withou
         calls.append(recorder._lock._is_owned())
         return {"capturedAt": "2026-11-01T00:00:00Z", "process": {"vmHwmBytes": 500}}
     monkeypatch.setattr(memory, "memory_snapshot", sample)
+    def native_sample():
+        native_calls.append(recorder._lock._is_owned())
+        return {"status": "AVAILABLE", "arenaBytesCurrent": 1000, "allocatedSmallBlockBytes": 700,
+                "availableSmallBlockBytes": 100, "unusedPoolBytes": 100, "arenasCurrent": 1,
+                "raw": "private-memory-sentinel", "sizeClasses": [{"address": "private-memory-sentinel"}]}
+    monkeypatch.setattr(policy, "python_allocator_metrics", native_sample)
     first = recorder.view()
     recorder.reset()
     second = recorder.view()
@@ -149,14 +157,32 @@ def test_current_memory_view_observes_same_process_across_telemetry_reset_withou
     assert first["currentMemory"]["process"]["vmHwmBytes"] == 500
     assert first["startupRestore"]["state"] == "ready" and first["startupRestore"]["outcome"] == "restored"
     assert first["startupRestore"]["integrityStatus"] == "ok"
+    assert first["pythonReservations"]["arenaBytesCurrent"] == 1000
+    assert first["pythonReservations"]["allocatedSmallBlockBytes"] == 700
     assert "private-memory-sentinel" not in json.dumps(first)
     assert calls == [False, False]
+    assert native_calls == [False, False]
     monkeypatch.setattr(memory, "memory_snapshot",
                         lambda: (_ for _ in ()).throw(OSError("private-memory-sentinel")))
     failed = recorder.view()
     assert failed["currentMemory"]["status"] == "UNAVAILABLE"
     assert "private-memory-sentinel" not in json.dumps(failed)
     assert failed["historyCount"] == 0 and failed["processIdentity"] == identity
+
+
+@pytest.mark.parametrize("value", [True, -1, 2**100, None, "private-memory-sentinel"])
+def test_native_reservation_view_fails_closed_without_false_zero_or_raw_details(monkeypatch, value):
+    import argus_allocator_policy as policy
+    raw = {"status": "AVAILABLE", "arenaBytesCurrent": 1000, "allocatedSmallBlockBytes": value,
+           "availableSmallBlockBytes": 100, "unusedPoolBytes": 100, "arenasCurrent": 1}
+    monkeypatch.setattr(policy, "python_allocator_metrics", lambda: raw)
+    result = memory._python_reservation_observation()
+    assert result["status"] == "UNAVAILABLE"
+    assert all(v is None for key, v in result.items() if key not in ("status", "capturedAt"))
+    assert "private-memory-sentinel" not in json.dumps(result)
+    monkeypatch.setattr(policy, "python_allocator_metrics",
+                        lambda: (_ for _ in ()).throw(OSError("private-memory-sentinel")))
+    assert memory._python_reservation_observation()["status"] == "UNAVAILABLE"
 
 
 def test_history_is_bounded_after_100_missions_and_scalar_only():

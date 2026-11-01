@@ -187,17 +187,24 @@ def test_runtime_projection_is_closed_and_does_not_infer_collection_cpu_ownershi
 def test_existing_runtime_readback_retains_closed_memory_and_allocator_identity_only():
     from scripts.run_intel_collect import private_runtime_record
     raw = runtime_fixture()
+    raw['startupRss'] = {'beforeRestoreMib': 180, 'afterRestoreMib': 500,
+                         'owner': 'private-memory-sentinel'}
     raw['allocatorReclaim'] = {'startupPolicy': {'backendBuildSha': 'a' * 40,
         'backendVersion': '1.2.3', 'pythonAllocator': {'allocatorName': 'malloc'},
         'token': 'private-memory-sentinel'}}
     raw['operationAttribution'] = {'processIdentity': {'instanceId': 'b' * 32, 'pid': 123},
+        'pythonReservations': {'status': 'AVAILABLE', 'capturedAt': '2026-11-01T00:01:00Z',
+                              'arenaBytesCurrent': 1000, 'allocatedSmallBlockBytes': 700,
+                              'availableSmallBlockBytes': 100, 'unusedPoolBytes': 100, 'arenasCurrent': 1,
+                              'raw': 'private-memory-sentinel'},
         'startupRestore': {'state': 'ready', 'outcome': 'restored', 'integrityStatus': 'ok',
                           'completedAt': '2026-11-01T00:00:00Z', 'token': 'private-memory-sentinel'},
         'currentMemory': {'capturedAt': '2026-11-01T00:01:00Z',
             'smapsRollup': {'swapBytes': 0},
             'process': {'vmRssBytes': 500, 'vmHwmBytes': 600, 'owner': 'private-memory-sentinel'},
             'cgroup': {'memoryCurrentBytes': 800, 'memoryPeakBytes': 900,
-                       'memoryMaxBytes': 2147483648, 'events': {'max': 2, 'oom_kill': 0}},
+                       'memoryMaxBytes': 2147483648, 'events': {'max': 2, 'oom_kill': 0},
+                       'stat': {'anon': 600, 'file': 100, 'kernel': 10, 'owner': 'private-memory-sentinel'}},
             'allocatorMetrics': {'allocatedBytes': 300, 'freeBytes': 100, 'mmapBytes': 5},
             'token': 'private-memory-sentinel'}}
     value = private_runtime_record(raw, {})['memoryObservation']
@@ -210,15 +217,26 @@ def test_existing_runtime_readback_retains_closed_memory_and_allocator_identity_
     assert value['cgroup']['memoryMaxBytes'] == 2147483648
     assert value['cgroup']['events']['oom_kill'] == 0
     assert value['cgroup']['events']['oom'] is None
+    assert value['cgroup']['stat'] == {'anon': 600, 'file': 100, 'kernel': 10}
+    assert value['startupRssMib'] == {'beforeRestoreMib': 180, 'afterRestoreMib': 500}
+    assert value['pythonReservations']['arenaBytesCurrent'] == 1000
+    assert value['pythonReservations']['allocatedSmallBlockBytes'] == 700
     assert 'private-memory-sentinel' not in json.dumps(value)
     raw['operationAttribution']['processIdentity'].update(instanceId='private-memory-sentinel', pid=True)
     raw['operationAttribution']['currentMemory']['cgroup']['memoryMaxBytes'] = 2**100
+    raw['operationAttribution']['currentMemory']['cgroup']['stat'].update(anon=-1, file=2**100, kernel=True)
+    raw['startupRss'].update(beforeRestoreMib=True, afterRestoreMib=65537)
+    raw['operationAttribution']['pythonReservations']['status'] = 'private-memory-sentinel'
     raw['allocatorReclaim']['startupPolicy'].update(backendBuildSha='A' * 40, backendVersion='private-memory-sentinel')
     raw['allocatorReclaim']['startupPolicy']['pythonAllocator']['allocatorName'] = {'secret': 1}
     value = private_runtime_record(raw, {})['memoryObservation']
     assert value['pid'] is None and value['processInstanceId'] is None
     assert value['backendSha'] is None and value['backendVersion'] is None
     assert value['allocatorName'] is None and value['cgroup']['memoryMaxBytes'] is None
+    assert all(value is None for value in value['cgroup']['stat'].values())
+    assert all(value is None for value in value['startupRssMib'].values())
+    assert value['pythonReservations']['status'] == 'UNAVAILABLE'
+    assert value['pythonReservations']['allocatedSmallBlockBytes'] is None
     assert 'private-memory-sentinel' not in json.dumps(value)
 
 

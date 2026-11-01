@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.220"
+PRODUCT_VERSION = "v13.8.221"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -55,7 +55,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_boj_policy_result.py': 'f8efca2d1b961b6d53a7fc3ace9142f2da77d6c0',
     # 2026-10-23 オーナー承認: 答え合わせのデータの名前に指数(INDEX)を足した正確な内容(日経平均そのものへの置き換え)。
     # 承認の言葉は argus_market_replay.py の build_context のコメントに記録。次の変更はまた止まる。
-    'argus_market_replay.py': '1f84b6bcec622db9f7e0573aab16f7797b026a7c',
+    'argus_market_replay.py': '14510c24ebf337da81b778456d03830caa9d244f',
     # 2026-10-23 オーナー承認: 米国の日足(OHLCV_BAR)の優先順の先頭に moomoo の確定足を加え、
     # 日経平均そのものの値(INDEX_LEVEL)の取得元に立花・Yahoo の遅延値を置いた正確な内容。
     # 取得元の優先順位は維持し、時点検査の独立所有を保つコピー処理削減を含む正確な内容。
@@ -133,19 +133,19 @@ REVIEWED_EXTENSION_BLOBS = {
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
     # contents; v13.7.59 candidate).
     'argus_allocator_policy.py': '5a39a5da52a42fdedd9e1bb0e68b3d9a24fa4dcd',
-    'test_argus_allocator_policy.py': '9c69cfa60663289c90a71da83c77671b2550facc',
-    'docs/ops/allocator-reclaim.md': '841305ff9e9ae1aa6c95c37cfae2fa74a9ff75ed',
+    'test_argus_allocator_policy.py': '5b3611839f112df5caffbfe09209ec5d6f44be8e',
+    'docs/ops/allocator-reclaim.md': '36e7f038294fcd2339c150e78de8f3470a91f7e7',
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
     'test_argus_jp_owner_quote_warm.py': 'eb998f6e67dbfeb8bc65598521189618efd0de04',
     # Derived market artifacts outside the sealed checkpoint (exact reviewed
     # contents of the store module, its tests, registry and measurement budget).
-    'argus_market_artifact_store.py': '165ddd480ff87d2f08de1dcaef8cdaad6de0e96a',
+    'argus_market_artifact_store.py': 'd011163998579adac26d041bcb3e5f264d01f405',
     'argus_recovery_measurement.py': '11943e22628b0728e9fcb118c149593a53c48727',
     'argus_recovery_registry.py': '5c43767361e05b3dea99b02605920c5fc3e9608c',
     'docs/MARKET_ARTIFACT_STORE.md': 'e2e994da953b12c42a95d67b4eaf9ab1a8c0b6aa',
     'test_argus_market_artifact_split.py': '9331909fab52e479dc63f869aba531ba26825668',
     'test_argus_market_artifact_store.py': 'f6c2d1c330b814666328b34d8939efea934d8146',
-    'test_argus_memory_attribution.py': '11845bd2a5bd41eceb214420e4fb191f8c1af0f2',
+    'test_argus_memory_attribution.py': '41e10691a314f91fac8cc2631a02bffb05269dd4',
     'test_argus_recovery_measurement.py': 'b7beb4b6c1915ddb2cfab0857f31a82cc5c5c832',
     'test_argus_recovery_registry.py': 'd1132e69768b5a9edf9bbf964bd8df476edda4b8',
     # Today boot console (owner 2026-09-28): exact reviewed contents.
@@ -189,7 +189,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '618d05f602f0a5d2912af7f831af0c06972bdab0',
+    'web/scripts/owner-today-https.mjs': 'e7d12359974ba609ef358ff049a7d2b4bda7980e',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -229,8 +229,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/warm-profile-runtime.mjs': 'd9a07d4103109ee92f8cfdcf86c25c8e9e83db05',
     'web/scripts/warm-profile-runtime.test.mjs': '07935360729d30d689156113345ab2a0c72a78bb',
     # Exact regression coverage for canonical record-sized asset hash encoding.
-    "test_argus_normalized_hash.py": "20dd0d0e9119d8b0357b459cb1eac1bc146c5b11",
-    'argus_memory_attribution.py': 'c2725d97e1a8ad2981166bb477159344d8cd44f2',
+    "test_argus_normalized_hash.py": "2042898101a72400f878a006233720b848bff70d",
+    'argus_memory_attribution.py': 'a3e67c469b4014a7d7969e1ba2270c30c262e3d1',
     'docs/ops/checkpoint-phase-timing.md': '1d82cb8f29f26a6f351e628a3d97904382b62334',
     'test_argus_checkpoint_phase_timing.py': '31edce29020fa25091ed78ad4dceaa6719ca0c2a',
     'ops/imports/acquisition_20260920/ACCEPTANCE_CRITERIA.md': '918375dfb7c134b0792b401b90356178635e5f1a',

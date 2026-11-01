@@ -18,6 +18,9 @@ import os
 import tempfile
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
+from argus_causal_event_memory import read_ledger as _state_reader
+from argus_causal_event_memory import verify_ledger as _stream_verifier
+
 PREFIX = "market-analysis/v1/event-memory"
 MANIFEST = PREFIX + "/manifest.json"
 SCHEMA = "argus-event-memory-backup-v1"
@@ -29,18 +32,27 @@ def _sha(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def chunks(raw: bytes) -> List[bytes]:
-    """Whole lines, greedily packed; a boundary depends only on earlier bytes."""
-    out, current = [], bytearray()
+def _iter_chunks(raw: bytes):
+    """The existing whole-line chunk boundaries, without retaining every piece."""
+    count, current = 0, bytearray()
     for line in raw.splitlines(keepends=True):
         if current and len(current) + len(line) > CHUNK_TARGET:
-            out.append(bytes(current)); current = bytearray()
+            count += 1
+            if count > MAX_CHUNKS:
+                raise ValueError("event_memory_backup_bound")
+            yield bytes(current)
+            current = bytearray()
         current.extend(line)
     if current:
-        out.append(bytes(current))
-    if len(out) > MAX_CHUNKS:
-        raise ValueError("event_memory_backup_bound")
-    return out
+        count += 1
+        if count > MAX_CHUNKS:
+            raise ValueError("event_memory_backup_bound")
+        yield bytes(current)
+
+
+def chunks(raw: bytes) -> List[bytes]:
+    """Keep the original list API for callers that need every chunk."""
+    return list(_iter_chunks(raw))
 
 
 def _chunk_path(digest: str) -> str:
@@ -82,17 +94,21 @@ def synchronize(path: str, remote: Any, *, read_ledger: Callable[[str], Mapping[
     local = _verify(raw, os.path.dirname(os.path.abspath(path)), read_ledger)
     if local.get("status") != "VERIFIED":
         return {"status": "LOCAL_NOT_VERIFIED", "reason": local.get("reason")}
-    records = len(local.get("records") or [])
+    records = local["recordCount"]
     if manifest and manifest["totalSha256"] == _sha(raw):
         return {"status": "VERIFIED", "records": records, "bytes": len(raw)}
     if manifest and (len(raw) < manifest["totalBytes"] or _sha(raw[:manifest["totalBytes"]]) != manifest["totalSha256"]):
         # Not a clean extension (a shorter or different ledger): never overwrite the copy.
         return {"status": "CONFLICT", "records": records, "remoteRecords": manifest["records"]}
-    pieces = chunks(raw)
+    # Check the unchanged chunk bound before any remote mutation. Retain only
+    # digest/length descriptors; a second pass holds one outgoing piece.
+    chunk_rows = [{"sha256": _sha(piece), "bytes": len(piece)} for piece in _iter_chunks(raw)]
     known = {row["sha256"] for row in (manifest or {}).get("chunks") or []}
     written = 0
-    for piece in pieces:
+    for piece, row in zip(_iter_chunks(raw), chunk_rows, strict=True):
         digest = _sha(piece)
+        if digest != row["sha256"] or len(piece) != row["bytes"]:
+            raise ValueError("event_memory_backup_chunk_plan_changed")
         if digest in known:
             continue
         existing, existing_version = remote.get(_chunk_path(digest))
@@ -101,9 +117,9 @@ def synchronize(path: str, remote: Any, *, read_ledger: Callable[[str], Mapping[
             written += 1
         elif existing != piece:
             raise ValueError("event_memory_backup_chunk_conflict")
-    body = {"schemaVersion": SCHEMA, "chunks": [{"sha256": _sha(p), "bytes": len(p)} for p in pieces],
+    body = {"schemaVersion": SCHEMA, "chunks": chunk_rows,
             "totalBytes": len(raw), "totalSha256": _sha(raw), "records": records,
-            "lastRecordHash": (local.get("records") or [{}])[-1].get("recordHash")}
+            "lastRecordHash": local["lastRecordHash"]}
     encoded = _encode(body)
     remote.put(MANIFEST, encoded, expected_version=version)
     if remote.get(MANIFEST)[0] != encoded:
@@ -111,12 +127,25 @@ def synchronize(path: str, remote: Any, *, read_ledger: Callable[[str], Mapping[
     return {"status": "UPLOADED", "records": records, "bytes": len(raw), "chunksWritten": written}
 
 
+def _verification_summary(path: str, read_ledger: Callable[[str], Mapping[str, Any]]) -> Mapping[str, Any]:
+    # Only the exact authoritative reader has a shared, equivalent streaming
+    # verifier. Preserve injected-reader behavior and derive its scalars from
+    # the validated records, never from caller-supplied summary fields.
+    if read_ledger is _state_reader:
+        return _stream_verifier(path)
+    checked = read_ledger(path)
+    rows = checked.get("records") or []
+    return {"status": checked.get("status"), "reason": checked.get("reason"),
+            "corruptLine": checked.get("corruptLine"), "recordCount": len(rows),
+            "lastRecordHash": rows[-1].get("recordHash") if rows else None}
+
+
 def _verify(raw: bytes, directory: str, read_ledger: Callable[[str], Mapping[str, Any]]) -> Mapping[str, Any]:
     fd, temporary = tempfile.mkstemp(prefix=".event-memory-check-", dir=directory)
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(raw)
-        return read_ledger(temporary)
+        return _verification_summary(temporary, read_ledger)
     finally:
         os.unlink(temporary)
 
@@ -138,8 +167,8 @@ def _restore(path: str, remote: Any, manifest: Mapping[str, Any],
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(whole); handle.flush(); os.fsync(handle.fileno())
-        checked = read_ledger(temporary)
-        if checked.get("status") != "VERIFIED" or len(checked.get("records") or []) != manifest["records"]:
+        checked = _verification_summary(temporary, read_ledger)
+        if checked.get("status") != "VERIFIED" or checked["recordCount"] != manifest["records"]:
             raise ValueError("event_memory_backup_chain_invalid")
         if os.path.exists(final):
             raise ValueError("event_memory_backup_local_appeared")

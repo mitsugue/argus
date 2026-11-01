@@ -916,10 +916,14 @@ def merge_report(state: Dict[str, Any], report: Dict[str, Any], now_iso: str) ->
 
 
 def state_hash(state: Dict[str, Any]) -> str:
+    from argus_market_artifact_store import payload_sha256
     normalized = normalize_state(state)
-    return _hash({key: normalized[key] for key in
-                  ("snapshots", "zones", "turningPoints", "reactionAnomalies",
-                   "relationshipBreaks", "invalidations")}, 32)
+    codec = json.JSONEncoder(ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), default=str)
+    return payload_sha256({key: normalized[key] for key in
+                          ("snapshots", "zones", "turningPoints", "reactionAnomalies",
+                           "relationshipBreaks", "invalidations")},
+                          encode_bytes=lambda value: codec.encode(value).encode("utf-8"))[:32]
 
 
 def read_back_verified(local: Dict[str, Any], remote: Dict[str, Any]) -> bool:

@@ -64,7 +64,7 @@ def _canonical(value: Any) -> bytes:
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
-def _iter_canonical(value: Any, depth: int = 2):
+def _iter_canonical(value: Any, depth: int = 2, *, encode_bytes=None):
     """Canonical JSON in pieces, identical to ``_canonical`` byte for byte.
 
     Containers are streamed to ``depth`` levels (an artifact payload is a
@@ -73,31 +73,36 @@ def _iter_canonical(value: Any, depth: int = 2):
     standard encoder's ``sort_keys`` order for other key types must be
     preserved exactly.
     """
+    encode_bytes = _canonical if encode_bytes is None else encode_bytes
     if depth > 0 and type(value) is dict and value and \
             all(type(key) is str for key in value):
         yield b"{"
         for index, key in enumerate(sorted(value)):
             if index:
                 yield b","
-            yield _canonical(key)
+            yield encode_bytes(key)
             yield b":"
-            yield from _iter_canonical(value[key], depth - 1)
+            yield from _iter_canonical(value[key], depth - 1, encode_bytes=encode_bytes)
         yield b"}"
     elif depth > 0 and type(value) is list and value:
         yield b"["
         for index, item in enumerate(value):
             if index:
                 yield b","
-            yield from _iter_canonical(item, depth - 1)
+            yield from _iter_canonical(item, depth - 1, encode_bytes=encode_bytes)
         yield b"]"
     else:
-        yield _canonical(value)
+        yield encode_bytes(value)
 
 
-def payload_sha256(payload: Mapping[str, Any]) -> str:
-    """SHA-256 of the canonical payload, streamed piece by piece."""
+def payload_sha256(payload: Mapping[str, Any], *, encode_bytes=None) -> str:
+    """Stream a payload hash; an explicit codec preserves legacy state hashes.
+
+    Artifact writers and verifiers retain their strict default codec. State
+    hash callers may supply their existing codec without changing its options.
+    """
     hasher = hashlib.sha256()
-    for piece in _iter_canonical(payload):
+    for piece in _iter_canonical(payload, encode_bytes=encode_bytes):
         hasher.update(piece)
     return hasher.hexdigest()
 

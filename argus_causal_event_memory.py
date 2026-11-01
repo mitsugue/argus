@@ -1083,19 +1083,24 @@ def append_record(path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
             return record
 
 
-def read_ledger(path: str) -> Dict[str, Any]:
+def _read_ledger(path: str, *, retain_records: bool) -> Dict[str, Any]:
     records: List[Dict[str, Any]] = []
+    record_count = 0
     previous_hash = None
     corrupt_line = None
+    def result(status, reason, line):
+        if retain_records:
+            return {"status": status, "reason": reason,
+                    "records": records, "corruptLine": line}
+        return {"status": status, "reason": reason, "recordCount": record_count,
+                "lastRecordHash": previous_hash, "corruptLine": line}
     try:
         if os.path.getsize(path) > MAX_LEDGER_BYTES:
-            return {"status": "DATA_GATED", "reason": "ledger_byte_bound_exceeded",
-                    "records": [], "corruptLine": None}
+            return result("DATA_GATED", "ledger_byte_bound_exceeded", None)
         with open(path, "rb") as handle:
             for line_number, raw in enumerate(handle, 1):
-                if len(records) >= MAX_LEDGER_RECORDS:
-                    return {"status": "DATA_GATED", "reason": "ledger_record_bound_exceeded",
-                            "records": records, "corruptLine": None}
+                if record_count >= MAX_LEDGER_RECORDS:
+                    return result("DATA_GATED", "ledger_record_bound_exceeded", None)
                 try:
                     row = json.loads(raw.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1106,13 +1111,24 @@ def read_ledger(path: str) -> Dict[str, Any]:
                             row, expected_sequence=line_number):
                     corrupt_line = line_number
                     break
-                records.append(row)
+                if retain_records:
+                    records.append(row)
+                record_count += 1
                 previous_hash = row["recordHash"]
     except FileNotFoundError:
-        return {"status": "EMPTY", "reason": None, "records": [], "corruptLine": None}
-    return {"status": "CORRUPT" if corrupt_line else "VERIFIED",
-            "reason": "hash_chain_invalid" if corrupt_line else None,
-            "records": records, "corruptLine": corrupt_line}
+        return result("EMPTY", None, None)
+    return result("CORRUPT" if corrupt_line else "VERIFIED",
+                  "hash_chain_invalid" if corrupt_line else None, corrupt_line)
+
+
+def read_ledger(path: str) -> Dict[str, Any]:
+    """Read all validated records for the existing state restoration path."""
+    return _read_ledger(path, retain_records=True)
+
+
+def verify_ledger(path: str) -> Dict[str, Any]:
+    """Run the same complete chain checks without retaining parsed records."""
+    return _read_ledger(path, retain_records=False)
 
 
 def empty_state() -> Dict[str, Any]:

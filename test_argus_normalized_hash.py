@@ -1,11 +1,17 @@
 import copy
+import json
 import math
+import tracemalloc
 import unicodedata
 from datetime import date, datetime, timezone
 
 import pytest
 
 import argus_asset_chart_cache as assets
+import argus_chart_intelligence as chart_archive
+import argus_today_intelligence as today_archive
+import argus_market_replay as replay_archive
+import argus_market_artifact_store as artifact_files
 import argus_verified_snapshot as verified
 from test_argus_asset_chart_cache import (
     ASSET_BOUNDARY_STATE_HASH,
@@ -16,6 +22,110 @@ from test_argus_verified_snapshot import (
     boundary_store as verified_boundary_store,
     candidate as verified_candidate,
 )
+
+
+ARCHIVE_FIELDS = {
+    chart_archive: ("snapshots", "zones", "turningPoints", "reactionAnomalies", "relationshipBreaks", "invalidations"),
+    today_archive: ("snapshots", "shortSellingHistory", "failedRallyOutcomes"),
+    replay_archive: ("contexts", "contextHistory"),
+}
+
+
+def _archive_state(module, value, count=1):
+    state = module.empty_state()
+    for field in ARCHIVE_FIELDS[module]:
+        state[field] = [{"id": str(i), "date": "2026-01-01", "asOf": "2026-01-01T00:00:00Z",
+                         "contextId": "synthetic-context-" + str(i), "instrumentId": "JP:SYNTHETIC-" + str(i),
+                         "horizon": 5, "metadata": value} for i in range(count)]
+    return state
+
+
+def _legacy_archive_hash(module, state):
+    normalized = module.normalize_state(state)
+    return module._hash({key: normalized[key] for key in ARCHIVE_FIELDS[module]}, 32)
+
+
+@pytest.mark.parametrize("module", ARCHIVE_FIELDS)
+@pytest.mark.parametrize("value", [
+    "日本株 🌐 𠀋 quote\"\\\n",
+    {"z": [None, True, False, -0.0, 1e-100, 1e100], "a": ("tuple", 7)},
+    {"combining": "Cafe\N{COMBINING ACUTE ACCENT}", "precomposed": "Caf\N{LATIN SMALL LETTER E WITH ACUTE}"},
+    {2: "numeric-key", 1: "first"},
+    math.nan, math.inf, -math.inf,
+])
+def test_archive_stream_hash_preserves_full_legacy_codec_and_normalization(module, value):
+    raw = _archive_state(module, value)
+    expected = _legacy_archive_hash(module, raw)
+    assert module.state_hash(raw) == expected
+    assert _legacy_archive_hash(module, raw) == expected
+
+
+@pytest.mark.parametrize("module", ARCHIVE_FIELDS)
+def test_archive_stream_hash_preserves_ownership_and_canonical_order(module):
+    raw = _archive_state(module, {"b": [1, {"日本語": "🙂"}], "a": -0.0}, count=3)
+    before = copy.deepcopy(raw)
+    expected = _legacy_archive_hash(module, raw)
+    assert module.state_hash(raw) == expected and raw == before
+    reordered = copy.deepcopy(raw)
+    for field in ARCHIVE_FIELDS[module]:
+        reordered[field] = [dict(reversed(list(row.items()))) for row in reordered[field]]
+    assert module.state_hash(reordered) == _legacy_archive_hash(module, reordered) == expected
+    for field in ARCHIVE_FIELDS[module]:
+        reordered[field].reverse()
+    assert module.state_hash(reordered) == _legacy_archive_hash(module, reordered)
+    raw[ARCHIVE_FIELDS[module][0]][0]["metadata"]["b"].append("synthetic:changed")
+    assert module.state_hash(raw) == _legacy_archive_hash(module, raw) != expected
+
+
+@pytest.mark.parametrize("module", ARCHIVE_FIELDS)
+def test_archive_stream_hash_keeps_default_string_fallback_and_rejections(module):
+    raw = _archive_state(module, date(2026, 1, 1))
+    if module is chart_archive:
+        assert module.state_hash(raw) == _legacy_archive_hash(module, raw)
+    else:
+        for digest in (module.state_hash, lambda state: _legacy_archive_hash(module, state)):
+            with pytest.raises(TypeError):
+                digest(raw)
+    cyclic = []
+    cyclic.append(cyclic)
+    raw = _archive_state(module, cyclic)
+    for digest in (module.state_hash, lambda state: _legacy_archive_hash(module, state)):
+        with pytest.raises(ValueError):
+            digest(raw)
+    raw = _archive_state(module, "\ud800")
+    for digest in (module.state_hash, lambda state: _legacy_archive_hash(module, state)):
+        with pytest.raises(UnicodeEncodeError):
+            digest(raw)
+
+
+def test_archive_custom_codec_does_not_change_strict_artifact_default():
+    raw = {"rows": [{"value": math.nan}]}
+    with pytest.raises(ValueError):
+        artifact_files.payload_sha256(raw)
+    legacy_codec = json.JSONEncoder(sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    assert artifact_files.payload_sha256(raw, encode_bytes=lambda value: legacy_codec.encode(value).encode())
+    with pytest.raises(ValueError):
+        artifact_files.payload_sha256(raw)
+
+
+@pytest.mark.parametrize("module", ARCHIVE_FIELDS)
+def test_archive_stream_hash_avoids_whole_archive_encoding_peak(module):
+    raw = _archive_state(module, {"label": "検証🙂" * 300}, count=128)
+    results = []
+    for digest in (lambda state: _legacy_archive_hash(module, state), module.state_hash):
+        already_tracing = tracemalloc.is_tracing()
+        if not already_tracing:
+            tracemalloc.start()
+        try:
+            tracemalloc.reset_peak()
+            baseline = tracemalloc.get_traced_memory()[0]
+            value = digest(raw)
+            results.append((value, tracemalloc.get_traced_memory()[1] - baseline))
+        finally:
+            if not already_tracing:
+                tracemalloc.stop()
+    assert results[0][0] == results[1][0]
+    assert results[1][1] < results[0][1] // 2
 
 
 def _events(module, value):

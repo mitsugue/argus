@@ -453,32 +453,43 @@ def test_python_allocator_unavailable_never_exposes_text_or_exception(monkeypatc
     assert policy.python_allocator_metrics()["status"] == "UNAVAILABLE"
 
 
-def test_python_allocator_native_reader_leaves_descriptors_and_stderr_unchanged(capfd):
+@pytest.mark.parametrize("allocator", ["pymalloc", "malloc"])
+def test_python_allocator_native_reader_leaves_descriptors_and_stderr_unchanged(allocator):
     import ctypes
     if (sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 12)
             or not sys.platform.startswith("linux") or ctypes.sizeof(ctypes.c_void_p) != 8):
         pytest.skip("native reader deliberately restricted to Linux CPython 3.12 64-bit")
-    # Import/init before measuring persistent resources, then exercise the
-    # real native API. A supported runtime returning unavailable is a failure.
-    allocator_name = policy.python_allocator_name()
-    assert allocator_name in {"pymalloc", "pymalloc_debug", "malloc", "malloc_debug"}
-    expected_status = "AVAILABLE" if allocator_name.startswith("pymalloc") else "UNAVAILABLE"
-    assert policy.python_allocator_metrics()["status"] == expected_status
-    before = len(os.listdir("/proc/self/fd"))
-    stderr_before = os.fstat(2)
-    for _ in range(8):
-        result = policy.python_allocator_metrics()
-        assert result["status"] == expected_status
-        assert result["allocatorName"] == allocator_name
-        if expected_status == "AVAILABLE":
-            assert result["arenasHighwater"] >= result["arenasCurrent"]
-        else:
-            assert "arenaBytesCurrent" not in result
-    assert len(os.listdir("/proc/self/fd")) == before
-    stderr_after = os.fstat(2)
-    assert (stderr_before.st_dev, stderr_before.st_ino) == (stderr_after.st_dev, stderr_after.st_ino)
-    captured = capfd.readouterr()
-    assert captured.out == captured.err == ""
+    # Other scanner tests leave background work in a suite worker. Observe
+    # the reader's own persistent resources in a fresh process, keeping every
+    # FD/stderr assertion and checking both native allocator modes explicitly.
+    program = """
+import os
+import argus_allocator_policy as policy
+allocator_name = policy.python_allocator_name()
+assert allocator_name in {"pymalloc", "pymalloc_debug", "malloc", "malloc_debug"}
+expected_status = "AVAILABLE" if allocator_name.startswith("pymalloc") else "UNAVAILABLE"
+assert policy.python_allocator_metrics()["status"] == expected_status
+before = len(os.listdir("/proc/self/fd"))
+stderr_before = os.fstat(2)
+for _ in range(8):
+    result = policy.python_allocator_metrics()
+    assert result["status"] == expected_status
+    assert result["allocatorName"] == allocator_name
+    if expected_status == "AVAILABLE":
+        assert result["arenasHighwater"] >= result["arenasCurrent"]
+    else:
+        assert "arenaBytesCurrent" not in result
+assert len(os.listdir("/proc/self/fd")) == before
+stderr_after = os.fstat(2)
+assert (stderr_before.st_dev, stderr_before.st_ino) == (stderr_after.st_dev, stderr_after.st_ino)
+"""
+    env = dict(os.environ)
+    env["PYTHONMALLOC"] = allocator
+    result = subprocess.run([sys.executable, "-B", "-c", program],
+                            cwd=str(Path(policy.__file__).parent), env=env,
+                            capture_output=True, text=True, check=True, timeout=15)
+    assert result.stdout == result.stderr == ""
+
 
 @pytest.fixture
 def _reclaim_state():
