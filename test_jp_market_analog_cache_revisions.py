@@ -69,4 +69,43 @@ class CacheRevisions(unittest.TestCase):
         bars=copy.deepcopy(BARS);bars[35]['availableFrom']='2026-12-01T00:00:00Z'
         cache={};self.invoke(cache,bars=bars);key=cache['key'];bars[35]['close']+=900
         self.invoke(cache,bars=bars);self.assertEqual(self.studies(),1);self.assertEqual(key,cache['key'])
+
+    def test_owned_input_projection_keeps_complete_outputs_and_price_proof(self):
+        import jp_market_engine as engine
+        state = row('credit.loss_pct', -1, metadata={'receipts': ['synthetic:initial']})
+        corrected = {**copy.deepcopy(state), 'revision': 1, 'knownAt': CUTOFF, 'value': -2}
+        future = {**copy.deepcopy(state), 'availableFrom': '2026-12-01T00:00:00Z', 'value': 900}
+        malformed = {**copy.deepcopy(state), 'revision': True}
+        states = [state, corrected, future, malformed]
+        prices = copy.deepcopy(BARS)
+        prices[10]['metadata'] = {'receipts': ['synthetic:cash']}
+        before = copy.deepcopy((states, prices))
+        original = engine.point_in_time_rows
+
+        def ordinary_projection(rows, cutoff, **kwargs):
+            return original(rows, cutoff)
+
+        ordinary = {}
+        cache = {}
+        with patch.object(engine, 'point_in_time_rows', ordinary_projection):
+            for horizon in (1, 5, 10, 20):
+                ordinary[horizon] = self.invoke(cache, bars=prices, state_rows=states,
+                                                horizon_sessions=horizon)
+        cache = {}
+        for horizon in (1, 5, 10, 20):
+            result = self.invoke(cache, bars=prices, state_rows=states,
+                                 horizon_sessions=horizon)
+            self.assertEqual(result, ordinary[horizon])
+            self.assertIn('proofId', result['sourceVisibility'])
+        self.assertEqual((states, prices), before)
+
+    def test_owned_state_projection_rechecks_conflicts_even_with_warm_cache(self):
+        state = row('credit.loss_pct', -1, metadata={'receipts': ['synthetic:initial']})
+        cache = {}
+        self.invoke(cache, state_rows=[state])
+        conflict = copy.deepcopy(state)
+        conflict['metadata']['receipts'].append('synthetic:conflicting')
+        with self.assertRaisesRegex(ValueError, 'conflicting_row_revision'):
+            self.invoke(cache, state_rows=[state, conflict])
+        self.assertEqual(state['metadata']['receipts'], ['synthetic:initial'])
 if __name__=='__main__':unittest.main(verbosity=2)
