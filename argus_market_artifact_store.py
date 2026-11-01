@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 from typing import Any, Callable, Dict, Mapping, Optional
 
 SCHEMA = "argus-market-artifact-v1"
@@ -113,6 +114,36 @@ def _file_sha256(path: str) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             hasher.update(chunk)
     return hasher.hexdigest()
+
+
+def verify_file_digest(path: str, expected: str, *, maximum_bytes: int) -> None:
+    """Verify an installed derived cache without retaining a parsed copy.
+
+    The caller computes the expected canonical digest before writing. Check
+    the installed regular file independently, including replacement during
+    the read, while keeping the original cache's byte ceiling.
+    """
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as handle:
+        before = os.fstat(handle.fileno())
+        if not stat.S_ISREG(before.st_mode) or before.st_size > maximum_bytes:
+            raise ArtifactError("derived_cache_size_or_type")
+        digest = hashlib.sha256()
+        total = 0
+        for piece in iter(lambda: handle.read(128 * 1024), b""):
+            total += len(piece)
+            if total > maximum_bytes:
+                raise ArtifactError("derived_cache_size_or_type")
+            digest.update(piece)
+        after = os.fstat(handle.fileno())
+        installed = os.stat(path, follow_symlinks=False)
+        def identity(value):
+            return (value.st_dev, value.st_ino, value.st_mode, value.st_size,
+                    value.st_mtime_ns, value.st_ctime_ns)
+        if (identity(before) != identity(after)
+                or identity(after) != identity(installed)
+                or total != before.st_size or digest.hexdigest() != expected):
+            raise ArtifactError("derived_cache_readback_mismatch")
 
 
 def directory_for(root: str) -> str:

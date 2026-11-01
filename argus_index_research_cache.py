@@ -120,6 +120,26 @@ def load_with_calibration(path, *, method, now, calibration_method=None):
     if len(raw) > MAX_BYTES:
         raise ValueError('research_cache_size_bound')
     doc = json.loads(raw)
+    return _admit_document(doc, method=method, now=now,
+                           calibration_method=calibration_method, copy_records=True)
+
+
+def validate_for_persistence(doc, *, method, now, calibration_method=None):
+    """Validate the source using the restore rules, without a second cache.
+
+    Every record is still reconstructed and checked individually. Only the
+    admitted output mapping borrows records, and it never escapes this call.
+    Startup restoration and public reads retain their independent ownership.
+    """
+    restored, calibration = _admit_document(doc, method=method, now=now,
+        calibration_method=calibration_method, copy_records=False)
+    if restored != doc['records']:
+        raise ValueError('index_research_readback_mismatch')
+    if calibration != (doc.get('comparisonCalibration') or {}).get('state', {}):
+        raise ValueError('research_calibration_readback_mismatch')
+
+
+def _admit_document(doc, *, method, now, calibration_method, copy_records):
     records = doc.get('records')
     if doc.get('schemaVersion') != SCHEMA or not isinstance(records, dict) or set(records) - KEYS:
         raise ValueError('research_cache_schema')
@@ -130,7 +150,9 @@ def load_with_calibration(path, *, method, now, calibration_method=None):
         expected = record(key, value['payload'], method=value['methodVersion'], at=value['calculatedAt'])
         if value != expected:
             raise ValueError('research_cache_record_integrity')
-        admitted = read({key: value}, key, method=method, now=now)
+        admitted = (read({key: value}, key, method=method, now=now) if copy_records
+                    else value if value.get('methodVersion') == method
+                    and stamp(value['calculatedAt']) <= stamp(now) else None)
         if admitted:
             restored[key] = admitted
     saved = doc.get('comparisonCalibration')
