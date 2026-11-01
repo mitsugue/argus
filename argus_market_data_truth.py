@@ -1137,6 +1137,20 @@ def select_history_as_of(
     return out
 
 
+_IMMUTABLE_ROW_SCALARS = (str, int, float, bool, type(None))
+
+
+def _owned_row_copy(raw):
+    material = dict(raw)
+    if any(type(key) is not str for key in material):
+        return copy.deepcopy(material)
+    owned = {}
+    memo = {id(material): owned}
+    for key, value in material.items():
+        owned[key] = value if type(value) in _IMMUTABLE_ROW_SCALARS else copy.deepcopy(value, memo)
+    return owned
+
+
 def point_in_time_rows(rows: Iterable[Mapping[str, Any]], as_of: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Strict legacy-row cutoff used while provider caches migrate to observations.
 
@@ -1158,7 +1172,9 @@ def point_in_time_rows(rows: Iterable[Mapping[str, Any]], as_of: str) -> Tuple[L
         if not isinstance(raw, Mapping):
             excluded_malformed += 1
             continue
-        row = copy.deepcopy(dict(raw))
+        # Immutable JSON scalars already have deepcopy's ownership semantics.
+        # Copy nested values before validation, preserving shared references.
+        row = _owned_row_copy(raw)
         revision = row.get("revision", 0)
         known_field = "knownAt" if row.get("knownAt") else \
             "availableFrom" if row.get("availableFrom") else None

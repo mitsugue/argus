@@ -1196,5 +1196,59 @@ class LegacyPointInTimeTests(unittest.TestCase):
                 [row] * (truth.MAX_INPUT_OBSERVATIONS + 1), AS_OF)
 
 
+class LegacyRowOwnershipTest(unittest.TestCase):
+    def test_rows_and_complete_proof_match_deepcopy_for_revisions_and_bad_inputs(self):
+        from unittest.mock import patch
+        from collections import UserDict
+        row = {'date': '2026-08-12', 'availableFrom': '2026-08-12', 'close': 100,
+               'sourceRef': {'refs': ['original']}}
+        revised = {**row, 'revision': 1, 'knownAt': '2026-08-13T00:00:00Z', 'close': 101}
+        rows = [UserDict(row), revised, copy.deepcopy(row),
+                {**revised, 'revision': 2, 'knownAt': '2026-08-15T00:00:00Z'},
+                {'date': '2026-08-12', 'close': 10},
+                {'date': 'bad', 'knownAt': 'bad'},
+                {**row, 'date': '2026-08-15'},
+                {**row, 'date': '2026-08-11', 'revision': 1}]
+        original = copy.deepcopy(rows)
+        actual = truth.point_in_time_rows(rows, AS_OF)
+        with patch.object(truth, '_owned_row_copy', lambda raw: copy.deepcopy(dict(raw))):
+            expected = truth.point_in_time_rows(rows, AS_OF)
+        self.assertEqual(actual, expected)
+        self.assertEqual(rows, original)
+        self.assertEqual((True, 'ok'), truth.verify_point_in_time_proof(actual[1]))
+
+    def test_nested_ownership_and_aliases_survive_source_and_result_mutations(self):
+        shared = {'refs': ['original']}
+        row = {'date': '2026-08-12', 'availableFrom': '2026-08-12', 'close': 100,
+               'sourceRef': shared, 'metadata': shared}
+        selected, proof = truth.point_in_time_rows([row], AS_OF)
+        self.assertIs(selected[0]['sourceRef'], selected[0]['metadata'])
+        shared['refs'].append('source-change')
+        self.assertEqual(selected[0]['metadata']['refs'], ['original'])
+        selected[0]['metadata']['refs'].append('result-change')
+        self.assertEqual(shared['refs'], ['original', 'source-change'])
+        again, updated = truth.point_in_time_rows([row], AS_OF)
+        self.assertNotEqual(proof['admittedDatasetDigest'], updated['admittedDatasetDigest'])
+        self.assertEqual(again[0]['metadata']['refs'], ['original', 'source-change'])
+
+    def test_source_change_after_admission_does_not_rewrite_proof_input(self):
+        from unittest.mock import patch
+        row = {'date': '2026-08-12', 'availableFrom': '2026-08-12', 'close': 100,
+               'metadata': {'refs': ['admitted']}}
+        digest = truth._sha
+        changed = False
+        def during_hash(value):
+            nonlocal changed
+            if not changed:
+                row['metadata']['refs'].append('after-copy')
+                changed = True
+            return digest(value)
+        with patch.object(truth, '_sha', side_effect=during_hash):
+            selected, proof = truth.point_in_time_rows([row], AS_OF)
+        self.assertEqual(selected[0]['metadata']['refs'], ['admitted'])
+        self.assertEqual(row['metadata']['refs'], ['admitted', 'after-copy'])
+        self.assertEqual((True, 'ok'), truth.verify_point_in_time_proof(proof))
+
+
 if __name__ == "__main__":
     unittest.main()

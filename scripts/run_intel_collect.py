@@ -27,20 +27,30 @@ STAGES = frozenset(('news_feeds', 'news_translation', 'news_ranking', 'news_pers
     'pit_official', 'pit_feature_history', 'pit_feature_sources', 'pit_feature_ledger',
     'pit_feature_reconcile', 'pit_feature_build', 'pit_feature_persist', 'pit_research', 'pit_backup'))
 
+RESEARCH_KEYS = frozenset(
+    [f'chart:{index}:{interval}' for index in ('N225', 'NDX', 'SPX', 'TOPIX')
+     for interval in ('daily', 'weekly')]
+    + [f'comparison:N225:{horizon}' for horizon in (1, 5, 10, 20)])
+
+
+def _private_stamp(value):
+    if isinstance(value, str) and len(value) <= 40:
+        try:
+            if datetime.fromisoformat(value.replace('Z', '+00:00')).tzinfo is not None:
+                return value
+        except ValueError:
+            pass
+    return None
+
+
+def _private_seconds(value):
+    return round(value, 3) if (type(value) in (int, float) and
+        0 <= value <= 86400 and math.isfinite(value)) else None
+
 
 def private_timing_record(body, *, include_run_context=False):
     """Closed scalar projection of the SAME tracked response; never returned on stdout."""
-    def stamp(value):
-        if isinstance(value, str) and len(value) <= 40:
-            try:
-                if datetime.fromisoformat(value.replace('Z', '+00:00')).tzinfo is not None:
-                    return value
-            except ValueError:
-                pass
-        return None
-    def seconds(value):
-        return round(value, 3) if (type(value) in (int, float) and
-            0 <= value <= 86400 and math.isfinite(value)) else None
+    stamp, seconds = _private_stamp, _private_seconds
     stages = []
     rows = body.get('completedStages')
     for row in (rows if isinstance(rows, list) else [])[:len(STAGES)]:
@@ -60,6 +70,77 @@ def private_timing_record(body, *, include_run_context=False):
     return projection
 
 
+def private_runtime_record(body, expected):
+    """Latest global research scalars, not an assertion of collection CPU ownership."""
+    body = body if isinstance(body, dict) else {}
+    expected = expected if isinstance(expected, dict) else {}
+    collect = body.get('intelCollect')
+    collect = collect if isinstance(collect, dict) else {}
+    current = collect.get('currentRun')
+    current = private_timing_record(current if isinstance(current, dict) else {}, include_run_context=True)
+    research = body.get('indexResearch')
+    research = research if isinstance(research, dict) else {}
+    raw_outcomes = research.get('outcomes')
+    raw_outcomes = raw_outcomes if isinstance(raw_outcomes, dict) else {}
+    outcomes = {}
+    for key in sorted(RESEARCH_KEYS):
+        row = raw_outcomes.get(key)
+        if not isinstance(row, dict):
+            continue
+        outcomes[key] = {
+            'status': row.get('status') if row.get('status') in
+                ('live', 'stale', 'available', 'unavailable', 'expected_skip',
+                 'missing', 'insufficient_data', 'exception') else None,
+            'elapsedSeconds': _private_seconds(row.get('elapsedSeconds')),
+            'cpuSeconds': _private_seconds(row.get('cpuSeconds')),
+            'calibrationStatus': row.get('calibrationStatus') if row.get('calibrationStatus') in
+                ('REUSED', 'CALCULATED', 'NOT_EVALUABLE') else None}
+    bounds = {key: _private_stamp(expected.get(key)) for key in ('startedAt', 'finishedAt')}
+    research_bounds = {key: _private_stamp(research.get(key))
+                       for key in ('lastStartedAt', 'lastCompletedAt')}
+    within = None
+    if all(bounds.values()) and all(research_bounds.values()):
+        start, finish = (datetime.fromisoformat(bounds[key].replace('Z', '+00:00'))
+                         for key in ('startedAt', 'finishedAt'))
+        rstart, rfinish = (datetime.fromisoformat(research_bounds[key].replace('Z', '+00:00'))
+                           for key in ('lastStartedAt', 'lastCompletedAt'))
+        within = start <= rstart <= rfinish <= finish
+    def rss(value):
+        return value if type(value) in (int, float) and 0 <= value <= 65536 and math.isfinite(value) else None
+    return {'schemaVersion': 'argus-collect-private-runtime-v1',
+        'available': any(row['cpuSeconds'] is not None or row['elapsedSeconds'] is not None
+                         for row in outcomes.values()), 'scope': 'LATEST_GLOBAL_RESEARCH_OBSERVATION',
+        'expectedCollection': bounds, 'observedCollection': current,
+        'collectionTimingBoundsMatch': bool(all(bounds.values()) and all(
+            bounds[key] == current.get(key) for key in bounds)),
+        'researchWindowWithinExpectedCollection': within,
+        'research': {**research_bounds, 'outcomes': outcomes,
+            'status': research.get('status') if research.get('status') in
+                ('NOT_RUN', 'RUNNING', 'AVAILABLE', 'PARTIAL', 'FAILED') else None,
+            'persistenceStatus': 'VERIFIED' if research.get('persistenceStatus') == 'VERIFIED' else None},
+        'currentRssMib': rss(body.get('currentRssMib')), 'peakRssMib': rss(body.get('peakRssMib'))}
+
+
+def _capture_private_runtime(*, base, headers, expected, request, clock, deadline, sink):
+    unavailable = {'schemaVersion': 'argus-collect-private-runtime-v1', 'available': False}
+    value = {**unavailable, 'errorClass': 'runtime_budget_exhausted'}
+    try:
+        remaining = deadline - clock()
+        if remaining > 0:
+            code, raw = request(url=base.rstrip('/') + '/api/argus/admin/memory-attribution',
+                method='GET', headers=headers, data=None, timeout=min(15, remaining))
+            value = {**unavailable, 'errorClass': 'runtime_response_unavailable'}
+            if 200 <= code < 300 and len(raw) <= 1024 * 1024:
+                value = private_runtime_record(json.loads(raw), expected)
+    except (OSError, URLError, TimeoutError, ValueError, TypeError):
+        value = {**unavailable, 'errorClass': 'runtime_transport_or_json_error'}
+    try:
+        sink(value)
+    except Exception:
+        # Auxiliary readback cannot retry or alter the completed collection.
+        pass
+
+
 def save_private_timing(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
@@ -77,7 +158,7 @@ def save_private_timing(path, value):
 
 def run(*, base: str, token: str, timeout: float = 900, request=request_json,
         clock=time.monotonic, sleep=time.sleep, request_id: str | None = None,
-        private_timing=None) -> dict:
+        private_timing=None, private_runtime=None) -> dict:
     if not token:
         return {"status": "failed", "errorClass": "admin_token_missing"}
     run_id = request_id or uuid.uuid4().hex
@@ -108,12 +189,15 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
                     return {"status": "failed", "errorClass": "collect_run_identity_mismatch"}
                 run_id, started = received_id, True
                 if private_timing is not None:
-                    private_timing(private_timing_record(body))
+                    private_timing(private_timing_record(body, include_run_context=True))
                 if body["status"] in ("done", "failed"):
                     # Persist only bounded status/counts, no provider payloads.
                     result = body.get("result") or {}
                     failed_feeds = result.get("failedFeeds") or []
                     all_feeds_failed = bool(result.get("feeds")) and len(failed_feeds) >= result["feeds"]
+                    if private_runtime is not None:
+                        _capture_private_runtime(base=base, headers=headers, expected=body,
+                            request=request, clock=clock, deadline=deadline, sink=private_runtime)
                     return {"status": "failed" if all_feeds_failed else body["status"], "runId": run_id,
                             "startedAt": body.get("startedAt"), "finishedAt": body.get("finishedAt"),
                             "errorClass": "all_intel_feeds_unavailable" if all_feeds_failed else body.get("errorClass"),
@@ -145,16 +229,26 @@ def main(argv=None):
     parser.add_argument('--private-timing-output', type=Path)
     args = parser.parse_args(argv)
     saved = {'ok': False, 'available': False}
+    runtime_saved = {'ok': False, 'available': False}
     def observe(value):
         try:
             save_private_timing(args.private_timing_output, value)
             saved.update(ok=True, available=value['available'])
         except (OSError, ValueError):
             saved.update(ok=False, available=False)
+    def observe_runtime(value):
+        try:
+            path = args.private_timing_output.with_name(args.private_timing_output.stem + '-runtime.json')
+            save_private_timing(path, value)
+            runtime_saved.update(ok=True, available=value['available'])
+        except (OSError, ValueError):
+            runtime_saved.update(ok=False, available=False)
     result = run(base=args.base, token=os.environ.get("ARGUS_ADMIN_TOKEN", ""), timeout=args.timeout,
-                 private_timing=observe if args.private_timing_output else None)
+                 private_timing=observe if args.private_timing_output else None,
+                 private_runtime=observe_runtime if args.private_timing_output else None)
     if args.private_timing_output:
         result.update(privateTimingSaved=saved['ok'], privateTimingAvailable=saved['available'])
+        result.update(privateRuntimeSaved=runtime_saved['ok'], privateRuntimeAvailable=runtime_saved['available'])
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result["status"] == "done" else 1
 
