@@ -192,7 +192,6 @@ def history_cache_envelope(history, *, method: str) -> dict[str, Any]:
 
 def load_history_cache(path, *, method: str, now: str):
     """Read once on the background lane; mismatch never becomes current data."""
-    from jp_market_engine import _instant
     target = Path(path)
     if target.is_symlink():
         raise ValueError("feature_cache_symlink")
@@ -201,8 +200,25 @@ def load_history_cache(path, *, method: str, now: str):
     if len(raw) > HISTORY_CACHE_MAX_BYTES:
         raise ValueError("feature_cache_size_bound")
     doc = json.loads(raw)
+    return validate_history_cache(doc, method=method, now=now)
+
+
+def validate_history_cache(doc, *, method: str, now: str):
+    """Share all admission checks with the bounded write verification path."""
+    from jp_market_engine import _instant
+    def json_native(value):
+        # A write must retain the old parsed-readback equality check: JSON
+        # changes tuples and non-string keys even when their digest is valid.
+        if isinstance(value, dict):
+            return all(isinstance(key, str) and json_native(item)
+                       for key, item in value.items())
+        if isinstance(value, list):
+            return all(json_native(item) for item in value)
+        return value is None or isinstance(value, (str, int, float, bool))
     if not isinstance(doc, dict) or doc.get("schemaVersion") != HISTORY_CACHE_SCHEMA:
         raise ValueError("feature_cache_schema")
+    if not json_native(doc):
+        raise ValueError("feature_cache_readback_mismatch")
     expected = history_cache_envelope(doc.get("history"), method=doc.get("methodIdentity"))
     if doc != expected:
         raise ValueError("feature_cache_integrity")

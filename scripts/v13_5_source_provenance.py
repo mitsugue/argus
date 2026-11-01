@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.221"
+PRODUCT_VERSION = "v13.8.222"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_derived_cache_verification.py': 'f6c0666d9c249d96014fa79f4a4379665172244e',
     'docs/operations/saved-corporate-earnings-calendar.md': 'c7c8e5b5dc946e1ac0042e8c955a0dce10f01e95',
     'test_argus_financial_verification_timing.py': 'cdd13a83254f5fb6ce35606116367f22492ab130',
     'test_argus_corporate_earnings_calendar.py': '1523b025ec4de91d171c1527af6f9475da527d67',
@@ -139,7 +140,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_jp_owner_quote_warm.py': 'eb998f6e67dbfeb8bc65598521189618efd0de04',
     # Derived market artifacts outside the sealed checkpoint (exact reviewed
     # contents of the store module, its tests, registry and measurement budget).
-    'argus_market_artifact_store.py': 'd011163998579adac26d041bcb3e5f264d01f405',
+    'argus_market_artifact_store.py': '69a5201c999c9a03af0383abc55f7167479ddbd7',
     'argus_recovery_measurement.py': '11943e22628b0728e9fcb118c149593a53c48727',
     'argus_recovery_registry.py': '5c43767361e05b3dea99b02605920c5fc3e9608c',
     'docs/MARKET_ARTIFACT_STORE.md': 'e2e994da953b12c42a95d67b4eaf9ab1a8c0b6aa',
@@ -189,7 +190,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'e7d12359974ba609ef358ff049a7d2b4bda7980e',
+    'web/scripts/owner-today-https.mjs': '4b6854894c8da7058620e5af552dfdc014565ad4',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -291,7 +292,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "docs/V13_7_NUMERICAL_RESEARCH_INVENTORY.md": "827158b6cc590cd7aebc60b8539806c50c82ef91",
     "test_jp_market_valuation.py": "2aa3093796fa2b75e10525bde18cd19922fb43ef",
     "test_argus_index_research_cache.py": "276f27505aa1066cea06d3973a6cecdf92742eb9",
-    "argus_index_research_cache.py": "ff395903a8217425c8ddb2a959082399c3ed2937",
+    "argus_index_research_cache.py": "9af69d567cb5ac16642eba4b0d6ed5886294bb1b",
     'test_argus_research_calculation_reuse.py': '0aec958de8cffbd8caca9e1e56c9c52dc3227cad',
     'web/src/components/today/NumericalResearchDetails.tsx': '51154691504cfeb1ed08891a450c9e746f161a95',
     'test_argus_jp_market_research.py': '8a05e5b7f1f514f6d16b3541fbf1d5c11484ccad',
@@ -432,7 +433,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_analogs.py': '4f5983abde196da4825d03170909700a1b2735f9',
     'jp_market_dynamics.py': '36624677a01861c4adfa706e4d5b9dfa405212dd',
     'jp_market_events.py': '9798f7172c58c3d94748641d4ca67fd4dde6f4cf',
-    'jp_market_features.py': '8fabe12cd8e02abf55af2ef7e0a46e79ffcc65ed',
+    'jp_market_features.py': '3d74d6f913e7ffa68186ff50ac5210f0904dd747',
     'jp_market_price_paths.py': '6bfc75d1390a8f652693c0535def2aa06db08b18',
     'test_jp_market_current_per.py': '0ee8c8c8f6fe2631dccd7e829abbfdc673503209',
     'jp_market_source_adapters.py': 'f5950ba0ff80f98b8a121cfd08d5eef691e81af0',
