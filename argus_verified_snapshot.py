@@ -550,7 +550,13 @@ def _digest_normalized_store(
 def state_hash(
         store: Dict[str, Any], *,
         diagnostic_observer: Optional[
-            Callable[[str, Dict[str, Any]], None]] = None) -> str:
+            Callable[[str, Dict[str, Any]], None]] = None,
+        _published_readonly: bool = False) -> str:
+    # Only private published-store comparisons opt in. Every snapshot still
+    # takes raw verification; no data field or normalized marker selects it.
+    if _published_readonly is True:
+        return _state_hash_for_persistence(
+            store, diagnostic_observer=diagnostic_observer)
     observing = diagnostic_observer is not None
     if observing:
         _diagnostic_notify(diagnostic_observer, "hash_enter", {})

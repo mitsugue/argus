@@ -839,9 +839,6 @@ def test_normalized_hash_producer_sites_are_exact_ast_whitelist():
     calls = _scanner_hash_calls("state_hash_normalized")
     assert calls == [
         {"function": "_osint_persist_locked",
-         "module": "argus_verified_snapshot",
-         "argument": "_verified_normalized"},
-        {"function": "_osint_persist_locked",
          "module": "argus_asset_chart_cache",
          "argument": "_asset_normalized"},
         {"function": "api_argus_osint_memory_snapshot",
@@ -850,6 +847,13 @@ def test_normalized_hash_producer_sites_are_exact_ast_whitelist():
         {"function": "api_argus_osint_memory_snapshot",
          "module": "argus_asset_chart_cache",
          "argument": "_asset_chart_reports_normalized"},
+    ]
+    # The plain checkpoint projection never enters a trusted normalized path.
+    # Its dedicated hash revalidates all snapshots before the same digest.
+    assert _scanner_hash_calls("_state_hash_for_persistence") == [
+        {"function": "_osint_persist_locked",
+         "module": "argus_verified_snapshot",
+         "argument": "_verified_normalized"},
     ]
 
     persist = inspect.getsource(scanner._osint_persist_locked)
