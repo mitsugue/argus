@@ -388,8 +388,8 @@ class ReferenceBatchTest(unittest.TestCase):
         class ScaleRows(list):
             pass
 
-        def visible(rows, cutoff):
-            data, proof = original(rows, cutoff)
+        def visible(rows, cutoff, **kwargs):
+            data, proof = original(rows, cutoff, **kwargs)
             if rows and rows[0].get('field') == 'credit.loss_pct':
                 data = ScaleRows(data)
                 admitted.append(weakref.ref(data))

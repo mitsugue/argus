@@ -484,7 +484,8 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     # received later must not move the unit a past comparison was measured in.
     from jp_market_analogs import robust_feature_scales
     visible_states = point_in_time_rows(
-        [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff)[0]
+        [dict(row) for row in state_rows if isinstance(row, Mapping)], cutoff,
+        _reuse_immutable_scalars=True, _include_proof=False)[0]
     scales = robust_feature_scales(visible_states)
     policy = policy or AnalogPolicy.with_scales(scales)
     from dataclasses import replace as _replace
@@ -493,7 +494,8 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
         windows=recent_scale_windows(cutoff, RECENT_SCALE_YEARS))).state_scales)
     del visible_states
     visible, visibility = point_in_time_rows(
-        [dict(row) for row in bars if row.get("instrumentId") == INSTRUMENT], cutoff)
+        [dict(row) for row in bars if row.get("instrumentId") == INSTRUMENT], cutoff,
+        _reuse_immutable_scalars=True)
     visible.sort(key=lambda row: row.get("date", ""))
     base = {"status": "unavailable", "automaticAiCalls": 0, "actionAuthority": False,
             "informationCutoff": cutoff, "lastSuccessfulAcquisitionAt": acquired_at,
