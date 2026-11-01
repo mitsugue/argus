@@ -7,6 +7,7 @@ the scanner wiring — without touching a real allocator.
 """
 import inspect
 import json
+import os
 import sys
 import time
 from collections import deque
@@ -285,6 +286,84 @@ def test_memory_coverage_concurrent_walk_is_skipped(monkeypatch):
         "cgroup": {"memoryCurrentBytes": 0, "memoryMaxBytes": 2 * 1024**3}})
     with policy._HEAP_OBSERVATION_LOCK:
         assert policy.resident_memory_coverage({}, [])["builtinGraph"] == {"status": "SKIPPED_BUSY"}
+
+
+def _synthetic_python_allocator_stats():
+    rows = ["Small block threshold = 512, in 32 size classes."]
+    for index in range(32):
+        counts = "1 100 155" if index == 3 else "0 0 0"
+        rows.append(f"{index} {(index + 1) * 16} {counts}")
+    rows.extend([
+        "# arenas allocated total = 3", "# arenas reclaimed = 2",
+        "# arenas highwater mark = 3", "# arenas allocated current = 1",
+        "1 arenas * 1048576 bytes/arena = 1,048,576",
+        "# bytes in allocated blocks = 6,400",
+        "# bytes in available blocks = 9,920",
+        "63 unused pools * 16384 bytes = 1,032,192",
+        "# bytes lost to pool headers = 48",
+        "# bytes lost to quantization = 16",
+        "# bytes lost to arena alignment = 0",
+    ])
+    return "\n".join(rows) + "\n"
+
+
+def test_python_allocator_admits_consistent_class_and_arena_totals_only():
+    result = policy._parse_python_allocator_stats(_synthetic_python_allocator_stats())
+    assert result["allocatedSmallBlockBytes"] == 6400
+    assert result["availableSmallBlockBytes"] == 9920
+    assert result["unusedPoolBytes"] == 1032192
+    assert result["arenaBytesCurrent"] == 1048576
+    assert result["arenasCurrent"] == 1 and result["arenasReclaimed"] == 2
+    assert len(result["sizeClasses"]) == 32
+    assert result["scope"] == "cpython_pymalloc_reservations_not_rss"
+
+
+@pytest.mark.parametrize("old,new", [
+    ("# bytes in allocated blocks = 6,400", "# bytes in allocated blocks = 6,401"),
+    ("# bytes lost to arena alignment = 0", "# bytes lost to arena alignment = 1"),
+    ("# arenas allocated current = 1", "# arenas allocated current = 2"),
+    ("# arenas allocated total = 3", "# arenas allocated total = 4"),
+    ("63 unused pools", "62 unused pools"),
+    ("1048576 bytes/arena", "2097152 bytes/arena"),
+    ("31 512 0 0 0", "30 512 0 0 0"),
+    ("31 512 0 0 0\n", ""),
+    ("# arenas reclaimed = 2", "# arenas reclaimed = 2\n# arenas reclaimed = 2"),
+])
+def test_python_allocator_rejects_incomplete_duplicate_or_inconsistent_stats(old, new):
+    with pytest.raises(ValueError):
+        policy._parse_python_allocator_stats(_synthetic_python_allocator_stats().replace(old, new))
+
+
+def test_python_allocator_unavailable_never_exposes_text_or_exception(monkeypatch):
+    monkeypatch.setattr(policy, "_python_allocator_stats_text", lambda: "private-native-sentinel")
+    result = policy.python_allocator_metrics()
+    assert result["status"] == "UNAVAILABLE"
+    assert "arenaBytesCurrent" not in result
+    assert "private-native-sentinel" not in json.dumps(result)
+    monkeypatch.setattr(policy, "_python_allocator_stats_text",
+                        lambda: (_ for _ in ()).throw(OSError("private-native-sentinel")))
+    assert policy.python_allocator_metrics()["status"] == "UNAVAILABLE"
+
+
+def test_python_allocator_native_reader_leaves_descriptors_and_stderr_unchanged(capfd):
+    import ctypes
+    if (sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 12)
+            or not sys.platform.startswith("linux") or ctypes.sizeof(ctypes.c_void_p) != 8):
+        pytest.skip("native reader deliberately restricted to Linux CPython 3.12 64-bit")
+    # Import/init before measuring persistent resources, then exercise the
+    # real native API. A supported runtime returning unavailable is a failure.
+    assert policy.python_allocator_metrics()["status"] == "AVAILABLE"
+    before = len(os.listdir("/proc/self/fd"))
+    stderr_before = os.fstat(2)
+    for _ in range(8):
+        result = policy.python_allocator_metrics()
+        assert result["status"] == "AVAILABLE"
+        assert result["arenasHighwater"] >= result["arenasCurrent"]
+    assert len(os.listdir("/proc/self/fd")) == before
+    stderr_after = os.fstat(2)
+    assert (stderr_before.st_dev, stderr_before.st_ino) == (stderr_after.st_dev, stderr_after.st_ino)
+    captured = capfd.readouterr()
+    assert captured.out == captured.err == ""
 
 @pytest.fixture
 def _reclaim_state():

@@ -115,6 +115,13 @@ def summarize(doc: dict[str, Any]) -> str:
                        f"glibc allocated/free/mmap MiB {_mib(allocator.get('allocatedBytes'))}/"
                        f"{_mib(allocator.get('freeBytes'))}/{_mib(allocator.get('mmapBytes'))}")
             out.append(f"- {phase} memory events: {group.get('events')}")
+            small = coverage.get("pythonAllocator" + phase.title()) or {}
+            out.append(f"- {phase} CPython allocator: {small.get('status')}; "
+                       f"reserved/allocated/available/unused-pool MiB "
+                       f"{_mib(small.get('arenaBytesCurrent'))}/"
+                       f"{_mib(small.get('allocatedSmallBlockBytes'))}/"
+                       f"{_mib(small.get('availableSmallBlockBytes'))}/"
+                       f"{_mib(small.get('unusedPoolBytes'))}; reservations are not RSS")
         graph = coverage.get("builtinGraph") or {}
         out.append(f"- builtin graph: {graph.get('status')}; selected roots, "
                    "first discovery, non-atomic; not a whole-heap or RSS measurement")
