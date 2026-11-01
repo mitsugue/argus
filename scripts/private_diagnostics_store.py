@@ -21,11 +21,16 @@ MAX_FILES = 20
 _NAME = re.compile(r'^[a-z0-9][a-z0-9-]{0,62}$')
 
 
-def destinations(kind, run_id, files):
+def destinations(kind, run_id, files, *, run_attempt=1):
     if not _NAME.match(kind or '') or not re.fullmatch(r'[0-9]{1,20}', str(run_id or '')):
         raise ValueError('invalid_diagnostics_destination')
     if not files or len(files) > MAX_FILES:
         raise ValueError('diagnostics_file_count')
+    if type(run_attempt) not in (int, str) or not re.fullmatch(r'[1-9][0-9]{0,8}', str(run_attempt)):
+        raise ValueError('invalid_diagnostics_attempt')
+    prefix = f'{PREFIX}/{kind}/{run_id}'
+    if int(run_attempt) > 1:
+        prefix += f'/attempt-{run_attempt}'
     out = []
     for path in files:
         if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_BYTES:
@@ -33,14 +38,14 @@ def destinations(kind, run_id, files):
         name = path.name
         if not re.fullmatch(r'[A-Za-z0-9._-]{1,80}', name):
             raise ValueError('diagnostics_file_name')
-        out.append((path, f'{PREFIX}/{kind}/{run_id}/{name}'))
+        out.append((path, f'{prefix}/{name}'))
     return out
 
 
-def store(kind, run_id, files, token, *, opener=urllib.request.urlopen):
+def store(kind, run_id, files, token, *, run_attempt=1, opener=urllib.request.urlopen):
     if not token:
         raise ValueError('private_token_missing')
-    for path, destination in destinations(kind, run_id, files):
+    for path, destination in destinations(kind, run_id, files, run_attempt=run_attempt):
         body = json.dumps({'message': f'diagnostics {kind} {run_id}', 'branch': 'main',
                            'content': base64.b64encode(path.read_bytes()).decode()}).encode()
         request = urllib.request.Request(f'https://api.github.com/repos/{REPOSITORY}/contents/{destination}',
@@ -59,6 +64,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--kind', required=True)
     parser.add_argument('--run-id', required=True)
+    parser.add_argument('--run-attempt', type=int, default=1)
     parser.add_argument('paths', nargs='+')
     args = parser.parse_args(argv)
     files = []
@@ -67,7 +73,7 @@ def main(argv=None):
         files.extend(sorted(p for p in path.iterdir() if p.is_file()) if path.is_dir() else [path])
     try:
         count = store(args.kind, args.run_id, [f for f in files if f.exists()],
-                      os.environ.get('PRIVATE_DIAGNOSTICS_TOKEN', ''))
+                      os.environ.get('PRIVATE_DIAGNOSTICS_TOKEN', ''), run_attempt=args.run_attempt)
     except (ValueError, OSError) as exc:
         print(f'private diagnostics: not stored ({exc})')
         return 1

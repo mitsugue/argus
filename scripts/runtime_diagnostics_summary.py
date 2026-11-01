@@ -2,15 +2,42 @@
 """Plain-language summary of the owner-only runtime snapshot (v13.5.61).
 
 Input: the JSON returned by /api/argus/admin/memory-attribution?threads=1.
-Output: Markdown for the GitHub run page. Locations and counters only — the
+Output: private Markdown. Locations and counters only — the
 document never carries values, environment, or owner data, and this script
-adds nothing of its own beyond formatting.
+adds nothing of its own beyond formatting. The optional identity projection
+contains only observed build/readiness scalars.
 """
 from __future__ import annotations
 
 import json
+from datetime import datetime
+import re
 import sys
 from typing import Any
+
+
+def observed_backend_identity(before: dict, after: dict, ready: dict, *, at: str) -> dict:
+    """Bind a private snapshot to matching observed health/readiness probes."""
+    if not all(isinstance(value, dict) for value in (before, after, ready)):
+        raise ValueError('runtime_backend_identity_invalid')
+    try:
+        stamp = datetime.fromisoformat(at.replace('Z', '+00:00'))
+    except (AttributeError, TypeError, ValueError):
+        raise ValueError('runtime_backend_identity_invalid') from None
+    shas = [value.get('buildSha') for value in (before, after, ready)]
+    versions = [value.get('backendVersion') or value.get('appVersion') for value in (before, after)]
+    if (stamp.tzinfo is None or any(not isinstance(sha, str) or not re.fullmatch(r'[0-9a-f]{40}', sha)
+                                 for sha in shas)
+            or any(not isinstance(version, str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version)
+                   for version in versions)):
+        raise ValueError('runtime_backend_identity_invalid')
+    if (len(set(shas)) != 1 or len(set(versions)) != 1
+            or before.get('status') != 'ok' or after.get('status') != 'ok'
+            or ready.get('ready') is not True):
+        raise ValueError('runtime_backend_identity_inconsistent')
+    return {'schemaVersion': 'argus-runtime-observed-backend-identity-v1',
+            'capturedAt': at, 'observedBackendSha': shas[0], 'backendVersion': versions[0],
+            'healthBeforeAndAfterMatch': True, 'readyBuildMatches': True, 'status': 'verified'}
 
 
 def _frames(thread: dict, limit: int) -> str:
