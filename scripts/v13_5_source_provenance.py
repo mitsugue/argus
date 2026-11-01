@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.218"
+PRODUCT_VERSION = "v13.8.219"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -132,9 +132,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_render_deploy_diagnostics.py': 'ffbcdda6f9c27aabff883e93bf73b03d7be550b4',
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
     # contents; v13.7.59 candidate).
-    'argus_allocator_policy.py': '5fef79998b2b306be249000f74a0d194faf80c02',
-    'test_argus_allocator_policy.py': '09441cec38f159b7187b562bc88bfbaa55637951',
-    'docs/ops/allocator-reclaim.md': '8329af50d619efef52fdabedd88fffdabd470e57',
+    'argus_allocator_policy.py': '4422b5fa437aca4ebd458274854e4b764775e46b',
+    'test_argus_allocator_policy.py': '72aa6b969d70fa4ed726da433ca1649a236fc37d',
+    'docs/ops/allocator-reclaim.md': '09a5c1f1ee45d591b4164826e61e15b9f302d38c',
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
     'test_argus_jp_owner_quote_warm.py': 'eb998f6e67dbfeb8bc65598521189618efd0de04',
     # Derived market artifacts outside the sealed checkpoint (exact reviewed
@@ -145,7 +145,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/MARKET_ARTIFACT_STORE.md': 'e2e994da953b12c42a95d67b4eaf9ab1a8c0b6aa',
     'test_argus_market_artifact_split.py': '9331909fab52e479dc63f869aba531ba26825668',
     'test_argus_market_artifact_store.py': 'f6c2d1c330b814666328b34d8939efea934d8146',
-    'test_argus_memory_attribution.py': 'b40c0d986b69c4181adef26512f5b31554748506',
+    'test_argus_memory_attribution.py': '11845bd2a5bd41eceb214420e4fb191f8c1af0f2',
     'test_argus_recovery_measurement.py': 'b7beb4b6c1915ddb2cfab0857f31a82cc5c5c832',
     'test_argus_recovery_registry.py': 'd1132e69768b5a9edf9bbf964bd8df476edda4b8',
     # Today boot console (owner 2026-09-28): exact reviewed contents.
@@ -189,7 +189,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'ad53fe8ed3f48dff3c5ea024b651e712ec74f58f',
+    'web/scripts/owner-today-https.mjs': 'c43875d94bdaae2e9d1eca0bb72cacd20845992e',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -230,7 +230,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/warm-profile-runtime.test.mjs': '07935360729d30d689156113345ab2a0c72a78bb',
     # Exact regression coverage for canonical record-sized asset hash encoding.
     "test_argus_normalized_hash.py": "20dd0d0e9119d8b0357b459cb1eac1bc146c5b11",
-    'argus_memory_attribution.py': '599a506269204eeb77f20091dba2dcd7b489b8df',
+    'argus_memory_attribution.py': 'c2725d97e1a8ad2981166bb477159344d8cd44f2',
     'docs/ops/checkpoint-phase-timing.md': '1d82cb8f29f26a6f351e628a3d97904382b62334',
     'test_argus_checkpoint_phase_timing.py': '31edce29020fa25091ed78ad4dceaa6719ca0c2a',
     'ops/imports/acquisition_20260920/ACCEPTANCE_CRITERIA.md': '918375dfb7c134b0792b401b90356178635e5f1a',

@@ -19,6 +19,7 @@ import resource
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from typing import Any, Dict, Iterable, Mapping, Optional
 
@@ -26,6 +27,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional
 SCHEMA_VERSION = "argus-memory-attribution-v3"
 OPERATION_SCHEMA_VERSION = "argus-operation-memory-v2"
 UNKNOWN = "UNKNOWN"
+_PROCESS_INSTANCE_ID = uuid.uuid4().hex
 NOT_APPLICABLE = "NOT_APPLICABLE"
 DEFAULT_HISTORY_LIMIT = 16
 MAXIMUM_HISTORY_LIMIT = 32
@@ -93,6 +95,7 @@ _OPERATION_METADATA_FIELDS = {
 
 _STATUS_FIELDS = {
     "VmRSS": "vmRssBytes",
+    "VmHWM": "vmHwmBytes",
     "VmSize": "vmSizeBytes",
     "VmData": "vmDataBytes",
     "RssAnon": "rssAnonBytes",
@@ -133,6 +136,34 @@ _LOGICAL_FIELDS = (
 
 def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _startup_restore_observation() -> Dict[str, Any]:
+    """Read only fixed restoration metadata from the trusted server entry."""
+    main = sys.modules.get("__main__")
+    startup = getattr(main, "_STARTUP", {})
+    durable = getattr(main, "_DURABLE_STATE", {})
+    startup = startup if isinstance(startup, dict) else {}
+    durable = durable if isinstance(durable, dict) else {}
+
+    def stamp(value):
+        if type(value) is not str or len(value) > 40:
+            return None
+        try:
+            return value if dt.datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo else None
+        except ValueError:
+            return None
+    def selected(value, choices):
+        return value if value in choices else None
+    return {"state": selected(startup.get("state"), (
+                "bootstrapping", "loading_local", "loading_remote", "reconciling",
+                "ready", "ready_degraded", "failed_safe")),
+            "outcome": selected(startup.get("restoreOutcome"), (
+                "restored", "no_prior_state", "corrupt_last_known_good", "persistent_storage_unavailable")),
+            "integrityStatus": selected(durable.get("integrityStatus"), ("ok", "unknown", "corrupt_ignored")),
+            "startedAt": stamp(startup.get("restoreStartedAt")),
+            "completedAt": stamp(startup.get("restoreCompletedAt")),
+            "lastRestoreAt": stamp(durable.get("lastRestoreAt"))}
 
 
 def _unknown_map(keys: Iterable[str]) -> Dict[str, Any]:
@@ -1441,6 +1472,12 @@ class OperationAttributionRecorder:
             return copy.deepcopy(row)
 
     def view(self) -> Dict[str, Any]:
+        # Only a view samples current OS counters. Event recording remains
+        # unchanged, and slow kernel reads never hold the recorder lock.
+        try:
+            current_memory = memory_snapshot()
+        except Exception:
+            current_memory = {"capturedAt": _now(), "status": "UNAVAILABLE"}
         with self._lock:
             history = copy.deepcopy(list(self._history))
             known = sorted(
@@ -1450,6 +1487,9 @@ class OperationAttributionRecorder:
             intermission = copy.deepcopy(list(self._intermission_history))
             payload = {
                 "schemaVersion": OPERATION_SCHEMA_VERSION,
+                "processIdentity": {"instanceId": _PROCESS_INSTANCE_ID, "pid": os.getpid()},
+                "currentMemory": current_memory,
+                "startupRestore": _startup_restore_observation(),
                 "historyLimit": self._maximum_records,
                 "thresholdBytes": self._threshold_bytes,
                 "historyCount": len(history),

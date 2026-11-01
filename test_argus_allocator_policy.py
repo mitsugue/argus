@@ -8,6 +8,9 @@ the scanner wiring — without touching a real allocator.
 import inspect
 import json
 import os
+from pathlib import Path
+import shutil
+import subprocess
 import sys
 import time
 from collections import deque
@@ -70,6 +73,124 @@ def test_startup_policy_never_raises_without_a_native_mallopt(monkeypatch):
     monkeypatch.setattr(ctypes, "CDLL", lambda *a, **k: (_ for _ in ()).throw(OSError("no libc")))
     report = policy.startup_policy({}, platform="linux")
     assert report["status"] == "UNAVAILABLE" and report["errorClass"] == "OSError"
+
+
+@pytest.fixture
+def _backend_allocator_entry(monkeypatch):
+    backend = str(Path(policy.__file__).with_name("scanner.py"))
+    monkeypatch.setattr(sys.modules["__main__"], "__file__", backend, raising=False)
+    monkeypatch.setattr(sys, "argv", [backend])
+    monkeypatch.setattr(sys, "orig_argv", [sys.executable, "-B", "-u", backend])
+    monkeypatch.setattr(policy, "python_allocator_name", lambda: "pymalloc")
+    monkeypatch.setattr(policy, "_BACKEND_ALLOCATOR_REEXEC_ATTEMPTED", False)
+    monkeypatch.delenv("PYTHONMALLOC", raising=False)
+    return backend
+
+
+def test_backend_allocator_reexec_preserves_interpreter_args_and_environment(monkeypatch, _backend_allocator_entry):
+    class Replaced(BaseException):
+        pass
+    before = dict(os.environ)
+    captured = {}
+
+    def execute(executable, args, env):
+        captured.update(executable=executable, args=args, env=env)
+        raise Replaced()
+    monkeypatch.setattr(os, "execve", execute)
+    with pytest.raises(Replaced):
+        policy._bootstrap_backend_allocator()
+    assert captured["executable"] == sys.executable
+    assert captured["args"] == [sys.executable, "-B", "-u", _backend_allocator_entry]
+    assert captured["env"]["PYTHONMALLOC"] == "malloc"
+    assert all(captured["env"].get(key) == value for key, value in before.items())
+    assert "PYTHONMALLOC" not in os.environ
+    assert policy._BACKEND_ALLOCATOR_REEXEC_ATTEMPTED is True
+
+
+@pytest.mark.parametrize("configured", ["malloc", "pymalloc", "malloc_debug", "default"])
+def test_backend_allocator_honours_explicit_allocator(monkeypatch, _backend_allocator_entry, configured):
+    monkeypatch.setenv("PYTHONMALLOC", configured)
+    monkeypatch.setattr(os, "execve", lambda *args: (_ for _ in ()).throw(AssertionError("must not exec")))
+    assert policy._bootstrap_backend_allocator()["status"] == "EXPLICIT_ALLOCATOR"
+
+
+def test_backend_allocator_does_not_change_workers_imports_or_disabled_policy(monkeypatch, _backend_allocator_entry):
+    monkeypatch.setattr(os, "execve", lambda *args: (_ for _ in ()).throw(AssertionError("must not exec")))
+    with monkeypatch.context() as change:
+        change.setattr(sys, "argv", [_backend_allocator_entry, "--worker"])
+        assert policy._bootstrap_backend_allocator()["status"] == "NOT_BACKEND_SERVER"
+    with monkeypatch.context() as change:
+        change.setattr(sys.modules["__main__"], "__file__", __file__)
+        assert policy._bootstrap_backend_allocator()["status"] == "NOT_BACKEND_SERVER"
+    with monkeypatch.context() as change:
+        change.setenv("ARGUS_MALLOC_MMAP_THRESHOLD_BYTES", "0")
+        change.setattr(policy, "_bootstrap_backend_allocator", lambda: (_ for _ in ()).throw(AssertionError("disabled")))
+        assert policy.startup_policy()["status"] == "DISABLED"
+
+
+def test_backend_allocator_exec_failure_is_reported_without_repeated_attempt_or_detail(monkeypatch, _backend_allocator_entry):
+    calls = []
+
+    def denied(*args):
+        calls.append(True)
+        raise PermissionError("private-exec-sentinel")
+    monkeypatch.setattr(os, "execve", denied)
+    first = policy._bootstrap_backend_allocator()
+    assert first == {"status": "REEXEC_FAILED", "allocatorName": "pymalloc", "errorClass": "PermissionError"}
+    assert "private-exec-sentinel" not in json.dumps(first)
+    assert policy._bootstrap_backend_allocator()["status"] == "REEXEC_ALREADY_ATTEMPTED"
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("allocator,args,flags,expected_entries,expected_mode", [
+    (None, [], [], 2, "malloc"),
+    ("pymalloc", [], [], 1, "pymalloc"),
+    ("malloc", [], [], 1, "malloc"),
+    (None, ["--worker"], [], 1, "pymalloc"),
+    (None, [], ["-E"], 1, "pymalloc"),
+    (None, [], ["-X", "dev"], 1, "pymalloc_debug"),
+])
+def test_real_backend_allocator_exec_is_once_before_restore_and_preserves_pid_flags_and_credentials(
+        tmp_path, allocator, args, flags, expected_entries, expected_mode):
+    if sys.platform != "linux" or sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 12):
+        pytest.skip("backend repair applies to Linux CPython3.12")
+    shutil.copyfile(policy.__file__, tmp_path / "argus_allocator_policy.py")
+    program = tmp_path / "scanner.py"
+    program.write_text('''import json, os, sys
+import argus_allocator_policy as policy
+def _backend_exact_sha():
+    return "a" * 40
+def _semantic_app_version():
+    return "1.2.3"
+with open(os.environ["ALLOCATOR_TEST_TRACE"], "a") as stream:
+    stream.write(json.dumps({"pid": os.getpid(), "allocator": policy.python_allocator_name()}) + "\\n")
+report = policy.startup_policy()
+print(json.dumps({"allocator": policy.python_allocator_name(), "bytecodeDisabled": sys.dont_write_bytecode,
+    "unbuffered": sys.stdout.write_through, "credentialPreserved": os.environ.get("ALLOCATOR_TEST_CREDENTIAL") == "fixture-only",
+    "restoreWouldStartNow": True, "bootstrap": report.get("pythonAllocator"),
+    "buildSha": report.get("backendBuildSha"), "version": report.get("backendVersion")}))
+''')
+    env = dict(os.environ)
+    env.pop("PYTHONMALLOC", None)
+    env.pop("ARGUS_MALLOC_MMAP_THRESHOLD_BYTES", None)
+    if allocator:
+        env["PYTHONMALLOC"] = allocator
+    env["ALLOCATOR_TEST_TRACE"] = str(tmp_path / "trace.jsonl")
+    env["ALLOCATOR_TEST_CREDENTIAL"] = "fixture-only"
+    result = subprocess.run([sys.executable, *flags, "-B", "-u", str(program), *args], env=env,
+                            text=True, capture_output=True, check=True, timeout=15)
+    output = json.loads(result.stdout)
+    entries = [json.loads(line) for line in (tmp_path / "trace.jsonl").read_text().splitlines()]
+    assert len(entries) == expected_entries
+    assert len({entry["pid"] for entry in entries}) == 1
+    assert output["allocator"] == expected_mode
+    assert output["bytecodeDisabled"] and output["unbuffered"] and output["credentialPreserved"]
+    assert output["restoreWouldStartNow"] is True
+    if not args:
+        assert output["buildSha"] == "a" * 40 and output["version"] == "1.2.3"
+    else:
+        assert output["buildSha"] is None and output["version"] is None
+    assert "fixture-only" not in result.stdout
 
 
 # ── reclaim decision ─────────────────────────────────────────────────────────
@@ -352,13 +473,20 @@ def test_python_allocator_native_reader_leaves_descriptors_and_stderr_unchanged(
         pytest.skip("native reader deliberately restricted to Linux CPython 3.12 64-bit")
     # Import/init before measuring persistent resources, then exercise the
     # real native API. A supported runtime returning unavailable is a failure.
-    assert policy.python_allocator_metrics()["status"] == "AVAILABLE"
+    allocator_name = policy.python_allocator_name()
+    assert allocator_name in {"pymalloc", "pymalloc_debug", "malloc", "malloc_debug"}
+    expected_status = "AVAILABLE" if allocator_name.startswith("pymalloc") else "UNAVAILABLE"
+    assert policy.python_allocator_metrics()["status"] == expected_status
     before = len(os.listdir("/proc/self/fd"))
     stderr_before = os.fstat(2)
     for _ in range(8):
         result = policy.python_allocator_metrics()
-        assert result["status"] == "AVAILABLE"
-        assert result["arenasHighwater"] >= result["arenasCurrent"]
+        assert result["status"] == expected_status
+        assert result["allocatorName"] == allocator_name
+        if expected_status == "AVAILABLE":
+            assert result["arenasHighwater"] >= result["arenasCurrent"]
+        else:
+            assert "arenaBytesCurrent" not in result
     assert len(os.listdir("/proc/self/fd")) == before
     stderr_after = os.fstat(2)
     assert (stderr_before.st_dev, stderr_before.st_ino) == (stderr_after.st_dev, stderr_after.st_ino)

@@ -118,7 +118,53 @@ def private_runtime_record(body, expected):
             'status': research.get('status') if research.get('status') in
                 ('NOT_RUN', 'RUNNING', 'AVAILABLE', 'PARTIAL', 'FAILED') else None,
             'persistenceStatus': 'VERIFIED' if research.get('persistenceStatus') == 'VERIFIED' else None},
-        'currentRssMib': rss(body.get('currentRssMib')), 'peakRssMib': rss(body.get('peakRssMib'))}
+        'currentRssMib': rss(body.get('currentRssMib')), 'peakRssMib': rss(body.get('peakRssMib')),
+        'memoryObservation': _private_memory_record(body)}
+
+
+def _private_memory_record(body):
+    """Closed OS/startup scalars from the already existing single GET."""
+    def mapping(value):
+        return value if isinstance(value, dict) else {}
+    def number(value):
+        return value if type(value) is int and 0 <= value < 2**63 else None
+    def hex_id(value, length):
+        return value if type(value) is str and len(value) == length and all(
+            c in '0123456789abcdef' for c in value) else None
+    operations = mapping(body.get('operationAttribution'))
+    sample = mapping(operations.get('currentMemory'))
+    process = mapping(sample.get('process'))
+    group = mapping(sample.get('cgroup'))
+    events = mapping(group.get('events'))
+    allocator = mapping(sample.get('allocatorMetrics'))
+    identity = mapping(operations.get('processIdentity'))
+    restore = mapping(operations.get('startupRestore'))
+    policy = mapping(mapping(body.get('allocatorReclaim')).get('startupPolicy'))
+    python = mapping(policy.get('pythonAllocator'))
+    name = python.get('allocatorName')
+    version = policy.get('backendVersion')
+    valid_version = (type(version) is str and len(version) <= 30
+                     and len(version.split('.')) == 3
+                     and all(part.isascii() and part.isdigit() for part in version.split('.')))
+    return {'schemaVersion': 'argus-private-memory-observation-v1',
+        'capturedAt': _private_stamp(sample.get('capturedAt')),
+        'backendSha': hex_id(policy.get('backendBuildSha'), 40),
+        'backendVersion': version if valid_version else None,
+        'processInstanceId': hex_id(identity.get('instanceId'), 32), 'pid': number(identity.get('pid')),
+        'swapBytes': number(mapping(sample.get('smapsRollup')).get('swapBytes')),
+        'restoration': {
+            'state': restore.get('state') if restore.get('state') in
+                ('bootstrapping', 'loading_local', 'loading_remote', 'reconciling', 'ready', 'ready_degraded', 'failed_safe') else None,
+            'outcome': restore.get('outcome') if restore.get('outcome') in
+                ('restored', 'no_prior_state', 'corrupt_last_known_good', 'persistent_storage_unavailable') else None,
+            'integrityStatus': restore.get('integrityStatus') if restore.get('integrityStatus') in
+                ('ok', 'unknown', 'corrupt_ignored') else None,
+            **{key: _private_stamp(restore.get(key)) for key in ('startedAt', 'completedAt', 'lastRestoreAt')}},
+        'allocatorName': name if name in ('malloc', 'pymalloc', 'malloc_debug', 'pymalloc_debug', 'UNAVAILABLE') else None,
+        'process': {key: number(process.get(key)) for key in ('vmRssBytes', 'vmHwmBytes', 'rssAnonBytes', 'rssFileBytes')},
+        'cgroup': {**{key: number(group.get(key)) for key in ('memoryCurrentBytes', 'memoryPeakBytes', 'memoryMaxBytes')},
+                   'events': {key: number(events.get(key)) for key in ('low', 'high', 'max', 'oom', 'oom_kill', 'oom_group_kill')}},
+        'allocator': {key: number(allocator.get(key)) for key in ('arenaBytes', 'allocatedBytes', 'freeBytes', 'mmapBytes')}}
 
 
 def _capture_private_runtime(*, base, headers, expected, request, clock, deadline, sink):

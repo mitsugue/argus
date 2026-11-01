@@ -127,6 +127,38 @@ def test_cgroup_v2_parser_marks_optional_fields_unknown(tmp_path):
                       "oom_kill": 1, "oom_group_kill": memory.UNKNOWN}
 
 
+def test_current_memory_view_observes_same_process_across_telemetry_reset_without_lock(monkeypatch):
+    recorder = memory.OperationAttributionRecorder()
+    calls = []
+    main = memory.sys.modules["__main__"]
+    monkeypatch.setattr(main, "_STARTUP", {"state": "ready", "restoreOutcome": "restored",
+        "restoreCompletedAt": "2026-11-01T00:01:00Z", "token": "private-memory-sentinel"}, raising=False)
+    monkeypatch.setattr(main, "_DURABLE_STATE", {"integrityStatus": "ok",
+        "lastRestoreAt": "2026-11-01T00:00:50Z", "owner": "private-memory-sentinel"}, raising=False)
+
+    def sample():
+        calls.append(recorder._lock._is_owned())
+        return {"capturedAt": "2026-11-01T00:00:00Z", "process": {"vmHwmBytes": 500}}
+    monkeypatch.setattr(memory, "memory_snapshot", sample)
+    first = recorder.view()
+    recorder.reset()
+    second = recorder.view()
+    assert first["processIdentity"] == second["processIdentity"]
+    identity = first["processIdentity"]
+    assert len(identity["instanceId"]) == 32 and identity["pid"] == memory.os.getpid()
+    assert first["currentMemory"]["process"]["vmHwmBytes"] == 500
+    assert first["startupRestore"]["state"] == "ready" and first["startupRestore"]["outcome"] == "restored"
+    assert first["startupRestore"]["integrityStatus"] == "ok"
+    assert "private-memory-sentinel" not in json.dumps(first)
+    assert calls == [False, False]
+    monkeypatch.setattr(memory, "memory_snapshot",
+                        lambda: (_ for _ in ()).throw(OSError("private-memory-sentinel")))
+    failed = recorder.view()
+    assert failed["currentMemory"]["status"] == "UNAVAILABLE"
+    assert "private-memory-sentinel" not in json.dumps(failed)
+    assert failed["historyCount"] == 0 and failed["processIdentity"] == identity
+
+
 def test_history_is_bounded_after_100_missions_and_scalar_only():
     recorder = memory.MemoryAttributionRecorder(16)
     for index in range(100):
