@@ -2921,6 +2921,7 @@ def test_cost_ledger_writes_through_and_restores_after_a_restart(monkeypatch, tm
 
 
 def test_cost_ledger_restart_releases_only_abandoned_reservations(monkeypatch, tmp_path):
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: "2026-09-14T03:00:00Z")
     policy = scanner.argus_cost_policy.default_state("SCHEDULED_AI", event_opt_in=True)
     settled = {"provider": "openai", "purpose": "market_brief",
                "at": "2026-09-14T01:00:00Z", "estimatedCostUsd": 0.2,
