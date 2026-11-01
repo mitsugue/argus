@@ -191,6 +191,8 @@ def test_existing_runtime_readback_retains_closed_memory_and_allocator_identity_
         'backendVersion': '1.2.3', 'pythonAllocator': {'allocatorName': 'malloc'},
         'token': 'private-memory-sentinel'}}
     raw['operationAttribution'] = {'processIdentity': {'instanceId': 'b' * 32, 'pid': 123},
+        'startupRestore': {'state': 'ready', 'outcome': 'restored', 'integrityStatus': 'ok',
+                          'completedAt': '2026-11-01T00:00:00Z', 'token': 'private-memory-sentinel'},
         'currentMemory': {'capturedAt': '2026-11-01T00:01:00Z',
             'smapsRollup': {'swapBytes': 0},
             'process': {'vmRssBytes': 500, 'vmHwmBytes': 600, 'owner': 'private-memory-sentinel'},
@@ -203,6 +205,7 @@ def test_existing_runtime_readback_retains_closed_memory_and_allocator_identity_
     assert value['processInstanceId'] == 'b' * 32 and value['pid'] == 123
     assert value['allocatorName'] == 'malloc'
     assert value['swapBytes'] == 0
+    assert value['restoration']['outcome'] == 'restored' and value['restoration']['integrityStatus'] == 'ok'
     assert value['process']['vmHwmBytes'] == 600
     assert value['cgroup']['memoryMaxBytes'] == 2147483648
     assert value['cgroup']['events']['oom_kill'] == 0

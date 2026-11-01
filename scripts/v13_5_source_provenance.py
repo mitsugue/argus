@@ -133,7 +133,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
     # contents; v13.7.59 candidate).
     'argus_allocator_policy.py': '4422b5fa437aca4ebd458274854e4b764775e46b',
-    'test_argus_allocator_policy.py': '1de2af5adaf00ecd314298f17116848929796964',
+    'test_argus_allocator_policy.py': '72aa6b969d70fa4ed726da433ca1649a236fc37d',
     'docs/ops/allocator-reclaim.md': '09a5c1f1ee45d591b4164826e61e15b9f302d38c',
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
     'test_argus_jp_owner_quote_warm.py': 'eb998f6e67dbfeb8bc65598521189618efd0de04',
@@ -145,7 +145,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/MARKET_ARTIFACT_STORE.md': 'e2e994da953b12c42a95d67b4eaf9ab1a8c0b6aa',
     'test_argus_market_artifact_split.py': '9331909fab52e479dc63f869aba531ba26825668',
     'test_argus_market_artifact_store.py': 'f6c2d1c330b814666328b34d8939efea934d8146',
-    'test_argus_memory_attribution.py': 'a997e446e09a09cfe55c9ecf9bf77421a6431401',
+    'test_argus_memory_attribution.py': '11845bd2a5bd41eceb214420e4fb191f8c1af0f2',
     'test_argus_recovery_measurement.py': 'b7beb4b6c1915ddb2cfab0857f31a82cc5c5c832',
     'test_argus_recovery_registry.py': 'd1132e69768b5a9edf9bbf964bd8df476edda4b8',
     # Today boot console (owner 2026-09-28): exact reviewed contents.
@@ -230,7 +230,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/warm-profile-runtime.test.mjs': '07935360729d30d689156113345ab2a0c72a78bb',
     # Exact regression coverage for canonical record-sized asset hash encoding.
     "test_argus_normalized_hash.py": "20dd0d0e9119d8b0357b459cb1eac1bc146c5b11",
-    'argus_memory_attribution.py': '3c59d68f5c5219d8c80b231f414145828289eff6',
+    'argus_memory_attribution.py': 'c2725d97e1a8ad2981166bb477159344d8cd44f2',
     'docs/ops/checkpoint-phase-timing.md': '1d82cb8f29f26a6f351e628a3d97904382b62334',
     'test_argus_checkpoint_phase_timing.py': '31edce29020fa25091ed78ad4dceaa6719ca0c2a',
     'ops/imports/acquisition_20260920/ACCEPTANCE_CRITERIA.md': '918375dfb7c134b0792b401b90356178635e5f1a',

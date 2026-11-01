@@ -78,7 +78,7 @@ def test_startup_policy_never_raises_without_a_native_mallopt(monkeypatch):
 @pytest.fixture
 def _backend_allocator_entry(monkeypatch):
     backend = str(Path(policy.__file__).with_name("scanner.py"))
-    monkeypatch.setattr(sys.modules["__main__"], "__file__", backend)
+    monkeypatch.setattr(sys.modules["__main__"], "__file__", backend, raising=False)
     monkeypatch.setattr(sys, "argv", [backend])
     monkeypatch.setattr(sys, "orig_argv", [sys.executable, "-B", "-u", backend])
     monkeypatch.setattr(policy, "python_allocator_name", lambda: "pymalloc")

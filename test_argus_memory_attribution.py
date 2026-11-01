@@ -130,6 +130,11 @@ def test_cgroup_v2_parser_marks_optional_fields_unknown(tmp_path):
 def test_current_memory_view_observes_same_process_across_telemetry_reset_without_lock(monkeypatch):
     recorder = memory.OperationAttributionRecorder()
     calls = []
+    main = memory.sys.modules["__main__"]
+    monkeypatch.setattr(main, "_STARTUP", {"state": "ready", "restoreOutcome": "restored",
+        "restoreCompletedAt": "2026-11-01T00:01:00Z", "token": "private-memory-sentinel"}, raising=False)
+    monkeypatch.setattr(main, "_DURABLE_STATE", {"integrityStatus": "ok",
+        "lastRestoreAt": "2026-11-01T00:00:50Z", "owner": "private-memory-sentinel"}, raising=False)
 
     def sample():
         calls.append(recorder._lock._is_owned())
@@ -142,6 +147,9 @@ def test_current_memory_view_observes_same_process_across_telemetry_reset_withou
     identity = first["processIdentity"]
     assert len(identity["instanceId"]) == 32 and identity["pid"] == memory.os.getpid()
     assert first["currentMemory"]["process"]["vmHwmBytes"] == 500
+    assert first["startupRestore"]["state"] == "ready" and first["startupRestore"]["outcome"] == "restored"
+    assert first["startupRestore"]["integrityStatus"] == "ok"
+    assert "private-memory-sentinel" not in json.dumps(first)
     assert calls == [False, False]
     monkeypatch.setattr(memory, "memory_snapshot",
                         lambda: (_ for _ in ()).throw(OSError("private-memory-sentinel")))

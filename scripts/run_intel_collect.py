@@ -138,6 +138,7 @@ def _private_memory_record(body):
     events = mapping(group.get('events'))
     allocator = mapping(sample.get('allocatorMetrics'))
     identity = mapping(operations.get('processIdentity'))
+    restore = mapping(operations.get('startupRestore'))
     policy = mapping(mapping(body.get('allocatorReclaim')).get('startupPolicy'))
     python = mapping(policy.get('pythonAllocator'))
     name = python.get('allocatorName')
@@ -151,6 +152,14 @@ def _private_memory_record(body):
         'backendVersion': version if valid_version else None,
         'processInstanceId': hex_id(identity.get('instanceId'), 32), 'pid': number(identity.get('pid')),
         'swapBytes': number(mapping(sample.get('smapsRollup')).get('swapBytes')),
+        'restoration': {
+            'state': restore.get('state') if restore.get('state') in
+                ('bootstrapping', 'loading_local', 'loading_remote', 'reconciling', 'ready', 'ready_degraded', 'failed_safe') else None,
+            'outcome': restore.get('outcome') if restore.get('outcome') in
+                ('restored', 'no_prior_state', 'corrupt_last_known_good', 'persistent_storage_unavailable') else None,
+            'integrityStatus': restore.get('integrityStatus') if restore.get('integrityStatus') in
+                ('ok', 'unknown', 'corrupt_ignored') else None,
+            **{key: _private_stamp(restore.get(key)) for key in ('startedAt', 'completedAt', 'lastRestoreAt')}},
         'allocatorName': name if name in ('malloc', 'pymalloc', 'malloc_debug', 'pymalloc_debug', 'UNAVAILABLE') else None,
         'process': {key: number(process.get(key)) for key in ('vmRssBytes', 'vmHwmBytes', 'rssAnonBytes', 'rssFileBytes')},
         'cgroup': {**{key: number(group.get(key)) for key in ('memoryCurrentBytes', 'memoryPeakBytes', 'memoryMaxBytes')},
