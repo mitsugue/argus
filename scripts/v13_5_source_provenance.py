@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.219"
+PRODUCT_VERSION = "v13.8.220"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -132,9 +132,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_render_deploy_diagnostics.py': 'ffbcdda6f9c27aabff883e93bf73b03d7be550b4',
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
     # contents; v13.7.59 candidate).
-    'argus_allocator_policy.py': '4422b5fa437aca4ebd458274854e4b764775e46b',
-    'test_argus_allocator_policy.py': '72aa6b969d70fa4ed726da433ca1649a236fc37d',
-    'docs/ops/allocator-reclaim.md': '09a5c1f1ee45d591b4164826e61e15b9f302d38c',
+    'argus_allocator_policy.py': '5a39a5da52a42fdedd9e1bb0e68b3d9a24fa4dcd',
+    'test_argus_allocator_policy.py': '9c69cfa60663289c90a71da83c77671b2550facc',
+    'docs/ops/allocator-reclaim.md': '841305ff9e9ae1aa6c95c37cfae2fa74a9ff75ed',
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
     'test_argus_jp_owner_quote_warm.py': 'eb998f6e67dbfeb8bc65598521189618efd0de04',
     # Derived market artifacts outside the sealed checkpoint (exact reviewed
@@ -189,7 +189,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'c43875d94bdaae2e9d1eca0bb72cacd20845992e',
+    'web/scripts/owner-today-https.mjs': '618d05f602f0a5d2912af7f831af0c06972bdab0',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -415,7 +415,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/today/MarketAnalysisHistory.tsx': '52feccc90676804d82aecdb434ee1e85298044e2',
     'test_argus_analysis_history.py': 'c688b85b59294dee647f83c9b766a5aec62b71f8',
     'argus_analysis_history.py': '222095a48f73d201df2ab39bb34782e5eee479ad',
-    'argus_market_ledger.py': 'e497d1c6020adead5e823303e7a144ef6b1e7911',
+    'test_argus_market_ledger.py': '7ee698c0e8d1ae47a0a3169f1e4bba945000fce8',
+    'argus_market_ledger.py': '9cc2899dba0d0477c4bf4859a3dd065e1b811011',
     'jp_market_positioning.py': 'c0f090d16b77a8aa180560088d0da1060e0e1c20',
     'test_jp_market_positioning.py': 'e0e9dd7b5e75ca2a11f6494c6a08d2e7bf269703',
     'web/scripts/jpy-position.test.cjs': '42d72fc2c3ce1909bbe4db0e17138b7739b531c7',
@@ -432,7 +433,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_dynamics.py': '36624677a01861c4adfa706e4d5b9dfa405212dd',
     'jp_market_events.py': '9798f7172c58c3d94748641d4ca67fd4dde6f4cf',
     'jp_market_features.py': '8fabe12cd8e02abf55af2ef7e0a46e79ffcc65ed',
-    'jp_market_price_paths.py': '649add342b09ef529a303adacee52ad11c846ca9',
+    'jp_market_price_paths.py': '6bfc75d1390a8f652693c0535def2aa06db08b18',
     'test_jp_market_current_per.py': '0ee8c8c8f6fe2631dccd7e829abbfdc673503209',
     'jp_market_source_adapters.py': 'f5950ba0ff80f98b8a121cfd08d5eef691e81af0',
     'ops/calendar/jp_index_sq_2026.json': 'd55cbf1e1362d4d86b21fe413cc2de35b035bd62',

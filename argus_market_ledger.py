@@ -204,7 +204,33 @@ def state_hash(state: Dict[str, Any]) -> str:
                                      "rolledBackImports")}
     if "fiscalMonitor" in st:
         material["fiscalMonitor"] = st["fiscalMonitor"]
-    return _hash(material, 32)
+    # Preserve the canonical encoding without retaining its entire Unicode
+    # text and UTF-8 copy alongside the resident ledger. Each normalized
+    # array item uses the same C JSON encoder as the previous whole document.
+    digest = hashlib.sha256()
+    def add(text):
+        digest.update(text.encode())
+    def encode(value):
+        return json.dumps(value, sort_keys=True, ensure_ascii=False,
+                          separators=(",", ":"))
+    add("{")
+    for position, key in enumerate(sorted(material)):
+        if position:
+            add(",")
+        add(encode(key))
+        add(":")
+        value = material[key]
+        if isinstance(value, list):
+            add("[")
+            for index, item in enumerate(value):
+                if index:
+                    add(",")
+                add(encode(item))
+            add("]")
+        else:
+            add(encode(value))
+    add("}")
+    return digest.hexdigest()[:32]
 
 
 def rebuild_required(state: Dict[str, Any]) -> bool:

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import unittest
+import weakref
 from unittest.mock import patch
 ROOT=Path(__file__).resolve().parent;sys.path.insert(0,str(ROOT))
 import jp_market_analog_backtest as backtest
@@ -47,6 +48,56 @@ class CacheRevisions(unittest.TestCase):
     def test_same_count_historical_price_correction_revalidates(self):
         cache={};self.invoke(cache);bars=copy.deepcopy(BARS);bars[35]['close']+=700
         self.invoke(cache,bars=bars);self.assertEqual(self.studies(),2)
+
+    def test_obsolete_candidate_graph_dies_before_replacement_build(self):
+        import jp_market_analogs as analogs
+        class LifetimeProbe:
+            pass
+        cache = {}
+        self.invoke(cache)
+        marker = LifetimeProbe()
+        old_graph = weakref.ref(marker)
+        cache['sealedCandidates']['lifetimeProbe'] = marker
+        del marker
+        corrected = copy.deepcopy(BARS)
+        corrected[35]['close'] += 700
+        unchanged = copy.deepcopy(corrected)
+        original = analogs.build_episode
+        historical_builds = []
+
+        def build(**kwargs):
+            if kwargs['cutoff'] != CUTOFF:
+                self.assertIsNone(old_graph(), 'obsolete candidate graph overlaps its replacement')
+                historical_builds.append(kwargs['cutoff'])
+            return original(**kwargs)
+
+        with patch.object(analogs, 'build_episode', build):
+            updated = self.invoke(cache, bars=corrected)
+        self.assertTrue(historical_builds)
+        self.assertEqual(updated, self.invoke({}, bars=corrected))
+        self.assertEqual(corrected, unchanged)
+
+    def test_failed_candidate_rebuild_keeps_completed_study_and_never_reuses_obsolete_graph(self):
+        import jp_market_analogs as analogs
+        cache = {}
+        self.invoke(cache)
+        key, result = cache['key'], cache['result']
+        corrected = copy.deepcopy(BARS)
+        corrected[35]['close'] += 700
+        original = analogs.build_episode
+
+        def fail_history(**kwargs):
+            if kwargs['cutoff'] != CUTOFF:
+                raise ValueError('synthetic_new_episode_failure')
+            return original(**kwargs)
+
+        with patch.object(analogs, 'build_episode', fail_history):
+            with self.assertRaisesRegex(ValueError, 'synthetic_new_episode_failure'):
+                self.invoke(cache, bars=corrected)
+        self.assertEqual(cache['key'], key)
+        self.assertIs(cache['result'], result)
+        self.assertNotIn('sealedCandidates', cache)
+        self.assertEqual(self.invoke(cache, bars=corrected), self.invoke({}, bars=corrected))
     def test_same_count_state_correction_revalidates(self):
         r=row('credit.loss_pct',-1);cache={};self.invoke(cache,state_rows=[r])
         self.invoke(cache,state_rows=[{**r,'value':-2}]);self.assertEqual(self.studies(),2)

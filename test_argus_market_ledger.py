@@ -1,4 +1,5 @@
 import copy
+import tracemalloc
 import unittest
 from datetime import date, timedelta
 from unittest import mock
@@ -19,6 +20,71 @@ def add(state, series, day, value, unit=None, available=None, source="fixture"):
 
 
 class MarketLedgerTests(unittest.TestCase):
+    @staticmethod
+    def legacy_hash(state):
+        normalized = ml.normalize_state(state)
+        material = {key: normalized[key] for key in (
+            "observations", "derivedMetrics", "turningPoints", "backtests",
+            "imports", "rolledBackImports")}
+        if "fiscalMonitor" in normalized:
+            material["fiscalMonitor"] = normalized["fiscalMonitor"]
+        return ml._hash(material, 32)
+
+    def test_streamed_state_hash_keeps_full_canonical_content_and_input_ownership(self):
+        state = ml.empty_state()
+        state["observations"] = [{"seriesId": "synthetic:unicode", "id": str(i),
+            "periodEnd": "2026-01-01", "revision": i, "value": value,
+            "metadata": {"日本語🙂": ["quote\"\\\n", {"nested": (None, True, False, -0.0)}]}}
+            for i, value in enumerate((None, -0.0, 1e-100, 1e100, float("inf")))]
+        state["derivedMetrics"] = [{"id": "synthetic:derived", "asOf": NOW, "value": 1.25}]
+        state["imports"] = [{"id": "synthetic:import", "raw": ["二", 2]}]
+        state["rolledBackImports"] = ["synthetic:old"]
+        state["fiscalMonitor"] = {"schemaVersion": "jp-fiscal-monitor-state-v1", "items": [{"label": "国債🙂"}]}
+        before = copy.deepcopy(state)
+        self.assertEqual(ml.state_hash(state), self.legacy_hash(state))
+        self.assertEqual(state, before)
+        changed = copy.deepcopy(state)
+        changed["observations"][0]["metadata"]["日本語🙂"].append("synthetic:changed")
+        self.assertNotEqual(ml.state_hash(changed), ml.state_hash(state))
+        self.assertEqual(ml.state_hash(changed), self.legacy_hash(changed))
+
+    def test_streamed_state_hash_rejects_unencodable_and_cyclic_rows(self):
+        for value in (object(), "\ud800"):
+            state = ml.empty_state()
+            state["observations"] = [{"seriesId": "synthetic:invalid", "metadata": value}]
+            for digest in (ml.state_hash, self.legacy_hash):
+                with self.assertRaises((TypeError, UnicodeEncodeError)):
+                    digest(state)
+        state = ml.empty_state()
+        row = {"seriesId": "synthetic:cycle"}
+        row["metadata"] = row
+        state["observations"] = [row]
+        for digest in (ml.state_hash, self.legacy_hash):
+            with self.assertRaises(ValueError):
+                digest(state)
+
+    def test_streamed_state_hash_avoids_whole_ledger_encoding_peak(self):
+        state = ml.empty_state()
+        state["observations"] = [{"seriesId": "synthetic:memory", "id": str(i),
+            "periodEnd": "2026-01-01", "revision": i,
+            "metadata": {"label": "検証🙂" * 100}} for i in range(3000)]
+        results = []
+        for digest in (self.legacy_hash, ml.state_hash):
+            already_tracing = tracemalloc.is_tracing()
+            if not already_tracing:
+                tracemalloc.start()
+            try:
+                tracemalloc.reset_peak()
+                baseline = tracemalloc.get_traced_memory()[0]
+                value = digest(state)
+                peak = tracemalloc.get_traced_memory()[1] - baseline
+                results.append((value, peak))
+            finally:
+                if not already_tracing:
+                    tracemalloc.stop()
+        self.assertEqual(results[0][0], results[1][0])
+        self.assertLess(results[1][1], results[0][1] // 2)
+
     def test_append_only_revision_duplicate_and_unit_validation(self):
         st = add(ml.empty_state(), "credit.short_balance", "2026-07-10", 700_000_000_000)
         with self.assertRaisesRegex(ValueError, "duplicate_observation"):

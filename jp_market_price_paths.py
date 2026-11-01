@@ -586,6 +586,12 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
         excluded = dict(reused["excluded"])
         positions_range = range(0)
     else:
+        if candidate_key:
+            # This generation cannot serve the new content key. Release both
+            # owners before building its replacement; retaining the local
+            # lookup would keep the entire obsolete episode graph alive.
+            backtest_cache.pop("sealedCandidates", None)
+            reused = None
         candidates, candidates_with = [], []
         excluded = {"missingCalendarOrPriceSession": 0, "incompleteEpisode": 0}
         positions_range = range(policy.lookback_sessions, len(visible) - policy.lookback_sessions - 1)
