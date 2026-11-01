@@ -61,6 +61,8 @@ REVIEWED_EXTENSION_BLOBS = {
     # 取得元の優先順位は維持し、時点検査の独立所有を保つコピー処理削減を含む正確な内容。
     # このpinを将来の編集への一般的な許可として流用しない。
     'argus_market_data_truth.py': '32198c14778c6c3920ca75019ed175eb19d9f1a5',
+    # 時点検査の全証明一致・入れ子の独立所有・検査後の原入力変更を検証した正確な内容。
+    'test_argus_market_data_truth.py': 'd4d78b717bba1185e1dd11e301b07b3ae64989d4',
     # 受領済みの公式結果を既存の見立てとニュースへ渡す正確な内容。
     'argus_macro_material.py': 'fdabb0863e0df5de12e4dd6c835e232ce7c65bc2',
     'test_argus_macro_material.py': 'b5e68b9722079359a1f74f72a21c527e80d94332',
