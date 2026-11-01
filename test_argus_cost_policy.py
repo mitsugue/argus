@@ -400,6 +400,15 @@ def test_complete_policy_window_restores_full_month_without_false_unknown(monkey
 
 def test_runtime_reservation_does_not_drop_earlier_current_month_rows(monkeypatch, tmp_path):
     scanner = _runtime_ledger(monkeypatch, tmp_path)
+    from datetime import datetime, timezone
+
+    class LedgerClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = cls(2026, 9, 12, 7, tzinfo=timezone.utc)
+            return fixed.astimezone(tz) if tz is not None else fixed.replace(tzinfo=None)
+
+    monkeypatch.setattr(scanner, "datetime", LedgerClock)
     monkeypatch.setattr(scanner, "_DURABILITY_PRODUCTION", False)
     scanner._COST_POLICY["usage"] = [
         {"provider": "openai", "purpose": "manual_api",
