@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_derived_cache_runtime.py': '66142899b9f2895dbaa76ed8b5857c30272f98c0',
     'test_argus_derived_cache_verification.py': 'f6c0666d9c249d96014fa79f4a4379665172244e',
     'docs/operations/saved-corporate-earnings-calendar.md': 'c7c8e5b5dc946e1ac0042e8c955a0dce10f01e95',
     'test_argus_financial_verification_timing.py': 'cdd13a83254f5fb6ce35606116367f22492ab130',
