@@ -96,14 +96,15 @@ def _iter_canonical(value: Any, depth: int = 2, *, encode_bytes=None):
         yield encode_bytes(value)
 
 
-def payload_sha256(payload: Mapping[str, Any], *, encode_bytes=None) -> str:
+def payload_sha256(payload: Mapping[str, Any], *, encode_bytes=None, depth: int = 2) -> str:
     """Stream a payload hash; an explicit codec preserves legacy state hashes.
 
-    Artifact writers and verifiers retain their strict default codec. State
-    hash callers may supply their existing codec without changing its options.
+    Artifact writers and verifiers retain their strict default codec and
+    depth. Nested cache callers may stream one more container level, while
+    state hashes may supply their existing codec without changing its options.
     """
     hasher = hashlib.sha256()
-    for piece in _iter_canonical(payload, encode_bytes=encode_bytes):
+    for piece in _iter_canonical(payload, depth=depth, encode_bytes=encode_bytes):
         hasher.update(piece)
     return hasher.hexdigest()
 

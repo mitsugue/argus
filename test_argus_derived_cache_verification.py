@@ -15,6 +15,37 @@ AT = '2026-08-01T12:00:00Z'
 METHOD = 'b' * 64
 
 
+@pytest.mark.parametrize('value', [
+    {'history': {'features': [{'value': -0.0, 'label': '日本株\\\"\n'},
+                               {'value': 1.2345678901234567, 'nested': [None, True]}]}},
+    {'tuple': (1, {'integerKeys': {2: 'two', 1: 'one'}})},
+    [{}, [], {'numeric': [1e-200, 1e200]}],
+])
+def test_nested_cache_digest_keeps_every_legacy_canonical_byte(value):
+    expected = hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+        allow_nan=False, separators=(',', ':')).encode()).hexdigest()
+    assert features._history_digest(value) == research.digest(value) == expected
+    assert artifacts.payload_sha256(value) == expected
+    assert artifacts.payload_sha256(value, depth=3) == expected
+
+
+@pytest.mark.parametrize('damage', ['nan', 'infinity', 'mixed_keys', 'cycle', 'unsupported'])
+def test_nested_cache_digest_retains_legacy_rejections(damage):
+    value = {'history': {'features': [{'value': 1.25}]}}
+    row = value['history']['features'][0]
+    if damage == 'nan': row['value'] = float('nan')
+    elif damage == 'infinity': row['value'] = float('inf')
+    elif damage == 'mixed_keys': row[1] = 'one'
+    elif damage == 'cycle': row['cycle'] = value
+    else: row['value'] = object()
+    with pytest.raises((ValueError, TypeError)) as legacy:
+        json.dumps(value, sort_keys=True, ensure_ascii=False,
+                   allow_nan=False, separators=(',', ':'))
+    for calculate in (features._history_digest, research.digest):
+        with pytest.raises(type(legacy.value)):
+            calculate(value)
+
+
 def feature_history():
     return dict(schemaVersion='jp-market-feature-history-v1', status='AVAILABLE',
         inputIdentity='a' * 64, cutoffCount=1, historicalVintageVerified=False,
@@ -28,6 +59,31 @@ def report_document():
     return research.envelope({key: research.record(key,
         {'comparison': {'values': [1.25, -0.0], 'policy': ('a', 'b')}},
         method=METHOD, at=AT)})
+
+
+@pytest.mark.parametrize('value', [
+    {'日本株': [1.25, -0.0, None, '\\"\n']},
+    {'values': ({1: 'one', 2: 'two'}, [True, False, 1e-200])},
+])
+def test_size_check_retains_exact_default_whitespace_utf8_bound(value):
+    assert research._encoded_size(value) == len(json.dumps(value,
+        ensure_ascii=False, allow_nan=False).encode())
+
+
+def test_optional_calibration_keeps_the_exact_original_byte_boundary(monkeypatch):
+    records = report_document()['records']
+    saved = research.calibration_record(dict(key='c'*64, result={'日本株':[1.25]},
+        search=None, materialReactionResearch=None, yardstickResearch=None),
+        method='calibration', at=AT)
+    doc = research.envelope(records, calibration=saved)
+    size = len(json.dumps(doc, ensure_ascii=False, allow_nan=False).encode())
+    monkeypatch.setattr(research, 'MAX_BYTES', size)
+    assert research.envelope(records, calibration=saved) == doc
+    monkeypatch.setattr(research, 'MAX_BYTES', size-1)
+    assert 'comparisonCalibration' not in research.envelope(records, calibration=saved)
+    # Even an over-limit prefix must not hide an invalid later scalar.
+    monkeypatch.setattr(research, 'MAX_BYTES', 1)
+    with pytest.raises(TypeError): research._encoded_size(['x'*100, object()])
 
 
 def test_independent_digest_matches_writer_and_unchanged_file(tmp_path):

@@ -43547,15 +43547,16 @@ def _index_research_warm():
                 # Optional acceleration must not prevent saving good reports.
                 _INDEX_RESEARCH_STATUS['calibrationSaveError'] = type(exc).__name__
             doc = argus_index_research_cache.envelope(_INDEX_RESEARCH_REPORTS, calibration=calibration)
-            argus_persistent_storage.atomic_write_json(path, doc,
-                maximum_bytes=argus_index_research_cache.MAX_BYTES, file_mode=0o600)
-            restored, checked_calibration = argus_index_research_cache.load_with_calibration(
-                path, method=_INDEX_RESEARCH_METHOD, now=_ai_now_iso(),
+            argus_index_research_cache.validate_for_persistence(
+                doc, method=_INDEX_RESEARCH_METHOD, now=_ai_now_iso(),
                 calibration_method=argus_index_research_cache.calibration_method())
-            if restored != _INDEX_RESEARCH_REPORTS:
+            expected = argus_market_artifact_store.payload_sha256(doc, depth=3)
+            receipt = argus_persistent_storage.atomic_write_json(path, doc,
+                maximum_bytes=argus_index_research_cache.MAX_BYTES, file_mode=0o600)
+            if receipt.get('snapshotHash') != expected:
                 raise ValueError("index_research_readback_mismatch")
-            if checked_calibration != (doc.get('comparisonCalibration') or {}).get('state', {}):
-                raise ValueError('research_calibration_readback_mismatch')
+            argus_market_artifact_store.verify_file_digest(
+                path, expected, maximum_bytes=argus_index_research_cache.MAX_BYTES)
             _INDEX_RESEARCH_STATUS["persistenceStatus"] = "VERIFIED"
     except Exception as exc:
         _INDEX_RESEARCH_STATUS.update(status="FAILED", errorClass=type(exc).__name__, currentTarget=None)
@@ -44783,10 +44784,15 @@ def _jp_market_feature_history_persist(cache_path, method, now):
     try:
         doc = jp_market_features.history_cache_envelope(_JP_MARKET_FEATURE_HISTORY, method=method)
         argus_product_naming.require_allowed(doc)
-        argus_persistent_storage.atomic_write_json(cache_path, doc,
-            maximum_bytes=jp_market_features.HISTORY_CACHE_MAX_BYTES, file_mode=0o600)
-        if jp_market_features.load_history_cache(cache_path, method=method, now=now) != _JP_MARKET_FEATURE_HISTORY:
+        if jp_market_features.validate_history_cache(doc, method=method, now=now) != _JP_MARKET_FEATURE_HISTORY:
             raise ValueError("feature_cache_readback_mismatch")
+        expected = argus_market_artifact_store.payload_sha256(doc, depth=3)
+        receipt = argus_persistent_storage.atomic_write_json(cache_path, doc,
+            maximum_bytes=jp_market_features.HISTORY_CACHE_MAX_BYTES, file_mode=0o600)
+        if receipt.get('snapshotHash') != expected:
+            raise ValueError("feature_cache_readback_mismatch")
+        argus_market_artifact_store.verify_file_digest(cache_path, expected,
+            maximum_bytes=jp_market_features.HISTORY_CACHE_MAX_BYTES)
         _JP_MARKET_FEATURE_CACHE_STATUS["persistenceStatus"] = "VERIFIED"
         _JP_MARKET_FEATURE_CACHE_STATUS.pop("persistenceError", None)
     except Exception as exc:
