@@ -5,6 +5,37 @@ import argus_persistent_storage as storage
 import jp_market_features as features
 from test_argus_derived_cache_verification import AT, METHOD, feature_history
 
+
+def test_separate_restores_public_reads_and_record_sources_remain_independent(tmp_path):
+    from copy import deepcopy
+    import json
+    payload = {'comparison': {'values': [1.25, -0.0], 'policy': ('a', 'b')}}
+    original = deepcopy(payload)
+    key = 'comparison:N225:5'
+    record = research.record(key, payload, method=METHOD, at=AT)
+    payload['comparison']['values'][0] = 999
+    assert record['payload'] == json.loads(json.dumps(original))
+    state = dict(key='c'*64, result={'values':[1.25]}, search=None,
+                 materialReactionResearch=None, yardstickResearch=None)
+    saved = research.calibration_record(state, method='calibration', at=AT)
+    path = tmp_path/'cache.json'
+    path.write_text(json.dumps(research.envelope({key:record}, calibration=saved)))
+    first, calibration = research.load_with_calibration(path, method=METHOD, now=AT,
+                                                        calibration_method='calibration')
+    second, other_calibration = research.load_with_calibration(path, method=METHOD, now=AT,
+                                                              calibration_method='calibration')
+    assert first == second == {key:record}
+    public = research.read(first, key, method=METHOD, now=AT)
+    public['payload']['comparison']['values'][0] = 888
+    assert first == second
+    first[key]['payload']['comparison']['values'][0] = 777
+    calibration['result']['values'][0] = 666
+    assert second == {key:record}
+    assert other_calibration == saved['state'] == state
+    restored, checked = research.load_with_calibration(path, method=METHOD, now=AT,
+                                                       calibration_method='calibration')
+    assert restored == second and checked == other_calibration
+
 @pytest.mark.parametrize('damage', ['receipt', 'installed', 'mutated_source', None])
 def test_feature_save_checks_source_and_installed_bytes_without_parsing(tmp_path, monkeypatch, damage):
     import scanner

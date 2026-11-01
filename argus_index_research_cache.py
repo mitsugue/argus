@@ -88,12 +88,13 @@ def record(key, payload, *, method, at):
 
 def read(records, key, *, method, now):
     value = records.get(key)
-    if not value or value.get('methodVersion') != method:
-        return None
-    if stamp(value['calculatedAt']) > stamp(now):
-        return None
     # Records enter memory only via record() or load(); screen reads never rehash history.
-    return deepcopy(value)
+    return deepcopy(value) if _current_record(value, method=method, now=now) else None
+
+
+def _current_record(value, *, method, now):
+    return bool(value and value.get('methodVersion') == method
+                and not stamp(value['calculatedAt']) > stamp(now))
 
 
 def envelope(records, *, calibration=None):
@@ -120,8 +121,11 @@ def load_with_calibration(path, *, method, now, calibration_method=None):
     if len(raw) > MAX_BYTES:
         raise ValueError('research_cache_size_bound')
     doc = json.loads(raw)
+    # JSON parsing already gives this call sole ownership of every record.
+    # Returning those admitted records does not alias any caller's objects;
+    # copying them all again only overlaps two complete container graphs.
     return _admit_document(doc, method=method, now=now,
-                           calibration_method=calibration_method, copy_records=True)
+                           calibration_method=calibration_method)
 
 
 def validate_for_persistence(doc, *, method, now, calibration_method=None):
@@ -129,17 +133,17 @@ def validate_for_persistence(doc, *, method, now, calibration_method=None):
 
     Every record is still reconstructed and checked individually. Only the
     admitted output mapping borrows records, and it never escapes this call.
-    Startup restoration and public reads retain their independent ownership.
+    Startup parsing and public reads retain their independent ownership.
     """
     restored, calibration = _admit_document(doc, method=method, now=now,
-        calibration_method=calibration_method, copy_records=False)
+        calibration_method=calibration_method)
     if restored != doc['records']:
         raise ValueError('index_research_readback_mismatch')
     if calibration != (doc.get('comparisonCalibration') or {}).get('state', {}):
         raise ValueError('research_calibration_readback_mismatch')
 
 
-def _admit_document(doc, *, method, now, calibration_method, copy_records):
+def _admit_document(doc, *, method, now, calibration_method):
     records = doc.get('records')
     if doc.get('schemaVersion') != SCHEMA or not isinstance(records, dict) or set(records) - KEYS:
         raise ValueError('research_cache_schema')
@@ -150,9 +154,7 @@ def _admit_document(doc, *, method, now, calibration_method, copy_records):
         expected = record(key, value['payload'], method=value['methodVersion'], at=value['calculatedAt'])
         if value != expected:
             raise ValueError('research_cache_record_integrity')
-        admitted = (read({key: value}, key, method=method, now=now) if copy_records
-                    else value if value.get('methodVersion') == method
-                    and stamp(value['calculatedAt']) <= stamp(now) else None)
+        admitted = value if _current_record(value, method=method, now=now) else None
         if admitted:
             restored[key] = admitted
     saved = doc.get('comparisonCalibration')
