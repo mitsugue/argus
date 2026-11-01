@@ -133,7 +133,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
     # contents; v13.7.59 candidate).
     'argus_allocator_policy.py': '5a39a5da52a42fdedd9e1bb0e68b3d9a24fa4dcd',
-    'test_argus_allocator_policy.py': '9c69cfa60663289c90a71da83c77671b2550facc',
+    'test_argus_allocator_policy.py': '5b3611839f112df5caffbfe09209ec5d6f44be8e',
     'docs/ops/allocator-reclaim.md': '36e7f038294fcd2339c150e78de8f3470a91f7e7',
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
     'test_argus_jp_owner_quote_warm.py': 'eb998f6e67dbfeb8bc65598521189618efd0de04',
