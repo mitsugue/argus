@@ -2,28 +2,20 @@
 
 ## Current scalar coverage and retained builtin graph
 
-The existing server startup policy also selects the system allocator for
-Python small objects on Linux CPython 3.12 when the interpreter still uses
-its default pymalloc. This lets the existing glibc policy and bounded reclaim
-operate on freed small-object pages instead of waiting for an entire Python
-arena to become empty. Import and worker commands do not select an allocator.
+The server preserves the interpreter's default Python allocator and any
+explicit PYTHONMALLOC or interpreter flags. Startup records the actual native
+allocator name without re-executing the interpreter. The glibc thresholds and
+existing bounded reclaim remain unchanged. With an explicit malloc allocator,
+pymalloc arena statistics are UNAVAILABLE rather than zero.
 
-The selection occurs at the existing startup_policy() call before restoration
-and before the scheduler/server starts. The process replaces its interpreter
-once with PYTHONMALLOC=malloc, keeping its PID, original interpreter flags,
-arguments, descriptors and inherited credentials. Explicit PYTHONMALLOC,
-development/ignore-environment flags and the existing disabled-policy setting
-are respected. An exec failure is reported and not retried in that process.
-Setting PYTHONMALLOC=pymalloc explicitly preserves the previous allocator for
-rollback; it does not alter stored data or release authority.
-
-The private allocator metrics include the current name read from CPython's
-native API. With malloc, pymalloc arena statistics are UNAVAILABLE rather than
-zero; the existing glibc counters describe small-object allocations too.
-This changes allocator ownership, not GC, reclaim thresholds, collection
-schedules, cache retention, original inputs, numerical methods or restore
-authority. Memory and CPU must both be checked with identical inputs, then
-verified in the actual production memory limit before acceptance.
+When comparison input content changes, the old sealed candidate generation
+cannot serve that content key. The comparison now releases the cache and
+local reference to that obsolete graph before constructing its replacement.
+Identical keys still reuse their candidates across horizons. Completed studies
+and saved reports remain available if a new build fails; no obsolete candidate
+is admitted to the new input. Inputs, formulas, thresholds, episode hashes,
+validation, retention bounds and restore authority are unchanged. No GC or
+extra allocator reclaim is introduced.
 
 The existing operation view samples current OS/allocator scalars once when
 read, outside its lock, and carries an opaque process instance plus PID.

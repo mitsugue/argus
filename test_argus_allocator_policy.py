@@ -82,75 +82,62 @@ def _backend_allocator_entry(monkeypatch):
     monkeypatch.setattr(sys, "argv", [backend])
     monkeypatch.setattr(sys, "orig_argv", [sys.executable, "-B", "-u", backend])
     monkeypatch.setattr(policy, "python_allocator_name", lambda: "pymalloc")
-    monkeypatch.setattr(policy, "_BACKEND_ALLOCATOR_REEXEC_ATTEMPTED", False)
     monkeypatch.delenv("PYTHONMALLOC", raising=False)
     return backend
 
 
-def test_backend_allocator_reexec_preserves_interpreter_args_and_environment(monkeypatch, _backend_allocator_entry):
-    class Replaced(BaseException):
-        pass
+def test_backend_allocator_observation_preserves_interpreter_args_and_environment(monkeypatch, _backend_allocator_entry):
     before = dict(os.environ)
-    captured = {}
-
-    def execute(executable, args, env):
-        captured.update(executable=executable, args=args, env=env)
-        raise Replaced()
-    monkeypatch.setattr(os, "execve", execute)
-    with pytest.raises(Replaced):
-        policy._bootstrap_backend_allocator()
-    assert captured["executable"] == sys.executable
-    assert captured["args"] == [sys.executable, "-B", "-u", _backend_allocator_entry]
-    assert captured["env"]["PYTHONMALLOC"] == "malloc"
-    assert all(captured["env"].get(key) == value for key, value in before.items())
-    assert "PYTHONMALLOC" not in os.environ
-    assert policy._BACKEND_ALLOCATOR_REEXEC_ATTEMPTED is True
+    args, original_args = list(sys.argv), list(sys.orig_argv)
+    monkeypatch.setattr(os, "execve", lambda *args: (_ for _ in ()).throw(AssertionError("must not exec")))
+    assert policy._backend_allocator_observation() == {
+        "status": "ALLOCATOR_PRESERVED", "allocatorName": "pymalloc"}
+    assert dict(os.environ) == before
+    assert sys.argv == args and sys.orig_argv == original_args
 
 
 @pytest.mark.parametrize("configured", ["malloc", "pymalloc", "malloc_debug", "default"])
 def test_backend_allocator_honours_explicit_allocator(monkeypatch, _backend_allocator_entry, configured):
     monkeypatch.setenv("PYTHONMALLOC", configured)
     monkeypatch.setattr(os, "execve", lambda *args: (_ for _ in ()).throw(AssertionError("must not exec")))
-    assert policy._bootstrap_backend_allocator()["status"] == "EXPLICIT_ALLOCATOR"
+    assert policy._backend_allocator_observation()["status"] == "EXPLICIT_ALLOCATOR"
 
 
 def test_backend_allocator_does_not_change_workers_imports_or_disabled_policy(monkeypatch, _backend_allocator_entry):
     monkeypatch.setattr(os, "execve", lambda *args: (_ for _ in ()).throw(AssertionError("must not exec")))
     with monkeypatch.context() as change:
         change.setattr(sys, "argv", [_backend_allocator_entry, "--worker"])
-        assert policy._bootstrap_backend_allocator()["status"] == "NOT_BACKEND_SERVER"
+        assert policy._backend_allocator_observation()["status"] == "NOT_BACKEND_SERVER"
     with monkeypatch.context() as change:
         change.setattr(sys.modules["__main__"], "__file__", __file__)
-        assert policy._bootstrap_backend_allocator()["status"] == "NOT_BACKEND_SERVER"
+        assert policy._backend_allocator_observation()["status"] == "NOT_BACKEND_SERVER"
     with monkeypatch.context() as change:
         change.setenv("ARGUS_MALLOC_MMAP_THRESHOLD_BYTES", "0")
-        change.setattr(policy, "_bootstrap_backend_allocator", lambda: (_ for _ in ()).throw(AssertionError("disabled")))
+        change.setattr(policy, "_backend_allocator_observation", lambda: (_ for _ in ()).throw(AssertionError("disabled")))
         assert policy.startup_policy()["status"] == "DISABLED"
 
 
-def test_backend_allocator_exec_failure_is_reported_without_repeated_attempt_or_detail(monkeypatch, _backend_allocator_entry):
+def test_backend_allocator_repeated_observations_never_exec_or_expose_environment(monkeypatch, _backend_allocator_entry):
     calls = []
-
     def denied(*args):
         calls.append(True)
         raise PermissionError("private-exec-sentinel")
     monkeypatch.setattr(os, "execve", denied)
-    first = policy._bootstrap_backend_allocator()
-    assert first == {"status": "REEXEC_FAILED", "allocatorName": "pymalloc", "errorClass": "PermissionError"}
-    assert "private-exec-sentinel" not in json.dumps(first)
-    assert policy._bootstrap_backend_allocator()["status"] == "REEXEC_ALREADY_ATTEMPTED"
-    assert len(calls) == 1
+    first = policy._backend_allocator_observation()
+    assert first == {"status": "ALLOCATOR_PRESERVED", "allocatorName": "pymalloc"}
+    assert policy._backend_allocator_observation() == first
+    assert calls == [] and "private-exec-sentinel" not in json.dumps(first)
 
 
 @pytest.mark.parametrize("allocator,args,flags,expected_entries,expected_mode", [
-    (None, [], [], 2, "malloc"),
+    (None, [], [], 1, "pymalloc"),
     ("pymalloc", [], [], 1, "pymalloc"),
     ("malloc", [], [], 1, "malloc"),
     (None, ["--worker"], [], 1, "pymalloc"),
     (None, [], ["-E"], 1, "pymalloc"),
     (None, [], ["-X", "dev"], 1, "pymalloc_debug"),
 ])
-def test_real_backend_allocator_exec_is_once_before_restore_and_preserves_pid_flags_and_credentials(
+def test_real_backend_allocator_keeps_interpreter_and_preserves_pid_flags_and_credentials(
         tmp_path, allocator, args, flags, expected_entries, expected_mode):
     if sys.platform != "linux" or sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 12):
         pytest.skip("backend repair applies to Linux CPython3.12")

@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.219"
+PRODUCT_VERSION = "v13.8.220"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -132,8 +132,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_render_deploy_diagnostics.py': 'ffbcdda6f9c27aabff883e93bf73b03d7be550b4',
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
     # contents; v13.7.59 candidate).
-    'argus_allocator_policy.py': '4422b5fa437aca4ebd458274854e4b764775e46b',
-    'test_argus_allocator_policy.py': '72aa6b969d70fa4ed726da433ca1649a236fc37d',
+    'argus_allocator_policy.py': '5a39a5da52a42fdedd9e1bb0e68b3d9a24fa4dcd',
+    'test_argus_allocator_policy.py': '9c69cfa60663289c90a71da83c77671b2550facc',
     'docs/ops/allocator-reclaim.md': '09a5c1f1ee45d591b4164826e61e15b9f302d38c',
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
     'test_argus_jp_owner_quote_warm.py': 'eb998f6e67dbfeb8bc65598521189618efd0de04',
@@ -432,7 +432,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'jp_market_dynamics.py': '36624677a01861c4adfa706e4d5b9dfa405212dd',
     'jp_market_events.py': '9798f7172c58c3d94748641d4ca67fd4dde6f4cf',
     'jp_market_features.py': '8fabe12cd8e02abf55af2ef7e0a46e79ffcc65ed',
-    'jp_market_price_paths.py': '649add342b09ef529a303adacee52ad11c846ca9',
+    'jp_market_price_paths.py': '6bfc75d1390a8f652693c0535def2aa06db08b18',
     'test_jp_market_current_per.py': '0ee8c8c8f6fe2631dccd7e829abbfdc673503209',
     'jp_market_source_adapters.py': 'f5950ba0ff80f98b8a121cfd08d5eef691e81af0',
     'ops/calendar/jp_index_sq_2026.json': 'd55cbf1e1362d4d86b21fe413cc2de35b035bd62',
