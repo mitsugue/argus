@@ -36,6 +36,7 @@ import sys
 import threading
 import time
 from collections import deque
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
 SCHEMA_VERSION = "argus-allocator-policy-v1"
@@ -194,6 +195,110 @@ HEAP_MINIMUM_HEADROOM_BYTES = 128 * 1024 * 1024
 _HEAP_OBSERVATION_LOCK = threading.Lock()
 
 
+def _python_allocator_stats_text() -> str:
+    """Read CPython 3.12's allocator to an isolated FILE, never stderr.
+
+    PyDLL keeps the GIL while the native reader visits its pools. No process
+    descriptor is redirected and no GC, allocator policy or cache is changed.
+    The ABI is deliberately limited; other runtimes must stay unobserved.
+    """
+    import ctypes
+    import tempfile
+    if (sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 12)
+            or not sys.platform.startswith("linux")
+            or ctypes.sizeof(ctypes.c_void_p) != 8):
+        raise ValueError("unsupported_runtime")
+    native = ctypes.pythonapi._PyObject_DebugMallocStats
+    native.argtypes = [ctypes.c_void_p]
+    native.restype = None
+    libc = ctypes.CDLL(None)
+    libc.fdopen.argtypes = [ctypes.c_int, ctypes.c_char_p]
+    libc.fdopen.restype = ctypes.c_void_p
+    libc.fclose.argtypes = [ctypes.c_void_p]
+    libc.fclose.restype = ctypes.c_int
+    with tempfile.TemporaryFile(mode="w+b") as handle:
+        duplicate = os.dup(handle.fileno())
+        stream = libc.fdopen(duplicate, b"w+")
+        if not stream:
+            os.close(duplicate)
+            raise OSError("allocator_stats_stream_unavailable")
+        try:
+            native(stream)
+        finally:
+            libc.fclose(stream)
+        handle.seek(0)
+        raw = handle.read(16385)
+    if len(raw) > 16384:
+        raise ValueError("allocator_stats_size_bound")
+    return raw.decode("ascii")
+
+
+def _parse_python_allocator_stats(text: str) -> Dict[str, Any]:
+    """Admit fixed scalar counters only after independent total checks."""
+    import re
+    if len(text) > 16384 or not text.startswith(
+            "Small block threshold = 512, in 32 size classes.\n"):
+        raise ValueError("allocator_stats_format")
+    classes = []
+    for row in re.findall(r"(?m)^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$", text):
+        index, size, pools, used, available = map(int, row)
+        if index != len(classes) or size != (index + 1) * 16:
+            raise ValueError("allocator_stats_class_order")
+        classes.append({"blockSizeBytes": size, "poolCount": pools,
+                        "blocksInUse": used, "availableBlocks": available})
+    if len(classes) != 32:
+        raise ValueError("allocator_stats_classes_incomplete")
+
+    def counter(label: str) -> int:
+        found = re.findall(r"(?m)^# " + re.escape(label) + r"\s*=\s*([0-9,]+)\s*$", text)
+        if len(found) != 1:
+            raise ValueError("allocator_stats_counter_missing")
+        return int(found[0].replace(",", ""))
+    fields = {name: counter(label) for name, label in (
+        ("arenasAllocatedTotal", "arenas allocated total"),
+        ("arenasReclaimed", "arenas reclaimed"),
+        ("arenasHighwater", "arenas highwater mark"),
+        ("arenasCurrent", "arenas allocated current"),
+        ("allocatedSmallBlockBytes", "bytes in allocated blocks"),
+        ("availableSmallBlockBytes", "bytes in available blocks"),
+        ("poolHeaderBytes", "bytes lost to pool headers"),
+        ("quantizationBytes", "bytes lost to quantization"),
+        ("alignmentBytes", "bytes lost to arena alignment"))}
+    arenas = re.findall(r"(?m)^(\d+) arenas \* (\d+) bytes/arena\s*=\s*([0-9,]+)\s*$", text)
+    unused = re.findall(r"(?m)^(\d+) unused pools \* (\d+) bytes\s*=\s*([0-9,]+)\s*$", text)
+    if len(arenas) != 1 or len(unused) != 1:
+        raise ValueError("allocator_stats_totals_missing")
+    arena_count, arena_size, arena_total = (int(x.replace(",", "")) for x in arenas[0])
+    unused_count, pool_size, unused_total = (int(x.replace(",", "")) for x in unused[0])
+    if (arena_size != 1048576 or pool_size != 16384
+            or arena_count != fields["arenasCurrent"]
+            or arena_total != arena_count * arena_size
+            or unused_total != unused_count * pool_size
+            or fields["arenasAllocatedTotal"] != arena_count + fields["arenasReclaimed"]
+            or fields["arenasHighwater"] < arena_count
+            or fields["allocatedSmallBlockBytes"] != sum(r["blockSizeBytes"] * r["blocksInUse"] for r in classes)
+            or fields["availableSmallBlockBytes"] != sum(r["blockSizeBytes"] * r["availableBlocks"] for r in classes)
+            or arena_total != sum(fields[key] for key in (
+                "allocatedSmallBlockBytes", "availableSmallBlockBytes", "poolHeaderBytes",
+                "quantizationBytes", "alignmentBytes")) + unused_total):
+        raise ValueError("allocator_stats_totals_inconsistent")
+    return {"schemaVersion": "argus-cpython-small-block-allocator-v1",
+            "status": "AVAILABLE", "scope": "cpython_pymalloc_reservations_not_rss",
+            **fields, "arenaBytesCurrent": arena_total, "unusedPoolBytes": unused_total,
+            "sizeClasses": classes}
+
+
+def python_allocator_metrics() -> Dict[str, Any]:
+    started = time.monotonic()
+    try:
+        result = _parse_python_allocator_stats(_python_allocator_stats_text())
+    except (AttributeError, OSError, ValueError, TypeError, UnicodeError):
+        result = {"schemaVersion": "argus-cpython-small-block-allocator-v1",
+                  "status": "UNAVAILABLE"}
+    return {**result, "capturedAt": datetime.now(timezone.utc).isoformat(),
+            "elapsedMs": round((time.monotonic() - started) * 1000, 3)}
+
+
 def _builtin_children(value: Any) -> Iterable[Any]:
     kind = type(value)
     if kind is dict:
@@ -288,6 +393,7 @@ def resident_memory_coverage(named: Mapping[str, Any], rows: Iterable[Mapping[st
     """
     import argus_memory_attribution
     before = argus_memory_attribution.memory_snapshot()
+    python_before = python_allocator_metrics()
     blocks_before = sys.getallocatedblocks() if hasattr(sys, "getallocatedblocks") else None
     group = before.get("cgroup") or {}
     current, maximum = group.get("memoryCurrentBytes"), group.get("memoryMaxBytes")
@@ -313,8 +419,11 @@ def resident_memory_coverage(named: Mapping[str, Any], rows: Iterable[Mapping[st
                      **retained_builtin_graph(named, names)}
         finally:
             _HEAP_OBSERVATION_LOCK.release()
+    python_after = python_allocator_metrics()
     return {"schemaVersion": "argus-resident-memory-coverage-v1",
             "before": before,
+            "pythonAllocatorBefore": python_before,
+            "pythonAllocatorAfter": python_after,
             "builtinGraph": graph,
             "after": argus_memory_attribution.memory_snapshot(),
             "pythonAllocatedBlocksBefore": blocks_before,

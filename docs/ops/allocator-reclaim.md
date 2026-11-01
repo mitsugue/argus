@@ -26,6 +26,23 @@ collection or AI, or changes a timer. Before/after metrics expose its own
 measurement effect. All observations use the existing private diagnostics
 storage; the public workflow log contains no production memory values.
 
+On 64-bit Linux CPython 3.12, the same coverage also reads the small-block
+allocator's current/highwater/reclaimed arenas, allocated and available blocks,
+unused pools and allocator overhead. The interpreter's existing native stats
+reader runs with the GIL held and writes to an isolated temporary FILE; stderr
+is never redirected. The FILE and its descriptors are closed before parsing.
+At most 16 KiB is read. The parser admits only fixed counters and the 32 size
+classes after reconciling class totals and all arena components. Unsupported
+runtimes, a missing native entry point, disabled pymalloc, missing counters or
+inconsistent totals yield UNAVAILABLE, never a zero-allocation observation.
+
+These are allocator reservations, not resident pages, whole-process heap size
+or application-owned live objects. Allocated blocks can include interpreter
+free lists; available blocks and unused pools are not automatically resident.
+Compare the timestamped before/after allocator readings with OS anonymous RSS,
+glibc counters and cgroup file/kernel memory. Readings taken during other work
+cannot measure the diagnostic's own effect or assign growth to one operation.
+
 These observations do not accept a production memory plan. Check the actual
 production limit, boot/build, lifetime peak, memory events and collection
 coverage separately. The owner runbook's 70% peak criterion and the existing

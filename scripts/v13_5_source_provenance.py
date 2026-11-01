@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.217"
+PRODUCT_VERSION = "v13.8.218"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -132,9 +132,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_render_deploy_diagnostics.py': 'ffbcdda6f9c27aabff883e93bf73b03d7be550b4',
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
     # contents; v13.7.59 candidate).
-    'argus_allocator_policy.py': '5b4d54520efceb914c65d38215e3b0874958a0c8',
-    'test_argus_allocator_policy.py': 'e2463c06260b394feaf933220792d801ac083bde',
-    'docs/ops/allocator-reclaim.md': 'be51eee735f12c2f6075b5a64c19e2b6a409ef35',
+    'argus_allocator_policy.py': '5fef79998b2b306be249000f74a0d194faf80c02',
+    'test_argus_allocator_policy.py': '09441cec38f159b7187b562bc88bfbaa55637951',
+    'docs/ops/allocator-reclaim.md': '8329af50d619efef52fdabedd88fffdabd470e57',
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
     'test_argus_jp_owner_quote_warm.py': 'eb998f6e67dbfeb8bc65598521189618efd0de04',
     # Derived market artifacts outside the sealed checkpoint (exact reviewed
@@ -189,7 +189,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'af1eebe49c5fb001a9255f31783189921df1a772',
+    'web/scripts/owner-today-https.mjs': 'ad53fe8ed3f48dff3c5ea024b651e712ec74f58f',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
