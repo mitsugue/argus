@@ -138,6 +138,21 @@ def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _python_reservation_observation() -> Dict[str, Any]:
+    """Read only bounded native counters for a view, never for every event."""
+    fields = ("arenaBytesCurrent", "allocatedSmallBlockBytes", "availableSmallBlockBytes",
+              "unusedPoolBytes", "arenasCurrent")
+    try:
+        import argus_allocator_policy
+        raw = argus_allocator_policy.python_allocator_metrics()
+        valid = (isinstance(raw, dict) and raw.get("status") == "AVAILABLE"
+                 and all(type(raw.get(key)) is int and 0 <= raw[key] < 2**63 for key in fields))
+    except Exception:
+        raw, valid = {}, False
+    return {"status": "AVAILABLE" if valid else "UNAVAILABLE", "capturedAt": _now(),
+            **{key: raw[key] if valid else None for key in fields}}
+
+
 def _startup_restore_observation() -> Dict[str, Any]:
     """Read only fixed restoration metadata from the trusted server entry."""
     main = sys.modules.get("__main__")
@@ -1478,6 +1493,7 @@ class OperationAttributionRecorder:
             current_memory = memory_snapshot()
         except Exception:
             current_memory = {"capturedAt": _now(), "status": "UNAVAILABLE"}
+        python_reservations = _python_reservation_observation()
         with self._lock:
             history = copy.deepcopy(list(self._history))
             known = sorted(
@@ -1489,6 +1505,7 @@ class OperationAttributionRecorder:
                 "schemaVersion": OPERATION_SCHEMA_VERSION,
                 "processIdentity": {"instanceId": _PROCESS_INSTANCE_ID, "pid": os.getpid()},
                 "currentMemory": current_memory,
+                "pythonReservations": python_reservations,
                 "startupRestore": _startup_restore_observation(),
                 "historyLimit": self._maximum_records,
                 "thresholdBytes": self._threshold_bytes,

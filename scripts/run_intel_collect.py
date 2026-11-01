@@ -142,6 +142,7 @@ def _private_memory_record(body):
     events = mapping(group.get('events'))
     allocator = mapping(sample.get('allocatorMetrics'))
     identity = mapping(operations.get('processIdentity'))
+    reservations = mapping(operations.get('pythonReservations'))
     restore = mapping(operations.get('startupRestore'))
     policy = mapping(mapping(body.get('allocatorReclaim')).get('startupPolicy'))
     python = mapping(policy.get('pythonAllocator'))
@@ -167,6 +168,11 @@ def _private_memory_record(body):
             **{key: _private_stamp(restore.get(key)) for key in ('startedAt', 'completedAt', 'lastRestoreAt')}},
         'allocatorName': name if name in ('malloc', 'pymalloc', 'malloc_debug', 'pymalloc_debug', 'UNAVAILABLE') else None,
         'startupRssMib': {key: resident_mib(startup_rss.get(key)) for key in ('beforeRestoreMib', 'afterRestoreMib')},
+        'pythonReservations': {'status': 'AVAILABLE' if reservations.get('status') == 'AVAILABLE' else 'UNAVAILABLE',
+            'capturedAt': _private_stamp(reservations.get('capturedAt')),
+            **{key: number(reservations.get(key)) if reservations.get('status') == 'AVAILABLE' else None
+               for key in ('arenaBytesCurrent', 'allocatedSmallBlockBytes', 'availableSmallBlockBytes',
+                           'unusedPoolBytes', 'arenasCurrent')}},
         'process': {key: number(process.get(key)) for key in ('vmRssBytes', 'vmHwmBytes', 'rssAnonBytes', 'rssFileBytes')},
         'cgroup': {**{key: number(group.get(key)) for key in ('memoryCurrentBytes', 'memoryPeakBytes', 'memoryMaxBytes')},
                    'stat': {key: number(group_stat.get(key)) for key in ('anon', 'file', 'kernel')},

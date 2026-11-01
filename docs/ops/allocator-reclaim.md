@@ -41,6 +41,12 @@ limits and manifest encoding remain identical. All chunk descriptors and the
 limit are checked before a remote write, then one outgoing piece is retained.
 No record or validation step is removed and no authority is switched.
 
+Only when the operation view is read, the existing bounded native reader
+also supplies five Python arena reservation counters outside the recorder
+lock. Event snapshots do not perform this read. The closed private projection
+retains no native table, raw text, addresses or exception details. Unsupported,
+missing or malformed results stay UNAVAILABLE with unknown counters, not zero.
+
 The existing operation view samples current OS/allocator scalars once when
 read, outside its lock, and carries an opaque process instance plus PID.
 The instance changes across interpreter replacement and survives recorder
