@@ -103,9 +103,17 @@ def envelope(records, *, calibration=None):
     doc = {'schemaVersion': SCHEMA, 'records': records, 'sha256': digest(records)}
     if calibration is not None:
         doc['comparisonCalibration'] = calibration
-        if len(json.dumps(doc, ensure_ascii=False, allow_nan=False).encode()) > MAX_BYTES:
+        if _encoded_size(doc) > MAX_BYTES:
             del doc['comparisonCalibration']
     return doc
+
+
+def _encoded_size(value):
+    # Preserve the original default separators (including their spaces),
+    # UTF-8 byte count and full validation, without retaining the whole text.
+    # Do not stop at MAX_BYTES: invalid later values must still be rejected.
+    encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False)
+    return sum(len(piece.encode()) for piece in encoder.iterencode(value))
 
 
 def load(path, *, method, now):

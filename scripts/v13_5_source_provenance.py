@@ -36,7 +36,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
     'test_argus_derived_cache_runtime.py': 'ba86296508e59ea6ca38adac12882f1a914ffdcf',
-    'test_argus_derived_cache_verification.py': 'f29f911cb99d49fcc5d03f81b983326497225ed3',
+    'test_argus_derived_cache_verification.py': '6573189387a701167733d04c6f6413fab170878c',
     'docs/operations/saved-corporate-earnings-calendar.md': 'c7c8e5b5dc946e1ac0042e8c955a0dce10f01e95',
     'test_argus_financial_verification_timing.py': 'cdd13a83254f5fb6ce35606116367f22492ab130',
     'test_argus_corporate_earnings_calendar.py': '1523b025ec4de91d171c1527af6f9475da527d67',
@@ -293,7 +293,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "docs/V13_7_NUMERICAL_RESEARCH_INVENTORY.md": "827158b6cc590cd7aebc60b8539806c50c82ef91",
     "test_jp_market_valuation.py": "2aa3093796fa2b75e10525bde18cd19922fb43ef",
     "test_argus_index_research_cache.py": "276f27505aa1066cea06d3973a6cecdf92742eb9",
-    "argus_index_research_cache.py": "3048f23f83af58b902ca856c501a5eed073013ac",
+    "argus_index_research_cache.py": "d45ac4acba4e4907ac1c4d86801eddd4ccb53095",
     'test_argus_research_calculation_reuse.py': '0aec958de8cffbd8caca9e1e56c9c52dc3227cad',
     'web/src/components/today/NumericalResearchDetails.tsx': '51154691504cfeb1ed08891a450c9e746f161a95',
     'test_argus_jp_market_research.py': '8a05e5b7f1f514f6d16b3541fbf1d5c11484ccad',

@@ -61,6 +61,31 @@ def report_document():
         method=METHOD, at=AT)})
 
 
+@pytest.mark.parametrize('value', [
+    {'日本株': [1.25, -0.0, None, '\\"\n']},
+    {'values': ({1: 'one', 2: 'two'}, [True, False, 1e-200])},
+])
+def test_size_check_retains_exact_default_whitespace_utf8_bound(value):
+    assert research._encoded_size(value) == len(json.dumps(value,
+        ensure_ascii=False, allow_nan=False).encode())
+
+
+def test_optional_calibration_keeps_the_exact_original_byte_boundary(monkeypatch):
+    records = report_document()['records']
+    saved = research.calibration_record(dict(key='c'*64, result={'日本株':[1.25]},
+        search=None, materialReactionResearch=None, yardstickResearch=None),
+        method='calibration', at=AT)
+    doc = research.envelope(records, calibration=saved)
+    size = len(json.dumps(doc, ensure_ascii=False, allow_nan=False).encode())
+    monkeypatch.setattr(research, 'MAX_BYTES', size)
+    assert research.envelope(records, calibration=saved) == doc
+    monkeypatch.setattr(research, 'MAX_BYTES', size-1)
+    assert 'comparisonCalibration' not in research.envelope(records, calibration=saved)
+    # Even an over-limit prefix must not hide an invalid later scalar.
+    monkeypatch.setattr(research, 'MAX_BYTES', 1)
+    with pytest.raises(TypeError): research._encoded_size(['x'*100, object()])
+
+
 def test_independent_digest_matches_writer_and_unchanged_file(tmp_path):
     doc = report_document()
     original = deepcopy(doc)
