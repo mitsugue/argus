@@ -100,6 +100,29 @@ def summarize(doc: dict[str, Any]) -> str:
                        f"{_mib((last.get('allocatorAfter') or {}).get('freeBytes'))} MiB, "
                        f"{last.get('durationMs')} ms")
     inventory = doc.get("residentInventory") or {}
+    coverage = inventory.get("memoryCoverage") or {}
+    if coverage:
+        out.append("")
+        out.append("## Current process and cgroup memory")
+        for phase in ("before", "after"):
+            sample = coverage.get(phase) or {}
+            group = sample.get("cgroup") or {}
+            allocator = sample.get("allocatorMetrics") or {}
+            allocator = allocator if isinstance(allocator, dict) else {}
+            out.append(f"- {phase}: cgroup current/peak/max MiB "
+                       f"{_mib(group.get('memoryCurrentBytes'))}/"
+                       f"{_mib(group.get('memoryPeakBytes'))}/{_mib(group.get('memoryMaxBytes'))}; "
+                       f"glibc allocated/free/mmap MiB {_mib(allocator.get('allocatedBytes'))}/"
+                       f"{_mib(allocator.get('freeBytes'))}/{_mib(allocator.get('mmapBytes'))}")
+            out.append(f"- {phase} memory events: {group.get('events')}")
+        graph = coverage.get("builtinGraph") or {}
+        out.append(f"- builtin graph: {graph.get('status')}; selected roots, "
+                   "first discovery, non-atomic; not a whole-heap or RSS measurement")
+        for row in graph.get("rows") or []:
+            out.append(f"- `{row.get('name')}`: new shallow MiB "
+                       f"{_mib(row.get('newlyVisitedShallowBytes'))}, "
+                       f"objects {row.get('newObjectCount')}, shared {row.get('sharedReferenceCount')}, "
+                       f"opaque {row.get('opaqueReferenceCount')}, {row.get('status')}")
     rows = inventory.get("rows") or []
     if rows:
         out.append("")

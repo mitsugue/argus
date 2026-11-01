@@ -55,7 +55,7 @@ const fixture=await build({stdin:{contents:`
  createRoot(document.getElementById('root')).render(<React.StrictMode><OwnerAccess>{__FULL_APP_FIXTURE__?<AssetsProvider><WatchlistSyncLifecycle/><App/><Screen/></AssetsProvider>:<Screen/>}</OwnerAccess></React.StrictMode>);
 `,loader:'tsx',resolveDir:web},bundle:true,write:false,format:'iife',platform:'browser',
  loader:{'.css':'empty'},define:{'import.meta.env':JSON.stringify({VITE_ARGUS_OWNER_AUTH_REQUIRED:'1',VITE_ARGUS_BACKEND_URL:backendOrigin}),
- '__PRODUCT_VERSION__':JSON.stringify('13.8.216'),'__FRONTEND_BUILD_SHA__':JSON.stringify('fixture-build'),'__APP_VERSION__':JSON.stringify('fixture-version'),
+ '__PRODUCT_VERSION__':JSON.stringify('13.8.217'),'__FRONTEND_BUILD_SHA__':JSON.stringify('fixture-build'),'__APP_VERSION__':JSON.stringify('fixture-version'),
  '__FULL_APP_FIXTURE__':JSON.stringify(process.env.ARGUS_FULL_APP_FIXTURE==='1'),
  'process.env.NODE_ENV':JSON.stringify('development')},logLevel:'silent'});
 if(process.env.ARGUS_FULL_APP_FIXTURE==='1')fs.writeFileSync('/private/tmp/argus-owner-resume-repair-20261013/full-fixture-compiled.js',fixture.outputFiles[0].text);

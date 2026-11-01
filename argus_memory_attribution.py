@@ -213,8 +213,16 @@ def cgroup_metrics(root: str = "/sys/fs/cgroup") -> Dict[str, Any]:
         "memoryCurrentBytes": _read_cgroup_number(base / "memory.current"),
         "memoryPeakBytes": _read_cgroup_number(base / "memory.peak"),
         "memoryMaxBytes": _read_cgroup_number(base / "memory.max"),
+        "events": _unknown_map(("low", "high", "max", "oom", "oom_kill", "oom_group_kill")),
         "stat": _unknown_map(_CGROUP_STAT_FIELDS),
     }
+    events = _read_text(base / "memory.events")
+    for line in (events or "").splitlines():
+        tokens = line.split()
+        if len(tokens) == 2 and tokens[0] in output["events"]:
+            value = _integer(tokens[1])
+            if type(value) is int and value >= 0:
+                output["events"][tokens[0]] = value
     raw = _read_text(base / "memory.stat")
     if raw is None:
         return output

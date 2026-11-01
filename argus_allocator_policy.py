@@ -33,6 +33,7 @@ import itertools
 import json
 import os
 import sys
+import threading
 import time
 from collections import deque
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
@@ -181,6 +182,147 @@ INVENTORY_SAMPLE = 256
 INVENTORY_MAX_DEPTH = 14
 _SCALAR_BYTES = {bool: 5, type(None): 4}
 
+# A diagnostic must not become the memory spike it is investigating.  These
+# are observation budgets, not acceptance limits or application cache limits.
+HEAP_ROOT_LIMIT = 12
+HEAP_OBJECT_LIMIT = 131072
+HEAP_ROOT_OBJECT_LIMIT = 32768
+HEAP_EDGE_LIMIT = 524288
+HEAP_DEPTH_LIMIT = 64
+HEAP_SECONDS = 2.0
+HEAP_MINIMUM_HEADROOM_BYTES = 128 * 1024 * 1024
+_HEAP_OBSERVATION_LOCK = threading.Lock()
+
+
+def _builtin_children(value: Any) -> Iterable[Any]:
+    kind = type(value)
+    if kind is dict:
+        return itertools.chain.from_iterable(dict.items(value))
+    if kind in (list, tuple, set, frozenset, deque):
+        return iter(value)
+    return iter(())
+
+
+def retained_builtin_graph(named: Mapping[str, Any], root_names: Iterable[str], *,
+                           now: Callable[[], float] = time.monotonic
+                           ) -> Dict[str, Any]:
+    """Bounded, identity-aware graph observation; never a whole-heap/RSS estimate.
+
+    Only exact builtins are visited: no custom iterator, repr, __sizeof__,
+    property or GC traversal can run.  A byte is attributed to its first root
+    in the supplied order, not to an exclusive owner.  Concurrent mutation,
+    opaque objects and every budget leave explicit incomplete evidence.
+    """
+    started = now()
+    seen: set[int] = set()
+    rows = []
+    total_bytes = edges = 0
+    allowed = (dict, list, tuple, set, frozenset, deque,
+               str, bytes, bytearray, int, float, bool, type(None))
+    for name in itertools.islice(root_names, HEAP_ROOT_LIMIT):
+        row = {"name": name, "newlyVisitedShallowBytes": 0,
+               "newObjectCount": 0, "sharedReferenceCount": 0,
+               "opaqueReferenceCount": 0, "status": "VISITED"}
+        stack = [iter((named[name],))]
+        try:
+            while stack:
+                if now() - started >= HEAP_SECONDS:
+                    row["status"] = "TIME_LIMIT"
+                    break
+                if edges >= HEAP_EDGE_LIMIT:
+                    row["status"] = "EDGE_LIMIT"
+                    break
+                try:
+                    value = next(stack[-1])
+                except StopIteration:
+                    stack.pop()
+                    continue
+                edges += 1
+                if type(value) not in allowed:
+                    row["opaqueReferenceCount"] += 1
+                    continue
+                identity = id(value)
+                if identity in seen:
+                    row["sharedReferenceCount"] += 1
+                    continue
+                if len(seen) >= HEAP_OBJECT_LIMIT:
+                    row["status"] = "OBJECT_LIMIT"
+                    break
+                if row["newObjectCount"] >= HEAP_ROOT_OBJECT_LIMIT:
+                    row["status"] = "ROOT_OBJECT_LIMIT"
+                    break
+                seen.add(identity)
+                row["newObjectCount"] += 1
+                row["newlyVisitedShallowBytes"] += sys.getsizeof(value)
+                if type(value) in (dict, list, tuple, set, frozenset, deque):
+                    if len(stack) >= HEAP_DEPTH_LIMIT:
+                        row["status"] = "DEPTH_LIMIT"
+                    else:
+                        stack.append(iter(_builtin_children(value)))
+        except RuntimeError:
+            row["status"] = "CONCURRENT_MUTATION"
+        if row["opaqueReferenceCount"] and row["status"] == "VISITED":
+            row["status"] = "OPAQUE_REFERENCES"
+        total_bytes += row["newlyVisitedShallowBytes"]
+        rows.append(row)
+    return {"schemaVersion": "argus-retained-builtin-graph-v1",
+            "scope": "selected_roots_first_discovery_non_atomic",
+            "wholeHeapMeasured": False,
+            "currentHeapLowerBoundProved": False,
+            "uniqueVisitedShallowBytes": total_bytes,
+            "uniqueObjectCount": len(seen), "visitedEdges": edges,
+            "elapsedMs": int((now() - started) * 1000),
+            "objectLimit": HEAP_OBJECT_LIMIT,
+            "rootObjectLimit": HEAP_ROOT_OBJECT_LIMIT,
+            "edgeLimit": HEAP_EDGE_LIMIT, "depthLimit": HEAP_DEPTH_LIMIT,
+            "timeLimitSeconds": HEAP_SECONDS, "rows": rows}
+
+
+def resident_memory_coverage(named: Mapping[str, Any], rows: Iterable[Mapping[str, Any]]
+                             ) -> Dict[str, Any]:
+    """Read current native/cgroup scalars; inspect roots only with headroom.
+
+    The existing mission samples already use this reader.  In particular
+    mallinfo2.uordblks excludes mmap chunks; omitting hblkhd falsely turns
+    large live native allocations into an unexplained RSS residual.
+    """
+    import argus_memory_attribution
+    before = argus_memory_attribution.memory_snapshot()
+    blocks_before = sys.getallocatedblocks() if hasattr(sys, "getallocatedblocks") else None
+    group = before.get("cgroup") or {}
+    current, maximum = group.get("memoryCurrentBytes"), group.get("memoryMaxBytes")
+    running = any(type(named.get(key)) is dict and named[key].get(field) == value
+                  for key, field, value in (
+                      ("_MISSION_TICK_CONTEXT", "active", True),
+                      ("_INTEL_COLLECT_RUN", "status", "running"),
+                      ("_HEAVY_TICK_STATE", "running", True)))
+    if running:
+        graph = {"status": "SKIPPED_ACTIVE_WORK"}
+    elif (type(current) is not int or type(maximum) is not int
+          or current < 0 or maximum <= 0):
+        graph = {"status": "SKIPPED_UNKNOWN_MEMORY_LIMIT"}
+    elif maximum - current < HEAP_MINIMUM_HEADROOM_BYTES:
+        graph = {"status": "SKIPPED_LOW_HEADROOM"}
+    elif not _HEAP_OBSERVATION_LOCK.acquire(blocking=False):
+        graph = {"status": "SKIPPED_BUSY"}
+    else:
+        try:
+            names = [row["name"] for row in rows
+                     if row["name"] in named and row.get("serializedBytes", 0) > 0]
+            graph = {"status": "BOUNDED_OBSERVATION",
+                     **retained_builtin_graph(named, names)}
+        finally:
+            _HEAP_OBSERVATION_LOCK.release()
+    return {"schemaVersion": "argus-resident-memory-coverage-v1",
+            "before": before,
+            "builtinGraph": graph,
+            "after": argus_memory_attribution.memory_snapshot(),
+            "pythonAllocatedBlocksBefore": blocks_before,
+            "pythonAllocatedBlocksAfter": (sys.getallocatedblocks()
+                                            if hasattr(sys, "getallocatedblocks") else None),
+            "minimumHeadroomBytes": HEAP_MINIMUM_HEADROOM_BYTES,
+            "productionResourceAccepted": False}
+
 
 def _estimate(value: Any, *, sample: int, depth: int, state: Dict[str, Any]
               ) -> int:
@@ -299,6 +441,7 @@ def resident_inventory(named: Mapping[str, Any], *,
         "totalSerializedBytes": total,
         "elapsedMs": int((now() - started) * 1000),
         "rows": rows[:max(1, int(limit))],
+        "memoryCoverage": resident_memory_coverage(named, rows),
     }
 
 
