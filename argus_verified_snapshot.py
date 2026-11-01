@@ -435,8 +435,8 @@ def _normalize_store_shared(value: Any) -> Dict[str, Any]:
     """``normalize_store`` without the deep copies and without provenance.
 
     Verified snapshots are referenced, not copied; the containers are new so
-    the input store is never mutated.  Only ``publish_atomic`` uses this,
-    and its result is never handed to the trusted fast hash path.
+    the input store is never mutated. Publication and private read-only
+    persistence use this; its result never receives trusted provenance.
     """
     result = empty_store()
     if not isinstance(value, dict):
@@ -590,6 +590,34 @@ def state_hash_normalized(
             "hashNormalizedAlive": True,
         })
     return _digest_normalized_store(store, diagnostic_observer)
+
+
+def _state_hash_for_persistence(
+        store: Dict[str, Any], *,
+        diagnostic_observer: Optional[
+            Callable[[str, Dict[str, Any]], None]] = None) -> str:
+    """Hash publication-owned snapshots without copying all their payloads.
+
+    Only private worker serialization and before/after comparisons use this.
+    Published snapshot objects are never mutated: publication replaces their
+    pointers and public reads return owned copies. The local projection pins
+    those objects while hashing. It is not a trusted-normalized fast path:
+    every snapshot is reverified on every call, and no mutable reference
+    escapes this hash function. Raw/restore and owned-normalization APIs keep
+    their existing contracts.
+    """
+    observing = diagnostic_observer is not None
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "hash_enter", {})
+    normalized = _normalize_store_shared(store)
+    if observing:
+        _diagnostic_notify(diagnostic_observer, "internal_normalize_complete", {
+            "currentCount": len(normalized["current"]),
+            "historyCount": len(normalized["history"]),
+            "hashNormalizedAlive": True,
+            "snapshotPayloadsBorrowed": True,
+        })
+    return _digest_normalized_store(normalized, diagnostic_observer)
 
 
 def read_back_verified(local: Dict[str, Any], remote: Dict[str, Any]) -> bool:
