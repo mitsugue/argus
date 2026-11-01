@@ -134,7 +134,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # contents; v13.7.59 candidate).
     'argus_allocator_policy.py': '5a39a5da52a42fdedd9e1bb0e68b3d9a24fa4dcd',
     'test_argus_allocator_policy.py': '9c69cfa60663289c90a71da83c77671b2550facc',
-    'docs/ops/allocator-reclaim.md': '09a5c1f1ee45d591b4164826e61e15b9f302d38c',
+    'docs/ops/allocator-reclaim.md': '841305ff9e9ae1aa6c95c37cfae2fa74a9ff75ed',
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
     'test_argus_jp_owner_quote_warm.py': 'eb998f6e67dbfeb8bc65598521189618efd0de04',
     # Derived market artifacts outside the sealed checkpoint (exact reviewed
@@ -189,7 +189,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'c43875d94bdaae2e9d1eca0bb72cacd20845992e',
+    'web/scripts/owner-today-https.mjs': '618d05f602f0a5d2912af7f831af0c06972bdab0',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
