@@ -1,5 +1,37 @@
 # Allocator policy, bounded reclaim and resident inventory (v13.7.55)
 
+## Current scalar coverage and retained builtin graph
+
+The existing owner-only `?inventory=1` response also contains `memoryCoverage`.
+Its before/after samples retain the current process and smaps totals, glibc
+arena/in-use/free/**mmap** counters, and cgroup current/peak/max/events. Missing
+kernel fields remain unknown. `uordblks` alone excludes mmap chunks. A process
+RSS or a serialized-size estimate cannot replace these counters, and a cgroup
+peak includes other processes and file cache in that cgroup.
+
+The selected twelve largest inventory roots receive a separate builtin graph
+observation. Object identity is deduplicated across roots and cycles. Bytes
+are attributed to first discovery in that order, not exclusive ownership.
+Only exact builtin containers and scalars are visited; no element values,
+inner keys, addresses, paths, custom hooks or object representations are output.
+The walk is non-atomic: concurrent changes can make its sum differ from any
+single instant. It proves neither the current heap size nor a current heap
+lower bound, and it cannot account for native buffers or all module roots.
+
+The walk is capped at 131,072 unique objects, 32,768 per root, 524,288 edges,
+depth 64 and two seconds, with explicit incomplete statuses. It skips active
+collection/heavy work, unknown finite cgroup limits, headroom below 128 MiB,
+and another concurrent walk. It never calls GC or trim, clears a cache, starts
+collection or AI, or changes a timer. Before/after metrics expose its own
+measurement effect. All observations use the existing private diagnostics
+storage; the public workflow log contains no production memory values.
+
+These observations do not accept a production memory plan. Check the actual
+production limit, boot/build, lifetime peak, memory events and collection
+coverage separately. The owner runbook's 70% peak criterion and the existing
+resource/restore acceptance remain required; neither a 4 GiB CI run nor an
+unlimited/larger cloud machine supplies production 2 GB acceptance.
+
 ## Evidence
 
 Runtime diagnostics run 36279443457 (build 22478dce, 2026-09-27, 16 mission

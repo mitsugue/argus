@@ -7,6 +7,7 @@ the scanner wiring — without touching a real allocator.
 """
 import inspect
 import json
+import sys
 import time
 from collections import deque
 from typing import Any
@@ -181,6 +182,109 @@ def test_resident_inventory_depth_is_bounded():
 
 
 # ── scanner wiring ───────────────────────────────────────────────────────────
+
+def test_builtin_graph_counts_shared_and_cyclic_objects_once_without_values():
+    secret = "private-graph-sentinel-" * 5
+    shared = [secret, 37.25]
+    first = [shared, shared]
+    first.append(first)
+    second = [shared]
+    graph = policy.retained_builtin_graph({"_A": first, "_B": second}, ["_A", "_B"])
+    expected = sum(map(sys.getsizeof, (first, second, shared, secret, shared[1])))
+    assert graph["uniqueVisitedShallowBytes"] == expected
+    assert graph["uniqueObjectCount"] == 5
+    assert graph["rows"][0]["sharedReferenceCount"] == 2
+    assert graph["rows"][1]["newlyVisitedShallowBytes"] == sys.getsizeof(second)
+    assert graph["wholeHeapMeasured"] is False
+    assert secret not in json.dumps(graph)
+    assert first[0] is first[1] is second[0] and first[-1] is first
+
+
+def test_builtin_graph_never_calls_custom_hooks():
+    class Trap(list):
+        def __iter__(self):
+            raise AssertionError("custom iteration")
+
+        def __sizeof__(self):
+            raise AssertionError("custom size")
+
+        def __repr__(self):
+            raise AssertionError("custom repr")
+    graph = policy.retained_builtin_graph({"_A": [Trap()]}, ["_A"])
+    assert graph["uniqueObjectCount"] == 1
+    assert graph["rows"][0]["status"] == "OPAQUE_REFERENCES"
+    assert graph["rows"][0]["opaqueReferenceCount"] == 1
+
+
+@pytest.mark.parametrize("budget,value,status", [
+    ("HEAP_ROOT_OBJECT_LIMIT", 3, "ROOT_OBJECT_LIMIT"),
+    ("HEAP_OBJECT_LIMIT", 3, "OBJECT_LIMIT"),
+    ("HEAP_EDGE_LIMIT", 3, "EDGE_LIMIT"),
+    ("HEAP_DEPTH_LIMIT", 2, "DEPTH_LIMIT"),
+])
+def test_builtin_graph_budget_is_explicit_incomplete_evidence(monkeypatch, budget, value, status):
+    monkeypatch.setattr(policy, budget, value)
+    graph = policy.retained_builtin_graph({"_A": [[list(range(100))]]}, ["_A"])
+    assert graph["rows"][0]["status"] == status
+    assert graph["uniqueObjectCount"] <= policy.HEAP_OBJECT_LIMIT
+    assert graph["visitedEdges"] <= policy.HEAP_EDGE_LIMIT
+    assert graph["wholeHeapMeasured"] is False
+
+
+def test_builtin_graph_time_budget_stops_before_visiting():
+    clock = iter([0.0, 3.0, 4.0])
+    graph = policy.retained_builtin_graph({"_A": [1]}, ["_A"], now=lambda: next(clock))
+    assert graph["uniqueObjectCount"] == 0
+    assert graph["rows"][0]["status"] == "TIME_LIMIT"
+
+
+def test_builtin_graph_concurrent_dict_mutation_is_incomplete():
+    root = {"key": []}
+    calls = 0
+
+    def clock():
+        nonlocal calls
+        calls += 1
+        if calls == 4:
+            root["added"] = []
+        return 0.0
+    graph = policy.retained_builtin_graph({"_A": root}, ["_A"], now=clock)
+    assert graph["rows"][0]["status"] == "CONCURRENT_MUTATION"
+    assert graph["currentHeapLowerBoundProved"] is False
+
+
+def test_memory_coverage_preserves_native_mmaps_and_actual_cgroup_events(monkeypatch):
+    memory = {"cgroup": {"memoryCurrentBytes": 100, "memoryMaxBytes": 2 * 1024**3,
+                          "events": {"oom_kill": 2}},
+              "allocatorMetrics": {"allocatedBytes": 7, "mmapBytes": 900}}
+    monkeypatch.setattr(argus_memory_attribution, "memory_snapshot", lambda: memory)
+    result = policy.resident_memory_coverage({"_A": [1]}, [{"name": "_A", "serializedBytes": 3}])
+    assert result["before"] == result["after"] == memory
+    assert result["builtinGraph"]["uniqueObjectCount"] == 2
+    assert result["productionResourceAccepted"] is False
+
+
+@pytest.mark.parametrize("current,maximum,running,reason", [
+    (10, "max", False, "SKIPPED_UNKNOWN_MEMORY_LIMIT"),
+    ("UNKNOWN", 1000, False, "SKIPPED_UNKNOWN_MEMORY_LIMIT"),
+    (1000, 1001, False, "SKIPPED_LOW_HEADROOM"),
+    (100, 2 * 1024**3, True, "SKIPPED_ACTIVE_WORK"),
+])
+def test_memory_coverage_skips_unsafe_graph_work(monkeypatch, current, maximum, running, reason):
+    monkeypatch.setattr(argus_memory_attribution, "memory_snapshot", lambda: {
+        "cgroup": {"memoryCurrentBytes": current, "memoryMaxBytes": maximum}})
+    monkeypatch.setattr(policy, "retained_builtin_graph",
+                        lambda *a: (_ for _ in ()).throw(AssertionError("must not walk")))
+    result = policy.resident_memory_coverage({"_INTEL_COLLECT_RUN": {
+        "status": "running" if running else "done"}}, [])
+    assert result["builtinGraph"]["status"] == reason
+
+
+def test_memory_coverage_concurrent_walk_is_skipped(monkeypatch):
+    monkeypatch.setattr(argus_memory_attribution, "memory_snapshot", lambda: {
+        "cgroup": {"memoryCurrentBytes": 0, "memoryMaxBytes": 2 * 1024**3}})
+    with policy._HEAP_OBSERVATION_LOCK:
+        assert policy.resident_memory_coverage({}, [])["builtinGraph"] == {"status": "SKIPPED_BUSY"}
 
 @pytest.fixture
 def _reclaim_state():

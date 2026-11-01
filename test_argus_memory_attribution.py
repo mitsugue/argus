@@ -119,6 +119,12 @@ def test_cgroup_v2_parser_marks_optional_fields_unknown(tmp_path):
     assert result["stat"]["anon"] == 10
     assert result["stat"]["file"] == 20
     assert result["stat"]["sock"] == memory.UNKNOWN
+    assert result["events"]["oom_kill"] == memory.UNKNOWN
+    (tmp_path / "memory.events").write_text(
+        "low 0\nhigh 4\nmax 9\noom 2\noom_kill 1\nunknown 123\noom_group_kill -1\n")
+    events = memory.cgroup_metrics(str(tmp_path))["events"]
+    assert events == {"low": 0, "high": 4, "max": 9, "oom": 2,
+                      "oom_kill": 1, "oom_group_kill": memory.UNKNOWN}
 
 
 def test_history_is_bounded_after_100_missions_and_scalar_only():
