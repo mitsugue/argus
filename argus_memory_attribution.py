@@ -19,6 +19,7 @@ import resource
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from typing import Any, Dict, Iterable, Mapping, Optional
 
@@ -26,6 +27,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional
 SCHEMA_VERSION = "argus-memory-attribution-v3"
 OPERATION_SCHEMA_VERSION = "argus-operation-memory-v2"
 UNKNOWN = "UNKNOWN"
+_PROCESS_INSTANCE_ID = uuid.uuid4().hex
 NOT_APPLICABLE = "NOT_APPLICABLE"
 DEFAULT_HISTORY_LIMIT = 16
 MAXIMUM_HISTORY_LIMIT = 32
@@ -93,6 +95,7 @@ _OPERATION_METADATA_FIELDS = {
 
 _STATUS_FIELDS = {
     "VmRSS": "vmRssBytes",
+    "VmHWM": "vmHwmBytes",
     "VmSize": "vmSizeBytes",
     "VmData": "vmDataBytes",
     "RssAnon": "rssAnonBytes",
@@ -1441,6 +1444,12 @@ class OperationAttributionRecorder:
             return copy.deepcopy(row)
 
     def view(self) -> Dict[str, Any]:
+        # Only a view samples current OS counters. Event recording remains
+        # unchanged, and slow kernel reads never hold the recorder lock.
+        try:
+            current_memory = memory_snapshot()
+        except Exception:
+            current_memory = {"capturedAt": _now(), "status": "UNAVAILABLE"}
         with self._lock:
             history = copy.deepcopy(list(self._history))
             known = sorted(
@@ -1450,6 +1459,8 @@ class OperationAttributionRecorder:
             intermission = copy.deepcopy(list(self._intermission_history))
             payload = {
                 "schemaVersion": OPERATION_SCHEMA_VERSION,
+                "processIdentity": {"instanceId": _PROCESS_INSTANCE_ID, "pid": os.getpid()},
+                "currentMemory": current_memory,
                 "historyLimit": self._maximum_records,
                 "thresholdBytes": self._threshold_bytes,
                 "historyCount": len(history),

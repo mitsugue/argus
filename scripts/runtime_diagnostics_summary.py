@@ -116,7 +116,7 @@ def summarize(doc: dict[str, Any]) -> str:
                        f"{_mib(allocator.get('freeBytes'))}/{_mib(allocator.get('mmapBytes'))}")
             out.append(f"- {phase} memory events: {group.get('events')}")
             small = coverage.get("pythonAllocator" + phase.title()) or {}
-            out.append(f"- {phase} CPython allocator: {small.get('status')}; "
+            out.append(f"- {phase} CPython allocator: {small.get('allocatorName')} {small.get('status')}; "
                        f"reserved/allocated/available/unused-pool MiB "
                        f"{_mib(small.get('arenaBytesCurrent'))}/"
                        f"{_mib(small.get('allocatedSmallBlockBytes'))}/"

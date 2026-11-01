@@ -24,8 +24,9 @@ This module provides three small, independently testable pieces:
   named in-memory containers.  Only names, types, lengths and byte counts are
   returned; no element value is ever copied into the result.
 
-Nothing here reads environment secrets, persists anything, or raises to its
-caller.
+Diagnostics never return environment secrets. The backend-only re-exec keeps
+the inherited environment private and intact. No source state is persisted or
+removed by this module.
 """
 from __future__ import annotations
 
@@ -56,6 +57,65 @@ RECLAIM_MINIMUM_INTERVAL_SECONDS = 300.0
 
 INVENTORY_DEFAULT_LIMIT = 48
 INVENTORY_TOTAL_TIME_BUDGET_SECONDS = 20.0
+_BACKEND_ALLOCATOR_REEXEC_ATTEMPTED = False
+
+
+def python_allocator_name() -> str:
+    """Read a closed allocator name from CPython, not an environment guess."""
+    if (sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 12)
+            or not sys.platform.startswith("linux")):
+        return "UNAVAILABLE"
+    try:
+        import ctypes
+        native = ctypes.pythonapi._PyMem_GetCurrentAllocatorName
+        native.argtypes = []
+        native.restype = ctypes.c_char_p
+        value = native()
+        allowed = {b"malloc": "malloc", b"pymalloc": "pymalloc",
+                   b"malloc_debug": "malloc_debug", b"pymalloc_debug": "pymalloc_debug"}
+        return allowed.get(value, "UNAVAILABLE")
+    except (AttributeError, OSError, TypeError, ValueError):
+        return "UNAVAILABLE"
+
+
+def _bootstrap_backend_allocator() -> Dict[str, Any]:
+    """Select reclaimable small allocations before the server restores data.
+
+    This is called only by the existing real startup_policy() entry. Import,
+    worker commands and explicit interpreter allocator choices are untouched.
+    A successful exec keeps the PID, arguments, descriptors and environment;
+    the new interpreter observes PYTHONMALLOC=malloc and cannot exec again.
+    """
+    global _BACKEND_ALLOCATOR_REEXEC_ATTEMPTED
+    main_file = getattr(sys.modules.get("__main__"), "__file__", None)
+    backend_file = os.path.join(os.path.dirname(__file__), "scanner.py")
+    if (len(sys.argv) != 1 or not isinstance(main_file, str)
+            or os.path.realpath(main_file) != os.path.realpath(backend_file)):
+        return {"status": "NOT_BACKEND_SERVER"}
+    if (sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 12)
+            or not sys.platform.startswith("linux")):
+        return {"status": "UNSUPPORTED_RUNTIME"}
+    name = python_allocator_name()
+    if os.environ.get("PYTHONMALLOC"):
+        return {"status": "EXPLICIT_ALLOCATOR", "allocatorName": name}
+    if sys.flags.ignore_environment or sys.flags.dev_mode:
+        return {"status": "INTERPRETER_FLAGS_PRESERVED", "allocatorName": name}
+    if name != "pymalloc":
+        return {"status": "ALLOCATOR_PRESERVED", "allocatorName": name}
+    original_args = getattr(sys, "orig_argv", None)
+    if not original_args or not sys.executable:
+        return {"status": "ORIGINAL_ARGUMENTS_UNAVAILABLE", "allocatorName": name}
+    if _BACKEND_ALLOCATOR_REEXEC_ATTEMPTED:
+        return {"status": "REEXEC_ALREADY_ATTEMPTED", "allocatorName": name}
+    next_environment = dict(os.environ)
+    next_environment["PYTHONMALLOC"] = "malloc"
+    _BACKEND_ALLOCATOR_REEXEC_ATTEMPTED = True
+    try:
+        os.execve(sys.executable, [sys.executable, *original_args[1:]], next_environment)
+    except OSError as exc:
+        return {"status": "REEXEC_FAILED", "allocatorName": name,
+                "errorClass": type(exc).__name__}
+    return {"status": "REEXEC_NOT_REPLACED", "allocatorName": name}
 
 
 def _int_env(env: Mapping[str, str], key: str, default: int,
@@ -82,6 +142,7 @@ def startup_policy(env: Optional[Mapping[str, str]] = None, *,
     Values are clamped to glibc's accepted ranges; an invalid override falls
     back to the default and is reported.
     """
+    real_runtime = env is None and platform is None and mallopt is None
     env = os.environ if env is None else env
     platform = sys.platform if platform is None else platform
     report: Dict[str, Any] = {
@@ -106,6 +167,30 @@ def startup_policy(env: Optional[Mapping[str, str]] = None, *,
         report["overrideErrors"]["ARGUS_MALLOC_ARENA_MAX"] = err
     if not str(platform).startswith("linux"):
         return report
+    if real_runtime:
+        try:
+            report["pythonAllocator"] = _bootstrap_backend_allocator()
+        except Exception as exc:  # Preserve the existing fail-open startup contract.
+            report["pythonAllocator"] = {"status": "UNAVAILABLE", "errorClass": type(exc).__name__}
+        # The trusted server exposes the same closed identity as healthz.
+        # Record it once so the existing private collection readback can bind
+        # allocator/resource observations without another production request.
+        main = sys.modules.get("__main__")
+        if report["pythonAllocator"].get("status") != "NOT_BACKEND_SERVER":
+            for field, function in (("backendBuildSha", "_backend_exact_sha"),
+                                    ("backendVersion", "_semantic_app_version")):
+                try:
+                    resolver = getattr(main, function, None)
+                    value = resolver() if callable(resolver) else None
+                    valid = (type(value) is str and len(value) == 40
+                             and all(c in "0123456789abcdef" for c in value)) if field == "backendBuildSha" else (
+                                 type(value) is str and len(value) <= 30
+                                 and len(value.split(".")) == 3
+                                 and all(part.isascii() and part.isdigit() for part in value.split(".")))
+                    if valid:
+                        report[field] = value
+                except Exception:
+                    pass
     if mallopt is None:
         try:
             import ctypes
@@ -295,7 +380,8 @@ def python_allocator_metrics() -> Dict[str, Any]:
     except (AttributeError, OSError, ValueError, TypeError, UnicodeError):
         result = {"schemaVersion": "argus-cpython-small-block-allocator-v1",
                   "status": "UNAVAILABLE"}
-    return {**result, "capturedAt": datetime.now(timezone.utc).isoformat(),
+    return {**result, "allocatorName": python_allocator_name(),
+            "capturedAt": datetime.now(timezone.utc).isoformat(),
             "elapsedMs": round((time.monotonic() - started) * 1000, 3)}
 
 

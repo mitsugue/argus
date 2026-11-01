@@ -2,6 +2,39 @@
 
 ## Current scalar coverage and retained builtin graph
 
+The existing server startup policy also selects the system allocator for
+Python small objects on Linux CPython 3.12 when the interpreter still uses
+its default pymalloc. This lets the existing glibc policy and bounded reclaim
+operate on freed small-object pages instead of waiting for an entire Python
+arena to become empty. Import and worker commands do not select an allocator.
+
+The selection occurs at the existing startup_policy() call before restoration
+and before the scheduler/server starts. The process replaces its interpreter
+once with PYTHONMALLOC=malloc, keeping its PID, original interpreter flags,
+arguments, descriptors and inherited credentials. Explicit PYTHONMALLOC,
+development/ignore-environment flags and the existing disabled-policy setting
+are respected. An exec failure is reported and not retried in that process.
+Setting PYTHONMALLOC=pymalloc explicitly preserves the previous allocator for
+rollback; it does not alter stored data or release authority.
+
+The private allocator metrics include the current name read from CPython's
+native API. With malloc, pymalloc arena statistics are UNAVAILABLE rather than
+zero; the existing glibc counters describe small-object allocations too.
+This changes allocator ownership, not GC, reclaim thresholds, collection
+schedules, cache retention, original inputs, numerical methods or restore
+authority. Memory and CPU must both be checked with identical inputs, then
+verified in the actual production memory limit before acceptance.
+
+The existing operation view samples current OS/allocator scalars once when
+read, outside its lock, and carries an opaque process instance plus PID.
+The instance changes across interpreter replacement and survives recorder
+resets; PID distinguishes forked processes. The existing post-collection GET
+projects these counters, the kernel RSS high-water mark, cgroup limit/events,
+and the trusted startup build/allocator identity into the existing private
+timing file. It adds no request, heap walk, timer or raw response storage.
+Missing or malformed scalars remain unknown. This enables ordinary stored
+collection records to verify a repair without repeating hot diagnostics.
+
 The existing owner-only `?inventory=1` response also contains `memoryCoverage`.
 Its before/after samples retain the current process and smaps totals, glibc
 arena/in-use/free/**mmap** counters, and cgroup current/peak/max/events. Missing

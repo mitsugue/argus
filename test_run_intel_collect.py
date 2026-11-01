@@ -184,6 +184,41 @@ def test_runtime_projection_is_closed_and_does_not_infer_collection_cpu_ownershi
     assert private_runtime_record(raw, expected)['currentRssMib'] is None
 
 
+def test_existing_runtime_readback_retains_closed_memory_and_allocator_identity_only():
+    from scripts.run_intel_collect import private_runtime_record
+    raw = runtime_fixture()
+    raw['allocatorReclaim'] = {'startupPolicy': {'backendBuildSha': 'a' * 40,
+        'backendVersion': '1.2.3', 'pythonAllocator': {'allocatorName': 'malloc'},
+        'token': 'private-memory-sentinel'}}
+    raw['operationAttribution'] = {'processIdentity': {'instanceId': 'b' * 32, 'pid': 123},
+        'currentMemory': {'capturedAt': '2026-11-01T00:01:00Z',
+            'smapsRollup': {'swapBytes': 0},
+            'process': {'vmRssBytes': 500, 'vmHwmBytes': 600, 'owner': 'private-memory-sentinel'},
+            'cgroup': {'memoryCurrentBytes': 800, 'memoryPeakBytes': 900,
+                       'memoryMaxBytes': 2147483648, 'events': {'max': 2, 'oom_kill': 0}},
+            'allocatorMetrics': {'allocatedBytes': 300, 'freeBytes': 100, 'mmapBytes': 5},
+            'token': 'private-memory-sentinel'}}
+    value = private_runtime_record(raw, {})['memoryObservation']
+    assert value['backendSha'] == 'a' * 40 and value['backendVersion'] == '1.2.3'
+    assert value['processInstanceId'] == 'b' * 32 and value['pid'] == 123
+    assert value['allocatorName'] == 'malloc'
+    assert value['swapBytes'] == 0
+    assert value['process']['vmHwmBytes'] == 600
+    assert value['cgroup']['memoryMaxBytes'] == 2147483648
+    assert value['cgroup']['events']['oom_kill'] == 0
+    assert value['cgroup']['events']['oom'] is None
+    assert 'private-memory-sentinel' not in json.dumps(value)
+    raw['operationAttribution']['processIdentity'].update(instanceId='private-memory-sentinel', pid=True)
+    raw['operationAttribution']['currentMemory']['cgroup']['memoryMaxBytes'] = 2**100
+    raw['allocatorReclaim']['startupPolicy'].update(backendBuildSha='A' * 40, backendVersion='private-memory-sentinel')
+    raw['allocatorReclaim']['startupPolicy']['pythonAllocator']['allocatorName'] = {'secret': 1}
+    value = private_runtime_record(raw, {})['memoryObservation']
+    assert value['pid'] is None and value['processInstanceId'] is None
+    assert value['backendSha'] is None and value['backendVersion'] is None
+    assert value['allocatorName'] is None and value['cgroup']['memoryMaxBytes'] is None
+    assert 'private-memory-sentinel' not in json.dumps(value)
+
+
 def test_private_runtime_is_one_get_after_original_collection_with_no_stdout_details():
     calls, records = [], []
     tracked = {'status': 'done', 'runId': 'test-run-1',
