@@ -36,7 +36,9 @@ jobs:
         run: python -m pytest -q -n 4 --dist loadgroup
 
   frontend:
-    runs-on: ubuntu-latest
+    # Playwright 1.55 provides browser dependencies for Ubuntu 24.04;
+    # ubuntu-latest may select the unsupported Ubuntu 26.04 image.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
