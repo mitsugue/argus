@@ -35,7 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    'docs/ops/verified-snapshot-persistence.md': 'cc1660986f851ac650bce19d706a52c41016daa3',
+    'test_argus_verified_projection_runtime.py': '31dbae45f12b666492e8d39d0e53930ae3fb0c6e',
+    'docs/ops/verified-snapshot-persistence.md': 'c77267ecdc4044163f31f73e792382fbeaf01613',
     'test_argus_verified_persistence_projection.py': '387e336e60d2300d29ca4ec2eab4475429c5b1b0',
     'test_argus_derived_cache_runtime.py': 'ba86296508e59ea6ca38adac12882f1a914ffdcf',
     'test_argus_derived_cache_verification.py': '6573189387a701167733d04c6f6413fab170878c',
@@ -149,7 +150,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/MARKET_ARTIFACT_STORE.md': 'e2e994da953b12c42a95d67b4eaf9ab1a8c0b6aa',
     'test_argus_market_artifact_split.py': '9331909fab52e479dc63f869aba531ba26825668',
     'test_argus_market_artifact_store.py': 'f6c2d1c330b814666328b34d8939efea934d8146',
-    'test_argus_memory_attribution.py': '41e10691a314f91fac8cc2631a02bffb05269dd4',
+    'test_argus_memory_attribution.py': '5a85289dd029ca2af253324b53c50520b545b0d1',
     'test_argus_recovery_measurement.py': 'b7beb4b6c1915ddb2cfab0857f31a82cc5c5c832',
     'test_argus_recovery_registry.py': 'd1132e69768b5a9edf9bbf964bd8df476edda4b8',
     # Today boot console (owner 2026-09-28): exact reviewed contents.

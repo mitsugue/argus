@@ -23907,7 +23907,9 @@ def _merge_restored_market_artifact(name, payload):
     if name == "verifiedViewSnapshots":
         # Restore is monotonic per pointer: an older copy can add a missing
         # key but cannot roll back a newer local view.
-        for _snapshot in argus_verified_snapshot.normalize_store(
+        # The lookup is read-only; publish_atomic still validates and makes
+        # its serialized owned copy for every destination pointer.
+        for _snapshot in argus_verified_snapshot._normalize_store_shared(
                 payload).get("current", {}).values():
             _restored_vvs, _ = argus_verified_snapshot.publish_atomic(
                 _VERIFIED_VIEW_SNAPSHOTS, _snapshot, now_iso=_ai_now_iso())
@@ -27975,7 +27977,7 @@ def _osint_persist_locked():
 
             _verified_normalized = _memory_operation_run(
                 "internal", "source.verified_snapshots.normalize",
-                argus_verified_snapshot.normalize_store, _VERIFIED_VIEW_SNAPSHOTS,
+                argus_verified_snapshot._normalize_store_shared, _VERIFIED_VIEW_SNAPSHOTS,
                 _attribution_after_callback=_verified_normalize_complete)
             _verified_normalized_hash_counts = {
                 "normalizedHashFastPathCount": 0,
@@ -27983,21 +27985,18 @@ def _osint_persist_locked():
             }
 
             def _verified_hash_complete(_state_hash):
-                _fallback_count = _verified_normalized_hash_counts[
-                    "normalizedHashFallbackCount"]
                 _memory_attribution_source_capture(
                     "S7V7", "verified_snapshots_hash_returned", {
                         "authoritativeAlive": True,
                         "blobNormalizedAlive": True,
                         "hashTemporariesReleased": True,
-                        "peakWholeStateRepresentations": (
-                            4 if _fallback_count else 3),
+                        "peakWholeStateRepresentations": 1,
                         **_verified_normalized_hash_counts,
                     })
 
             blob["verifiedViewSnapshotsStateHash"] = _memory_operation_run(
                 "internal", "source.verified_snapshots.hash_normalized",
-                argus_verified_snapshot.state_hash_normalized,
+                argus_verified_snapshot._state_hash_for_persistence,
                 _verified_normalized,
                 diagnostic_observer=_memory_state_hash_observer(
                     "verified", _verified_normalized_hash_counts),
@@ -36017,7 +36016,7 @@ def _api_argus_admin_missions_tick_impl():
     _chart_before_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
     _replay_before_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
     _view_before_hash = argus_verified_snapshot.state_hash(
-        _VERIFIED_VIEW_SNAPSHOTS)
+        _VERIFIED_VIEW_SNAPSHOTS, _published_readonly=True)
     _memory_attribution_path_capture("M5", "pre_view_hashes_complete")
     _chart_reports = []
     _view_publications = []
@@ -36051,7 +36050,7 @@ def _api_argus_admin_missions_tick_impl():
         _chart_after_hash = argus_chart_intelligence.state_hash(_CHART_INTELLIGENCE)
         _replay_after_hash = argus_market_replay.state_hash(_MARKET_REPLAY)
         _view_after_hash = argus_verified_snapshot.state_hash(
-            _VERIFIED_VIEW_SNAPSHOTS)
+            _VERIFIED_VIEW_SNAPSHOTS, _published_readonly=True)
         _chart_changed = _chart_before_hash != _chart_after_hash
         _replay_changed = _replay_before_hash != _replay_after_hash
         _view_changed = _view_before_hash != _view_after_hash
