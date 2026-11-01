@@ -141,7 +141,128 @@ def test_main_cannot_claim_timing_saved_after_diagnostic_write_failure(monkeypat
     monkeypatch.setattr(collector, 'save_private_timing', fail)
     assert collector.main(['--private-timing-output', str(tmp_path / 'timing.json')]) == 0
     value = json.loads(capsys.readouterr().out)
-    assert value == {'status': 'done', 'privateTimingSaved': False, 'privateTimingAvailable': False}
+    assert value == {'status': 'done', 'privateTimingSaved': False, 'privateTimingAvailable': False,
+                     'privateRuntimeSaved': False, 'privateRuntimeAvailable': False}
+
+
+def runtime_fixture():
+    return {'currentRssMib': 1000, 'peakRssMib': 1200,
+        'owner': 'owner-test-value', 'token': 'secret-test-value',
+        'intelCollect': {'currentRun': {'startedAt': '2026-11-01T00:00:00Z',
+            'finishedAt': '2026-11-01T00:01:00Z', 'status': 'done', 'trigger': 'resident',
+            'completedStages': [{'stage': 'pit_research', 'elapsedSeconds': 30}]}},
+        'indexResearch': {'lastStartedAt': '2026-11-01T00:00:20Z',
+            'lastCompletedAt': '2026-11-01T00:00:50Z', 'persistenceStatus': 'VERIFIED',
+            'outcomes': {'comparison:N225:1': {'status': 'available', 'elapsedSeconds': 30,
+                'cpuSeconds': 29.5, 'calibrationStatus': 'REUSED', 'body': 'owner-test-value'},
+                'owner-test-value': {'cpuSeconds': 10}}}}
+
+
+def test_runtime_projection_is_closed_and_does_not_infer_collection_cpu_ownership():
+    from scripts.run_intel_collect import private_runtime_record
+    raw = runtime_fixture()
+    expected = {'startedAt': '2026-11-01T00:00:00Z', 'finishedAt': '2026-11-01T00:01:00Z'}
+    value = private_runtime_record(raw, expected)
+    assert value['available'] and value['collectionTimingBoundsMatch']
+    assert value['researchWindowWithinExpectedCollection'] is True
+    assert value['research']['outcomes']['comparison:N225:1']['cpuSeconds'] == 29.5
+    assert value['observedCollection']['trigger'] == 'resident'
+    assert value['scope'] == 'LATEST_GLOBAL_RESEARCH_OBSERVATION'
+    assert 'owner-test-value' not in json.dumps(value) and 'secret-test-value' not in json.dumps(value)
+    raw['intelCollect']['currentRun']['startedAt'] = '2026-11-01T00:00:01Z'
+    raw['indexResearch']['lastStartedAt'] = '2026-10-31T23:59:00Z'
+    value = private_runtime_record(raw, expected)
+    assert not value['collectionTimingBoundsMatch']
+    assert value['researchWindowWithinExpectedCollection'] is False
+    raw['indexResearch']['outcomes']['comparison:N225:1'].update(cpuSeconds=float('nan'),
+        elapsedSeconds=True, calibrationStatus={'secret': 1}, status=['owner-test-value'])
+    value = private_runtime_record(raw, expected)
+    row = value['research']['outcomes']['comparison:N225:1']
+    assert row == {'cpuSeconds': None, 'elapsedSeconds': None, 'calibrationStatus': None, 'status': None}
+    assert value['available'] is False
+    raw['currentRssMib'] = 10 ** 1000
+    assert private_runtime_record(raw, expected)['currentRssMib'] is None
+
+
+def test_private_runtime_is_one_get_after_original_collection_with_no_stdout_details():
+    calls, records = [], []
+    tracked = {'status': 'done', 'runId': 'test-run-1',
+        'startedAt': '2026-11-01T00:00:00Z', 'finishedAt': '2026-11-01T00:01:00Z'}
+    def request(**kw):
+        calls.append(kw)
+        return 200, json.dumps(runtime_fixture() if kw['method'] == 'GET' else tracked)
+    result = run(base='https://example.test', token='secret-test-value', request_id='test-run-1',
+                 request=request, private_runtime=records.append)
+    assert [c['method'] for c in calls] == ['POST', 'GET']
+    assert calls[1]['url'] == 'https://example.test/api/argus/admin/memory-attribution'
+    assert calls[1]['data'] is None and calls[1]['timeout'] <= 15
+    assert records[0]['available'] and result['status'] == 'done'
+    for value in ('cpuSeconds', 'resident', 'secret-test-value', 'owner-test-value'):
+        assert value not in json.dumps(result)
+
+
+def test_private_runtime_respects_remaining_budget_without_restarting_completed_work():
+    calls, records, tick = [], [], [0]
+    def request(**kw):
+        calls.append(kw)
+        tick[0] = 11
+        return 200, '{"status":"done","runId":"test-run-1"}'
+    result = run(base='https://example.test', token='secret', timeout=10, clock=lambda: tick[0],
+        request=request, request_id='test-run-1', private_runtime=records.append)
+    assert result['status'] == 'done' and len(calls) == 1
+    assert records == [{'schemaVersion': 'argus-collect-private-runtime-v1',
+                       'available': False, 'errorClass': 'runtime_budget_exhausted'}]
+
+
+def test_private_runtime_timeout_is_capped_by_remaining_collection_budget():
+    calls, tick, records = [], [0], []
+    def request(**kw):
+        calls.append(kw)
+        if kw['method'] == 'GET':
+            assert kw['timeout'] == 2
+            raise TimeoutError('secret-test-value')
+        tick[0] = 8
+        return 200, '{"status":"failed","runId":"test-run-1","errorClass":"collector_failed"}'
+    result = run(base='https://example.test', token='secret', timeout=10,
+        clock=lambda: tick[0], request=request, request_id='test-run-1', private_runtime=records.append)
+    assert result['status'] == 'failed' and result['errorClass'] == 'collector_failed'
+    assert [c['method'] for c in calls] == ['POST', 'GET']
+    assert records[0]['errorClass'] == 'runtime_transport_or_json_error'
+    assert 'secret-test-value' not in json.dumps(records)
+
+
+def test_private_runtime_failure_and_sink_failure_never_change_collection_result():
+    for reply in [(403, 'secret-test-value'), (200, 'bad-json'), (200, 'x' * (1024 * 1024 + 1))]:
+        calls, records = [], []
+        def request(**kw):
+            calls.append(kw['method'])
+            return reply if kw['method'] == 'GET' else (200, '{"status":"done","runId":"test-run-1"}')
+        result = run(base='https://example.test', token='secret', request=request,
+            request_id='test-run-1', private_runtime=records.append)
+        assert calls == ['POST', 'GET'] and result['status'] == 'done'
+        assert records[0]['available'] is False and 'secret-test-value' not in json.dumps(records)
+    def broken_sink(value):
+        raise OSError('secret-test-value')
+    assert run(base='https://example.test', token='secret',
+        request=lambda **kw: (200, '{"status":"done","runId":"test-run-1"}'),
+        request_id='test-run-1', private_runtime=broken_sink)['status'] == 'done'
+
+
+def test_main_saves_runtime_only_in_sibling_private_file(monkeypatch, tmp_path, capsys):
+    import scripts.run_intel_collect as collector
+    def fake_run(**kw):
+        kw['private_timing']({'available': True})
+        kw['private_runtime'](collector.private_runtime_record(runtime_fixture(), {}))
+        return {'status': 'done'}
+    monkeypatch.setattr(collector, 'run', fake_run)
+    target = tmp_path / 'collect-timing.json'
+    assert collector.main(['--private-timing-output', str(target)]) == 0
+    private = tmp_path / 'collect-timing-runtime.json'
+    assert private.exists() and private.stat().st_mode & 0o777 == 0o600
+    assert json.loads(private.read_text())['research']['outcomes']['comparison:N225:1']['cpuSeconds'] == 29.5
+    stdout = capsys.readouterr().out
+    assert json.loads(stdout)['privateRuntimeSaved'] is True
+    assert 'cpuSeconds' not in stdout and 'owner-test-value' not in stdout
 
 
 def test_failed_feed_names_are_kept_for_the_private_record():
