@@ -17,6 +17,12 @@ is admitted to the new input. Inputs, formulas, thresholds, episode hashes,
 validation, retention bounds and restore authority are unchanged. No GC or
 extra allocator reclaim is introduced.
 
+The market ledger state hash encodes the same sorted canonical JSON one array
+item at a time. This avoids retaining the full Unicode encoding and its UTF-8
+copy together with the resident history. Normalization, every field, array
+order, scalar encoding and the stored hash remain unchanged. Individual row
+encodings are temporary; no archive, row, receipt or restore check is omitted.
+
 The existing operation view samples current OS/allocator scalars once when
 read, outside its lock, and carries an opaque process instance plus PID.
 The instance changes across interpreter replacement and survives recorder
