@@ -55,8 +55,8 @@ def calibration_record(state, *, method, at):
 
 
 def digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
-        allow_nan=False, separators=(',', ':')).encode()).hexdigest()
+    from argus_market_artifact_store import payload_sha256
+    return payload_sha256(value, depth=3)
 
 
 def stamp(value):

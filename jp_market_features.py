@@ -160,8 +160,8 @@ def history_method_identity() -> str:
 
 
 def _history_digest(value) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
-        allow_nan=False, separators=(",", ":")).encode()).hexdigest()
+    from argus_market_artifact_store import payload_sha256
+    return payload_sha256(value, depth=3)
 
 
 def history_cache_envelope(history, *, method: str) -> dict[str, Any]:

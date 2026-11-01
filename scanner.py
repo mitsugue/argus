@@ -43550,7 +43550,7 @@ def _index_research_warm():
             argus_index_research_cache.validate_for_persistence(
                 doc, method=_INDEX_RESEARCH_METHOD, now=_ai_now_iso(),
                 calibration_method=argus_index_research_cache.calibration_method())
-            expected = argus_market_artifact_store.payload_sha256(doc)
+            expected = argus_market_artifact_store.payload_sha256(doc, depth=3)
             receipt = argus_persistent_storage.atomic_write_json(path, doc,
                 maximum_bytes=argus_index_research_cache.MAX_BYTES, file_mode=0o600)
             if receipt.get('snapshotHash') != expected:
@@ -44786,7 +44786,7 @@ def _jp_market_feature_history_persist(cache_path, method, now):
         argus_product_naming.require_allowed(doc)
         if jp_market_features.validate_history_cache(doc, method=method, now=now) != _JP_MARKET_FEATURE_HISTORY:
             raise ValueError("feature_cache_readback_mismatch")
-        expected = argus_market_artifact_store.payload_sha256(doc)
+        expected = argus_market_artifact_store.payload_sha256(doc, depth=3)
         receipt = argus_persistent_storage.atomic_write_json(cache_path, doc,
             maximum_bytes=jp_market_features.HISTORY_CACHE_MAX_BYTES, file_mode=0o600)
         if receipt.get('snapshotHash') != expected:

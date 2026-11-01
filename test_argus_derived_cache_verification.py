@@ -15,6 +15,37 @@ AT = '2026-08-01T12:00:00Z'
 METHOD = 'b' * 64
 
 
+@pytest.mark.parametrize('value', [
+    {'history': {'features': [{'value': -0.0, 'label': '日本株\\\"\n'},
+                               {'value': 1.2345678901234567, 'nested': [None, True]}]}},
+    {'tuple': (1, {'integerKeys': {2: 'two', 1: 'one'}})},
+    [{}, [], {'numeric': [1e-200, 1e200]}],
+])
+def test_nested_cache_digest_keeps_every_legacy_canonical_byte(value):
+    expected = hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+        allow_nan=False, separators=(',', ':')).encode()).hexdigest()
+    assert features._history_digest(value) == research.digest(value) == expected
+    assert artifacts.payload_sha256(value) == expected
+    assert artifacts.payload_sha256(value, depth=3) == expected
+
+
+@pytest.mark.parametrize('damage', ['nan', 'infinity', 'mixed_keys', 'cycle', 'unsupported'])
+def test_nested_cache_digest_retains_legacy_rejections(damage):
+    value = {'history': {'features': [{'value': 1.25}]}}
+    row = value['history']['features'][0]
+    if damage == 'nan': row['value'] = float('nan')
+    elif damage == 'infinity': row['value'] = float('inf')
+    elif damage == 'mixed_keys': row[1] = 'one'
+    elif damage == 'cycle': row['cycle'] = value
+    else: row['value'] = object()
+    with pytest.raises((ValueError, TypeError)) as legacy:
+        json.dumps(value, sort_keys=True, ensure_ascii=False,
+                   allow_nan=False, separators=(',', ':'))
+    for calculate in (features._history_digest, research.digest):
+        with pytest.raises(type(legacy.value)):
+            calculate(value)
+
+
 def feature_history():
     return dict(schemaVersion='jp-market-feature-history-v1', status='AVAILABLE',
         inputIdentity='a' * 64, cutoffCount=1, historicalVintageVerified=False,
