@@ -984,9 +984,12 @@ def latest_contexts(state: Dict[str, Any], instrument_id: str) -> Dict[str, Any]
 
 
 def state_hash(state: Dict[str, Any]) -> str:
+    from argus_market_artifact_store import payload_sha256
     normalized = normalize_state(state)
-    return _hash({"contexts": normalized["contexts"],
-                  "contextHistory": normalized["contextHistory"]})
+    codec = json.JSONEncoder(ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return payload_sha256({"contexts": normalized["contexts"],
+                           "contextHistory": normalized["contextHistory"]},
+                          encode_bytes=lambda value: codec.encode(value).encode("utf-8"))[:32]
 
 
 def read_back_verified(local: Dict[str, Any], remote: Dict[str, Any]) -> bool:

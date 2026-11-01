@@ -1313,9 +1313,12 @@ def merge_analysis(state: Dict[str, Any], analysis: Dict[str, Any],
 
 
 def state_hash(state: Dict[str, Any]) -> str:
+    from argus_market_artifact_store import payload_sha256
     normalized = normalize_state(state)
-    return _hash({key: normalized[key] for key in
-                  ("snapshots", "shortSellingHistory", "failedRallyOutcomes")}, 32)
+    codec = json.JSONEncoder(ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return payload_sha256({key: normalized[key] for key in
+                          ("snapshots", "shortSellingHistory", "failedRallyOutcomes")},
+                          encode_bytes=lambda value: codec.encode(value).encode("utf-8"))[:32]
 
 
 def read_back_verified(local: Dict[str, Any], remote: Dict[str, Any]) -> bool:

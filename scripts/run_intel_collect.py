@@ -128,6 +128,9 @@ def _private_memory_record(body):
         return value if isinstance(value, dict) else {}
     def number(value):
         return value if type(value) is int and 0 <= value < 2**63 else None
+    def resident_mib(value):
+        value = number(value)
+        return value if value is not None and value <= 65536 else None
     def hex_id(value, length):
         return value if type(value) is str and len(value) == length and all(
             c in '0123456789abcdef' for c in value) else None
@@ -135,12 +138,14 @@ def _private_memory_record(body):
     sample = mapping(operations.get('currentMemory'))
     process = mapping(sample.get('process'))
     group = mapping(sample.get('cgroup'))
+    group_stat = mapping(group.get('stat'))
     events = mapping(group.get('events'))
     allocator = mapping(sample.get('allocatorMetrics'))
     identity = mapping(operations.get('processIdentity'))
     restore = mapping(operations.get('startupRestore'))
     policy = mapping(mapping(body.get('allocatorReclaim')).get('startupPolicy'))
     python = mapping(policy.get('pythonAllocator'))
+    startup_rss = mapping(body.get('startupRss'))
     name = python.get('allocatorName')
     version = policy.get('backendVersion')
     valid_version = (type(version) is str and len(version) <= 30
@@ -161,8 +166,10 @@ def _private_memory_record(body):
                 ('ok', 'unknown', 'corrupt_ignored') else None,
             **{key: _private_stamp(restore.get(key)) for key in ('startedAt', 'completedAt', 'lastRestoreAt')}},
         'allocatorName': name if name in ('malloc', 'pymalloc', 'malloc_debug', 'pymalloc_debug', 'UNAVAILABLE') else None,
+        'startupRssMib': {key: resident_mib(startup_rss.get(key)) for key in ('beforeRestoreMib', 'afterRestoreMib')},
         'process': {key: number(process.get(key)) for key in ('vmRssBytes', 'vmHwmBytes', 'rssAnonBytes', 'rssFileBytes')},
         'cgroup': {**{key: number(group.get(key)) for key in ('memoryCurrentBytes', 'memoryPeakBytes', 'memoryMaxBytes')},
+                   'stat': {key: number(group_stat.get(key)) for key in ('anon', 'file', 'kernel')},
                    'events': {key: number(events.get(key)) for key in ('low', 'high', 'max', 'oom', 'oom_kill', 'oom_group_kill')}},
         'allocator': {key: number(allocator.get(key)) for key in ('arenaBytes', 'allocatedBytes', 'freeBytes', 'mmapBytes')}}
 

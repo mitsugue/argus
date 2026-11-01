@@ -23,6 +23,15 @@ copy together with the resident history. Normalization, every field, array
 order, scalar encoding and the stored hash remain unchanged. Individual row
 encodings are temporary; no archive, row, receipt or restore check is omitted.
 
+Chart, Today and replay state hashes also use the existing artifact chunk
+encoder, with each consumer explicitly retaining its legacy JSON options.
+Chart state keeps its default string fallback; the other state codecs retain
+their own prior behavior. Artifact writing and verification keep their strict
+default codec. Normalization and array order are unchanged. The existing
+private collection record additionally projects only the already reported
+cgroup anon/file/kernel counters and startup RSS integers, without another
+request, to distinguish file cache from process resident memory.
+
 The existing operation view samples current OS/allocator scalars once when
 read, outside its lock, and carries an opaque process instance plus PID.
 The instance changes across interpreter replacement and survives recorder
