@@ -138,6 +138,15 @@ def test_shadow_entries_are_kept_but_not_shown():
 
 @pytest.fixture
 def server(monkeypatch):
+    class FixtureClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW.astimezone(tz) if tz is not None else NOW.replace(tzinfo=None)
+
+    # The HTTP health summary reads datetime.now too. Keep it at the same
+    # instant as the fixed check result, rather than aging that result by
+    # the wall clock until it falls outside the original seven-day window.
+    monkeypatch.setattr(scanner, 'datetime', FixtureClock)
     memory = mpm.empty()
     mpm.ingest_news(memory, [_news()])
     monkeypatch.setitem(scanner._MARKET_POSITION, "memory", memory)
