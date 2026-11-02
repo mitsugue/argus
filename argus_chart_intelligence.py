@@ -22,6 +22,17 @@ import argus_market_data_truth
 SCHEMA_VERSION = "argus-chart-intelligence-v1"
 STATE_SCHEMA_VERSION = "argus-chart-intelligence-ledger-v1"
 METHOD_VERSION = "chart-intelligence-phase2-v2-pit-bound"
+
+
+def mission_report_scalars(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep the two fields consumed by mission bookkeeping, without its report.
+
+    The producer/public reader still returns its complete owned report.
+    Values and missing-field behavior match the existing mission consumer.
+    """
+    return {key: report.get(key) for key in ("reportId", "status")}
+
+
 MA_WINDOWS = (5, 25, 75, 100, 200)
 STATE_LIMITS = {
     "snapshots": 512, "zones": 4000, "turningPoints": 20000,

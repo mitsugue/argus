@@ -12,6 +12,7 @@ Contract under test (owner spec 2026-08-22):
 """
 from datetime import datetime, timedelta, timezone
 
+import pytest
 import scanner
 import argus_single_decision
 
@@ -64,14 +65,26 @@ def test_fresh_live_quote_yields_full_available_chain(monkeypatch):
     assert body["actionAuthority"] is False
 
 
-def test_latest_session_close_is_daily_authority_available(monkeypatch):
+@pytest.mark.parametrize('now', [
+    datetime(2026, 10, 30, 6, 30, 10, tzinfo=timezone.utc),  # immediately after close
+    datetime(2026, 11, 1, 2, 0, tzinfo=timezone.utc),         # weekend
+    datetime(2026, 11, 3, 2, 0, tzinfo=timezone.utc),         # JP holiday
+])
+def test_latest_session_close_is_daily_authority_available(monkeypatch, now):
     """JP_MARKET_ENGINEの日次思考: 最新完了セッションの公式終値は「現在の事実」— 週末や
     連休の壁時計経過でSTALE扱いにしない(owner spec 2026-08-22)。"""
     import argus_market_clock
-    now = datetime.now(timezone.utc)
+    class FixtureClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz) if tz is not None else now.replace(tzinfo=None)
+    monkeypatch.setattr(scanner, 'datetime', FixtureClock)
     session = argus_market_clock.latest_completed_session_date(
         argus_market_clock.JP_EQUITY, now)
     row = dict(_fresh_jp_row(now), status="delayed",
+               # A just-published close cannot have been received 30 seconds
+               # before publication. Keep the original causal validation.
+               receivedAt=_iso(now),
                sourceTimestamp=f"{session.isoformat()}T15:30:00+09:00")
     monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
     monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot",

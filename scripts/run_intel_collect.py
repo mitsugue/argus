@@ -107,7 +107,7 @@ def private_runtime_record(body, expected):
         within = start <= rstart <= rfinish <= finish
     def rss(value):
         return value if type(value) in (int, float) and 0 <= value <= 65536 and math.isfinite(value) else None
-    return {'schemaVersion': 'argus-collect-private-runtime-v1',
+    value = {'schemaVersion': 'argus-collect-private-runtime-v1',
         'available': any(row['cpuSeconds'] is not None or row['elapsedSeconds'] is not None
                          for row in outcomes.values()), 'scope': 'LATEST_GLOBAL_RESEARCH_OBSERVATION',
         'expectedCollection': bounds, 'observedCollection': current,
@@ -120,6 +120,13 @@ def private_runtime_record(body, expected):
             'persistenceStatus': 'VERIFIED' if research.get('persistenceStatus') == 'VERIFIED' else None},
         'currentRssMib': rss(body.get('currentRssMib')), 'peakRssMib': rss(body.get('peakRssMib')),
         'memoryObservation': _private_memory_record(body)}
+    history = collect.get('completedMemoryWindows')
+    if isinstance(history, list):
+        completed = [_private_completed_runtime(row) for row in history[-3:]]
+        completed = [row for row in completed if row is not None]
+        if completed:
+            value['completedOrdinaryWindows'] = completed
+    return value
 
 
 def _private_memory_record(body):
@@ -178,6 +185,40 @@ def _private_memory_record(body):
                    'stat': {key: number(group_stat.get(key)) for key in ('anon', 'file', 'kernel')},
                    'events': {key: number(events.get(key)) for key in ('low', 'high', 'max', 'oom', 'oom_kill', 'oom_group_kill')}},
         'allocator': {key: number(allocator.get(key)) for key in ('arenaBytes', 'allocatedBytes', 'freeBytes', 'mmapBytes')}}
+
+
+def _private_completed_runtime(row):
+    """Reproject a frozen completion through the original closed scalar filters.
+
+    Never trust stored pass/fail booleans or copy arbitrary nested history.
+    Reconstructed input has no history key, so projection cannot recurse.
+    """
+    def mapping(value):
+        return value if isinstance(value, dict) else {}
+    if not isinstance(row, dict) or row.get('schemaVersion') != 'argus-collect-private-runtime-v1':
+        return None
+    memory = mapping(row.get('memoryObservation'))
+    research = mapping(row.get('research'))
+    body = {
+        'intelCollect': {'currentRun': row.get('observedCollection')},
+        'indexResearch': research,
+        'currentRssMib': row.get('currentRssMib'), 'peakRssMib': row.get('peakRssMib'),
+        'startupRss': memory.get('startupRssMib'),
+        'allocatorReclaim': {'startupPolicy': {
+            'backendBuildSha': memory.get('backendSha'),
+            'backendVersion': memory.get('backendVersion'),
+            'pythonAllocator': {'allocatorName': memory.get('allocatorName')}}},
+        'operationAttribution': {
+            'processIdentity': {'instanceId': memory.get('processInstanceId'),
+                                'pid': memory.get('pid')},
+            'startupRestore': memory.get('restoration'),
+            'pythonReservations': memory.get('pythonReservations'),
+            'currentMemory': {
+                'capturedAt': memory.get('capturedAt'),
+                'process': memory.get('process'), 'cgroup': memory.get('cgroup'),
+                'allocatorMetrics': memory.get('allocator'),
+                'smapsRollup': {'swapBytes': memory.get('swapBytes')}}}}
+    return private_runtime_record(body, row.get('expectedCollection'))
 
 
 def _capture_private_runtime(*, base, headers, expected, request, clock, deadline, sink):
