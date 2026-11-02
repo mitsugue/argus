@@ -51932,7 +51932,7 @@ def _canonical_quote_observations(rows, decision_at, *,
             if observation["observationId"] not in seen:
                 observations.append(observation)
                 seen.add(observation["observationId"])
-    return observations
+    return argus_market_data_truth.coalesce_quote_observation_subsets(observations)
 
 
 def _canonical_current_outcome_observations(rows, decision_at):

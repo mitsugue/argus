@@ -1028,6 +1028,35 @@ def test_genuine_conflict_preserves_exact_failed_builder_input_without_issuing()
     assert projection['issuedDecisions'] == [] and quotes == original
 
 
+def test_same_provider_price_only_projection_does_not_block_canonical_issuance():
+    full = _jquants_row()
+    projected = {key: value for key, value in full.items()
+                 if key not in ('changePct', 'volume')}
+    expected = _projection(quote_rows=[('JP', 'jquants', full)])
+    assert expected['marketTruthSnapshotVerified'] is True
+    assert expected['issuedCount'] > 0
+    for quotes in ([('JP', 'jquants', full), ('JP', 'jquants', projected)],
+                   [('JP', 'jquants', projected), ('JP', 'jquants', full)]):
+        original = copy.deepcopy(quotes)
+        actual = _projection(quote_rows=quotes)
+        assert actual == expected
+        assert quotes == original
+
+
+def test_disagreeing_optional_quote_values_still_preserve_a_failed_input():
+    for change in ({'changePct': 2.0}, {'volume': 2000}):
+        quotes = [('JP', 'jquants', _jquants_row()),
+                  ('JP', 'jquants', _jquants_row(**change))]
+        original = copy.deepcopy(quotes)
+        projection = _projection(quote_rows=quotes)
+        assert projection['marketTruthSnapshotFailure']['code'] == 'conflicting_revision'
+        assert projection['marketTruthSnapshotFailureInput']['complete'] is True
+        assert projection['marketTruthSnapshotFailureInput']['observationCount'] == 2
+        assert projection['marketTruthSnapshot'] is None
+        assert projection['issuedDecisions'] == []
+        assert projection['issuedCount'] == 0 and quotes == original
+
+
 def test_other_failures_do_not_capture_input_or_retry_builder():
     for reason in ('snapshot_too_large', 'snapshot_candidates_truncated',
                    'too_many_observations', 'private-original-input'):
