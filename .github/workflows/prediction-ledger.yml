@@ -222,7 +222,8 @@ jobs:
           sha256sum -c "$RUNTIME/SHA256SUMS"
           if test -s snap.json; then
             python3 "$RUNTIME/scripts/private_diagnostics_store.py" \
-              --kind prediction-rejected --run-id "$GITHUB_RUN_ID" snap.json
+              --kind prediction-rejected --run-id "$GITHUB_RUN_ID" \
+              --run-attempt "$GITHUB_RUN_ATTEMPT" snap.json
           else
             echo "prediction snapshot unavailable; original run remains failed"
           fi
