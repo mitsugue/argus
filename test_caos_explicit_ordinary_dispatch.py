@@ -1,5 +1,6 @@
 """Execute the workflow's guards and payload without contacting any service."""
 import ast
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,15 @@ from test_caos_workflow_recovery import _workflow_step_run
 ROOT = Path(__file__).resolve().parent
 PATH = '.github/workflows/caos-scan.yml'
 TEXT = (ROOT / PATH).read_text()
-BASE = '44df055770a12a6267583f97df4eceabd80bca98'
+# Original operational steps at 44df055. Fixed source oracles also work when
+# the CI checkout contains only the candidate commit and no parent objects.
+BASE_STEP_SHA256 = {
+    'backend-identity': 'ccf0122c77261717512b7e75aa244cb2c06b7de5d65d30dc42f734038d284e66',
+    'caos-collection': 'c6254e75dcd1df5746a3b7ab66505fe1270d76ac6f9975e9bd2a5807839d92db',
+    'durability-flush': '56a8b0c5003f4606b9a59eb6fd3058f6c4cf1abbcf8dcb85d784c0362200ee64',
+    'future-map': '395c578df02eb69efd91c798ea78f11f854f44b57af93b2221d530eb51c6480f',
+    'mission-backup': '935361b02ab3976f6d2e7fca725cff20390e5457faae492c9de7981a0deb4eda',
+}
 
 
 def job(text, name):
@@ -77,20 +86,21 @@ def test_cancelled_flush_stays_disabled_for_owner_and_schedule():
 
 
 def test_existing_cron_concurrency_and_operational_steps_are_unchanged():
-    baseline = subprocess.check_output(['git', 'show', f'{BASE}:{PATH}'], cwd=ROOT, text=True)
     assert re.findall(r"^\s+- cron: '([^']+)'", TEXT, re.M) == ['7,37 * * * *']
-    old_group = next(line for line in baseline.splitlines() if line.startswith('  group:'))
-    assert old_group in TEXT
-    assert set(re.findall(r'^  ([a-z][a-z-]*):$', TEXT, re.M)) == set(
-        re.findall(r'^  ([a-z][a-z-]*):$', baseline, re.M))
+    assert next(line for line in TEXT.splitlines() if line.startswith('  group:')) == (
+        "  group: ${{ github.event_name == 'workflow_dispatch' && inputs.only == 'future_map' "
+        "&& 'caos-scan-future-map' || 'caos-scan-scheduled-missions' }}")
+    assert set(re.findall(r'^  ([a-z][a-z-]*):$', TEXT.split('\njobs:\n', 1)[1], re.M)) == {
+        'backend-identity', 'mission-backup', 'caos-collection', 'durability-flush', 'future-map', 'result'}
     for name in ('backend-identity', 'caos-collection', 'durability-flush', 'future-map'):
-        assert job(TEXT, name).split('    steps:\n', 1)[1] == job(baseline, name).split('    steps:\n', 1)[1]
+        steps = job(TEXT, name).split('    steps:\n', 1)[1]
+        assert hashlib.sha256(steps.encode()).hexdigest() == BASE_STEP_SHA256[name]
     new_mission = job(TEXT, 'mission-backup').split('    steps:\n', 1)[1]
     new_mission = new_mission.replace(
         '          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then\n'
         '            TRIGGER_SOURCE="manual"\n'
         '          fi\n', '')
-    assert new_mission == job(baseline, 'mission-backup').split('    steps:\n', 1)[1]
+    assert hashlib.sha256(new_mission.encode()).hexdigest() == BASE_STEP_SHA256['mission-backup']
     assert 'timeout-minutes: 7' in job(TEXT, 'mission-backup')
     assert 'for BATCH in 1 2 3; do' in job(TEXT, 'mission-backup')
     assert '--method POST --timeout 240' in job(TEXT, 'mission-backup')
