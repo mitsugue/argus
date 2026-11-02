@@ -21,7 +21,8 @@ existing behavior. Stored reports, public retired responses, market-view
 production, restoration authority and generation settings are preserved.
 
 The Product preparation adds the consuming iterator and its compatibility
-coverage. A separate, same-version Product/Recovery change wires it only to
-private artifact parses and scopes bulk attachment to enabled generation.
-Neither preparation nor an isolated comparison accepts production resources;
+coverage. Runtime wiring selects it only for private artifact parses; default
+bulk attachment respects the existing generation switch, while explicit
+attachment retains its existing behavior. Neither preparation nor an
+isolated comparison accepts production resources;
 the deployed build must satisfy the existing actual 2 GiB criteria.
