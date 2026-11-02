@@ -1,4 +1,5 @@
 import copy
+import itertools
 import unittest
 
 import argus_market_data_truth as truth
@@ -62,6 +63,91 @@ def rehash_pit_proof(row):
     material.pop("proofDigest", None)
     row["proofDigest"] = truth._sha(material)
     return row
+
+
+class QuoteProjectionCoalescingTests(unittest.TestCase):
+    def test_exact_projections_keep_the_existing_richest_record_in_every_order(self):
+        rows = [observation(values=values) for values in (
+            {"price": 100.0},
+            {"price": 100.0, "changePct": 1.0},
+            {"price": 100.0, "changePct": 1.0, "volume": 1000},
+        )]
+        before = copy.deepcopy(rows)
+        for order in itertools.permutations(rows):
+            result = truth.coalesce_quote_observation_subsets(order)
+            self.assertEqual([rows[-1]], result)
+            self.assertIs(rows[-1], result[0])
+            self.assertTrue(truth.validate_observation(result[0])[0])
+            self.assertEqual(result, truth.observations_as_of(result, AS_OF))
+        self.assertEqual(before, rows)
+        # The core validator still rejects the unnormalized duplicate revision.
+        with self.assertRaisesRegex(ValueError, "conflicting_revision"):
+            truth.observations_as_of(rows, AS_OF)
+
+    def test_conflicting_shared_values_are_never_coalesced(self):
+        full = observation(values={"price": 100.0, "changePct": 1.0, "volume": 1000})
+        for values in ({"price": 101.0},
+                       {"price": 100.0, "changePct": 2.0},
+                       {"price": 100.0, "volume": 2000}):
+            rows = [full, observation(values=values)]
+            result = truth.coalesce_quote_observation_subsets(rows)
+            self.assertEqual(rows, result)
+            with self.assertRaisesRegex(ValueError, "conflicting_revision"):
+                truth.observations_as_of(result, AS_OF)
+
+    def test_a_shared_projection_cannot_hide_two_conflicting_richer_records(self):
+        rows = [observation(values=values) for values in (
+            {"price": 100.0},
+            {"price": 100.0, "changePct": 1.0},
+            {"price": 100.0, "changePct": 2.0},
+        )]
+        result = truth.coalesce_quote_observation_subsets(rows)
+        self.assertEqual(rows[1:], result)
+        with self.assertRaisesRegex(ValueError, "conflicting_revision"):
+            truth.observations_as_of(result, AS_OF)
+
+    def test_incomparable_optional_fields_are_not_combined_into_a_new_record(self):
+        rows = [observation(values=values) for values in (
+            {"price": 100.0, "changePct": 1.0},
+            {"price": 100.0, "volume": 1000},
+        )]
+        self.assertEqual(rows, truth.coalesce_quote_observation_subsets(rows))
+        with self.assertRaisesRegex(ValueError, "conflicting_revision"):
+            truth.observations_as_of(rows, AS_OF)
+
+    def test_different_metadata_keeps_both_original_records(self):
+        price = observation()
+        rich_values = {"price": 100.0, "volume": 1000}
+        for changes in ({"provider": "jquants"}, {"revision": 1},
+                        {"known_at": "2026-08-14T01:00:03Z"},
+                        {"freshness": "DELAYED"},
+                        {"fresh_until": "2026-08-14T01:06:00Z"},
+                        {"received_at": "2026-08-14T01:00:02Z"}):
+            rows = [price, observation(values=rich_values, **changes)]
+            self.assertEqual(rows, truth.coalesce_quote_observation_subsets(rows))
+
+    def test_invalid_record_is_not_silently_removed_as_a_projection(self):
+        bad = observation()
+        bad["observationId"] = "mdo-" + "0" * 32
+        rows = [bad, observation(values={"price": 100.0, "volume": 1000})]
+        result = truth.coalesce_quote_observation_subsets(rows)
+        self.assertEqual(rows, result)
+        with self.assertRaises(ValueError):
+            truth.observations_as_of(result, AS_OF)
+
+    def test_equal_values_and_non_quote_observations_are_unchanged(self):
+        quote = observation()
+        index = observation(fact_type="INDEX_PROXY")
+        rows = [quote, copy.deepcopy(quote), index]
+        self.assertEqual(rows, truth.coalesce_quote_observation_subsets(rows))
+        self.assertEqual([], truth.coalesce_quote_observation_subsets([]))
+
+    def test_excessive_input_remains_for_the_existing_snapshot_bound_to_reject(self):
+        rows = [observation()] * (truth.MAX_INPUT_OBSERVATIONS + 1)
+        result = truth.coalesce_quote_observation_subsets(rows)
+        self.assertEqual(rows, result)
+        with self.assertRaisesRegex(ValueError, "too_many_observations"):
+            truth.observations_as_of(result, AS_OF)
 
 
 class ObservationContractTests(unittest.TestCase):

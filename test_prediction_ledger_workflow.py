@@ -30,7 +30,8 @@ def test_rejected_snapshot_is_preserved_privately_without_retrying_the_run():
     assert "failure() && steps.canonical_append.outcome == 'failure'" in block
     assert "PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}" in block
     assert 'sha256sum -c "$RUNTIME/SHA256SUMS"' in block
-    assert '--kind prediction-rejected --run-id "$GITHUB_RUN_ID" snap.json' in block
+    assert '--kind prediction-rejected --run-id "$GITHUB_RUN_ID"' in block
+    assert '--run-attempt "$GITHUB_RUN_ATTEMPT" snap.json' in block
     for forbidden in ("upload-artifact", "curl", "run_prediction_ledger.py", "continue-on-error", "cat snap.json"):
         assert forbidden not in block
     stage = source[source.index("Stage exact triggering-commit canonical ledger runtime"):

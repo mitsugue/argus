@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import itertools
 import json
 import math
 import re
@@ -857,6 +858,42 @@ def _validated_observations(values: Iterable[Mapping[str, Any]]) -> List[Dict[st
             raise ValueError(reason)
         out.append(copy.deepcopy(dict(row)))
     return out
+
+
+def coalesce_quote_observation_subsets(
+    values: Iterable[Mapping[str, Any]],
+) -> List[Mapping[str, Any]]:
+    """Keep an existing richer QUOTE when another is its exact projection.
+
+    Every non-value field must match, including provider, revision, receipt,
+    knowledge time and quality. Shared values must have identical canonical
+    bytes. No fields are merged, no observation is resealed, and genuine
+    conflicts remain for the ordinary truth validator to reject.
+    """
+    rows = list(values)
+    if len(rows) > MAX_INPUT_OBSERVATIONS:
+        # Leave the existing snapshot boundary to report its ordinary bound.
+        return rows
+    signatures: List[Optional[Tuple[str, str]]] = []
+    projections = set()
+    for row in rows:
+        if not validate_observation(row)[0] or row.get("factType") != "QUOTE":
+            signatures.append(None)
+            continue
+        metadata = _canonical({key: value for key, value in row.items()
+                               if key not in {"observationId", "values"}})
+        quote_values = row["values"]
+        signatures.append((metadata, _canonical(quote_values)))
+        fields = sorted(quote_values)
+        # QUOTE's closed schema has at most five fields. Enumerating its
+        # strict projections avoids a quadratic scan over observations.
+        for length in range(1, len(fields)):
+            for subset in itertools.combinations(fields, length):
+                if "price" in subset:
+                    projections.add((metadata, _canonical(
+                        {key: quote_values[key] for key in subset})))
+    return [row for row, signature in zip(rows, signatures)
+            if signature is None or signature not in projections]
 
 
 def observations_as_of(values: Iterable[Mapping[str, Any]], as_of: str

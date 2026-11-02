@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.225"
+PRODUCT_VERSION = "v13.8.226"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -70,9 +70,9 @@ REVIEWED_EXTENSION_BLOBS = {
     # 日経平均そのものの値(INDEX_LEVEL)の取得元に立花・Yahoo の遅延値を置いた正確な内容。
     # 取得元の優先順位は維持し、時点検査の独立所有を保つコピー処理削減を含む正確な内容。
     # このpinを将来の編集への一般的な許可として流用しない。
-    'argus_market_data_truth.py': '32198c14778c6c3920ca75019ed175eb19d9f1a5',
+    'argus_market_data_truth.py': '89ff47c5ffde96ff04e2345a30f35fc29ea130f0',
     # 時点検査の全証明一致・入れ子の独立所有・検査後の原入力変更を検証した正確な内容。
-    'test_argus_market_data_truth.py': 'd4d78b717bba1185e1dd11e301b07b3ae64989d4',
+    'test_argus_market_data_truth.py': 'dd1996634d4b1e63a6f291e1a958b0698bb400eb',
     # 受領済みの公式結果を既存の見立てとニュースへ渡す正確な内容。
     'argus_macro_material.py': 'fdabb0863e0df5de12e4dd6c835e232ce7c65bc2',
     'test_argus_macro_material.py': 'b5e68b9722079359a1f74f72a21c527e80d94332',
@@ -199,7 +199,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '121885d467d0f6cbf2f24dc3ac9fff7e63b3ffc2',
+    'web/scripts/owner-today-https.mjs': 'ed8af840759551c12ab343b7c3bcf956426e39c6',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -339,7 +339,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/common/TriangleStepLoader.css': '055ab6673461550f1cc0f38577da9e261a4bc647',
     'web/src/i18n/index.ts': '933221ee4ca1f3adccdb8ebf5c950419fe7ce019',
     # Owner-authorized v13.6.1 prediction-ledger continuity regression proof.
-    'test_prediction_ledger_workflow.py': '0b0fbc8f68b2f3624c125285d137661cf6fa14ac',
+    'test_prediction_ledger_workflow.py': '70f4d9cd0f9324658fdd883428468dc6ae1e132e',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
     'web/src/hooks/useAssets.ts': '0a82da6958f58aaba4c3bd7659c2af2032b4e93f',
     'web/src/components/dialogue/OwnerOverview.tsx': 'bffc59eb134b260698646ed146fbd3871f501cf9',
