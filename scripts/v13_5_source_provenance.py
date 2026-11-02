@@ -539,7 +539,8 @@ REVIEWED_EXTENSION_BLOBS = {
     "web/src/hooks/useVisibilityGuard.ts": "326a15b0726df40e5e354225e6cbf2d84c2ff799",
     "web/scripts/polling-singleton.test.mjs": "7b3bf5190ec5091ec4decbd6ba362e46fd8b1356",
     'test_argus_wal_cursor_and_report_scalars.py': 'd5dbd6da271a930a34e30cf89d62bdd237f8e5a6',
-    'docs/ops/wal-cursor-lifetime.md': '597881c75d928a6c22bfa49039c97f1db4f17ceb',
+    'docs/ops/wal-cursor-lifetime.md': 'bbfb9085604b50c1c1a01bb0909d0fb3a52a84e6',
+    'test_argus_completed_runtime_history.py': 'b037bf4ab0aa8c7a32bd6c53dd39c675f79c9fa5',
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({

@@ -25,6 +25,9 @@ with its collection bounds, native memory, process identity and startup restore
 state. Old starts, duplicate windows and unrelated later research do not become
 successful completions. This extends the existing bounded in-process record;
 it adds no timer, collection, provider request, AI call or persistent store.
+The existing single diagnostic read can export those frozen observations
+through the same closed scalar filters. Current global research remains a
+separate observation; stored pass flags are recomputed rather than trusted.
 
 Controlled comparisons use unchanged synthetic files, full original validation
 and fresh native allocators without explicit collection or trimming. Component
