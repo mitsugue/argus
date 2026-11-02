@@ -253,6 +253,18 @@ def append_wal(path: str, *, sequence: int, kind: str,
     return record
 
 
+def _decode_valid_wal_record(raw: bytes):
+    """The existing WAL validation, shared by replay and cursor-only reads."""
+    record = json.loads(raw.decode("utf-8"))
+    sequence = int(record.get("sequence") or 0)
+    if (not isinstance(record, dict) or
+            record.get("schemaVersion") != "argus-mission-wal-v1" or
+            record.get("recordHash") != _record_hash(record) or
+            sequence <= 0):
+        raise ValueError("invalid_wal_record")
+    return record, sequence
+
+
 def read_valid_wal(path: str, *, after_sequence: int = 0
                    ) -> Dict[str, Any]:
     records: List[Dict[str, Any]] = []
@@ -265,13 +277,7 @@ def read_valid_wal(path: str, *, after_sequence: int = 0
         lines = []
     for raw in lines:
         try:
-            record = json.loads(raw.decode("utf-8"))
-            sequence = int(record.get("sequence") or 0)
-            if (not isinstance(record, dict) or
-                    record.get("schemaVersion") != "argus-mission-wal-v1" or
-                    record.get("recordHash") != _record_hash(record) or
-                    sequence <= 0):
-                raise ValueError("invalid_wal_record")
+            record, sequence = _decode_valid_wal_record(raw)
             maximum = max(maximum, sequence)
             if sequence > int(after_sequence):
                 records.append(record)
@@ -280,6 +286,38 @@ def read_valid_wal(path: str, *, after_sequence: int = 0
     records.sort(key=lambda row: int(row["sequence"]))
     return {
         "records": records,
+        "corruptCount": corrupt,
+        "maximumSequence": maximum,
+        "bytes": os.path.getsize(path) if os.path.exists(path) else 0,
+    }
+
+
+def read_valid_wal_cursor(path: str, *, after_sequence: int = 0
+                          ) -> Dict[str, Any]:
+    """Validate every WAL row while retaining only count/sequence/byte scalars.
+
+    Replay and compaction continue to use ``read_valid_wal``. This reader
+    shares its exact decoder and corruption/error rules, does not mutate the
+    file, and does not retain raw lines or parsed transition payloads.
+    """
+    count = 0
+    corrupt = 0
+    maximum = int(after_sequence)
+    try:
+        with open(path, "rb") as handle:
+            for raw in handle:
+                try:
+                    record, sequence = _decode_valid_wal_record(raw)
+                    maximum = max(maximum, sequence)
+                    if sequence > int(after_sequence):
+                        count += 1
+                except (UnicodeDecodeError, json.JSONDecodeError,
+                        TypeError, ValueError):
+                    corrupt += 1
+    except FileNotFoundError:
+        pass
+    return {
+        "recordCount": count,
         "corruptCount": corrupt,
         "maximumSequence": maximum,
         "bytes": os.path.getsize(path) if os.path.exists(path) else 0,

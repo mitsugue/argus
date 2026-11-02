@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.224"
+PRODUCT_VERSION = "v13.8.225"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -199,7 +199,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '38d78e843065055234812db6d5a53fe02972adf7',
+    'web/scripts/owner-today-https.mjs': '121885d467d0f6cbf2f24dc3ac9fff7e63b3ffc2',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -281,7 +281,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     'scripts/run_breadth_freshness.py': '6655818fd1c4d32c2db7407b37010735ceb0da91',
     'test_breadth_freshness_workflow.py': 'e8ed1942175b75416caec8711363cfc771b90e3d',
-    'argus_tick_durability.py': 'fd2f2a97652cf1f3bb18084fd1aa5f54a19247da',
+    'argus_tick_durability.py': '9dcec745973889f66423454578d2942b90fe5c9c',
     'argus_jp_fiscal_monitor.py': '3584e845b3c66c2ebdbb41aae6e8b3bfd9866117',
     'argus_jp_fiscal_runtime.py': 'b9863be1c35dc22655d5d86f94911b1061f8a9ce',
     'argus_jp_fiscal_sources.py': '275738feebfefbc7cef3be1442f00d1e3d264bde',
@@ -538,6 +538,8 @@ REVIEWED_EXTENSION_BLOBS = {
     # has one visible-page lifecycle and does not poll while hidden.
     "web/src/hooks/useVisibilityGuard.ts": "326a15b0726df40e5e354225e6cbf2d84c2ff799",
     "web/scripts/polling-singleton.test.mjs": "7b3bf5190ec5091ec4decbd6ba362e46fd8b1356",
+    'test_argus_wal_cursor_and_report_scalars.py': 'd5dbd6da271a930a34e30cf89d62bdd237f8e5a6',
+    'docs/ops/wal-cursor-lifetime.md': '597881c75d928a6c22bfa49039c97f1db4f17ceb',
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({
