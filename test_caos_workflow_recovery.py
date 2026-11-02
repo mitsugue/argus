@@ -385,7 +385,9 @@ def test_workflow_has_independent_control_plane_jobs():
         "result:",
     ):
         assert job in text
-    assert "if: always() && !cancelled() && github.event_name == 'schedule'" in text
+    flush_header = text.split("  durability-flush:", 1)[1].split("    runs-on:", 1)[0]
+    assert "always() && !cancelled() &&" in flush_header
+    assert "github.event_name == 'schedule'" in flush_header
     assert "needs: [backend-identity, mission-backup, caos-collection]" in text
 
 
@@ -407,9 +409,12 @@ def test_durability_failure_is_visible_and_non_green():
     assert '[ "${{ needs.durability-flush.result }}" = "success" ] || exit 1' in text
 
 
-def test_cancelled_or_manual_workflow_performs_no_operational_write():
+def test_cancelled_flush_or_default_manual_workflow_keeps_its_write_guards():
     text = _text()
-    assert "if: always() && !cancelled() && github.event_name == 'schedule'" in text
+    flush_header = text.split("  durability-flush:", 1)[1].split("    runs-on:", 1)[0]
+    assert "always() && !cancelled() &&" in flush_header
+    assert "github.actor == github.repository_owner" in flush_header
+    assert "inputs.only == 'ordinary'" in flush_header
     assert "github.event_name == 'schedule'" in text.split(
         "  mission-backup:", 1
     )[1].split("  caos-collection:", 1)[0]

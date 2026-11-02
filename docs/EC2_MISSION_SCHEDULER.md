@@ -4,11 +4,27 @@ A.R.G.U.S. v12.3.2以降、30分mission tickのauthorityは次の順です。
 
 1. `ec2_systemd` — primary
 2. `github_schedule` — backup
-3. `manual` — diagnostic only
+3. `manual` — diagnostic by default; an explicit owner-started ordinary run is separate
 
 同一`missionWindowId`はbackendのleaseを最初に取得した1回だけ処理されます。
 後続sourceは`duplicate_suppressed`となり、Outcome retry、Journal event、Soak
 heartbeat、AI処理を重複実行しません。
+
+## 所有者による単発の通常実行
+
+`caos-scan` の `workflow_dispatch` は、入力 `only` が空なら従来どおり
+identity の読取りだけを行う。`future_map` の限定処理も変更しない。
+repository owner 本人が `only=ordinary` を明示した場合だけ、既存の通常収集、
+最大3バッチのバックアップ、独立したdurability flushを1回実行する。
+これは読取り診断ではなく、既存の市場データ更新や通常AI更新が動く可能性がある。
+読取りだけの承認をこの実行の承認として扱わず、追加の通常処理として明示する。
+
+通常実行は既存のconcurrency、認証、backend identity検証、期限、バッチ上限、
+private notes、失敗・partialの表示を共用する。manualのmission windowを使い、
+自然scheduleのwindowを消費しない。cron、EC2 timer、Stage 1やformal Soakの
+設定は変更しない。この単発実行を自然時刻の到着確認やformal Soakの開始・受入に
+数えない。GitHub Actionsの`caos-scan`からmainを選び、`only`に`ordinary`を
+指定して1回だけ起動する。本人以外のmanual dispatchは通常処理を実行しない。
 
 ## EC2への配置
 

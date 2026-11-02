@@ -8,13 +8,14 @@ name: caos-scan
 on:
   schedule:
     - cron: '7,37 * * * *'
-  # Manual dispatch: read-only identity diagnostic; operational jobs skip.
+  # Manual dispatch defaults to a read-only identity diagnostic. Only the
+  # repository owner can explicitly select one ordinary operational run.
   # only=future_map (2026-10-04): the FUTURE MAP writer's notification; the
   # app reads the stored document once and nothing else of the collection runs.
   workflow_dispatch:
     inputs:
       only:
-        description: future_map = FUTURE MAP だけ読む(週次更新の知らせ)
+        description: 'future_map = FUTURE MAP だけ読む / ordinary = 通常の収集・バックアップを1回実行（所有者のみ）'
         required: false
         default: ''
         type: string
@@ -85,7 +86,9 @@ jobs:
     needs: backend-identity
     if: >-
       always() &&
-      github.event_name == 'schedule' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.only == 'ordinary' &&
+        github.actor == github.repository_owner)) &&
       needs.backend-identity.result == 'success' &&
       needs.backend-identity.outputs.status == 'verified'
     runs-on: ubuntu-latest
@@ -112,6 +115,9 @@ jobs:
           }
           export EXPECTED_BACKEND_SHA
           TRIGGER_SOURCE="github_schedule"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            TRIGGER_SOURCE="manual"
+          fi
           export TRIGGER_SOURCE
           TICK_PAYLOAD=$(python3 -c \
             'import json,os; print(json.dumps({"triggerSource":os.environ["TRIGGER_SOURCE"],"expectedBuildSha":os.environ["EXPECTED_BACKEND_SHA"],"runId":os.environ["GITHUB_RUN_ID"]},separators=(",",":")))')
@@ -169,7 +175,9 @@ jobs:
     needs: backend-identity
     if: >-
       always() &&
-      github.event_name == 'schedule' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.only == 'ordinary' &&
+        github.actor == github.repository_owner)) &&
       needs.backend-identity.result == 'success' &&
       needs.backend-identity.outputs.status == 'verified'
     runs-on: ubuntu-latest
@@ -256,7 +264,11 @@ jobs:
 
   durability-flush:
     needs: [backend-identity, mission-backup, caos-collection]
-    if: always() && !cancelled() && github.event_name == 'schedule'
+    if: >-
+      always() && !cancelled() &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.only == 'ordinary' &&
+        github.actor == github.repository_owner))
     runs-on: ubuntu-latest
     timeout-minutes: 35
     outputs:
@@ -584,12 +596,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Report independent control-plane results
+        env:
+          ARGUS_OWNER_ORDINARY_DISPATCH: ${{ github.event_name == 'workflow_dispatch' && inputs.only == 'ordinary' && github.actor == github.repository_owner }}
         run: |
           echo "identityResult=${{ needs.backend-identity.outputs.status || needs.backend-identity.result }}"
           echo "missionResult=${{ needs.mission-backup.outputs.missionResult || needs.mission-backup.result }}"
           echo "caosResult=${{ needs.caos-collection.outputs.caosResult || needs.caos-collection.result }}"
           echo "durabilityResult=${{ needs.durability-flush.outputs.durabilityResult || needs.durability-flush.result }}"
-          if [ "${{ github.event_name }}" != "schedule" ]; then
+          if [ "${{ github.event_name }}" != "schedule" ] && [ "$ARGUS_OWNER_ORDINARY_DISPATCH" != "true" ]; then
             echo "overallResult=expected_skip_manual_diagnostic"
             exit 0
           fi
@@ -597,6 +611,12 @@ jobs:
           [ "${{ needs.mission-backup.result }}" = "success" ] || exit 1
           [ "${{ needs.caos-collection.result }}" = "success" ] || exit 1
           [ "${{ needs.durability-flush.result }}" = "success" ] || exit 1
+          if [ "$ARGUS_OWNER_ORDINARY_DISPATCH" = "true" ]; then
+            [ "${{ needs.mission-backup.outputs.missionResult }}" = "caught_up" ] || {
+              echo "overallResult=owner_ordinary_mission_not_completed"
+              exit 1
+            }
+          fi
           DURABILITY_RESULT="${{ needs.durability-flush.outputs.durabilityResult }}"
           case "$DURABILITY_RESULT" in
             verified)
