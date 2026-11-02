@@ -31,6 +31,12 @@ The existing single diagnostic read can export those frozen observations
 through the same closed scalar filters. Current global research remains a
 separate observation; stored pass flags are recomputed rather than trusted.
 
+The runtime records an observation only after the existing worker has set its
+terminal result and finish time, while holding the existing collect lock.
+Observation errors remain unknown and cannot change the collection result.
+The owner route copies the three-row tail before returning it. Sampling does
+not start another collection or reconstruct past completions from counters.
+
 Controlled comparisons use unchanged synthetic files, full original validation
 and fresh native allocators without explicit collection or trimming. Component
 measurements do not replace same-process production memory and restore acceptance.

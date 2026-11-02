@@ -10273,6 +10273,45 @@ def _intel_collect_stage(name):
         current.update(stage=name, stageStartedAt=_ai_now_iso())
 
 
+def _intel_collect_completed_memory_observation(completed):
+    """Closed native observation at this existing collection's completion."""
+    from scripts.run_intel_collect import private_runtime_record
+    research = copy.deepcopy(_INDEX_RESEARCH_STATUS)
+    operations = _MEMORY_OPERATIONS.view()
+    process = (operations.get("currentMemory") or {}).get("process") or {}
+
+    def mib(key):
+        value = process.get(key)
+        return value / (1024 * 1024) if type(value) is int and value >= 0 else None
+
+    return private_runtime_record({
+        "intelCollect": {"currentRun": completed},
+        "indexResearch": research,
+        "operationAttribution": operations,
+        "allocatorReclaim": {"startupPolicy": copy.deepcopy(
+            _ALLOCATOR_RECLAIM_STATE.get("startupPolicy") or {})},
+        "startupRss": dict(_STARTUP_RSS),
+        "currentRssMib": mib("vmRssBytes"),
+        "peakRssMib": mib("vmHwmBytes"),
+    }, completed)
+
+
+def _intel_collect_record_completion(completed):
+    """Caller holds the existing collect lock; keep only three terminal rows."""
+    if not isinstance(completed, dict) or completed.get("status") not in ("done", "failed"):
+        return
+    try:
+        observation = _intel_collect_completed_memory_observation(completed)
+    except Exception as exc:
+        # Observation failure cannot change the collection result, and an
+        # unknown sample must never become a zero/successful memory reading.
+        observation = {"schemaVersion": "argus-collect-private-runtime-v1",
+                       "available": False, "captureErrorClass": type(exc).__name__}
+    history = _INTEL_COLLECT_LAST.setdefault("completedMemoryWindows", [])
+    history.append(observation)
+    del history[:-3]
+
+
 def _intel_collect_tracked(request_id, *, status_only=False, trigger="request"):
     """Bounded single-flight record for the complete collect + warm operation."""
     with _INTEL_COLLECT_LOCK:
@@ -10305,6 +10344,7 @@ def _intel_collect_tracked(request_id, *, status_only=False, trigger="request"):
                 current.update(terminal, finishedAt=_ai_now_iso())
                 _INTEL_COLLECT_LAST.update(finishedMonotonic=time.monotonic(), finishedAt=current["finishedAt"],
                                            status=terminal["status"], trigger=trigger)
+                _intel_collect_record_completion(current)
             _INTEL_COLLECT_CONTEXT.run_id = None
 
         worker = threading.Thread(target=work, name="argus-intel-collect", daemon=True)
@@ -10313,6 +10353,7 @@ def _intel_collect_tracked(request_id, *, status_only=False, trigger="request"):
         except Exception as exc:
             current.update(status="failed", finishedAt=_ai_now_iso(),
                            errorClass=type(exc).__name__)
+            _intel_collect_record_completion(current)
         return copy.deepcopy(current), 202 if current["status"] == "running" else 200
 
 
@@ -27476,12 +27517,12 @@ def _checkpoint_wal_result(
                 "buildSha": build_sha,
                 "missionWindowId": mission_window_id,
             })
-    wal_state = argus_tick_durability.read_valid_wal(wal_path)
+    wal_state = argus_tick_durability.read_valid_wal_cursor(wal_path)
     return {
         "deferred": True,
         "reason": "remote_receipt_not_verified",
         "compactedThrough": 0,
-        "remainingRecords": len(wal_state["records"]),
+        "remainingRecords": wal_state["recordCount"],
         "receiptSequence": int(included_sequence),
         "bytes": wal_state["bytes"],
     }
@@ -27788,21 +27829,21 @@ def _osint_persist_locked():
         _memory_attribution_source_capture(
             "S0", "checkpoint_source_entry", {
                 "wholeStateRepresentations": 0,
-                "outerWalRepresentationAlive": True,
+                "outerWalRepresentationAlive": False,
             }, sample=pre_wal_sample)
-        wal_state = argus_tick_durability.read_valid_wal(_MISSION_WAL_FILE)
+        wal_state = argus_tick_durability.read_valid_wal_cursor(_MISSION_WAL_FILE)
         included_wal_sequence = int(wal_state.get("maximumSequence") or 0)
         _MISSION_BATCH_STATE["walAppliedSequence"] = included_wal_sequence
         post_wal_sample = _memory_attribution_scalar_snapshot()
         _memory_attribution_source_capture("S1", "wal_cursor_read", {
-            "walRecordCount": len(wal_state.get("records") or []),
+            "walRecordCount": int(wal_state.get("recordCount") or 0),
             "walBytes": wal_state.get("bytes"),
             "includedWalSequence": included_wal_sequence,
             "wholeStateRepresentations": 0,
         }, sample=post_wal_sample)
         _memory_attribution_path_capture(
             "M23", "final_wal_read_complete", {
-                "walRecordCount": len(wal_state.get("records") or []),
+                "walRecordCount": int(wal_state.get("recordCount") or 0),
                 "walBytes": wal_state.get("bytes"),
             }, sample=post_wal_sample)
 
@@ -28143,7 +28184,7 @@ def _osint_persist_locked():
             seal_duration_micros=_recovery_phase_a_elapsed_micros(
                 seal_started_ns),
             wal_bytes=wal_state.get("bytes"),
-            wal_records=len(wal_state.get("records") or []),
+            wal_records=int(wal_state.get("recordCount") or 0),
             wal_high_water=included_wal_sequence)
         verified_wal_sequence = _verified_persistent_wal_sequence()
         allow_wal_compaction = bool(
@@ -35658,7 +35699,9 @@ def api_argus_admin_memory_attribution():
                                    "running": _INTEL_COLLECT_RUN.get("status") == "running",
                                    "intervalSeconds": INTEL_COLLECT_RESIDENT_INTERVAL_SECONDS,
                                    "currentRun": private_timing_record(
-                                       _INTEL_COLLECT_RUN, include_run_context=True)}
+                                       _INTEL_COLLECT_RUN, include_run_context=True),
+                                   "completedMemoryWindows": copy.deepcopy(
+                                       _INTEL_COLLECT_LAST.get("completedMemoryWindows") or [])}
         payload["indexOfficialFactors"] = _jp_index_official_factor_status()
         payload["jsfDaily"] = dict(_JSF_DAILY_STATUS)
         payload["usdJpyTokyoClose"] = {k: v for k, v in _USDJPY_TOKYO_CLOSE.items() if k != "lastAttemptMonotonic"}
@@ -35820,7 +35863,7 @@ def api_argus_admin_missions_tick():
         })
     _prelude_samples["P3"] = _memory_attribution_scalar_snapshot()
     try:
-        wal = argus_tick_durability.read_valid_wal(_MISSION_WAL_FILE)
+        wal = argus_tick_durability.read_valid_wal_cursor(_MISSION_WAL_FILE)
         _prelude_samples["P4"] = _memory_attribution_scalar_snapshot()
         _t0_sample = _prelude_samples["P4"]
         _MISSION_TICK_CONTEXT.update({
@@ -36049,7 +36092,9 @@ def _api_argus_admin_missions_tick_impl():
                 _precompute_verified_market_view(
                     _market_symbol, _market_code,
                     market_scope=_market_symbol == "N225")
-            _chart_reports.append(_chart_report)
+            _chart_reports.append(
+                argus_chart_intelligence.mission_report_scalars(_chart_report))
+            del _chart_report
             _view_publications.append({
                 "instrument": _market_symbol, **_view_publication})
             _memory_attribution_path_capture(
