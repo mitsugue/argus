@@ -12,6 +12,7 @@ import fcntl
 import hashlib
 import json
 import os
+import stat
 import threading
 import time
 import uuid
@@ -298,14 +299,24 @@ def read_valid_wal_cursor(path: str, *, after_sequence: int = 0
 
     Replay and compaction continue to use ``read_valid_wal``. This reader
     shares its exact decoder and corruption/error rules, does not mutate the
-    file, and does not retain raw lines or parsed transition payloads.
+    file, and does not retain raw lines or parsed transition payloads. Read
+    only the regular file's captured length: later appends belong to a later
+    cursor and must not advance this checkpoint's sequence while it scans.
     """
     count = 0
     corrupt = 0
     maximum = int(after_sequence)
     try:
         with open(path, "rb") as handle:
-            for raw in handle:
+            opened = os.fstat(handle.fileno())
+            if not stat.S_ISREG(opened.st_mode):
+                raise ValueError("wal_cursor_requires_regular_file")
+            remaining = opened.st_size
+            while remaining:
+                raw = handle.readline(remaining)
+                if not raw:
+                    break
+                remaining -= len(raw)
                 try:
                     record, sequence = _decode_valid_wal_record(raw)
                     maximum = max(maximum, sequence)

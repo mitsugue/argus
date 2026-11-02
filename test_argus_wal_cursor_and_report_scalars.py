@@ -101,11 +101,55 @@ def test_cursor_iterates_lines_and_never_calls_readlines(tmp_path, monkeypatch):
             self.handle.close()
         def __iter__(self):
             return iter(self.handle)
+        def fileno(self):
+            return self.handle.fileno()
+        def readline(self, size):
+            return self.handle.readline(size)
         def readlines(self):
             pytest.fail('cursor retained raw WAL lines')
 
     monkeypatch.setattr(wal, 'open', StreamOnly, raising=False)
     assert wal.read_valid_wal_cursor(str(path))['recordCount'] == 2
+
+
+def test_cursor_does_not_chase_rows_appended_after_its_captured_length(tmp_path, monkeypatch):
+    path = tmp_path / 'growing.wal'
+    first, second = encoded(1), encoded(2)
+    path.write_bytes(first)
+
+    class GrowingFile:
+        def __init__(self, *args, **kwargs):
+            self.handle = builtins.open(*args, **kwargs)
+            self.appended = False
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            self.handle.close()
+        def fileno(self):
+            return self.handle.fileno()
+        def readline(self, size):
+            if not self.appended:
+                with builtins.open(path, 'ab') as output:
+                    output.write(second)
+                self.appended = True
+            return self.handle.readline(size)
+
+    monkeypatch.setattr(wal, 'open', GrowingFile, raising=False)
+    value = wal.read_valid_wal_cursor(str(path))
+    assert value == {'recordCount': 1, 'corruptCount': 0,
+                     'maximumSequence': 1, 'bytes': len(first + second)}
+    assert path.read_bytes() == first + second
+
+
+def test_cursor_rejects_nonregular_input_instead_of_reporting_an_empty_cursor(tmp_path, monkeypatch):
+    path = tmp_path / 'fixture.wal'
+    path.write_bytes(encoded(1))
+    from types import SimpleNamespace
+    import stat
+    monkeypatch.setattr(wal, 'os', SimpleNamespace(
+        fstat=lambda fd: SimpleNamespace(st_mode=stat.S_IFIFO, st_size=0)))
+    with pytest.raises(ValueError, match='wal_cursor_requires_regular_file'):
+        wal.read_valid_wal_cursor(str(path))
 
 
 def test_cursor_releases_parsed_rows_without_gc_and_full_reader_retains_them(tmp_path, monkeypatch):

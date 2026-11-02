@@ -281,7 +281,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
     'scripts/run_breadth_freshness.py': '6655818fd1c4d32c2db7407b37010735ceb0da91',
     'test_breadth_freshness_workflow.py': 'e8ed1942175b75416caec8711363cfc771b90e3d',
-    'argus_tick_durability.py': '9dcec745973889f66423454578d2942b90fe5c9c',
+    'argus_tick_durability.py': '591508252711cdef416c821ab157d163cc2a1741',
     'argus_jp_fiscal_monitor.py': '3584e845b3c66c2ebdbb41aae6e8b3bfd9866117',
     'argus_jp_fiscal_runtime.py': 'b9863be1c35dc22655d5d86f94911b1061f8a9ce',
     'argus_jp_fiscal_sources.py': '275738feebfefbc7cef3be1442f00d1e3d264bde',
@@ -538,8 +538,8 @@ REVIEWED_EXTENSION_BLOBS = {
     # has one visible-page lifecycle and does not poll while hidden.
     "web/src/hooks/useVisibilityGuard.ts": "326a15b0726df40e5e354225e6cbf2d84c2ff799",
     "web/scripts/polling-singleton.test.mjs": "7b3bf5190ec5091ec4decbd6ba362e46fd8b1356",
-    'test_argus_wal_cursor_and_report_scalars.py': 'd5dbd6da271a930a34e30cf89d62bdd237f8e5a6',
-    'docs/ops/wal-cursor-lifetime.md': 'bbfb9085604b50c1c1a01bb0909d0fb3a52a84e6',
+    'test_argus_wal_cursor_and_report_scalars.py': '21696065d68b3c488c22a2f26e9ec01cf8d4c69b',
+    'docs/ops/wal-cursor-lifetime.md': '206c99ed2437e10c1d3a72d603d49be8a6595985',
     'test_argus_completed_runtime_history.py': 'b037bf4ab0aa8c7a32bd6c53dd39c675f79c9fa5',
 }
 

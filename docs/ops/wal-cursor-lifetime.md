@@ -7,7 +7,9 @@ full WAL owners with the checkpoint and report temporaries.
 `read_valid_wal_cursor` uses the full reader's exact record decoder and checks
 every line. It retains one parsed row at a time and returns only `recordCount`,
 `corruptCount`, `maximumSequence` and `bytes`. It does not write, truncate or
-compact the WAL. Replay, compaction, record ordering, hash validation, corruption
+compact the WAL. It validates the regular file's captured length, so appends
+after that point cannot advance the cursor being used for this checkpoint.
+Replay, compaction, record ordering, hash validation, corruption
 handling and the existing full reader's returned records keep their contracts.
 
 The runtime consumers are limited to mission-entry bookkeeping, the final
