@@ -23695,7 +23695,8 @@ def _attach_market_store(name, reason="generation"):
         if doc is not None:
             try:
                 _merge_restored_market_artifact(
-                    name, _market_artifact_migrate(name, doc["payload"]))
+                    name, _market_artifact_migrate(name, doc["payload"]),
+                    _owned_parsed_payload=True)
             except Exception as exc:
                 error = type(exc).__name__
         row.update({"attached": True, "attachedAt": _ai_now_iso(),
@@ -23708,8 +23709,13 @@ def _attach_market_store(name, reason="generation"):
 
 
 def _attach_market_stores(reason="generation", names=None):
+    selected = names or _MARKET_RESIDENCY_ARTIFACTS
+    if not names and not _ASSET_CHART_GENERATION:
+        # The retired generator cannot change these reports. Keep its saved
+        # archive detached; explicit restore/generation attachment still works.
+        selected = tuple(name for name in selected if name != "assetChartReports")
     return {name: _attach_market_store(name, reason)
-            for name in (names or _MARKET_RESIDENCY_ARTIFACTS)}
+            for name in selected}
 
 
 def _detach_market_stores(reason="checkpoint"):
@@ -23855,7 +23861,7 @@ def _market_artifact_migrate(name, payload):
     return payload
 
 
-def _merge_restored_market_artifact(name, payload):
+def _merge_restored_market_artifact(name, payload, *, _owned_parsed_payload=False):
     """Merge one restored derived artifact into its live store.
 
     Every merge is monotonic or append-only, so a file, a legacy checkpoint
@@ -23907,10 +23913,15 @@ def _merge_restored_market_artifact(name, payload):
     if name == "verifiedViewSnapshots":
         # Restore is monotonic per pointer: an older copy can add a missing
         # key but cannot roll back a newer local view.
-        # The lookup is read-only; publish_atomic still validates and makes
-        # its serialized owned copy for every destination pointer.
-        for _snapshot in argus_verified_snapshot._normalize_store_shared(
-                payload).get("current", {}).values():
+        # Only the loader's private parse may be consumed. Caller-owned
+        # inputs keep their read-only lookup; every destination still takes
+        # the original publish_atomic validation and serialized read-back.
+        _snapshots = (
+            argus_verified_snapshot._consume_parsed_restore_snapshots(payload)
+            if _owned_parsed_payload is True else
+            argus_verified_snapshot._normalize_store_shared(
+                payload).get("current", {}).values())
+        for _snapshot in _snapshots:
             _restored_vvs, _ = argus_verified_snapshot.publish_atomic(
                 _VERIFIED_VIEW_SNAPSHOTS, _snapshot, now_iso=_ai_now_iso())
             _VERIFIED_VIEW_SNAPSHOTS.clear()
@@ -23974,7 +23985,8 @@ def _market_artifacts_restore():
                 continue
         try:
             payload = _market_artifact_migrate(name, doc["payload"])
-            _merge_restored_market_artifact(name, payload)
+            _merge_restored_market_artifact(
+                name, payload, _owned_parsed_payload=True)
         except Exception as exc:
             row.update({"restoreStatus": "merge_failed",
                         "errorClass": type(exc).__name__})
