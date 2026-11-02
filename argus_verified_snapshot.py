@@ -456,6 +456,25 @@ def _normalize_store_shared(value: Any) -> Dict[str, Any]:
     return result
 
 
+def _consume_parsed_restore_snapshots(payload: Any):
+    """Yield verified snapshots while consuming a private JSON parse.
+
+    Only the artifact loader owns this temporary input. This must never be
+    used on caller-owned or published stores. Validate the complete lookup
+    before consuming it, then keep only the unconsumed source snapshots.
+    The restore caller still uses ``publish_atomic`` for every yielded item,
+    including its original validation and serialized independent read-back.
+    This iterator grants no normalized provenance or restore authority.
+    """
+    projected = _normalize_store_shared(payload)
+    original = payload.get("current") if isinstance(payload, dict) else None
+    if isinstance(original, dict):
+        original.clear()
+    current = projected["current"]
+    for key in tuple(current):
+        yield current.pop(key)
+
+
 def normalize_store(value: Any) -> Dict[str, Any]:
     result = empty_store()
     if not isinstance(value, dict):
