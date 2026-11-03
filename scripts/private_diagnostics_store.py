@@ -64,7 +64,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--kind', required=True)
     parser.add_argument('--run-id', required=True)
-    parser.add_argument('--run-attempt', type=int, default=1)
+    parser.add_argument('--run-attempt', type=int,
+                        default=os.environ.get('GITHUB_RUN_ATTEMPT', '1'))
     parser.add_argument('paths', nargs='+')
     args = parser.parse_args(argv)
     files = []

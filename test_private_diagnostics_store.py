@@ -88,6 +88,49 @@ def test_cli_passes_the_attempt_without_printing_private_data(tmp_path, monkeypa
     assert 'PRIVATE_SENTINEL' not in output and 'fake-token' not in output
 
 
+@pytest.mark.parametrize('environment_attempt, explicit_attempt, expected', [
+    ('2', None, 2), ('2', '3', 3), (None, None, 1),
+])
+def test_cli_uses_workflow_attempt_and_keeps_existing_notes_create_only(
+        tmp_path, monkeypatch, capsys, environment_attempt, explicit_attempt, expected):
+    path = tmp_path / 'collect-timing.json'
+    path.write_text('PRIVATE_SENTINEL')
+    monkeypatch.setenv('PRIVATE_DIAGNOSTICS_TOKEN', 'fake-token')
+    if environment_attempt is None:
+        monkeypatch.delenv('GITHUB_RUN_ATTEMPT', raising=False)
+    else:
+        monkeypatch.setenv('GITHUB_RUN_ATTEMPT', environment_attempt)
+    original = ('https://api.github.com/repos/mitsugue/argus-l2b-private/contents/'
+                'diagnostics/warm/123/collect-timing.json')
+    remote = {original: b'original-private-note'} if expected > 1 else {}
+    unchanged = dict(remote)
+
+    def create_only(request, timeout):
+        assert request.full_url not in remote, 'existing evidence must never be replaced'
+        body = json.loads(request.data)
+        assert 'sha' not in body
+        remote[request.full_url] = base64.b64decode(body['content'])
+        return Response()
+
+    original_store = store.store
+
+    def local_store(kind, run_id, files, token, *, run_attempt):
+        return original_store(kind, run_id, files, token,
+                              run_attempt=run_attempt, opener=create_only)
+
+    monkeypatch.setattr(store, 'store', local_store)
+    args = ['--kind', 'warm', '--run-id', '123']
+    if explicit_attempt is not None:
+        args.extend(['--run-attempt', explicit_attempt])
+    args.append(str(path))
+    assert store.main(args) == 0
+    destination = (original.replace('/123/', f'/123/attempt-{expected}/')
+                   if expected > 1 else original)
+    assert remote[destination] == path.read_bytes()
+    assert all(remote[key] == value for key, value in unchanged.items())
+    assert capsys.readouterr().out == 'private diagnostics: stored 1 file(s)\n'
+
+
 def test_observed_identity_is_closed_and_keeps_backend_distinct_from_workflow():
     from scripts.runtime_diagnostics_summary import observed_backend_identity
     health = {'buildSha': 'a' * 40, 'backendVersion': '1.2.3', 'status': 'ok',
