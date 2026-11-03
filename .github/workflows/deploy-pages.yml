@@ -404,7 +404,7 @@ jobs:
             --contract release/v13-snapshot-readiness-contract.json \
             --base-url https://argus-backend-3j2m.onrender.com \
             --expected-sha '${{ needs.candidate-identity.outputs.backend_sha }}' \
-            --trigger-id 'v13-production-${{ github.sha }}-${{ github.run_id }}' \
+            --trigger-id 'v13-production-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}' \
             --out artifacts/business-snapshot-trigger/trigger.json
       - name: Warm the runtime caches immediately after the swap
         # v13.5.36: a deploy swap leaves quote/margin/index caches cold, and
