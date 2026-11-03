@@ -168,7 +168,7 @@ def read_record(path, record_id=None, *, presentation_only=False):
                    + ("WHERE json_extract(body,'$.brief.presentationStatus')='GENERATED' " if presentation_only else '')
                    + 'ORDER BY julianday(recorded_at) DESC,sequence DESC LIMIT 1').fetchone())
         if not row: return None
-        record = validate_record(json.loads(local_form.full_body(conn, row[0], row[1])))
+        record = _decode_record_body(local_form.full_body(conn, row[0], row[1]))
         if record['recordId'] != row[0]: raise ValueError('analysis_index_integrity_mismatch')
         return record
     finally: conn.close()

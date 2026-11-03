@@ -71,7 +71,7 @@ jobs:
           PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
         run: |
           [ -d "$RUNNER_TEMP/private-notes" ] || exit 0
-          python3 -B scripts/private_diagnostics_store.py --kind warm --run-id "${{ github.run_id }}" "$RUNNER_TEMP/private-notes"
+          python3 -B scripts/private_diagnostics_store.py --kind warm --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" "$RUNNER_TEMP/private-notes"
       - name: Record the warmed identity
         run: |
           echo "## backend-warm-after-deploy" >> "$GITHUB_STEP_SUMMARY"
