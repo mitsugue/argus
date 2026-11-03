@@ -5,11 +5,13 @@ import { eventTitleJa } from '../domain/eventTitleJa';
 import { equityEventWhen } from './japanEquityCalendar';
 
 export type TodayEventPreview = { key:string; name:string; when:string; remaining:string|null };
+const nativeDayRange=(row:TodayScheduledEvent)=>row.kind==='equity'&&(row.event.kind==='CORPORATE_EARNINGS'
+  ||row.event.kind==='US_ELECTION_DAY'&&row.event.market==='US'&&row.event.sourceTimezone==='America/New_York');
 
 /** Display-only calendar selection. This never supplies the decision/event-risk gate. */
 export function todayEventHighlights(rows:TodayScheduledEvent[], now=Date.now()):{featured:TodayEventPreview|null; next:TodayEventPreview[]} {
   const upcoming=rows.filter(row=>!row.released&&Number.isFinite(row.at)
-    && (row.at>=now || row.kind==='equity'&&row.event.kind==='CORPORATE_EARNINGS'&&Date.parse(row.event.rangeEndAt||'')>=now))
+    && (row.at>=now || nativeDayRange(row)&&row.kind==='equity'&&Date.parse(row.event.rangeEndAt||'')>=now))
     .sort((a,b)=>a.at-b.at||a.key.localeCompare(b.key));
   const preview=(row:TodayScheduledEvent):TodayEventPreview=>{
     const dateOnly=row.kind==='equity'?row.event.dateOnly:row.kind==='dashboard'?!row.event.eventTimeUtc
@@ -49,8 +51,7 @@ export function todayEventSchedule(dashboard:DashboardEvent[],legacy:ImportantEv
   const today=jpDay(new Date(now).toISOString());
   const end=jpDay(new Date(now+45*86400000).toISOString());
   const add=(row:TodayScheduledEvent) => {
-    const corporate = row.kind==='equity' && row.event.kind==='CORPORATE_EARNINGS';
-    if (corporate) {
+    if (nativeDayRange(row)&&row.kind==='equity') {
       const endAt=Date.parse(row.event.rangeEndAt||'');
       if (!Number.isFinite(endAt)||endAt<now||row.at>now+45*86400000) return;
     } else if (row.day && !row.released && (row.day<today || row.day>end)) return;

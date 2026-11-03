@@ -68,3 +68,14 @@ assert.equal(todayEventHighlights([],electionNow).next.length,0);
 assert.equal(todayEventHighlights(corporateRows,corporateNow).next.length,2,'current US-local earnings dates remain eligible');
 assert.match(todayEventHighlights(todayEventSchedule([nfp],[],[],electionNow),electionNow).next[0].when,/22:30/,'post-DST clock stays Japan time');
 console.log('選挙の重要予定・日付順3件・発表済み除外・同日重複・時刻未公表・米国日付と夏時間を確認');
+const nativeElection={...election,market:'US',sourceTimezone:'America/New_York',sourceFromDate:'2026-11-03',sourceToDate:'2026-11-03',
+ at:'2026-11-03T00:00:00-05:00',rangeEndAt:'2026-11-03T23:59:59-05:00'};
+const japanNextDay=Date.parse('2026-11-04T08:00:00+09:00');
+const electionRows=todayEventSchedule([],[],[nativeElection],japanNextDay);
+assert.equal(electionRows.length,1,'US voting date remains visible after Japan midnight');
+const electionPreview=todayEventHighlights(electionRows,japanNextDay);
+assert.equal(electionPreview.featured.name,nativeElection.titleJa);
+assert.equal(electionPreview.next[0].remaining,null,'native midnight boundaries never become a release countdown');
+assert.match(electionPreview.next[0].when,/11\/3.*米国.*時刻未公表/);
+assert.equal(require('../src/lib/japanEquityCalendar.ts').equityEventDistance(nativeElection,japanNextDay),'米国の今日');
+assert.equal(todayEventSchedule([],[],[nativeElection],Date.parse('2026-11-04T05:00:00Z')).length,0,'exact local-date end removes the upcoming event');

@@ -36,3 +36,17 @@ assert(c.validEquityCalendar(envelope(base)));
 for(const change of [{market:'OTHER'},{sourceTimezone:'UTC'},{dateOnly:false},{sourceFromDate:'2026-02-30'}, {sourceToDate:'2026-12-01'}, {sourceToDate:'2026-11-04'}, {date:'2026-11-04'}, {rangeEndAt:'invalid'}, {rangeEndAt:'2026-11-07T23:59:59-05:00'}, {at:'2026-11-05T00:00:00+09:00'}, {source:'unknown'}, {certainty:'ACTUAL'}, {receivedAt:'2026-10-31T01:00:00'}, {at:'2026-11-05T00:00:00'}, {rangeEndAt:'2026-11-06T12:00:00-05:00'}, {rangeEndAt:'2026-11-06T23:59:59-04:00'}, {certainty:'COMPANY_SCHEDULE'}]) assert.equal(c.validEquityCalendar(envelope({...base,...change})),false,JSON.stringify(change));
 assert(c.validEquityCalendar(envelope({...base,eventId:'fixture-J',market:'JP',sourceTimezone:'Asia/Tokyo',at:'2026-11-05T00:00:00+09:00',rangeEndAt:'2026-11-05T23:59:59+09:00',sourceToDate:'2026-11-05',source:'J-Quants 決算発表予定日',certainty:'COMPANY_SCHEDULE'})));
 console.log('予定と実公表の区別・日米の時差・範囲・受領・出典の契約を確認');
+const electionDay={eventId:'fixture-election',kind:'US_ELECTION_DAY',date:'2026-11-03',dateOnly:true,daysUntil:0,
+ titleJa:'米国 中間選挙',importance:'high',whatJa:'投票日',soWhatJa:'政策を確認',watchJa:'結果',actionAuthority:false,
+ source:'rule:us-federal-election-day-tuesday-after-first-monday-of-november',market:'US',sourceTimezone:'America/New_York',
+ sourceFromDate:'2026-11-03',sourceToDate:'2026-11-03',at:'2026-11-03T00:00:00-05:00',rangeEndAt:'2026-11-03T23:59:59-05:00'};
+assert(c.validEquityCalendar(envelope(electionDay)));
+for(const change of [{market:'JP'},{sourceTimezone:'UTC'},{dateOnly:false},{sourceToDate:'2026-11-04'},
+ {at:'2026-11-03T00:00:00+09:00'},{rangeEndAt:'2026-11-04T23:59:59-05:00'},
+ {at:'2026-11-03T00:00:00-04:00',rangeEndAt:'2026-11-03T23:59:59-04:00'}, {source:'unknown'}]) {
+ assert.equal(c.validEquityCalendar(envelope({...electionDay,...change})),false,JSON.stringify(change));
+}
+const legacyElection={...electionDay,at:'2026-11-03'};
+for(const key of ['market','sourceTimezone','sourceFromDate','sourceToDate','rangeEndAt'])delete legacyElection[key];
+assert(c.validEquityCalendar(envelope(legacyElection)),'saved calendars remain readable while both builds circulate');
+console.log('米国選挙の現地日付・冬時間・厳格な日付範囲・旧保存カレンダー互換を確認');

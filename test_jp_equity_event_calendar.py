@@ -102,6 +102,18 @@ def test_us_election_day_is_the_tuesday_after_the_first_monday_of_november():
     assert "標本が少なく" in row["soWhatJa"] and row["actionAuthority"] is False
     assert [r["date"] for r in cal.us_election_events(date(2027, 1, 1), date(2028, 12, 31))] == ["2028-11-07"]
     assert "大統領選" in cal.us_election_events(date(2028, 10, 1), date(2028, 12, 31))[0]["titleJa"]
+
+
+def test_us_election_date_survives_japan_midnight_until_its_native_day_ends():
+    during = cal.equity_event_calendar(now=datetime(2026, 11, 3, 21, 0, tzinfo=timezone.utc))
+    row = next(r for r in during['events'] if r['kind'] == 'US_ELECTION_DAY')
+    assert row['date'] == '2026-11-03' and row['daysUntil'] == 0
+    assert row['market'] == 'US' and row['sourceTimezone'] == 'America/New_York'
+    assert row['at'] == '2026-11-03T00:00:00-05:00'
+    assert row['rangeEndAt'] == '2026-11-03T23:59:59-05:00'
+    assert row['dateOnly'] is True and row['actionAuthority'] is False
+    after = cal.equity_event_calendar(now=datetime(2026, 11, 4, 5, 0, tzinfo=timezone.utc))
+    assert not any(r['kind'] == 'US_ELECTION_DAY' for r in after['events'])
     assert cal.us_election_events(date(2026, 11, 4), date(2027, 10, 31)) == []      # odd year, none
     # Inside the 90-day calendar it appears among the events, sorted by date.
     events = cal.equity_event_calendar(now=NOW, horizon_days=90)["events"]
