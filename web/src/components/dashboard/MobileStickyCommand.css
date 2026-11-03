@@ -39,6 +39,10 @@ body:not([data-argus-route='command']) > .msc { display: none !important; }
     text-align: left; cursor: pointer;
   }
   .msc__jump:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
+  .msc[data-event-count='2'], .msc[data-event-count='3'] { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
+  .msc[data-event-count='2'] { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .msc[data-event-count='2'] .msc__jump + .msc__jump,
+  .msc[data-event-count='3'] .msc__jump + .msc__jump { border-left: 1px solid var(--line); padding-left: 8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

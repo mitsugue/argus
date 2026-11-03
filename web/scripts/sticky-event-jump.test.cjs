@@ -25,6 +25,16 @@ assert.ok(/<button type="button" class="msc__jump"/.test(withEvent), withEvent);
 assert.ok(withEvent.includes('次: 米CPI') && withEvent.includes('10/24 21:30 · あと2時間'));
 const plain = bar({ text: '予定はありません', event: null });
 assert.ok(!plain.includes('<button') && plain.includes('予定はありません'), 'no event, no button');
+const many=bar({text:'次の予定',events:[
+  {name:'米国 中間選挙',when:'11/3・時刻未公表',remaining:null},
+  {name:'米雇用統計',when:'11/6 22:30',remaining:null},
+  {name:'日本SQ',when:'11/13・時刻未公表',remaining:null},
+  {name:'4件目',when:'11/20',remaining:null},
+]});
+assert.equal((many.match(/<button /g)||[]).length,3);
+assert(many.indexOf('中間選挙')<many.indexOf('雇用統計')&&many.indexOf('雇用統計')<many.indexOf('日本SQ'));
+assert(!many.includes('4件目')&&many.includes('data-event-count="3"'));
+assert.equal((many.match(/予定の一覧へ移る/g)||[]).length,3,'each preview retains its accessible EVENTS jump');
 
 // The click handler is the shared jumpTo to #today-events; the Today strip uses the same function.
 const src = fs.readFileSync('src/components/dashboard/MobileStickyCommand.tsx', 'utf8');

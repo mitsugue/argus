@@ -45,3 +45,26 @@ assert.equal(require('../src/lib/japanEquityCalendar.ts').equityEventWhen(corpor
 assert.equal(require('../src/lib/japanEquityCalendar.ts').equityEventWhen({...corporateValues[0],sourceToDate:'2026-11-02'}),'10/30〜11/02 米国');
 assert.equal(require('../src/lib/japanEquityCalendar.ts').equityEventWhen({kind:'SQ',date:'2026-11-13',dateOnly:true}),'11/13(金)','existing calendars unchanged');
 console.log('同日複数社・米国日付の末尾・推定範囲・発表未確認・既存の表示を確認');
+
+// The top tile and fixed bar read the same calendar as EVENTS, without feeding the risk gate.
+const {todayEventHighlights}=require('../src/lib/todayEventSchedule.ts');
+const electionNow=Date.parse('2026-11-03T07:30:00Z');
+const election={...equity('US_ELECTION_DAY','2026-11-03'),titleJa:'米国 中間選挙の投票日(2026年)',importance:'high'};
+const near={...macro('MEDIUM','2026-11-03','検査用の予定'),importance:'medium',eventTimeUtc:'2026-11-03T08:00:00Z'};
+const nfp={...macro('NFP','2026-11-06','US Employment Situation'),eventTimeUtc:'2026-11-06T13:30:00Z'};
+const oldResult={...macro('CPI','2026-11-02','CPI','post_result'),eventTimeUtc:'2026-11-02T13:30:00Z'};
+const inputs=[[nfp,near,oldResult],[legacy('NFP','2026-11-06','US Employment Situation')],[election]];
+const unchanged=JSON.stringify(inputs),scheduled=todayEventSchedule(...inputs,electionNow),scheduleBefore=JSON.stringify(scheduled);
+const highlights=todayEventHighlights(scheduled,electionNow);
+assert.equal(highlights.featured.name,election.titleJa,'high-impact election is picked up even though absent from macro feed');
+assert.deepEqual(highlights.next.map(e=>e.name),['検査用の予定',election.titleJa,'米雇用統計'],'footer carries the nearest three, chronological and deduplicated');
+assert.equal(highlights.featured.remaining,null,'a date-only election has no fabricated countdown');
+assert.match(highlights.featured.when,/11\/3.*時刻未公表/);
+assert.equal(highlights.next[0].remaining,'あと30分');
+assert(!highlights.next.some(e=>e.name==='米消費者物価'),'released results never become next events');
+assert.equal(JSON.stringify(inputs),unchanged);assert.equal(JSON.stringify(scheduled),scheduleBefore);
+assert.equal(todayEventHighlights(todayEventSchedule([],[],[{...equity('US_ELECTION_DAY','2026-11-12'),importance:'high'}],electionNow),electionNow).featured,null,'far or unclassified events are not promoted');
+assert.equal(todayEventHighlights([],electionNow).next.length,0);
+assert.equal(todayEventHighlights(corporateRows,corporateNow).next.length,2,'current US-local earnings dates remain eligible');
+assert.match(todayEventHighlights(todayEventSchedule([nfp],[],[],electionNow),electionNow).next[0].when,/22:30/,'post-DST clock stays Japan time');
+console.log('選挙の重要予定・日付順3件・発表済み除外・同日重複・時刻未公表・米国日付と夏時間を確認');

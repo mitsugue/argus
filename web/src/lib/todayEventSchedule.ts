@@ -2,6 +2,30 @@ import { deriveDashboardEventDisplayState, type DashboardEvent } from './dashboa
 import type { ImportantEvent } from '../hooks/useImportantEvents';
 import type { EquityCalendarEvent } from './japanEquityCalendar';
 import { eventTitleJa } from '../domain/eventTitleJa';
+import { equityEventWhen } from './japanEquityCalendar';
+
+export type TodayEventPreview = { key:string; name:string; when:string; remaining:string|null };
+
+/** Display-only calendar selection. This never supplies the decision/event-risk gate. */
+export function todayEventHighlights(rows:TodayScheduledEvent[], now=Date.now()):{featured:TodayEventPreview|null; next:TodayEventPreview[]} {
+  const upcoming=rows.filter(row=>!row.released&&Number.isFinite(row.at)
+    && (row.at>=now || row.kind==='equity'&&row.event.kind==='CORPORATE_EARNINGS'&&Date.parse(row.event.rangeEndAt||'')>=now))
+    .sort((a,b)=>a.at-b.at||a.key.localeCompare(b.key));
+  const preview=(row:TodayScheduledEvent):TodayEventPreview=>{
+    const dateOnly=row.kind==='equity'?row.event.dateOnly:row.kind==='dashboard'?!row.event.eventTimeUtc
+      :!row.event.eventTimeUtc&&!/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(row.event.jstTime||'');
+    const name=row.kind==='equity'?row.event.titleJa:eventTitleJa(row.event.eventCode,row.event.title);
+    const when=row.kind==='equity'?equityEventWhen(row.event):new Date(row.at).toLocaleString('ja-JP',{
+      timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',...(!dateOnly?{hour:'2-digit',minute:'2-digit'}:{})});
+    const minutes=Math.ceil((row.at-now)/60000);
+    const remaining=dateOnly?null:minutes<1?'まもなく':minutes<60?`あと${minutes}分`
+      :minutes<1440?`あと${Math.floor(minutes/60)}時間${minutes%60?`${minutes%60}分`:''}`:null;
+    return {key:row.key,name,when:when+(dateOnly?'・時刻未公表':''),remaining};
+  };
+  const featured=upcoming.find(row=>row.at<=now+7*86400000&&['high','critical'].includes(
+    row.kind==='legacy'?row.event.displayImpact:row.event.importance));
+  return {featured:featured?preview(featured):null,next:upcoming.slice(0,3).map(preview)};
+}
 
 export type TodayScheduledEvent =
   | { kind:'dashboard'; key:string; day:string; at:number; released:boolean; event:DashboardEvent }
