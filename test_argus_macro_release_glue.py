@@ -1,6 +1,7 @@
 """The in-server release reaction: baseline before, windows after, post analysis once the
 result and the measured reaction exist (owner finding 2026-10-03, US jobs report)."""
 import json
+import pytest
 
 import scanner
 import argus_macro_event_analysis as MA
@@ -68,7 +69,15 @@ def test_baseline_then_window_measure_from_one_provider(monkeypatch):
 def test_post_waits_for_the_result_and_the_window_then_runs_once(monkeypatch):
     _seed(monkeypatch)
     ran = []
-    monkeypatch.setattr(scanner, "_generate_macro_event_analysis", lambda limit=8: (ran.append(limit), {"status": "done"})[1])
+    def generate(limit=8):
+        ran.append(limit)
+        record = scanner._MACRO_ANALYSIS[EVENT["id"]]
+        record['post'] = {'generatedAt': '2026-10-02T12:36:00Z', 'verdict': 'partial',
+                          'reactionWindow': '+5m',
+                          'actualRevisionId': scanner.argus_macro_event_store.actual_revision_id(record['actual'])}
+        monkeypatch.setitem(scanner._MACRO_ANALYSIS_STATE, 'localPersistence', {'status': 'saved'})
+        return {'status': 'done'}
+    monkeypatch.setattr(scanner, "_generate_macro_event_analysis", generate)
     assert scanner._macro_release_post(EVENT, "+5m") is False          # no result, no window
     phase = ["before"]; _provider(monkeypatch, phase)
     scanner._macro_release_baseline(EVENT); phase[0] = "after"; scanner._macro_release_window(EVENT, "+5m")
@@ -78,6 +87,44 @@ def test_post_waits_for_the_result_and_the_window_then_runs_once(monkeypatch):
     assert scanner._macro_release_post(EVENT, "+5m") is True and ran == [8]
     monkeypatch.setattr(scanner, "_generate_macro_event_analysis", lambda limit=8: {"status": "already_running"})
     assert scanner._macro_release_post(EVENT, "+5m") is False          # asked again next tick
+
+
+@pytest.mark.parametrize('failure', ['no_post', 'earlier_window', 'other_result',
+                                   'no_generation_time', 'not_available', 'save_failed'])
+def test_release_watch_does_not_acknowledge_unfinished_requested_analysis(monkeypatch, failure):
+    _seed(monkeypatch, actual_available=True)
+    record = scanner._MACRO_ANALYSIS[EVENT['id']]
+    record['releaseReaction'] = {'windows': {'+8h': {'observedAt': '2026-10-02T20:31:00Z'}}}
+    record['post'] = {'generatedAt': '2026-10-02T20:32:00Z', 'verdict': 'partial',
+                      'reactionWindow': '+8h',
+                      'actualRevisionId': scanner.argus_macro_event_store.actual_revision_id(record['actual'])}
+    monkeypatch.setitem(scanner._MACRO_ANALYSIS_STATE, 'localPersistence', {'status': 'saved'})
+    if failure == 'no_post': record.pop('post')
+    if failure == 'earlier_window': record['post']['reactionWindow'] = '+60m'
+    if failure == 'other_result': record['post']['actualRevisionId'] = 'another-result'
+    if failure == 'no_generation_time': record['post']['generatedAt'] = None
+    if failure == 'not_available': record['post']['verdict'] = 'not_available'
+    if failure == 'save_failed':
+        monkeypatch.setitem(scanner._MACRO_ANALYSIS_STATE, 'localPersistence', {'status': 'failed'})
+    # An overall run can finish without generating this event, e.g. an empty
+    # provider response or a different event selected by the bounded batch.
+    monkeypatch.setattr(scanner, '_generate_macro_event_analysis', lambda limit=8: {'post': 0, 'pre': 0})
+    assert scanner._macro_release_post(EVENT, '+8h') is False
+
+
+@pytest.mark.parametrize('verdict', ['partial', 'not_scoreable'])
+def test_release_watch_accepts_saved_later_window_for_the_same_result(monkeypatch, verdict):
+    _seed(monkeypatch, actual_available=True)
+    record = scanner._MACRO_ANALYSIS[EVENT['id']]
+    record['releaseReaction'] = {'windows': {'+60m': {'observedAt': '2026-10-02T13:31:00Z'}}}
+    def generate(limit=8):
+        record['post'] = {'generatedAt': '2026-10-02T20:32:00Z', 'verdict': verdict,
+                          'reactionWindow': '+8h',
+                          'actualRevisionId': scanner.argus_macro_event_store.actual_revision_id(record['actual'])}
+        monkeypatch.setitem(scanner._MACRO_ANALYSIS_STATE, 'localPersistence', {'status': 'saved'})
+        return {'post': 1, 'pre': 0}
+    monkeypatch.setattr(scanner, '_generate_macro_event_analysis', generate)
+    assert scanner._macro_release_post(EVENT, '+60m') is True
 
 
 def test_post_prompt_reads_the_measured_reaction_and_is_replaced_once_at_sixty(monkeypatch):

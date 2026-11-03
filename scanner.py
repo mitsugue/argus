@@ -15412,14 +15412,19 @@ def _macro_release_window(event, name):
 
 
 def _macro_release_post(event, window):
-    """Run the post-release analysis once the official result exists. False: not yet."""
+    """Acknowledge only this event's saved analysis of the requested window."""
     eid, rec = _macro_release_record(event)
     if not (rec.get("actual") or {}).get("available"):
         return False
     if not ((rec.get("releaseReaction") or {}).get("windows") or {}).get(window):
         return False
     result = _generate_macro_event_analysis(limit=8)
-    return result.get("status") != "already_running"
+    if result.get("status") == "already_running":
+        return False
+    with _MACRO_RECORD_LOCK:
+        return argus_macro_release_watch.post_analysis_saved(
+            _MACRO_ANALYSIS.get(eid) or {}, window,
+            _MACRO_ANALYSIS_STATE.get("localPersistence") or {})
 
 
 def _next_fomc_after(date_iso):
