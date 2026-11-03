@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.228"
+PRODUCT_VERSION = "v13.8.229"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_macro_post_completion.py': 'bd7f1067e525f024c7d09321ef0feb6bb788e0fe',
     # Exact retired-residency and private-loader ownership regression.
     'test_argus_retired_asset_residency_runtime.py': 'd615682758101fd655c5d9d45fd3266ff1d70880',
     # Private parsed-copy lifetime and retired-report residency contract.
@@ -199,7 +200,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '4d3a1787ca9b4523bb1780ee958ec9b595c35e35',
+    'web/scripts/owner-today-https.mjs': '936f613c20dea0bc47c4ede74bb96087165a8c1c',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
