@@ -25,6 +25,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from zoneinfo import ZoneInfo
 
 import argus_market_clock as clock
 import jp_market_events
@@ -292,28 +293,36 @@ def us_policy_events(today: date, end: date, document: Mapping[str, Any]) -> lis
     return out
 
 
-def us_election_events(today: date, end: date) -> list[dict[str, Any]]:
+def us_election_events(today: date, end: date, *, now: datetime | None = None) -> list[dict[str, Any]]:
     """US federal Election Day: the Tuesday after the first Monday of November, in even years."""
     out = []
+    native_today = now.astimezone(ZoneInfo("America/New_York")).date() if now else today
     for year in (today.year, today.year + 1, today.year + 2):
         if year % 2 or year > 2100:
             continue
         first = date(year, 11, 1)
         monday = first + timedelta(days=(7 - first.weekday()) % 7)
         day = monday + timedelta(days=1)
-        if not today <= day <= end:
+        if not native_today <= day <= end:
             continue
         midterm = year % 4 == 2
         label = "中間選挙" if midterm else "大統領選・連邦議会選挙"
         closed = not _trading(day)
-        out.append(_event(
+        event = _event(
             event_id=f"us-election-day-{day.isoformat()}", kind="US_ELECTION_DAY",
             at=day.isoformat(), date_only=True,
             title_ja=f"米国 {label}の投票日({year}年)", importance="high",
             what_ja=US_ELECTION_TEXT["whatJa"]
                 + ("この日は東京市場が休場のため、結果は翌営業日の寄付きで初めて織り込まれます。" if closed else ""),
             so_what_ja=US_ELECTION_TEXT["soWhatJa"], watch_ja=US_ELECTION_TEXT["watchJa"],
-            source="rule:us-federal-election-day-tuesday-after-first-monday-of-november", today=today))
+            source="rule:us-federal-election-day-tuesday-after-first-monday-of-november", today=native_today)
+        # This is a native calendar-day range, never a release or poll-closing time.
+        zone = ZoneInfo("America/New_York")
+        start = datetime(day.year, day.month, day.day, tzinfo=zone)
+        event.update(market="US", sourceTimezone="America/New_York",
+                     sourceFromDate=day.isoformat(), sourceToDate=day.isoformat(),
+                     at=start.isoformat(), rangeEndAt=(start + timedelta(days=1, seconds=-1)).isoformat())
+        out.append(event)
     return out
 
 
@@ -423,7 +432,7 @@ def equity_event_calendar(*, now: datetime, horizon_days: int = DEFAULT_HORIZON_
             events += us_policy_events(today, end, json.loads(US_POLICY_DATES.read_text()))
         except (OSError, ValueError, TypeError, KeyError):
             gaps.append("us_policy_dates_unavailable")
-        events += us_election_events(today, end)
+        events += us_election_events(today, end, now=current)
         events += nikkei_review_events(today, end)
         events += dividend_events(today, end, ex_dividend)
         events += holiday_events(today, end)

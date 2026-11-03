@@ -10,6 +10,7 @@ import { editorialEdition, readableBriefEdition } from '../../lib/presentationIn
 import type { MarketBrief } from '../../lib/marketBrief';
 import { ArgusEditorialSurface } from './ArgusEditorialSurface';
 import { TodayDecisionStrip, type CriticalTodayNews } from './TodayDecisionStrip';
+import type { TodayEventPreview } from '../../lib/todayEventSchedule';
 import { marketChanges, marketWording } from '../../lib/marketWording';
 import { withoutScreenNotes } from '../../lib/screenNotes';
 
@@ -49,7 +50,8 @@ export function retainedBriefNote(brief: MarketBrief | null, requestFailed: bool
 }
 
 export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total: number } | null;
-  cutoff?: string | null; market?: string; editorial?: boolean; criticalNews?: CriticalTodayNews[] }> = ({ signals, cutoff, market, editorial = false, criticalNews }) => {
+  cutoff?: string | null; market?: string; editorial?: boolean; criticalNews?: CriticalTodayNews[];
+  featuredEvent?: TodayEventPreview | null }> = ({ signals, cutoff, market, editorial = false, criticalNews, featuredEvent }) => {
   const { brief: responseBrief, error, loading, retry } = useMarketBrief();
   const brief = readableBriefEdition(responseBrief) ?? responseBrief;
   const retained = brief !== responseBrief;
@@ -84,7 +86,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
     return <div className={`at-brief at-unified-brief${editorial ? ' at-brief--current' : ''}`} data-layout={editorial ? 'current-four-cards' : 'reference'} aria-label="ARGUSの今日の見立て" data-argus-contract="unified-brief-v1">
       <header className="at-brief__edition"><span>MARKET VIEW</span><time dateTime={brief.aiDiagnostics?.completedAt ?? brief.generatedAt}>
         {new Date(brief.aiDiagnostics?.completedAt ?? brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 更新</time>{updateState}</header>
-      {editorial ? <TodayDecisionStrip brief={brief} criticalNews={criticalNews} />
+      {editorial ? <TodayDecisionStrip brief={brief} criticalNews={criticalNews} featuredEvent={featuredEvent} />
         : <p className="at-unified-brief__view">{unified.sections.view.textJa}</p>}
       <div className="at-brief__rows">{(Object.keys(labels) as Array<keyof typeof labels>).filter(key => editorial ? ['reasons', 'changes', 'invalidation'].includes(key) : key !== 'view').map(key =>
         <div key={key} data-brief-section={key}><b>{labels[key]}</b><span>{editorial ? (key === 'changes' ? marketChanges(unified.sections[key].textJa) : marketWording(unified.sections[key].textJa)) : unified.sections[key].textJa}

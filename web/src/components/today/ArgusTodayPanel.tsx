@@ -3,6 +3,7 @@ import { WarningConditionsDetails } from './WarningConditionsDetails';
 import { revealNewsArticle } from '../../lib/revealNewsArticle';
 import { OwnerOverview } from '../dialogue/OwnerOverview';
 import { MarketBriefCard } from './MarketBriefCard';
+import type { TodayEventPreview } from '../../lib/todayEventSchedule';
 import { useMarketBrief } from '../../hooks/useMarketBrief';
 import { editorialCoversNews, editorialEdition } from '../../lib/presentationIntent';
 import React from 'react';
@@ -47,6 +48,7 @@ export interface TodayChartLoadState {
 }
 
 interface Props {
+  featuredEvent?: TodayEventPreview | null;
   view: ArgusTodayView;
   selectedSymbol: MarketInstrumentSymbol;
   horizon: MarketHorizon;
@@ -575,7 +577,7 @@ const ProjectionChart: React.FC<{
 };
 
 export const ArgusTodayPanel: React.FC<Props> = ({
-  view, selectedSymbol, horizon, chartLoad,
+  view, selectedSymbol, horizon, chartLoad, featuredEvent,
   projectionSource, freshnessNoteJa, shock, newsIntel,
   onNavigate, onNavigateToAsset, onNavigateToSettings, aiButton, jpNameBySymbol,
 }) => {
@@ -732,7 +734,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
       data-projection-revalidation-state={revalidationState} />
     <section className="at-view-hero" aria-label="今日の見立て">
       {editorialScope ? <MarketBriefCard signals={topSignals && !usSelected ? { activeCount: topSignals.activeCount, total: topSignals.total } : null}
-        cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market="JP" editorial
+        cutoff={decisionEvidence.marketView?.informationCutoff ?? null} market="JP" editorial featuredEvent={featuredEvent}
         criticalNews={newsRows.filter(row => row.severity === 'CRITICAL').map(row => ({
           id: row.id, title: row.headlineJa, why: row.whyJa, meta: row.metaJa,
         }))} />

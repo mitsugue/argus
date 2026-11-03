@@ -124,6 +124,13 @@ assert.equal((urgent.split('today-strip__tiles')[1].split('</div>')[0].match(/<b
 assert.ok(urgent.includes('重大ニュース 1件')&&urgent.includes('検査用：重要な政策発表'));
 assert.ok(urgent.includes('価格への影響は未確認です。')&&urgent.includes('10/5 01:30 · 確認待ち'));
 assert.ok(!urgent.includes('次の山場'),'重大ニュースがある時は４枚目に優先表示');
+const featuredEvent={key:'election',name:'米国 中間選挙',when:'11/3・時刻未公表',remaining:null};
+const electionStrip=renderToStaticMarkup(React.createElement(stripContext.exports.TodayDecisionStrip,{brief,featuredEvent}));
+assert(electionStrip.includes('米国 中間選挙')&&electionStrip.includes('11/3・時刻未公表'));
+assert(!electionStrip.includes('SQ 10/9'),'current calendar highlight replaces an old AI chip');
+const urgentElection=renderToStaticMarkup(React.createElement(stripContext.exports.TodayDecisionStrip,{brief,featuredEvent,
+ criticalNews:[{id:'test',title:'検査用：重要な政策発表',why:'検査用',meta:'確認待ち'}]}));
+assert(urgentElection.includes('重大ニュース 1件')&&!urgentElection.includes('米国 中間選挙'),'critical news keeps its existing priority');
 console.log('重大ニュースのトップカード PASS');
 assert.equal(d.friendlyEventText('US Treasury 10-Year Auctio 10/7', at), '米国債入札 10/7');
 assert.equal(d.friendlyEventText('US CPI (Consumer Price Index) 10/14 21:30', at), '米消費者物価 10/14 21:30');

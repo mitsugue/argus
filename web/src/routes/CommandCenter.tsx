@@ -5,6 +5,9 @@ import { useAssetIntel } from '../hooks/useAssetIntel';
 import { publishEventsJa, publishDataQuality } from '../lib/positionExposureShare';
 import { maybeUpdateOutcomes } from '../lib/decisionQuality';
 import { MobileStickyCommand } from '../components/dashboard/MobileStickyCommand';
+import { useJapanEquityCalendar } from '../hooks/useJapanEquityCalendar';
+import { useDashboardEvents } from '../hooks/useDashboardEvents';
+import { todayEventSchedule, todayEventHighlights } from '../lib/todayEventSchedule';
 import { scheduleVisibleInterval, subscribeInitialVisibleRead } from '../lib/pollingPolicy';
 import { runNotificationEngine } from '../lib/notifications';
 import { assessBackupSafety } from '../lib/backupSafety';
@@ -168,6 +171,10 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
     judgment, isPartial, partialReasonCodes, dataQualityDetailLinesJa, dataQualityNotes, visLimited,
     overlay, sdaBySymbol, importantEventsUnknown, jpQuotes,
   } = useAssetIntel({ publish: true, assets: assetsApi.assets });
+  const equityCalendar = useJapanEquityCalendar();
+  const dashboardEvents = useDashboardEvents();
+  const calendarHighlights = todayEventHighlights(todayEventSchedule(
+    dashboardEvents?.items ?? [], impEvents?.events ?? [], equityCalendar.data?.events ?? [], calendarNow), calendarNow);
   // v13.5.59 (owner): every JP code is shown with its company name — the
   // Tachibana rows carry codes only, so the name comes from the JP quote rows
   // and the device asset list (long names are shortened by jpDisplay).
@@ -616,6 +623,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
           error: decisionEvidence.error, subjects: decisionEvidence.subjects },
       }} />
       <ArgusTodayPanel view={argusToday}
+        featuredEvent={calendarHighlights.featured}
         selectedSymbol={selectedSymbol} horizon={chartHorizon}
         chartLoad={selectedChart}
         projectionSource={projectionSource} freshnessNoteJa={freshnessNoteJa}
@@ -629,7 +637,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         onNavigate={onNavigate} onNavigateToAsset={onNavigateToAsset}
         onNavigateToSettings={onNavigateToSettings}
         aiButton={null} />
-      <MobileStickyCommand text={argusToday.footerText} event={argusToday.footerEvent} />
+      <MobileStickyCommand text={argusToday.footerText} events={calendarHighlights.next} event={argusToday.footerEvent} />
     </PageShell>
   );
 };

@@ -42,6 +42,23 @@ function validCorporate(e: Record<string, unknown>): boolean {
   } catch { return false; }
 }
 
+function validElectionDay(e:Record<string,unknown>):boolean {
+  // Older saved calendars had only the date; continue reading that exact form.
+  if (!['market','sourceTimezone','sourceFromDate','sourceToDate','rangeEndAt'].some(k=>k in e)) return true;
+  if (e.market!=='US'||e.sourceTimezone!=='America/New_York'||e.dateOnly!==true
+    ||e.sourceFromDate!==e.date||e.sourceToDate!==e.date
+    ||e.source!=='rule:us-federal-election-day-tuesday-after-first-monday-of-november'
+    ||typeof e.at!=='string'||typeof e.rangeEndAt!=='string'
+    ||!/(Z|[+-]\d{2}:\d{2})$/.test(e.at)||!/(Z|[+-]\d{2}:\d{2})$/.test(e.rangeEndAt)) return false;
+  const first=Date.parse(e.at),last=Date.parse(e.rangeEndAt);
+  if (!Number.isFinite(first)||!Number.isFinite(last)||last-first!==86400000-1000) return false;
+  const nativeDay=(at:number)=>new Intl.DateTimeFormat('sv-SE',{timeZone:'America/New_York'}).format(new Date(at));
+  const nativeClock=(at:number)=>new Intl.DateTimeFormat('en-GB',{
+    timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23',
+  }).format(new Date(at));
+  return nativeDay(first)===e.date&&nativeDay(last)===e.date&&nativeClock(first)==='00:00:00'&&nativeClock(last)==='23:59:59';
+}
+
 export function validEquityCalendar(value: unknown): value is EquityCalendar {
   if (!value || typeof value !== 'object') return false;
   const c = value as Record<string, unknown>;
@@ -54,7 +71,8 @@ export function validEquityCalendar(value: unknown): value is EquityCalendar {
     return text(e.eventId, 120) && text(e.kind, 40) && text(e.at, 40) && day(e.date) && typeof e.dateOnly === 'boolean'
       && Number.isInteger(e.daysUntil) && text(e.titleJa, 120) && ['high', 'medium', 'low'].includes(String(e.importance))
       && text(e.whatJa) && text(e.soWhatJa) && text(e.watchJa) && e.actionAuthority === false
-      && (e.kind !== 'CORPORATE_EARNINGS' || validCorporate(e));
+      && (e.kind !== 'CORPORATE_EARNINGS' || validCorporate(e))
+      && (e.kind !== 'US_ELECTION_DAY' || validElectionDay(e));
   });
 }
 
@@ -68,10 +86,15 @@ export function equityEventWhen(event: EquityCalendarEvent): string {
   const [y, m, d] = event.date.split('-').map(Number);
   const weekday = WEEKDAY[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
   const time = event.dateOnly ? '' : ` ${Number(event.at.slice(11, 13))}:${event.at.slice(14, 16)}`;
-  return `${m}/${d}(${weekday})${time}`;
+  return `${m}/${d}(${weekday})${time}${event.kind==='US_ELECTION_DAY'&&event.market==='US'?' 米国':''}`;
 }
 
 export function equityEventDistance(event: EquityCalendarEvent, now = Date.now()): string {
+  if(event.kind==='US_ELECTION_DAY'&&event.market==='US') {
+    const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'America/New_York'}).format(new Date(now));
+    const days=Math.round((Date.parse(event.date)-Date.parse(today))/86400000);
+    return days===0?'米国の今日':days===1?'米国の明日':days>1?`${days}日後`: '米国日付の終了';
+  }
   if (!event.dateOnly && Number.isFinite(Date.parse(event.at)) && Date.parse(event.at) <= now) return '発表済み';
   return event.daysUntil <= 0 ? '今日' : event.daysUntil === 1 ? '明日' : `${event.daysUntil}日後`;
 }

@@ -2,6 +2,32 @@ import { deriveDashboardEventDisplayState, type DashboardEvent } from './dashboa
 import type { ImportantEvent } from '../hooks/useImportantEvents';
 import type { EquityCalendarEvent } from './japanEquityCalendar';
 import { eventTitleJa } from '../domain/eventTitleJa';
+import { equityEventWhen } from './japanEquityCalendar';
+
+export type TodayEventPreview = { key:string; name:string; when:string; remaining:string|null };
+const nativeDayRange=(row:TodayScheduledEvent)=>row.kind==='equity'&&(row.event.kind==='CORPORATE_EARNINGS'
+  ||row.event.kind==='US_ELECTION_DAY'&&row.event.market==='US'&&row.event.sourceTimezone==='America/New_York');
+
+/** Display-only calendar selection. This never supplies the decision/event-risk gate. */
+export function todayEventHighlights(rows:TodayScheduledEvent[], now=Date.now()):{featured:TodayEventPreview|null; next:TodayEventPreview[]} {
+  const upcoming=rows.filter(row=>!row.released&&Number.isFinite(row.at)
+    && (row.at>=now || nativeDayRange(row)&&row.kind==='equity'&&Date.parse(row.event.rangeEndAt||'')>=now))
+    .sort((a,b)=>a.at-b.at||a.key.localeCompare(b.key));
+  const preview=(row:TodayScheduledEvent):TodayEventPreview=>{
+    const dateOnly=row.kind==='equity'?row.event.dateOnly:row.kind==='dashboard'?!row.event.eventTimeUtc
+      :!row.event.eventTimeUtc&&!/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(row.event.jstTime||'');
+    const name=row.kind==='equity'?row.event.titleJa:eventTitleJa(row.event.eventCode,row.event.title);
+    const when=row.kind==='equity'?equityEventWhen(row.event):new Date(row.at).toLocaleString('ja-JP',{
+      timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',...(!dateOnly?{hour:'2-digit',minute:'2-digit'}:{})});
+    const minutes=Math.ceil((row.at-now)/60000);
+    const remaining=dateOnly?null:minutes<1?'まもなく':minutes<60?`あと${minutes}分`
+      :minutes<1440?`あと${Math.floor(minutes/60)}時間${minutes%60?`${minutes%60}分`:''}`:null;
+    return {key:row.key,name,when:when+(dateOnly?'・時刻未公表':''),remaining};
+  };
+  const featured=upcoming.find(row=>row.at<=now+7*86400000&&['high','critical'].includes(
+    row.kind==='legacy'?row.event.displayImpact:row.event.importance));
+  return {featured:featured?preview(featured):null,next:upcoming.slice(0,3).map(preview)};
+}
 
 export type TodayScheduledEvent =
   | { kind:'dashboard'; key:string; day:string; at:number; released:boolean; event:DashboardEvent }
@@ -25,8 +51,7 @@ export function todayEventSchedule(dashboard:DashboardEvent[],legacy:ImportantEv
   const today=jpDay(new Date(now).toISOString());
   const end=jpDay(new Date(now+45*86400000).toISOString());
   const add=(row:TodayScheduledEvent) => {
-    const corporate = row.kind==='equity' && row.event.kind==='CORPORATE_EARNINGS';
-    if (corporate) {
+    if (nativeDayRange(row)&&row.kind==='equity') {
       const endAt=Date.parse(row.event.rangeEndAt||'');
       if (!Number.isFinite(endAt)||endAt<now||row.at>now+45*86400000) return;
     } else if (row.day && !row.released && (row.day<today || row.day>end)) return;

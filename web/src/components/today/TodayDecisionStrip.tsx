@@ -6,6 +6,7 @@ import { nikkeiLiveCurrent, useJapanMarketComparison, useNikkeiLive } from '../.
 import { marketHeadline } from '../../lib/marketWording';
 import { MarketPositionCard } from './MarketPositionCard';
 import { jumpTo } from '../../lib/todayJump';
+import type { TodayEventPreview } from '../../lib/todayEventSchedule';
 import './TodayDecisionStrip.css';
 
 const toneLabel = { tail: '材料は追い風寄り', head: '材料は逆風寄り', wait: '材料はまちまち' } as const;
@@ -58,7 +59,7 @@ function readLastInputs(): StripInputs | null {
 }
 
 /** Conclusion, four numbers and the inputs with their direction, before the detailed explanation. */
-export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: MarketBrief; criticalNews?: CriticalTodayNews[] }) {
+export function TodayDecisionStrip({ brief, criticalNews = [], featuredEvent }: { brief: MarketBrief; criticalNews?: CriticalTodayNews[]; featuredEvent?: TodayEventPreview | null }) {
   const current = brief.calculationSnapshots?.['5']?.comparison as { actual?: ComparisonPoint[]; anchorDate?: string } | undefined;
   const currentFeatures = features(brief);
   const fresh = Array.isArray(current?.actual) && current!.actual.length >= 21;
@@ -132,6 +133,8 @@ export function TodayDecisionStrip({ brief, criticalNews = [] }: { brief: Market
         <small>重大ニュース {criticalNews.length}件</small><b className="today-strip__event">{criticalNews[0].title}</b>
         <span className="today-strip__news-preview">{criticalNews[0].why}</span><span className="today-strip__news-meta">{criticalNews[0].meta}</span>
         <span>詳しく ↓</span>
+      </button> : featuredEvent ? <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}>
+        <small>次の山場</small><b className="today-strip__event">{featuredEvent.name}</b><span>{featuredEvent.when}</span>
       </button> : brief.chips?.nextEvent ? <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}>
         <small>次の山場</small><b className="today-strip__event">{friendlyEventText(brief.chips.nextEvent)}</b></button> : <button type="button" className="today-strip__tile tile-event" onClick={() => jumpTo('today-events')}><small>次の山場</small><b>確認中</b></button>}
     </div>
