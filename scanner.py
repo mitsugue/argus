@@ -15412,14 +15412,31 @@ def _macro_release_window(event, name):
 
 
 def _macro_release_post(event, window):
-    """Run the post-release analysis once the official result exists. False: not yet."""
+    """Acknowledge only this event's saved analysis of the requested window."""
+    order = tuple(name for name, _ in argus_macro_release_reaction.WINDOWS)
+    if window not in order:
+        return False
     eid, rec = _macro_release_record(event)
     if not (rec.get("actual") or {}).get("available"):
         return False
     if not ((rec.get("releaseReaction") or {}).get("windows") or {}).get(window):
         return False
     result = _generate_macro_event_analysis(limit=8)
-    return result.get("status") != "already_running"
+    if result.get("status") == "already_running":
+        return False
+    # Finishing the bounded batch does not prove that this event was selected,
+    # received a usable response, or reached durable storage. Keep the existing
+    # watch request pending until its own current-result analysis is saved.
+    with _MACRO_RECORD_LOCK:
+        saved = _MACRO_ANALYSIS.get(eid) or {}
+        post = saved.get("post") or {}
+        actual = saved.get("actual") or {}
+        analysed = post.get("reactionWindow")
+        return bool(actual.get("available") and post.get("generatedAt")
+                    and post.get("verdict") in ("hit", "partial", "miss", "not_scoreable")
+                    and analysed in order and order.index(analysed) >= order.index(window)
+                    and post.get("actualRevisionId") == argus_macro_event_store.actual_revision_id(actual)
+                    and (_MACRO_ANALYSIS_STATE.get("localPersistence") or {}).get("status") == "saved")
 
 
 def _next_fomc_after(date_iso):
