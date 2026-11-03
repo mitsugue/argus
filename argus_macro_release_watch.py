@@ -27,6 +27,24 @@ WINDOW = timedelta(minutes=45)
 INTERVAL_SECONDS = 180
 POLL_SECONDS = 60
 
+def post_analysis_saved(record: Mapping[str, Any], window: str,
+                        persistence: Mapping[str, Any]) -> bool:
+    """A completed batch alone cannot acknowledge this event's measured window."""
+    import argus_macro_event_store as store
+    import argus_macro_release_reaction as reaction
+    order = tuple(name for name, _ in reaction.WINDOWS)
+    if window not in order:
+        return False
+    post = record.get('post') or {}
+    actual = record.get('actual') or {}
+    analysed = post.get('reactionWindow')
+    return bool(actual.get('available') and post.get('generatedAt')
+                and post.get('verdict') in ('hit', 'partial', 'miss', 'not_scoreable')
+                and analysed in order and order.index(analysed) >= order.index(window)
+                and post.get('actualRevisionId') == store.actual_revision_id(actual)
+                and persistence.get('status') == 'saved')
+
+
 _lock = threading.Lock()
 _state: dict[str, Any] = {"thread": None, "lastRefreshAt": None, "lastEventId": None,
                           "lastError": None, "refreshCount": 0,

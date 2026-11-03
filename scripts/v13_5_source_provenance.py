@@ -35,6 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_macro_post_completion.py': 'bd7f1067e525f024c7d09321ef0feb6bb788e0fe',
     # Exact retired-residency and private-loader ownership regression.
     'test_argus_retired_asset_residency_runtime.py': 'd615682758101fd655c5d9d45fd3266ff1d70880',
     # Private parsed-copy lifetime and retired-report residency contract.
