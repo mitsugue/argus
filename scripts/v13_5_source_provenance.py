@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.226"
+PRODUCT_VERSION = "v13.8.227"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -199,7 +199,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'ed8af840759551c12ab343b7c3bcf956426e39c6',
+    'web/scripts/owner-today-https.mjs': 'fed15212fc6a82d559b577929662a0529fda4224',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -423,8 +423,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/lib/marketInternals.ts': 'c9df9fe130a956dc08285542e0118c34938eb164',
     'web/src/lib/pwaRecovery.ts': '038fe1dc3e55433a0f72e8a06ca1701176155438',
     'web/src/components/today/MarketAnalysisHistory.tsx': '52feccc90676804d82aecdb434ee1e85298044e2',
-    'test_argus_analysis_history.py': 'c688b85b59294dee647f83c9b766a5aec62b71f8',
-    'argus_analysis_history.py': '222095a48f73d201df2ab39bb34782e5eee479ad',
+    'test_argus_analysis_history.py': '4d9b896aab5da30dcafaf6fefc7901eb4d507fca',
+    'argus_analysis_history.py': 'af94179703927b1efac3a8a0c95f16f3c4dae413',
     'test_argus_market_ledger.py': '7ee698c0e8d1ae47a0a3169f1e4bba945000fce8',
     'argus_market_ledger.py': '9cc2899dba0d0477c4bf4859a3dd065e1b811011',
     'jp_market_positioning.py': 'c0f090d16b77a8aa180560088d0da1060e0e1c20',
