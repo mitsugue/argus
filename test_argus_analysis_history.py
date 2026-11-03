@@ -268,3 +268,62 @@ def test_position_snapshot_survives_history_and_restart_without_rewriting_old_re
     state={};monkeypatch.setattr(scanner,'_MARKET_BRIEF',state)
     scanner._market_brief_history_restore()
     assert state['lastSuccessful']['marketPosition']==record['brief']['marketPosition']
+
+
+# Fresh owned JSON admission preserves all original history checks.
+def _owned_read_record_fixture():
+    return history.make_record(brief(), {'5': {
+        'forecastLine': [{'date': '2026-09-14', 'value': 101}],
+        'nested': {'rows': [{'value': 2.5}], 'flags': [True, None]}}})
+
+
+def test_owned_decode_matches_original_validator_and_preserves_source_bytes():
+    original = _owned_read_record_fixture()
+    raw = history._json(original)
+    decoded = history._decode_record_body(raw)
+    assert decoded == history.validate_record(json.loads(raw)) == original
+    decoded['calculations']['5']['nested']['rows'][0]['value'] = 999
+    assert history._json(original) == raw
+    assert history._decode_record_body(raw) == original
+
+
+@pytest.mark.parametrize('change', [
+    lambda v: v.update(recordId='0' * 64),
+    lambda v: v.update(scope='PRIVATE'),
+    lambda v: v.update(actionAuthority=True),
+    lambda v: v.update(extra='unadmitted'),
+    lambda v: v['calculations']['5']['nested']['rows'][0].update(value=99),
+    lambda v: v['calculations'].update({'2': {}}),
+    lambda v: v['brief'].update(sdaAuthority=True),
+    lambda v: v['brief'].update(unifiedStatus='INVALID_RESPONSE'),
+    lambda v: v['brief'].update(extra='unadmitted'),
+    lambda v: v['brief']['unifiedContext'].update(ownerContextAvailable=True),
+    lambda v: v['brief']['unifiedSummary'].update(contextId='different'),
+    lambda v: v.update(inputSnapshotDigest='0' * 64),
+])
+def test_owned_decode_rejects_same_tampering_as_original_validator(change):
+    altered = copy.deepcopy(_owned_read_record_fixture())
+    change(altered)
+    raw = json.dumps(altered)
+    with pytest.raises(ValueError) as old:
+        history.validate_record(json.loads(raw))
+    with pytest.raises(ValueError) as owned:
+        history._decode_record_body(raw)
+    assert str(owned.value) == str(old.value)
+
+
+@pytest.mark.parametrize('value', [None, [], 'invalid', {'schemaVersion': 'other'}])
+def test_owned_decode_rejects_same_invalid_roots(value):
+    with pytest.raises(ValueError, match='^analysis_schema_invalid$'):
+        history._decode_record_body(json.dumps(value))
+
+
+def test_public_record_builder_keeps_independent_nested_ownership():
+    b = brief()
+    calculations = {'5': {'rows': [{'value': 3}]}}
+    made = history.make_record(b, calculations)
+    calculations['5']['rows'][0]['value'] = 99
+    b['facts'][0]['text'] = 'changed'
+    assert made['calculations']['5']['rows'][0]['value'] == 3
+    assert made['brief']['facts'][0]['text'] != 'changed'
+    assert history.validate_record(made) == made

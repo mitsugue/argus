@@ -36,7 +36,7 @@ def _instant(value):
     return parsed
 
 
-def make_record(brief, calculations):
+def _checked_record_body(brief, calculations):
     if brief.get('unifiedStatus') != 'GENERATED' or brief.get('sdaAuthority') is not False:
         raise ValueError('accepted_non_authoritative_explanation_required')
     context, summary = brief['unifiedContext'], brief['unifiedSummary']
@@ -61,7 +61,30 @@ def make_record(brief, calculations):
     encoded = _json(body).encode()
     if len(encoded) > MAX_RECORD_BYTES:
         raise ValueError('analysis_record_bound_exceeded')
+    return body, encoded
+
+
+def make_record(brief, calculations):
+    _, encoded = _checked_record_body(brief, calculations)
     return {'recordId': hashlib.sha256(encoded).hexdigest(), **json.loads(encoded)}
+
+
+def _decode_record_body(raw):
+    """Validate a newly decoded private JSON body without a second full tree.
+
+    The JSON parser gives this call sole ownership. The original body checks,
+    canonical encoding, naming policy and complete identity comparison remain
+    the same as make_record/validate_record. Public builders still return
+    independently owned JSON values.
+    """
+    value = json.loads(raw)
+    if not isinstance(value, dict) or value.get('schemaVersion') != SCHEMA:
+        raise ValueError('analysis_schema_invalid')
+    body, encoded = _checked_record_body(value['brief'], value['calculations'])
+    rebuilt = {'recordId': hashlib.sha256(encoded).hexdigest(), **body}
+    if rebuilt != value:
+        raise ValueError('analysis_record_integrity_mismatch')
+    return rebuilt
 
 
 def validate_record(value):
@@ -310,10 +333,19 @@ def read_page(path, *, before_sequence=None, limit=20):
 
 def outcome_candidates(record, price_rows, *, received_at):
     """Compare saved N225 paths with later completed cash-index sessions only."""
+    return _outcome_candidates_validated(
+        validate_record(record), price_rows, received_at=received_at)
+
+
+def _outcome_candidates_validated(record, price_rows, *, received_at):
+    """Score an exclusively owned record immediately after read validation.
+
+    The caller must have obtained the unchanged record from read_record.
+    Standalone callers continue through outcome_candidates and its validator.
+    """
     from datetime import date, timedelta
     import math
     import argus_market_clock as clock
-    record = validate_record(record)
     received = _instant(received_at)
     issued = _instant(record['recordedAt'])
     if received < issued: return []
