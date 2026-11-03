@@ -18214,9 +18214,11 @@ def _market_brief_history_outcomes():
             before_sequence=_MARKET_BRIEF.get("outcomeBeforeSequence"), limit=20)
         for item in page["rows"]:
             record = argus_analysis_history.read_record(path, item["recordId"])
-            values = argus_analysis_history.outcome_candidates(record, cached.get("data") or [],
+            values = argus_analysis_history._outcome_candidates_validated(record, cached.get("data") or [],
                 received_at=cached["acquiredAt"])
+            del record
             argus_analysis_history.append_outcomes(path, values)
+            del values
         _MARKET_BRIEF["outcomeBeforeSequence"] = page["nextBeforeSequence"] if page["hasMore"] else None
         _MARKET_BRIEF["outcomeLastCheckedAt"] = _ai_now_iso()
     except FileNotFoundError:

@@ -277,6 +277,46 @@ def _owned_read_record_fixture():
         'nested': {'rows': [{'value': 2.5}], 'flags': [True, None]}}})
 
 
+def test_scoring_owned_read_matches_standalone_reference_and_keeps_original(tmp_path, monkeypatch):
+    path = tmp_path / 'history.sqlite'
+    history.initialize(path)
+    original = history.make_record(brief(), _one_day('2026-09-11', 102))
+    history.append(path, original)
+    prices = [{'date': '2026-09-14', 'close': 98}]
+    received = '2026-09-14T07:00:00Z'
+    expected = history.outcome_candidates(original, prices, received_at=received)
+    assert len(expected) == 1
+    monkeypatch.setattr(scanner, '_market_brief_history_path', lambda: str(path))
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', {'outcomeBeforeSequence': None})
+    monkeypatch.setattr(scanner, '_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE',
+                        {'^N225': {'acquiredAt': received, 'data': prices}})
+    scanner._market_brief_history_outcomes()
+    assert scanner._MARKET_BRIEF.get('outcomeError') is None
+    assert history.read_outcomes(path, original['recordId']) == expected
+    assert history.read_record(path, original['recordId']) == original
+
+
+def test_scoring_tampered_stored_record_still_fails_before_any_write(tmp_path, monkeypatch):
+    path = tmp_path / 'history.sqlite'
+    history.initialize(path)
+    original = history.make_record(brief(), _one_day('2026-09-11', 102))
+    history.append(path, original)
+    altered = copy.deepcopy(original)
+    altered['calculations']['1']['comparison']['forecast']['line'][0]['value'] = 999
+    conn = history._connect(path)
+    conn.execute('UPDATE views SET body=? WHERE record_id=?',
+                 (history._json(altered), original['recordId']))
+    conn.close()
+    monkeypatch.setattr(scanner, '_market_brief_history_path', lambda: str(path))
+    monkeypatch.setattr(scanner, '_MARKET_BRIEF', {'outcomeBeforeSequence': None})
+    monkeypatch.setattr(scanner, '_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE',
+                        {'^N225': {'acquiredAt': '2026-09-14T07:00:00Z',
+                                   'data': [{'date': '2026-09-14', 'close': 98}]}})
+    scanner._market_brief_history_outcomes()
+    assert scanner._MARKET_BRIEF['outcomeError'] == 'ValueError'
+    assert history.read_outcomes(path, original['recordId']) == []
+
+
 def test_owned_decode_matches_original_validator_and_preserves_source_bytes():
     original = _owned_read_record_fixture()
     raw = history._json(original)
