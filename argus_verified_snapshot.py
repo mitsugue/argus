@@ -665,6 +665,7 @@ class SingleFlight:
                 owner = True
             else:
                 owner = False
+                flight["waiterCount"] = flight.get("waiterCount", 0) + 1
         if not owner:
             flight["event"].wait()
             if flight.get("error") is not None:
@@ -672,6 +673,14 @@ class SingleFlight:
             return copy.deepcopy(flight.get("result"))
         try:
             result = producer()
+            # A lone producer has no result consumer to isolate. Close its
+            # flight atomically; otherwise retain the existing admission
+            # window through the result copy so later waiters still coalesce.
+            with self._lock:
+                if not flight.get("waiterCount", 0):
+                    self._flights.pop(key, None)
+                    flight["event"].set()
+                    return result
             flight["result"] = copy.deepcopy(result)
             return result
         except BaseException as exc:
@@ -680,4 +689,6 @@ class SingleFlight:
         finally:
             flight["event"].set()
             with self._lock:
-                self._flights.pop(key, None)
+                # A subsequent producer may already own the same key.
+                if self._flights.get(key) is flight:
+                    self._flights.pop(key, None)

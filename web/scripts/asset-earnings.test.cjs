@@ -3,6 +3,15 @@ const fs = require('fs');
 const ts = require('typescript');
 const assert = require('node:assert/strict');
 const Module = require('module');
+// Exercise the saved schedule at its declared observation date. A wall-clock
+// November run must not turn this fixture's future company schedule into past.
+const NativeDate = Date;
+let observedAt = '2026-10-08T00:00:00Z';
+globalThis.Date = class extends NativeDate {
+  constructor(...args) { super(...(args.length ? args : [observedAt])); }
+  static now() { return NativeDate.parse(observedAt); }
+};
+process.on('exit', () => { globalThis.Date = NativeDate; });
 for (const ext of ['.ts', '.tsx']) require.extensions[ext] = (m, file) => m._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React, esModuleInterop: true }
 }).outputText, file);
@@ -54,6 +63,10 @@ assert.equal(domain.validAssetEarnings({...official,next:{...official.next,sourc
 assert.equal(domain.validAssetEarnings({...official,market:'US'},'US:1001'),false);
 const scheduledHtml = renderToStaticMarkup(React.createElement(AssetEarningsDate,{market:'JP',row:official,refreshFailed:true}));
 assert.ok(scheduledHtml.includes('会社予定') && !scheduledHtml.includes('更新未確認'));
+observedAt = '2026-11-04T00:00:00Z';
+const expiredHtml = renderToStaticMarkup(React.createElement(AssetEarningsDate,{market:'JP',row:official}));
+assert.ok(expiredHtml.includes('日付未取得') && !expiredHtml.includes('11/3（会社予定）'));
+observedAt = '2026-10-08T00:00:00Z';
 assert.ok(renderToStaticMarkup(React.createElement(AssetEarningsDate,{market:'JP',row:{...official,scheduleStatus:'FETCH_FAILED'}})).includes('更新未確認'));
 const correctedCompany = {...official,previous:null,estimate:null,company:{disclosedDate:'2026-07-31',periodEnd:'2026-06-30',
   periodType:'1Q',fiscalYearEnd:'2027-03-31',operatingProfit:100000000,forecastOperatingProfit:450000000,consolidated:true,
