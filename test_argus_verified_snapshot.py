@@ -214,6 +214,148 @@ def test_singleflight_runs_one_concurrent_producer():
     assert results == [{"value": 7}] * 6
 
 
+def test_singleflight_single_caller_does_not_clone_result(monkeypatch):
+    flight = snapshots.SingleFlight()
+    original = {"bars": [{"close": 101.0}]}
+
+    def unexpected_copy(value):
+        raise AssertionError("single caller has no result consumer to isolate")
+
+    monkeypatch.setattr(snapshots, "copy", types.SimpleNamespace(
+        deepcopy=unexpected_copy))
+    assert flight.run("one", lambda: original) is original
+    assert flight._flights == {}
+
+
+def test_singleflight_waiter_results_stay_owned_after_owner_mutates(monkeypatch):
+    flight = snapshots.SingleFlight()
+    entered = threading.Event()
+    release = threading.Event()
+    copied = threading.Event()
+    original_copy = copy.deepcopy
+    original = {"bars": [{"close": 101.0}]}
+    results = []
+
+    def producer():
+        entered.set()
+        assert release.wait(2)
+        return original
+
+    def observed_copy(value):
+        result = original_copy(value)
+        copied.set()
+        return result
+
+    monkeypatch.setattr(snapshots, "copy", types.SimpleNamespace(
+        deepcopy=observed_copy))
+    owner = threading.Thread(target=lambda: results.append(
+        ("owner", flight.run("same", producer))))
+    owner.start()
+    assert entered.wait(2)
+    waiters = [threading.Thread(target=lambda: results.append(
+        ("waiter", flight.run("same", producer)))) for _ in range(2)]
+    for thread in waiters:
+        thread.start()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        with flight._lock:
+            admitted = flight._flights["same"].get("waiterCount") == 2
+        if admitted:
+            break
+        time.sleep(0.001)
+    assert admitted
+    release.set()
+    owner.join(2)
+    assert not owner.is_alive() and copied.is_set()
+    original["bars"][0]["close"] = 999.0
+    for thread in waiters:
+        thread.join(2)
+        assert not thread.is_alive()
+    received = [value for role, value in results if role == "waiter"]
+    assert len(received) == 2
+    assert received == [{"bars": [{"close": 101.0}]}] * 2
+    received[0]["bars"][0]["close"] = 0.0
+    assert received[1]["bars"][0]["close"] == 101.0
+    assert flight._flights == {}
+
+
+def test_singleflight_old_completion_keeps_a_new_same_key_producer(monkeypatch):
+    flight = snapshots.SingleFlight()
+    first_started = threading.Event()
+    first_release = threading.Event()
+    copy_started = threading.Event()
+    copy_release = threading.Event()
+    second_started = threading.Event()
+    second_release = threading.Event()
+    original_copy = copy.deepcopy
+    results = []
+    calls = []
+
+    def producer():
+        calls.append(len(calls) + 1)
+        value = calls[-1]
+        started, release = ((first_started, first_release) if value == 1
+                            else (second_started, second_release))
+        started.set()
+        assert release.wait(3)
+        return {"value": value}
+
+    def delayed_copy(value):
+        if value == {"value": 1} and not copy_started.is_set():
+            copy_started.set()
+            assert copy_release.wait(3)
+        return original_copy(value)
+
+    monkeypatch.setattr(snapshots, "copy", types.SimpleNamespace(
+        deepcopy=delayed_copy))
+    def run():
+        results.append(flight.run("same", producer))
+    first = threading.Thread(target=run)
+    first.start()
+    assert first_started.wait(2)
+    waiter = threading.Thread(target=run)
+    waiter.start()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        with flight._lock:
+            admitted = flight._flights["same"].get("waiterCount") == 1
+        if admitted:
+            break
+        time.sleep(0.001)
+    assert admitted
+    first_release.set()
+    assert copy_started.wait(2)
+    second = threading.Thread(target=run)
+    second.start()
+    assert second_started.wait(2)
+    copy_release.set()
+    first.join(2)
+    waiter.join(2)
+    assert not first.is_alive() and not waiter.is_alive()
+    with flight._lock:
+        assert "same" in flight._flights
+    second_release.set()
+    second.join(2)
+    assert not second.is_alive()
+    assert calls == [1, 2]
+    assert sorted(x["value"] for x in results) == [1, 1, 2]
+    assert flight._flights == {}
+
+
+def test_singleflight_producer_failure_allows_retry():
+    flight = snapshots.SingleFlight()
+    def failed():
+        raise ValueError("producer_failed")
+    try:
+        flight.run("same", failed)
+    except ValueError as exc:
+        assert str(exc) == "producer_failed"
+    else:
+        raise AssertionError("producer failure must propagate")
+    assert flight._flights == {}
+    assert flight.run("same", lambda: {"value": 2}) == {"value": 2}
+
+
 def test_normalization_gc_never_removes_current_pointer():
     store = snapshots.empty_store()
     for index in range(snapshots.MAX_CURRENT + 4):

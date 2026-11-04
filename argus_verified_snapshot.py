@@ -665,6 +665,7 @@ class SingleFlight:
                 owner = True
             else:
                 owner = False
+                flight["waiterCount"] = flight.get("waiterCount", 0) + 1
         if not owner:
             flight["event"].wait()
             if flight.get("error") is not None:
@@ -672,7 +673,15 @@ class SingleFlight:
             return copy.deepcopy(flight.get("result"))
         try:
             result = producer()
-            flight["result"] = copy.deepcopy(result)
+            # Production has completed. Close admission atomically so a lone
+            # producer need not copy a large report for nonexistent waiters.
+            # Registered waiters keep this flight alive until its event fires;
+            # later callers may start their next production independently.
+            with self._lock:
+                self._flights.pop(key, None)
+                has_waiters = flight.get("waiterCount", 0) > 0
+            if has_waiters:
+                flight["result"] = copy.deepcopy(result)
             return result
         except BaseException as exc:
             flight["error"] = exc
@@ -680,4 +689,6 @@ class SingleFlight:
         finally:
             flight["event"].set()
             with self._lock:
-                self._flights.pop(key, None)
+                # A subsequent producer may already own the same key.
+                if self._flights.get(key) is flight:
+                    self._flights.pop(key, None)
