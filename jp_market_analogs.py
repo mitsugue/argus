@@ -320,16 +320,51 @@ def _sequence(episode: Mapping[str, Any]) -> list[tuple[str, ...]]:
 
 
 def _edit_distance(left: Sequence[Any], right: Sequence[Any]) -> float:
+    """Exact normalized Levenshtein distance between simultaneous-day tokens.
+
+    Bit vectors evaluate the same unit insertion/deletion/substitution matrix
+    without allocating a Python list for every row of every historical pair.
+    No pruning, sampling, cutoff or persistent pair cache changes the result.
+    """
     if left == right:
         return 0.0
-    previous = list(range(len(right) + 1))
-    for i, item in enumerate(left, 1):
-        current = [i]
-        for j, other in enumerate(right, 1):
-            current.append(min(current[-1] + 1, previous[j] + 1,
-                               previous[j - 1] + (item != other)))
-        previous = current
-    return previous[-1] / max(len(left), len(right), 1)
+    size = max(len(left), len(right), 1)
+    if not left or not right:
+        return (len(left) or len(right)) / size
+    # The shorter side is the bit pattern; Python integers also cover patterns
+    # longer than a machine word. Engine tokens are tuples of strings.
+    if len(left) > len(right):
+        left, right = right, left
+    matches = {}
+    try:
+        for i, item in enumerate(left):
+            matches[item] = matches.get(item, 0) | (1 << i)
+        # Keep equality-only callers with unhashable tokens compatible too.
+        for item in right:
+            hash(item)
+    except TypeError:
+        previous = list(range(len(right) + 1))
+        for i, item in enumerate(left, 1):
+            current = [i]
+            for j, other in enumerate(right, 1):
+                current.append(min(current[-1] + 1, previous[j] + 1,
+                                   previous[j - 1] + (item != other)))
+            previous = current
+        return previous[-1] / size
+    positive, negative, distance = ~0, 0, len(left)
+    last_bit = 1 << (len(left) - 1)
+    for item in right:
+        equal = matches.get(item, 0)
+        vertical = equal | negative
+        horizontal = (((equal & positive) + positive) ^ positive) | equal
+        insert = negative | ~(horizontal | positive)
+        delete = positive & horizontal
+        distance += bool(insert & last_bit) - bool(delete & last_bit)
+        insert = (insert << 1) | 1
+        delete <<= 1
+        positive = delete | ~(vertical | insert)
+        negative = insert & vertical
+    return distance / size
 
 
 def weighted_distance(distances: Mapping[str, float | None], policy: AnalogPolicy) -> float:
