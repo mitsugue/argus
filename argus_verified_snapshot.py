@@ -673,15 +673,15 @@ class SingleFlight:
             return copy.deepcopy(flight.get("result"))
         try:
             result = producer()
-            # Production has completed. Close admission atomically so a lone
-            # producer need not copy a large report for nonexistent waiters.
-            # Registered waiters keep this flight alive until its event fires;
-            # later callers may start their next production independently.
+            # A lone producer has no result consumer to isolate. Close its
+            # flight atomically; otherwise retain the existing admission
+            # window through the result copy so later waiters still coalesce.
             with self._lock:
-                self._flights.pop(key, None)
-                has_waiters = flight.get("waiterCount", 0) > 0
-            if has_waiters:
-                flight["result"] = copy.deepcopy(result)
+                if not flight.get("waiterCount", 0):
+                    self._flights.pop(key, None)
+                    flight["event"].set()
+                    return result
+            flight["result"] = copy.deepcopy(result)
             return result
         except BaseException as exc:
             flight["error"] = exc

@@ -279,14 +279,12 @@ def test_singleflight_waiter_results_stay_owned_after_owner_mutates(monkeypatch)
     assert flight._flights == {}
 
 
-def test_singleflight_old_completion_keeps_a_new_same_key_producer(monkeypatch):
+def test_singleflight_late_waiter_joins_during_result_copy(monkeypatch):
     flight = snapshots.SingleFlight()
     first_started = threading.Event()
     first_release = threading.Event()
     copy_started = threading.Event()
     copy_release = threading.Event()
-    second_started = threading.Event()
-    second_release = threading.Event()
     original_copy = copy.deepcopy
     results = []
     calls = []
@@ -294,10 +292,8 @@ def test_singleflight_old_completion_keeps_a_new_same_key_producer(monkeypatch):
     def producer():
         calls.append(len(calls) + 1)
         value = calls[-1]
-        started, release = ((first_started, first_release) if value == 1
-                            else (second_started, second_release))
-        started.set()
-        assert release.wait(3)
+        first_started.set()
+        assert first_release.wait(3)
         return {"value": value}
 
     def delayed_copy(value):
@@ -325,21 +321,27 @@ def test_singleflight_old_completion_keeps_a_new_same_key_producer(monkeypatch):
     assert admitted
     first_release.set()
     assert copy_started.wait(2)
-    second = threading.Thread(target=run)
-    second.start()
-    assert second_started.wait(2)
+    late = threading.Thread(target=run)
+    late.start()
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        with flight._lock:
+            admitted = flight._flights["same"].get("waiterCount") == 2
+        if admitted:
+            break
+        time.sleep(0.001)
+    assert admitted and calls == [1]
     copy_release.set()
     first.join(2)
     waiter.join(2)
     assert not first.is_alive() and not waiter.is_alive()
-    with flight._lock:
-        assert "same" in flight._flights
-    second_release.set()
-    second.join(2)
-    assert not second.is_alive()
-    assert calls == [1, 2]
-    assert sorted(x["value"] for x in results) == [1, 1, 2]
+    late.join(2)
+    assert not late.is_alive()
+    assert calls == [1]
+    assert results == [{"value": 1}] * 3
     assert flight._flights == {}
+    assert flight.run("same", producer) == {"value": 2}
+    assert calls == [1, 2] and flight._flights == {}
 
 
 def test_singleflight_producer_failure_allows_retry():
