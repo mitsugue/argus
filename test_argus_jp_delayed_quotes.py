@@ -119,3 +119,25 @@ def test_index_records_http_and_shape_distinctly_and_success_clears(monkeypatch)
     live.refresh_once(lambda *a,**k:Shape(),now_epoch=NOW+1)
     state=live.current_quote_safe()
     assert state['lastErrorCode']=='INVALID_QUOTE' and state['lastAttemptAt'].startswith('2026-11-05')
+
+
+def test_late_body_completion_cannot_be_adopted_as_on_time():
+    clock=[0]
+    class Slow(Response):
+        def iter_content(self, **kwargs):
+            yield json.dumps(self.value).encode()
+            clock[0]=9
+    response=Slow()
+    quote,error=q._read(lambda *a,**k:response,'1001',lambda:NOW,lambda:clock[0],8)
+    assert quote is None and error=='TIME_BUDGET' and response.closed
+
+
+def test_invalid_broker_price_does_not_suppress_the_backup():
+    now=datetime.fromtimestamp(NOW,timezone.utc)
+    stamp=now.isoformat()
+    row={'provider':'TACHIBANA','freshness':'FRESH','marketStatus':'OPEN',
+         'sourceTimestamp':stamp,'receivedAt':stamp,'sourceTimestampPrecision':'SECOND','price':123}
+    doc={'enabled':True,'displayApproved':True,'mode':'DISPLAY','symbols':{'1001':row}}
+    assert q.fresh_broker_symbols(doc,now)=={'1001'}
+    for price in (None,0,float('nan'),True):
+        assert q.fresh_broker_symbols({**doc,'symbols':{'1001':{**row,'price':price}}},now)==set()

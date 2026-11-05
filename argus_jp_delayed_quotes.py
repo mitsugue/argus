@@ -42,6 +42,7 @@ def fresh_broker_symbols(evidence, now):
     return {code for code, row in evidence.get('symbols', {}).items()
         if isinstance(row, dict) and row.get('provider') == 'TACHIBANA'
         and row.get('freshness') == 'FRESH' and row.get('marketStatus') == 'OPEN'
+        and _number(row.get('price')) and row['price'] > 0
         and argus_tachibana_live.row_trade_current(row, now)}
 
 
@@ -100,6 +101,8 @@ def _read(get, symbol, epoch, clock, deadline):
             body.extend(chunk)
             if len(body) > MAX_BODY:
                 return None, 'BODY_LIMIT'
+        if clock() >= deadline:
+            return None, 'TIME_BUDGET'
         quote = parse_quote(json.loads(body), symbol, epoch())
         return (quote, None) if quote else (None, 'INVALID_QUOTE')
     except Exception as exc:
