@@ -1,0 +1,23 @@
+name: jp-index-readback
+on:
+  push:
+    branches: [codex/jp-index-readback-20261105]
+permissions:
+  contents: read
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Read one cached index document with existing operational authentication
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+        run: python3 -B scripts/jp_index_readback.py "$RUNNER_TEMP/readback"
+      - name: Preserve fixed fields privately
+        if: always()
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: python3 -B scripts/private_diagnostics_store.py --kind jp-index --run-id "${{ github.run_id }}" "$RUNNER_TEMP/readback"
