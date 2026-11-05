@@ -29,9 +29,11 @@ try:
         raise ValueError('body_size')
     r.update(bytes=len(body), bodySha256=hashlib.sha256(body).hexdigest())
     value = json.loads(body)
-    for key in ('status', 'reason', 'lastError'):
+    for key in ('status', 'reason', 'lastError', 'lastErrorCode', 'lastAttemptAt'):
         v = value.get(key)
         r[key] = v if v is None or isinstance(v, str) and len(v) <= 100 else 'REJECTED_FIELD'
+    r['workerAlive'] = value.get('workerAlive') if type(value.get('workerAlive')) is bool else None
+    r['expectedServerBuild'] = '6aa923801b127a62a0df01939e9984260f9eb4a6'
     quote = value.get('quote')
     if isinstance(quote, dict):
         r['quote'] = {key: quote.get(key) for key in ('tradedAt','receivedAt','delaySeconds','sessionOpen','realtime','source','actionAuthority')}
