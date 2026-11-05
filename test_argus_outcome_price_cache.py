@@ -84,3 +84,11 @@ def test_expired_cache_stays_missing_without_refresh(monkeypatch):
         'data': {'dates': ['2026-11-05', '2026-11-04'], 'closes': [110, 100]}}})
     assert scanner._price_history_cached('9999', market='JP',
         issued_day='2026-11-04', now=NOW) == []
+
+
+def test_expiry_is_not_a_substitute_for_recorded_receipt(monkeypatch):
+    monkeypatch.setattr(scanner, '_JQ_HISTORY_CACHE', {'9999': {
+        'expires': time.time() + 600,
+        'data': {'dates': ['2026-11-05', '2026-11-04'], 'closes': [110, 100]}}})
+    assert scanner._price_history_cached('9999', market='JP',
+        issued_day='2026-11-04', now=NOW) == []

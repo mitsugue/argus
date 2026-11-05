@@ -35395,6 +35395,18 @@ def _price_history_cached(symbol, *, market, issued_day, now):
         selected_market = "JP" if normalized[:1].isdigit() or normalized == "N225" else "US"
     if not normalized or selected_market not in ("JP", "US"):
         return []
+    if normalized != "N225" or selected_market != "JP":
+        cached = (_JQ_HISTORY_CACHE.get(normalized[:4]) if selected_market == "JP"
+                  else _TD_HISTORY_CACHE.get(normalized))
+        # Legacy chart display may infer a conservative cache time from its
+        # expiry. Outcome evidence needs the revision's recorded acquisition.
+        if not isinstance(cached, dict) or _utc_iso_or_none(cached.get("acquiredAt")) is None:
+            return []
+    elif not any(_utc_iso_or_none(value) for value in (
+            (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}).get("acquiredAt"),
+            _N225_ANALOG_HISTORY.get("currentSourceAcquiredAt"),
+            _N225_ANALOG_HISTORY.get("backfillAcquiredAt"))):
+        return []
     return closing_pair(_chart_history_cached(normalized, selected_market),
                         market=selected_market, issued_day=issued_day, now=now)
 
