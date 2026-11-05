@@ -29,7 +29,7 @@ try:
     if threads.get('schemaVersion')=='argus-runtime-thread-dump-v1':
         result['threads']=[{'name':str(t.get('name',''))[:80],
             'frames':[{'file':str(f.get('file',''))[:120],'line':f.get('line') if type(f.get('line')) is int else None,
-                       'function':str(f.get('function',''))[:80]} for f in (t.get('frames') or [])[:18]]
+                       'function':str(f.get('function',''))[:80]} for f in (t.get('frames') or [])[:18]]}
             for t in (threads.get('threads') or [])[:64] if isinstance(t,dict)]
         result['singleFlight']=threads.get('singleFlight')
     result['rssMiB']=body.get('currentRssMib') if type(body.get('currentRssMib')) in (int,float) else None
