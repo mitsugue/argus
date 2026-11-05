@@ -146,7 +146,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # Allocator policy / bounded reclaim / resident inventory (exact reviewed
     # contents; v13.7.59 candidate).
     'argus_allocator_policy.py': '5a39a5da52a42fdedd9e1bb0e68b3d9a24fa4dcd',
-    'test_argus_allocator_policy.py': '5b3611839f112df5caffbfe09209ec5d6f44be8e',
+    'test_argus_allocator_policy.py': '59c614ecdebe28458448957bd2dcc2a3a52b0884',
     'docs/ops/allocator-reclaim.md': '36e7f038294fcd2339c150e78de8f3470a91f7e7',
     # Market ledger artifact split + resident JP quote warm (exact reviewed contents).
     'test_argus_jp_owner_quote_warm.py': 'eb998f6e67dbfeb8bc65598521189618efd0de04',
@@ -476,7 +476,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dashboard/JapanSqCalendarCard.tsx': 'bf645a5a2e4ef7c48b9391df5a8f8d645f3ea64d',
     'web/src/components/dashboard/MacroResultDetails.tsx': '8428449ded5e6b9eab7ac4bd72983a40d500ed77',
     'web/src/components/today/MarginDynamicsCard.tsx': '4eb19a6f6ee8afeb78fdc83f584d50b9bfcde34e',
-    'web/src/hooks/useJapanMarketComparison.ts': 'f861ebddee3a3ef5f8969fc50b70e1a949506faa',
+    'web/src/hooks/useJapanMarketComparison.ts': 'bab48b6cba7dfe404083392081a59b6b8cea29c7',
     'web/src/hooks/useJapanSqCalendar.ts': '57a9dbc42c781a7a2ac1f4939b9084e332dba82c',
     'web/src/lib/japanMarketComparison.ts': 'ffb594c1b6e487f8afcb9c8f0af5f9784dd69c34',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',
@@ -731,6 +731,10 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/domain/jpDelayedPrice.ts",
+    "web/scripts/jp-delayed-price.test.cjs",
+    "test_argus_jp_delayed_quotes.py",
+    "argus_jp_delayed_quotes.py",
     "test_argus_macro_calendar_2027.py",
     "test_argus_financial_receipt_hash.py",
     "docs/operations/us-macro-calendar-2027.md",

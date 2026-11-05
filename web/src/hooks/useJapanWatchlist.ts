@@ -11,6 +11,7 @@ import {
   type JapanTruthSnapshot,
 } from '../domain/watchQuoteTruth';
 import { quoteDecisionExpiresAt } from '../domain/liveQuote';
+import { setJpDelayedPriceDocument } from '../domain/jpDelayedPrice';
 import { setTachibanaLiveDocument, tachibanaQuoteReadInterval } from '../domain/tachibanaLive';
 
 // Connection phase, surfaced to the UI so a cold-starting backend reads as
@@ -149,6 +150,9 @@ function japanWatchlistStore(symKey: string): SharedPollingStore<State> {
         const response = await fetch(target, { signal: ctrl.signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = (await response.json()) as JapanWatchlistSnapshot;
+        if (!cancelled && Object.prototype.hasOwnProperty.call(data, 'japaneseDelayed')) {
+          setJpDelayedPriceDocument(data.japaneseDelayed);
+        }
         if (!cancelled && Object.prototype.hasOwnProperty.call(data, 'japaneseLive')) {
           setTachibanaLiveDocument(data.japaneseLive);
         }
@@ -172,7 +176,7 @@ function japanWatchlistStore(symKey: string): SharedPollingStore<State> {
         if (lastEodFallbackAt != null && now - lastEodFallbackAt < REFRESH_INTERVAL_MS) {
           const previous = getState().data;
           return normalizeJapanWatchSnapshot({ ...(previous ?? dynamicSnapshot),
-            japaneseLive: dynamicSnapshot.japaneseLive } as JapanWatchlistSnapshot);
+            japaneseLive: dynamicSnapshot.japaneseLive, japaneseDelayed: dynamicSnapshot.japaneseDelayed } as JapanWatchlistSnapshot);
         }
         lastEodFallbackAt = now;
         const requested = symKey.split(',');
@@ -200,7 +204,7 @@ function japanWatchlistStore(symKey: string): SharedPollingStore<State> {
         const merged = mergeHistoryRows(
           resolved as unknown as Parameters<typeof mergeHistoryRows>[0], historyRows, requested);
         if (merged) return normalizeJapanWatchSnapshot({ ...merged,
-          japaneseLive: dynamicSnapshot.japaneseLive } as unknown as JapanWatchlistSnapshot);
+          japaneseLive: dynamicSnapshot.japaneseLive, japaneseDelayed: dynamicSnapshot.japaneseDelayed } as unknown as JapanWatchlistSnapshot);
       }
       return normalizeJapanWatchSnapshot(dynamicSnapshot);
     }

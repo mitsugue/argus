@@ -77,6 +77,14 @@ def test_startup_policy_never_raises_without_a_native_mallopt(monkeypatch):
 
 @pytest.fixture
 def _backend_allocator_entry(monkeypatch):
+    # This fixture models the Linux CPython3.12 server. Keep the real-runtime
+    # integration tests below separate; do not change the host interpreter.
+    class BackendRuntime:
+        platform = "linux"
+        version_info = (3, 12)
+        def __getattr__(self, name):
+            return getattr(sys, name)
+    monkeypatch.setattr(policy, "sys", BackendRuntime())
     backend = str(Path(policy.__file__).with_name("scanner.py"))
     monkeypatch.setattr(sys.modules["__main__"], "__file__", backend, raising=False)
     monkeypatch.setattr(sys, "argv", [backend])
@@ -84,6 +92,14 @@ def _backend_allocator_entry(monkeypatch):
     monkeypatch.setattr(policy, "python_allocator_name", lambda: "pymalloc")
     monkeypatch.delenv("PYTHONMALLOC", raising=False)
     return backend
+
+
+@pytest.mark.parametrize("platform,version", [("darwin", (3, 12)), ("linux", (3, 13))])
+def test_backend_allocator_observation_rejects_unsupported_runtime(monkeypatch, _backend_allocator_entry, platform, version):
+    monkeypatch.setattr(policy.sys, "platform", platform)
+    monkeypatch.setattr(policy.sys, "version_info", version)
+    monkeypatch.setattr(policy, "python_allocator_name", lambda: (_ for _ in ()).throw(AssertionError("no native read")))
+    assert policy._backend_allocator_observation() == {"status": "UNSUPPORTED_RUNTIME"}
 
 
 def test_backend_allocator_observation_preserves_interpreter_args_and_environment(monkeypatch, _backend_allocator_entry):

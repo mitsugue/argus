@@ -77,7 +77,7 @@ export function TodayDecisionStrip({ brief, criticalNews = [], featuredEvent }: 
   const stripAnchor = typeof comparison?.anchorDate === 'string' ? comparison.anchorDate : null;
   const closeStrip = decisionStrip(stripActual, stripFeatures, null, stripAnchor);
   const headline = marketHeadline(brief.unifiedSummary?.sections.view, brief.unifiedSummary?.sections.reasons);
-  const { quote: live, futures } = useNikkeiLive();
+  const { quote: live, futures, lastError: liveError } = useNikkeiLive();
   const recorded = (useJapanMarketComparison(5).levelMap as unknown as { dropAlert?: unknown } | null | undefined)?.dropAlert;
   // The delayed intraday value replaces the last close once it is from a later session.
   const lastActual = typeof comparison?.anchorDate === 'string' ? Date.parse(comparison.anchorDate) : NaN;
@@ -96,7 +96,7 @@ export function TodayDecisionStrip({ brief, criticalNews = [], featuredEvent }: 
   const shownChange = liveCurrent ? live!.changePct : strip.dayChangePct;
   // Owner policy 2026-10-23: no source or time-precision text beside the price; only a delayed value says so.
   const liveLabel = liveCurrent ? (live!.sessionOpen
-    ? (live!.realtime ? null : '遅延')
+    ? (live!.realtime ? null : `${liveError ? '更新失敗・' : ''}遅延 · ${new Date(live!.tradedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}時点`)
     : `${new Date(live!.tradedAt).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' })} 大引け`) : '前日終値';
   const preparing = !fresh;
   return <section className="today-strip" aria-label="今日の結論と数字" data-argus-contract="today-decision-strip-v1">

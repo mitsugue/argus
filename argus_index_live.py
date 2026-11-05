@@ -29,6 +29,7 @@ POLICY_RATE_SYMBOL = "ZQ=F"       # 30-day fed funds future: 100 - price = expec
 FUTURES_POLL_SECONDS = 900
 _JST = timezone(timedelta(hours=9))
 
+_registered_tick = None
 _lock = threading.Lock()
 _state: Dict[str, Any] = {"quote": None, "error": None, "thread": None,
                           "futures": None, "futuresError": None,
@@ -82,21 +83,34 @@ def session_window(now: datetime) -> bool:
 
 def refresh_once(get: Callable[..., Any], now_epoch: Optional[float] = None) -> Optional[Dict[str, Any]]:
     received = time.time() if now_epoch is None else now_epoch
+    response = None
+    error_code = None
+    with _lock:
+        _state["lastAttemptAt"] = datetime.fromtimestamp(received, timezone.utc).isoformat()
     try:
         response = get(f"https://query1.finance.yahoo.com/v8/finance/chart/{SYMBOL}",
                        params={"interval": "1m", "range": "1d"},
                        headers={"User-Agent": "Mozilla/5.0 (argus)"}, timeout=10)
         if getattr(response, "status_code", 200) != 200:
+            code = getattr(response, "status_code", 0)
+            error_code = "HTTP_" + str(code) if type(code) is int else "HTTP_ERROR"
             raise ValueError("index_live_http_failure")
+        received = time.time() if now_epoch is None else now_epoch
         quote = parse_quote(response.json(), received_epoch=received)
         if quote is None:
+            error_code = "INVALID_QUOTE"
             raise ValueError("index_live_shape_invalid")
     except Exception as exc:  # provider failures stay visible, never fatal
         with _lock:
             _state["error"] = type(exc).__name__
+            _state["errorCode"] = error_code or (type(exc).__name__ if type(exc).__name__ in ("Timeout", "ReadTimeout", "ConnectTimeout", "ConnectionError") else "READ_FAILED")
         return None
+    finally:
+        if response is not None and callable(getattr(response, "close", None)):
+            response.close()
     with _lock:
         _state["quote"], _state["error"] = quote, None
+        _state["errorCode"] = None
     return quote
 
 
@@ -164,11 +178,21 @@ def _loop(get: Callable[..., Any], sleep: Callable[[float], None],
                 refresh_futures_once(get)
                 refresh_policy_rate_once(get)
                 futures_read_at = clock()
+        if callable(_registered_tick):
+            try:
+                _registered_tick(get)
+            except Exception:
+                with _lock:
+                    _state["registeredTickError"] = "DISPLAY_BACKUP_FAILED"
         sleep(POLL_SECONDS)
 
 
-def ensure_started(get: Optional[Callable[..., Any]] = None, sleep: Callable[[float], None] = time.sleep) -> str:
+def ensure_started(get: Optional[Callable[..., Any]] = None, sleep: Callable[[float], None] = time.sleep,
+                   *, registered_tick=None) -> str:
+    global _registered_tick
     with _lock:
+        if registered_tick is not None:
+            _registered_tick = registered_tick
         thread = _state["thread"]
         if thread is not None and thread.is_alive():
             return "RUNNING"
@@ -184,6 +208,9 @@ def ensure_started(get: Optional[Callable[..., Any]] = None, sleep: Callable[[fl
 def current_quote_safe() -> Dict[str, Any]:
     with _lock:
         quote, error = _state["quote"], _state["error"]
+        diagnostics = {"lastAttemptAt": _state.get("lastAttemptAt"),
+                       "lastErrorCode": _state.get("errorCode"),
+                       "workerAlive": bool(_state.get("thread") and _state["thread"].is_alive())}
         futures, futures_error = _state.get("futures"), _state.get("futuresError")
         policy, policy_error = _state.get("policyRate"), _state.get("policyRateError")
     try:
@@ -215,5 +242,5 @@ def current_quote_safe() -> Dict[str, Any]:
                  "policyRateFuturesError": policy_error}
     if quote is None:
         return {"status": "UNAVAILABLE", "reason": error or "not_yet_fetched", "quote": None,
-                "actionAuthority": False, **overnight}
-    return {"status": "AVAILABLE", "quote": dict(quote), "lastError": error, "actionAuthority": False, **overnight}
+                "actionAuthority": False, **diagnostics, **overnight}
+    return {"status": "AVAILABLE", "quote": dict(quote), "lastError": error, "actionAuthority": False, **diagnostics, **overnight}
