@@ -165,7 +165,7 @@ const liveValid = (q: unknown): q is NikkeiLiveQuote => {
     && typeof v.delaySeconds === 'number' && v.delaySeconds >= 0 && typeof v.sessionOpen === 'boolean'
     && (v.realtime === false || v.realtime === true && (q as { source?: unknown }).source === '立花証券' && v.delaySeconds <= (v.tradedAtPrecision === 'MINUTE' ? 75 : 15) && typeof v.receivedAt === 'string' && Number.isFinite(Date.parse(v.receivedAt))) && (v.changePct === null || Number.isFinite(v.changePct));
 };
-export interface NikkeiLive { quote: NikkeiLiveQuote | null; futures: NikkeiLiveQuote | null }
+export interface NikkeiLive { quote: NikkeiLiveQuote | null; futures: NikkeiLiveQuote | null; lastError: string | null }
 // The CME future read outside the Tokyo session (owner check 2026-10-03).
 const futuresValid = (q: unknown): q is NikkeiLiveQuote =>
   liveValid(q) && (q as { symbol?: unknown }).symbol === 'NKD=F';
@@ -177,6 +177,7 @@ export function useNikkeiLive(): NikkeiLive {
     return nikkeiLiveCurrent(value);
   };
   const [quote, setQuote] = useState<NikkeiLiveQuote | null>(() => freshRestored(restored?.quote) ? restored.quote : null);
+  const [lastError, setLastError] = useState<string | null>(null);
   const [futures, setFutures] = useState<NikkeiLiveQuote | null>(() => freshRestored(restored?.futures)
     && futuresValid(restored.futures) ? restored.futures : null);
   useEffect(() => {
@@ -191,16 +192,17 @@ export function useNikkeiLive(): NikkeiLive {
       lastRead = Date.now();
       try {
         const response = await fetch(`${base}/api/argus/index-chart?index=N225&live=1`, { cache: 'no-store' });
-        if (!response.ok) return;
+        if (!response.ok) { if (!cancelled) setLastError('READ_FAILED'); return; }
         const body = await response.json();
         if (cancelled || body?.actionAuthority !== false) return;
+        setLastError(body.lastError || body.lastErrorCode ? 'PROVIDER_FAILED' : null);
         liveCadence = liveValid(body?.quote) && body.quote.realtime && body.quote.sessionOpen;
         if (liveValid(body?.quote)) setQuote(body.quote);
         if (futuresValid(body?.overnightFutures)) setFutures(body.overnightFutures);
         if (sessionViewCheckpoint.keep('nikkei-live', { quote: liveValid(body?.quote) ? body.quote : null,
           futures: futuresValid(body?.overnightFutures) ? body.overnightFutures : null, lastRead }))
           void sessionViewCheckpoint.flush();
-      } catch { liveCadence = false; /* keep the last value; the close remains the fallback */ }
+      } catch { if (!cancelled) setLastError('READ_FAILED'); liveCadence = false; /* keep the last value; the close remains the fallback */ }
       finally { active = false; }
     };
     if (!restored) void load();
@@ -221,5 +223,5 @@ export function useNikkeiLive(): NikkeiLive {
     return () => { cancelled = true; timer(); stopInitialLoad();
       document.removeEventListener('visibilitychange', onVisibleAge); };
   }, [base]);
-  return { quote, futures };
+  return { quote, futures, lastError };
 }

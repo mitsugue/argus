@@ -3217,7 +3217,9 @@ def _get_japan_watchlist_core(symbols=None, allow_provider_fetch=True):
             return (_cached_quote_snapshot(hit["data"]) if hit
                     else _dynamic_cached_only_snapshot(syms, "JP", "jquants"))
         # Formal quote path: licensed J-Quants when configured. Yahoo is reserved
-        # for mover discovery and never fills an Asset Desk/headline quote.
+        # for mover discovery and never fills an internal analytical quote.
+        # 2026-11-05 owner exception: a separate registered-JP display backup is
+        # attached only by the cached API below; it never enters this snapshot.
         headers = {"x-api-key": _JQUANTS_API_KEY} if _JQUANTS_API_KEY else None
         def fetch(code):
             nm = _jq_name_for(code) or code
@@ -3337,6 +3339,10 @@ def api_argus_japan_watchlist():
                      else [s['symbol'] for s in _JP_WATCHLIST])
         result = {**result, 'japaneseLive': argus_tachibana_quote_display.quote_document(
             supplier(), requested, read_at=_ai_now_iso())}
+    import argus_jp_delayed_quotes
+    requested = (_sanitize_symbols(symbols, _JP_SYM_RE, _JP_DYN_MAX) if symbols
+                 else [s['symbol'] for s in _JP_WATCHLIST])
+    result = {**result, 'japaneseDelayed': argus_jp_delayed_quotes.collector.document(requested)}
     return jsonify(result)
 
 
@@ -21184,12 +21190,28 @@ def _tachibana_live_autostart():
         pass
 
 
+def _jp_delayed_price_tick(get):
+    # Same minute loop and canonical owner store; never public warm hints.
+    import argus_jp_delayed_quotes
+    import argus_tachibana_live
+    evidence = _tachibana_live_evidence()
+    fresh = set()
+    if (evidence.get('enabled') is True and evidence.get('displayApproved') is True
+            and evidence.get('mode') == 'DISPLAY'):
+        now = datetime.now(pytz.utc)
+        fresh = {code for code, row in evidence.get('symbols', {}).items()
+                 if row.get('provider') == 'TACHIBANA' and row.get('freshness') == 'FRESH'
+                 and row.get('marketStatus') == 'OPEN'
+                 and argus_tachibana_live.row_trade_current(row, now)}
+    argus_jp_delayed_quotes.collector.tick(get, _owner_overview_registered_subjects, fresh)
+
+
 @app.before_request
 def _news_intake_autostart():
     _news_intake_ensure_thread()
     _tachibana_live_autostart()
     try:
-        argus_index_live.ensure_started()      # delayed intraday Nikkei, display only
+        argus_index_live.ensure_started(registered_tick=_jp_delayed_price_tick)
     except Exception as exc:
         add_log(f"index-live autostart unavailable: {type(exc).__name__}")
     try:

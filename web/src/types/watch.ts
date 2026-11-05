@@ -70,6 +70,7 @@ export interface JapanWatchlistSnapshot {
   stocks: JapanStockQuote[];
   /** Existing cached price evidence, independent of slow analysis. */
   japaneseLive?: Record<string, unknown> | null;
+  japaneseDelayed?: Record<string, unknown> | null;
 }
 
 // ── Live US watchlist (Twelve Data) ──────────────────────────────────

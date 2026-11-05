@@ -8,6 +8,7 @@ import { useAnalystTargetState } from '../../hooks/useAnalystTargets';
 import { AssetEarningsDate } from './AssetEarnings';
 import { AssetOutlookSummary } from './AssetOutlookSummary';
 import { cryptoPriceDisplay } from '../../domain/cryptoPriceDisplay';
+import { useJpDelayedPriceDocument, jpDelayedPrice, delayedPriceTime } from '../../domain/jpDelayedPrice';
 import { fmtPrice } from './deskFormat';
 
 // 登録銘柄の事実を先に表示する。旧保有判断は内部の制限・履歴に残す。
@@ -19,23 +20,26 @@ export const AssetDecisionSummary: React.FC<{
 }> = ({ d, open, onToggle, interactive = true }) => {
   const view = d.decisionFirst;
   const liveDocument = useTachibanaLiveDocument();
+  const delayedDocument = useJpDelayedPriceDocument();
   const analyst = useAnalystTargetState();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    if (liveDocument?.displayApproved !== true) return;
+    if (liveDocument?.displayApproved !== true && !delayedDocument) return;
     const timer = window.setInterval(() => setNow(Date.now()), 5_000);
     return () => window.clearInterval(timer);
-  }, [liveDocument?.displayApproved]);
+  }, [liveDocument?.displayApproved, delayedDocument]);
   // Display projection only: decisionFirst, its evidence and actions stay unchanged.
   const live = d.genre === 'jp' ? tachibanaCurrentRows(liveDocument, Math.max(now, Date.now())).get(view.symbol.toUpperCase()) : null;
+  const delayed = d.genre === 'jp' ? jpDelayedPrice(delayedDocument, view.symbol, Math.max(now, Date.now())) : null;
   const reference = d.genre === 'jp'
     ? tachibanaPriceReferenceRows(liveDocument, Math.max(now, Date.now())).get(view.symbol.toUpperCase()) : null;
   const receivedCurrent = reference?.receivedAt && liveDocument?.providerHealth === 'AVAILABLE'
     && ['LIVE', 'DEGRADED', 'STALE', 'CLOSED'].includes(liveDocument.status ?? '')
     ? Math.max(now, Date.now()) - Date.parse(reference.receivedAt) <= 15_000 : false;
-  const shownPrice = live?.price ?? reference?.price ?? null;
+  const delayedShown = !live && delayed && (delayed.current || !reference) ? delayed : null;
+  const shownPrice = live?.price ?? delayedShown?.price ?? reference?.price ?? null;
   const crypto = d.genre === 'crypto' ? cryptoPriceDisplay(d.cryptoDisplayQuote) : null;
-  const shownChange = crypto ? crypto.changePct : live ? live.changePct : reference ? reference.changePct : view.changePct;
+  const shownChange = crypto ? crypto.changePct : live ? live.changePct : delayedShown ? delayedShown.changePct : reference ? reference.changePct : view.changePct;
   const targetKey = `${d.asset.market}:${view.symbol.toUpperCase()}`;
   const currentPrice = shownPrice ?? (d.strat.status === 'mock' ? null : d.strat.price ?? d.card?.price ?? null);
 
@@ -57,10 +61,14 @@ export const AssetDecisionSummary: React.FC<{
               : `${view.pnlPct >= 0 ? '+' : ''}${view.pnlPct.toFixed(1)}%`}`
             : ''}
         </span>
-        {!crypto && <span className="ad-data">{reference ? '分析の価格基準は保存時点' : view.dataStatus}</span>}
+        {!crypto && <span className="ad-data">{reference || delayedShown ? '分析の価格基準は保存時点' : view.dataStatus}</span>}
       </span>
       {live && <span className="ad-quote-meta"><mark data-delay="LIVE">リアルタイム</mark><span>{tachibanaPriceTime(live)}</span></span>}
-      {!live && reference && <span className="ad-quote-meta" data-price-reference="TACHIBANA">
+      {delayedShown && <span className="ad-quote-meta" data-price-reference="YAHOO_DELAYED">
+        <mark data-delay="DELAYED">{delayedShown.current ? '遅延' : delayedShown.lastError ? '更新失敗・保存価格' : '保存価格'}</mark>
+        <span>Yahoo · 価格 {delayedPriceTime(delayedShown.sourceTimestamp)} · 受信 {delayedPriceTime(delayedShown.receivedAt)} · {Math.floor(delayedShown.delaySeconds / 60)}分前</span>
+      </span>}
+      {!live && !delayedShown && reference && <span className="ad-quote-meta" data-price-reference="TACHIBANA">
         <mark data-delay="UNKNOWN">{receivedCurrent
           ? reference.marketStatus === 'CLOSED' ? '市場クローズ・受信価格' : '受信価格・参考'
           : liveDocument?.priceRecordsRetained ? '受信停止・保存価格' : '保存価格'}</mark>
@@ -70,7 +78,7 @@ export const AssetDecisionSummary: React.FC<{
         <mark data-delay={crypto.delay}>{d.cryptoRefreshFailed ? '更新失敗・保存価格' : crypto.label}</mark>
         <span title={crypto.title}>{crypto.detail}</span>
       </span>}
-      {!live && !reference && !crypto && view.quoteTruth && <span className="ad-quote-meta" data-instrument-type={view.quoteTruth.instrumentType}>
+      {!live && !delayedShown && !reference && !crypto && view.quoteTruth && <span className="ad-quote-meta" data-instrument-type={view.quoteTruth.instrumentType}>
 
         <mark data-delay={view.quoteTruth.delayClass}>{{ LIVE: 'リアルタイム', '15m': '15分遅延', '20m': '20分遅延', EOD: '終値', 'T-1': '前日', UNKNOWN: '時刻未確認', OFFLINE: '未取得' }[view.quoteTruth.delayClass]}</mark>
         {/* v13.5.62: one plain freshness line (kind · provider · as of); the exact
