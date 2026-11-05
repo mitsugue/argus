@@ -572,7 +572,10 @@ def _history(rows, instrument, cutoff, *, unit=None, allow_negative=False):
               row.get("instrumentId") == instrument and (unit is None or row.get("unit") == unit) and
               (row.get("seriesId") or row.get("field") or row.get("kind") or
                ("OHLCV_BAR" if all(key in row for key in ("open", "high", "low", "close", "volume")) else "")) in allowed]
-    visible, _ = point_in_time_rows(scoped, cutoff)
+    # The selected rows still undergo every PIT/revision/conflict check.
+    # This caller discards the proof; mutable values remain owned copies.
+    visible, _ = point_in_time_rows(
+        scoped, cutoff, _reuse_immutable_scalars=True, _include_proof=False)
     result = []
     for row in visible:
         value = _number(row.get("close", row.get("value")))
@@ -602,7 +605,8 @@ def margin_cost_basis_loss_proxy(two_market_credit, nikkei_rows, *, cutoff):
     longs = [dict(row) for row in two_market_credit if isinstance(row, Mapping)
              and (row.get("instrumentId") or "MARKET") == "MARKET"
              and (row.get("seriesId") or row.get("field")) == "credit.long_balance"]
-    visible, _ = point_in_time_rows(longs, cutoff)
+    visible, _ = point_in_time_rows(
+        longs, cutoff, _reuse_immutable_scalars=True, _include_proof=False)
     weeks = sorted(((str(row.get("periodEnd") or row.get("date") or "")[:10], row) for row in visible
                     if _number(row.get("value")) is not None and _number(row.get("value")) > 0),
                    key=lambda item: item[0])[-(LOSS_PROXY_WEEKS + 1):]
@@ -774,7 +778,8 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
 
     loss_rows, _ = point_in_time_rows([dict(row) for row in valuation_loss if isinstance(row, Mapping)
                                       and (row.get("instrumentId") or "MARKET") == "MARKET"
-                                      and (row.get("seriesId") or row.get("field")) == "credit.valuation_loss_pct"], cutoff)
+                                      and (row.get("seriesId") or row.get("field")) == "credit.valuation_loss_pct"], cutoff,
+                                    _reuse_immutable_scalars=True, _include_proof=False)
     if loss_rows:
         loss = loss_rows[-1]
         normalized = normalize_valuation_loss(loss.get("value"), sign_convention=loss.get("signConvention"), unit=loss.get("unit"))
