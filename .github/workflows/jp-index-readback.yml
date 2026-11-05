@@ -7,16 +7,16 @@ permissions:
 jobs:
   read:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
-      - name: Read the known tracking run terminal without starting collection
+      - name: Read two intraday cache samples without starting collection
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
           PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
-        run: python3 -B -m scripts.jp_collect_terminal_readback "$RUNNER_TEMP/readback"
+        run: python3 -B -m scripts.jp_intraday_readback "$RUNNER_TEMP/readback"
       - name: Preserve fixed fields privately
         if: always()
         env:
