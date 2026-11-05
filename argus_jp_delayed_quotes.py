@@ -33,6 +33,18 @@ def symbols_from_members(rows):
         and re.fullmatch(r'[0-9][0-9A-Z]{3}(?:\.T)?', str(r.get('symbol', '')).upper())))[:MAX_SYMBOLS]
 
 
+def fresh_broker_symbols(evidence, now):
+    """Reuse the existing broker's exact current-trade admission."""
+    import argus_tachibana_live
+    if not isinstance(evidence, dict) or not (evidence.get('enabled') is True
+            and evidence.get('displayApproved') is True and evidence.get('mode') == 'DISPLAY'):
+        return set()
+    return {code for code, row in evidence.get('symbols', {}).items()
+        if isinstance(row, dict) and row.get('provider') == 'TACHIBANA'
+        and row.get('freshness') == 'FRESH' and row.get('marketStatus') == 'OPEN'
+        and argus_tachibana_live.row_trade_current(row, now)}
+
+
 def _number(value):
     return type(value) in (int, float) and math.isfinite(value)
 

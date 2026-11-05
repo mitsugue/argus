@@ -21193,16 +21193,8 @@ def _tachibana_live_autostart():
 def _jp_delayed_price_tick(get):
     # Same minute loop and canonical owner store; never public warm hints.
     import argus_jp_delayed_quotes
-    import argus_tachibana_live
     evidence = _tachibana_live_evidence()
-    fresh = set()
-    if (evidence.get('enabled') is True and evidence.get('displayApproved') is True
-            and evidence.get('mode') == 'DISPLAY'):
-        now = datetime.now(pytz.utc)
-        fresh = {code for code, row in evidence.get('symbols', {}).items()
-                 if row.get('provider') == 'TACHIBANA' and row.get('freshness') == 'FRESH'
-                 and row.get('marketStatus') == 'OPEN'
-                 and argus_tachibana_live.row_trade_current(row, now)}
+    fresh = argus_jp_delayed_quotes.fresh_broker_symbols(evidence, datetime.now(pytz.utc))
     argus_jp_delayed_quotes.collector.tick(get, _owner_overview_registered_subjects, fresh)
 
 
