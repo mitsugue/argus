@@ -35386,6 +35386,19 @@ def _market_ledger_tick(now_iso):
             "rebuildSkipped": False}
 
 
+def _price_history_cached(symbol, *, market, issued_day, now):
+    """Outcome reader: existing daily cache only, with actual receipt/close times."""
+    from argus_outcome_price_cache import closing_pair
+    normalized = str(symbol or "").strip().upper()
+    selected_market = str(market or "").upper()
+    if not selected_market:
+        selected_market = "JP" if normalized[:1].isdigit() or normalized == "N225" else "US"
+    if not normalized or selected_market not in ("JP", "US"):
+        return []
+    return closing_pair(_chart_history_cached(normalized, selected_market),
+                        market=selected_market, issued_day=issued_day, now=now)
+
+
 def _dl_resolve_matured(now_iso, max_records=None, return_stats=False,
                          deadline_monotonic=None):
     """成熟成果を同一Outcomeで再解決。cached価格のみ・0値採点なし・冪等。"""
@@ -35443,7 +35456,8 @@ def _dl_resolve_matured(now_iso, max_records=None, return_stats=False,
         processed += 1
         sym = fc.get("symbol")
         try:
-            hist = _price_history_cached(sym) if "_price_history_cached" in globals() else None
+            hist = _price_history_cached(
+                sym, market=fc.get("market"), issued_day=issued_date, now=now_iso)
         except Exception:
             hist = None
         start = end = None

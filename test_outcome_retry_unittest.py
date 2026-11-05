@@ -154,7 +154,7 @@ class ScannerOutcomeIntegrationTests(unittest.TestCase):
             scanner._price_history_cached = self.old_price
 
     def test_real_resolver_retries_same_record_then_resolves(self):
-        scanner._price_history_cached = lambda _s: []
+        scanner._price_history_cached = lambda _s, **_scope: []
         self.assertEqual(scanner._dl_resolve_matured(T0), 0)
         self.assertEqual(len(scanner._OUTCOME_LEDGER), 1)
         original_id = scanner._OUTCOME_LEDGER[0]["id"]
@@ -164,7 +164,7 @@ class ScannerOutcomeIntegrationTests(unittest.TestCase):
         self.assertEqual(len(scanner._OUTCOME_LEDGER), 1)
         self.assertEqual(scanner._OUTCOME_LEDGER[0]["id"], original_id)
         self.assertEqual(scanner._OUTCOME_LEDGER[0]["retryCount"], 1)
-        scanner._price_history_cached = lambda _s: [
+        scanner._price_history_cached = lambda _s, **_scope: [
             {"date": "2026-07-10", "close": 100},
             {"date": "2026-07-13", "close": 105},
         ]
@@ -174,7 +174,7 @@ class ScannerOutcomeIntegrationTests(unittest.TestCase):
         self.assertEqual(scanner._OUTCOME_LEDGER[0]["id"], original_id)
         self.assertEqual(scanner._OUTCOME_LEDGER[0]["status"], "resolved")
         before = json.dumps(scanner._OUTCOME_LEDGER[0], sort_keys=True)
-        scanner._price_history_cached = lambda _s: [
+        scanner._price_history_cached = lambda _s, **_scope: [
             {"date": "2026-07-10", "close": 100},
             {"date": "2026-07-13", "close": 1},
         ]
@@ -184,14 +184,14 @@ class ScannerOutcomeIntegrationTests(unittest.TestCase):
     def test_real_resolver_premature_and_legacy_safe(self):
         fc = scanner._FORECAST_LEDGER[0]
         fc["issuedAt"] = T0
-        scanner._price_history_cached = lambda _s: []
+        scanner._price_history_cached = lambda _s, **_scope: []
         scanner._dl_resolve_matured(T0)
         self.assertEqual(scanner._OUTCOME_LEDGER, [])
         fc["issuedAt"] = "2026-07-10T08:30:00+09:00"
         scanner._OUTCOME_LEDGER.append({"forecastId": fc["id"],
                                         "status": "unresolved",
                                         "immutableCreatedAt": T0})
-        scanner._price_history_cached = lambda _s: [
+        scanner._price_history_cached = lambda _s, **_scope: [
             {"date": "2026-07-10", "close": 100},
             {"date": "2026-07-13", "close": 101},
         ]
@@ -207,7 +207,7 @@ class ScannerOutcomeIntegrationTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory(prefix="argus-outcome-restore-") as td:
                 scanner._OSINT_PERSIST_FILE = os.path.join(td, "durable.json")
-                scanner._price_history_cached = lambda _s: []
+                scanner._price_history_cached = lambda _s, **_scope: []
                 scanner._dl_resolve_matured(T0)
                 original = dict(scanner._OUTCOME_LEDGER[0])
                 scanner._osint_persist()
@@ -220,7 +220,7 @@ class ScannerOutcomeIntegrationTests(unittest.TestCase):
                 self.assertEqual(restored["retryCount"], 0)
                 self.assertEqual(restored["nextRetryAt"], original["nextRetryAt"])
 
-                scanner._price_history_cached = lambda _s: [
+                scanner._price_history_cached = lambda _s, **_scope: [
                     {"date": "2026-07-10", "close": 100},
                     {"date": "2026-07-13", "close": 101},
                 ]
