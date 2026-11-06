@@ -12,13 +12,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
-      - name: Read current saved brief and cached index for the decline investigation
+      - name: Read existing source backup and Tokyo-close status only
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
-          ARGUS_JP_READBACK_MODE: brief
-        run: |
-          python3 -B -m scripts.jp_intraday_readback "$RUNNER_TEMP/readback"
-          python3 -B scripts/jp_index_readback.py "$RUNNER_TEMP/readback"
+        run: python3 -B -m scripts.source_backup_readback "$RUNNER_TEMP/readback"
       - name: Preserve fixed fields privately
         if: always()
         env:
