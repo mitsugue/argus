@@ -33,7 +33,7 @@ try:
         v = value.get(key)
         r[key] = v if v is None or isinstance(v, str) and len(v) <= 100 else 'REJECTED_FIELD'
     r['workerAlive'] = value.get('workerAlive') if type(value.get('workerAlive')) is bool else None
-    r['expectedServerBuild'] = '6aa923801b127a62a0df01939e9984260f9eb4a6'
+    r['expectedServerBuild'] = '992ebcc90ffef4c30181bf4423a3a13a3afe1f01'
     quote = value.get('quote')
     if isinstance(quote, dict):
         r['quote'] = {key: quote.get(key) for key in ('tradedAt','receivedAt','delaySeconds','sessionOpen','realtime','source','actionAuthority')}
