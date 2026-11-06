@@ -51,27 +51,39 @@ def _number(value):
 
 
 def parse_quote(payload, symbol, received):
+    """Keep the existing accepted price contract; reasons contain fixed codes only."""
+    quote, _ = parse_quote_with_reason(payload, symbol, received)
+    return quote
+
+
+def parse_quote_with_reason(payload, symbol, received):
     try:
         if not _number(received) or received <= 0:
-            return None
+            return None, 'INVALID_RECEIPT'
         result = payload['chart']['result']
         if payload['chart'].get('error') or len(result) != 1:
-            return None
+            return None, 'RESULT_UNAVAILABLE'
         m = result[0]['meta']
         price, traded = m.get('regularMarketPrice'), m.get('regularMarketTime')
-        if m.get('symbol') != symbol + '.T' or m.get('currency') != 'JPY':
-            return None
-        if not _number(price) or price <= 0 or not _number(traded) or not 0 < traded <= received:
-            return None
+        if m.get('symbol') != symbol + '.T':
+            return None, 'SYMBOL_MISMATCH'
+        if m.get('currency') != 'JPY':
+            return None, 'CURRENCY_MISMATCH'
+        if not _number(price) or price <= 0:
+            return None, 'PRICE_INVALID'
+        if not _number(traded) or not 0 < traded <= received:
+            return None, 'SOURCE_TIME_INVALID'
         source = datetime.fromtimestamp(traded, JST)
         receipt = datetime.fromtimestamp(received, JST)
         # A prior day's stale meta is not an intraday quote or today's change.
-        if source.date() != receipt.date() or not 9 * 60 <= source.hour * 60 + source.minute <= 15 * 60 + 30:
-            return None
+        if source.date() != receipt.date():
+            return None, 'SOURCE_PREVIOUS_SESSION'
+        if not 9 * 60 <= source.hour * 60 + source.minute <= 15 * 60 + 30:
+            return None, 'SOURCE_OUTSIDE_CASH_SESSION'
         source_session = market_session(JP_EQUITY, source)
         if not source_session['isTradingDay'] or (source_session['session'] not in ('MORNING_SESSION', 'AFTERNOON_SESSION')
                 and source.hour * 60 + source.minute not in (11 * 60 + 30, 15 * 60 + 30)):
-            return None
+            return None, 'SOURCE_OUTSIDE_CASH_SESSION'
         previous = m.get('chartPreviousClose')
         previous = previous if _number(previous) and previous > 0 else None
         iso = lambda n: datetime.fromtimestamp(n, timezone.utc).isoformat()
@@ -79,9 +91,9 @@ def parse_quote(payload, symbol, received):
             'changePct': (price / previous - 1) * 100 if previous else None,
             'sourceTimestamp': iso(traded), 'receivedAt': iso(received),
             'delaySeconds': int(received - traded), 'provider': 'YAHOO_DELAYED',
-            'realtime': False, 'actionAuthority': False}
+            'realtime': False, 'actionAuthority': False}, None
     except (KeyError, TypeError, ValueError, IndexError, OverflowError, OSError):
-        return None
+        return None, 'QUOTE_SHAPE_INVALID'
 
 
 def _read(get, symbol, epoch, clock, deadline):
@@ -103,8 +115,8 @@ def _read(get, symbol, epoch, clock, deadline):
                 return None, 'BODY_LIMIT'
         if clock() >= deadline:
             return None, 'TIME_BUDGET'
-        quote = parse_quote(json.loads(body), symbol, epoch())
-        return (quote, None) if quote else (None, 'INVALID_QUOTE')
+        quote, rejection = parse_quote_with_reason(json.loads(body), symbol, epoch())
+        return (quote, None) if quote else (None, rejection)
     except Exception as exc:
         name = type(exc).__name__
         return None, name if name in ('Timeout', 'ReadTimeout', 'ConnectTimeout', 'ConnectionError') else 'READ_FAILED'
