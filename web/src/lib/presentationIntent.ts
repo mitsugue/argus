@@ -58,6 +58,9 @@ export function hasEditorialIntent(brief: MarketBrief | null): boolean {
 
 export function editorialEdition(brief: MarketBrief | null): MarketBrief | null {
   if (hasEditorialIntent(brief)) return brief;
+  // A valid new explanation keeps its own facts and calculations in the fixed
+  // layout. An older layout must not replace it with an older explanation.
+  if (brief && validMarketBrief(brief) && brief.unifiedStatus === 'GENERATED') return null;
   const previous = brief?.retainedPresentation;
   return previous && validMarketBrief(previous) && hasEditorialIntent(previous) ? previous : null;
 }
