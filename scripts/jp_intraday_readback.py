@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-EXPECTED = '2f468c1850dc49935f615f39a8635a625367279a'
+EXPECTED = '717072492f1ded2426e6f5a35aeea219e83a6074'
 BASE = 'https://argus-backend-3j2m.onrender.com'
 
 
@@ -92,18 +92,6 @@ def main(output):
             if number: time.sleep(60)
             health, _ = get(BASE + '/healthz', os.environ['ARGUS_ADMIN_TOKEN'])
             if health.get('buildSha') != EXPECTED: raise ValueError('BACKEND_CHANGED')
-            if number == 0:
-                brief, brief_hash = get(BASE + '/api/argus/market-brief', os.environ['ARGUS_ADMIN_TOKEN'])
-                context = brief.get('unifiedContext') or {}
-                if (brief.get('schemaVersion') != 'argus-market-brief-v1'
-                        or brief.get('sdaAuthority') is not False
-                        or context.get('scope') != 'PUBLIC_MARKET'
-                        or context.get('ownerContextAvailable') is not False):
-                    raise ValueError('PUBLIC_BRIEF_SCOPE')
-                (out / 'market-brief-public.json').write_text(json.dumps(brief, ensure_ascii=False, allow_nan=False) + '\n')
-                result['brief'] = {'bodyHash': brief_hash, 'generatedAt': brief.get('generatedAt'),
-                    'unifiedStatus': brief.get('unifiedStatus'), 'presentationStatus': brief.get('presentationStatus'),
-                    'contextId': context.get('contextId'), 'planId': (brief.get('presentationPlan') or {}).get('planId')}
             index, index_hash = get(BASE + '/api/argus/index-chart?index=N225&live=1', os.environ['ARGUS_ADMIN_TOKEN'])
             watch, watch_hash = get(BASE + '/api/argus/japan-watchlist?symbols=' + urllib.parse.quote(','.join(codes)), os.environ['ARGUS_ADMIN_TOKEN'])
             now = time.time(); projected, prices = projection(watch, codes, now)
@@ -125,6 +113,24 @@ def main(output):
             previous, previous_index = prices, index_state
             result['samples'].append(sample)
         result['status'] = 'TWO_CACHED_SAMPLES_RECORDED_NOT_DEVICE_ACCEPTANCE'
+        try:
+            brief, brief_hash = get(BASE + '/api/argus/market-brief', os.environ['ARGUS_ADMIN_TOKEN'])
+            context = brief.get('unifiedContext') or {}
+            if (brief.get('schemaVersion') != 'argus-market-brief-v1'
+                    or brief.get('sdaAuthority') is not False
+                    or context.get('scope') != 'PUBLIC_MARKET'
+                    or context.get('ownerContextAvailable') is not False):
+                raise ValueError('PUBLIC_BRIEF_SCOPE')
+            (out / 'market-brief-public.json').write_text(json.dumps(brief, ensure_ascii=False, allow_nan=False) + '\n')
+            result['brief'] = {'bodyHash': brief_hash, 'generatedAt': brief.get('generatedAt'),
+                'serialization': 'parsed-json-reserialized-not-original-http-bytes',
+                'unifiedStatus': brief.get('unifiedStatus'), 'presentationStatus': brief.get('presentationStatus'),
+                'contextId': context.get('contextId'), 'planId': (brief.get('presentationPlan') or {}).get('planId')}
+            result['briefReadStatus'] = 'RECORDED_PUBLIC_MARKET'
+        except urllib.error.HTTPError as exc:
+            result.update(briefReadStatus='FAILED', briefErrorClass='HTTP_ERROR', briefHttp=exc.code)
+        except Exception as exc:
+            result.update(briefReadStatus='FAILED', briefErrorClass=(str(exc) if isinstance(exc, ValueError) and re.fullmatch(r'[A-Z_]+', str(exc)) else type(exc).__name__))
     except urllib.error.HTTPError as exc: result.update(errorClass='HTTP_ERROR', http=exc.code)
     except Exception as exc: result['errorClass'] = str(exc) if isinstance(exc,ValueError) and re.fullmatch(r'[A-Z_]+',str(exc)) else type(exc).__name__
     result.update(readCount=reads, elapsedSeconds=round(time.monotonic() - start, 3))
