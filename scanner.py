@@ -35423,6 +35423,25 @@ def _price_history_cached(symbol, *, market, issued_day, now):
                         market=selected_market, issued_day=issued_day, now=now)
 
 
+def _mission_forecast_inputs(market):
+    """Select this mission's market before applying the existing eight-item cap."""
+    kind = {"JP": argus_market_clock.JP_EQUITY,
+            "US": argus_market_clock.US_EQUITY}.get(market)
+    if kind is None and market != "ALL":
+        return []
+    selected = []
+    for symbol, investigation in _OSINT_STORE.items():
+        symbol_kind = argus_market_clock.asset_market(symbol)
+        symbol_market = {argus_market_clock.JP_EQUITY: "JP",
+                         argus_market_clock.US_EQUITY: "US"}.get(symbol_kind)
+        if not symbol or symbol_market is None or (kind is not None and symbol_kind != kind):
+            continue
+        selected.append((symbol, investigation, symbol_market))
+        if len(selected) == 8:
+            break
+    return selected
+
+
 def _dl_resolve_matured(now_iso, max_records=None, return_stats=False,
                          deadline_monotonic=None):
     """成熟成果を同一Outcomeで再解決。cached価格のみ・0値採点なし・冪等。"""
@@ -35438,8 +35457,11 @@ def _dl_resolve_matured(now_iso, max_records=None, return_stats=False,
         kind = {"JP": argus_market_clock.JP_EQUITY,
                 "US": argus_market_clock.US_EQUITY}.get(
                     str(fc.get("market") or "").upper())
+        symbol_kind = argus_market_clock.asset_market(str(fc.get("symbol") or ""))
+        if kind is not None and kind != symbol_kind:
+            return None  # An inconsistent immutable forecast cannot be reinterpreted.
         if kind is None:
-            kind = argus_market_clock.asset_market(str(fc.get("symbol") or ""))
+            kind = symbol_kind
         zone = {argus_market_clock.JP_EQUITY: TZ_JST,
                 argus_market_clock.US_EQUITY: TZ_ET}.get(kind)
         try:
@@ -36410,9 +36432,9 @@ def _api_argus_admin_missions_tick_impl():
                         mission_operation_token, {"result": "ok"})
                     continue
                 # 不変予測発行(成果を知る前・冪等はミッションキーで保証)
-                for sym, inv in list(_OSINT_STORE.items())[:8]:
+                for sym, inv, forecast_market in _mission_forecast_inputs(m["market"]):
                     rec = argus_decision_ledger.forecast_record(
-                        symbol=sym, market=m["market"],
+                        symbol=sym, market=forecast_market,
                         issued_at=now_iso, horizon="next_session",
                         target_type="catalyst_verdict",
                         forecast_value=(inv.get("catalystVerdict") or {}).get(
