@@ -176,7 +176,59 @@ def rejection_read(output):
     return 0 if result.get('status') == 'FIXED_REJECTION_SAMPLE_RECORDED_NOT_DEVICE_ACCEPTANCE' else 1
 
 
+def brief_read(output):
+    """Current public-market edition only; GET cannot start generation."""
+    out = Path(output); out.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic(); reads = 0
+    result = {'schemaVersion': 'current-public-market-brief-readback-v1',
+              'expectedBackend': EXPECTED, 'maximumReads': 2, 'retryCount': 0,
+              'newCollectorStarts': 0, 'newAiCalls': 0,
+              'ownerPrivateScopeAccepted': False}
+    opener = urllib.request.build_opener(NoRedirect())
+    def get(path):
+        nonlocal reads
+        if reads >= 2 or time.monotonic() - started + 20 > 60:
+            raise ValueError('READ_BUDGET')
+        reads += 1
+        request = urllib.request.Request(BASE + path, headers={
+            'X-ARGUS-ADMIN-TOKEN': os.environ['ARGUS_ADMIN_TOKEN'],
+            'Accept': 'application/json'})
+        with opener.open(request, timeout=20) as response:
+            raw = response.read(1048577)
+            if response.status != 200: raise ValueError('HTTP_STATUS')
+        if len(raw) > 1048576: raise ValueError('BODY_LIMIT')
+        return json.loads(raw), hashlib.sha256(raw).hexdigest()
+    try:
+        health, _ = get('/healthz')
+        if health.get('buildSha') != EXPECTED: raise ValueError('BACKEND_CHANGED')
+        result['backendSha'] = health['buildSha']
+        result['backendVersion'] = health.get('backendVersion')
+        brief, digest = get('/api/argus/market-brief')
+        context = brief.get('unifiedContext') or {}
+        if (brief.get('schemaVersion') != 'argus-market-brief-v1'
+                or brief.get('sdaAuthority') is not False
+                or context.get('scope') != 'PUBLIC_MARKET'
+                or context.get('ownerContextAvailable') is not False):
+            raise ValueError('PUBLIC_BRIEF_SCOPE')
+        (out / 'market-brief-public.json').write_text(json.dumps(brief, ensure_ascii=False, allow_nan=False) + '\n')
+        result.update(status='PUBLIC_MARKET_EDITION_RECORDED_NOT_DEVICE_ACCEPTANCE',
+            httpBodyHash=digest, serialization='parsed-json-reserialized-not-original-http-bytes',
+            generatedAt=brief.get('generatedAt'), unifiedStatus=brief.get('unifiedStatus'),
+            presentationStatus=brief.get('presentationStatus'), contextId=context.get('contextId'),
+            planId=(brief.get('presentationPlan') or {}).get('planId'),
+            recordId=(brief.get('analysisHistory') or {}).get('recordId'),
+            readAt=datetime.now(timezone.utc).isoformat())
+    except urllib.error.HTTPError as exc:
+        result.update(errorClass='HTTP_ERROR', http=exc.code)
+    except Exception as exc:
+        result['errorClass'] = str(exc) if isinstance(exc, ValueError) and re.fullmatch(r'[A-Z_]+', str(exc)) else type(exc).__name__
+    result.update(readCount=reads, elapsedSeconds=round(time.monotonic() - started, 3))
+    (out / 'brief-readback.json').write_text(json.dumps(result, ensure_ascii=False, allow_nan=False) + '\n')
+    return 0 if result.get('status') == 'PUBLIC_MARKET_EDITION_RECORDED_NOT_DEVICE_ACCEPTANCE' else 1
+
+
 if __name__ == '__main__':
-    if os.environ.get('ARGUS_JP_READBACK_MODE') != 'rejections':
+    mode = os.environ.get('ARGUS_JP_READBACK_MODE')
+    if mode not in ('rejections', 'brief'):
         raise SystemExit('READBACK_MODE_REQUIRED')
-    sys.exit(rejection_read(sys.argv[1]))
+    sys.exit((brief_read if mode == 'brief' else rejection_read)(sys.argv[1]))
