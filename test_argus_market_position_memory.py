@@ -413,3 +413,87 @@ def test_a_new_critical_breaking_report_is_not_buried_by_busier_themes():
     # Once its hold ends, the busier running themes return.
     shown, _ = _emerging(memory, "2026-10-26T13:00:00Z")
     assert [t["themeId"] for t in shown] == ["EMERGING_EARNINGS", "EMERGING_REGULATION"]
+
+
+from copy import deepcopy
+import pytest
+import argus_market_position_memory as mpm
+
+
+def _background_view():
+    rows = [
+        {'entryId':'move','kind':'NEWS','at':'2026-11-06T03:00:00Z','textJa':'報道A: 日本株が下落（下落率は拡大）'},
+        {'entryId':'background','kind':'PUBLIC_HEADLINE','at':'2026-11-05T22:00:00Z','textJa':'報道B: 設備投資の減速を警戒'},
+    ]
+    return {'asOf':'2026-11-06T04:00:00Z','themes':[{
+        'themeId':'AI_SEMIS','labelJa':'AI・半導体','status':'ACTIVE',
+        'lastUpdatedAt':'2026-11-06T03:00:00Z','externalRecent':rows}]}
+
+
+def test_latest_move_keeps_related_report_in_same_bounded_fact():
+    view = _background_view(); original = deepcopy(view)
+    fact, = mpm.explanation_facts(view)
+    assert '日本株が下落' in fact['text'] and '設備投資の減速を警戒' in fact['text']
+    assert '関連報道:' in fact['text'] and len(fact['text']) <= 160
+    assert fact['verification'] == 'CORROBORATED' and fact['priority'] == 'P1'
+    assert fact['source'] == 'market_position'
+    assert fact['provenance']['latestEntryId'] == 'move'
+    assert fact['provenance']['sourceRowSha256'] == mpm._digest(view['themes'][0]['externalRecent'])
+    assert view == original
+
+
+@pytest.mark.parametrize('patch',[
+    {'kind':'AI_VIEW'}, {'kind':'RADAR'}, {'at':'invalid'},
+    {'at':'2026-11-06T05:00:00Z'}, {'at':'2026-10-01T00:00:00Z'},
+    {'publicCheck':{'claim':'CONTRADICTED','textJa':'反証済み'}},
+])
+def test_related_report_rejects_nonreport_future_stale_or_marked_rows(patch):
+    view = _background_view(); view['themes'][0]['externalRecent'][1].update(patch)
+    fact, = mpm.explanation_facts(view)
+    assert '設備投資の減速を警戒' not in fact['text'] and '関連報道:' not in fact['text']
+
+
+def test_contradiction_stays_first_and_is_not_diluted_by_other_reporting():
+    view = _background_view()
+    view['themes'][0]['externalRecent'][0]['publicCheck'] = {'claim':'CONTRADICTED','textJa':'公式結果が反証'}
+    fact, = mpm.explanation_facts(view)
+    assert fact['text'].index('公式結果が反証') < fact['text'].index('日本株が下落')
+    assert '関連報道:' not in fact['text'] and '設備投資の減速を警戒' not in fact['text']
+
+
+@pytest.mark.parametrize('patch',[{'status':'QUIET'},{'future':True}])
+def test_inactive_or_future_primary_keeps_existing_single_report(patch):
+    view = _background_view(); theme=view['themes'][0]
+    if patch.get('future'): theme['externalRecent'][0]['at']='2026-11-06T05:00:00Z'
+    else: theme['status']=patch['status']
+    fact, = mpm.explanation_facts(view)
+    assert '関連報道:' not in fact['text']
+
+
+def test_over_budget_numeric_report_is_skipped_whole_not_clipped():
+    view=_background_view(); theme=view['themes'][0]
+    theme['externalRecent'][1]['textJa']='報道B: '+('長い見出し' * 40)+'123.45%'
+    theme['externalRecent'].append({'entryId':'short','kind':'NEWS','at':'2026-11-05T20:00:00Z','textJa':'報道C: 利益見通しは2.75%低下'})
+    fact,=mpm.explanation_facts(view)
+    assert '長い見出し' not in fact['text'] and '123.45' not in fact['text']
+    assert '利益見通しは2.75%低下' in fact['text'] and len(fact['text'])<=160
+
+
+def test_single_report_and_official_result_keep_existing_text_and_verification():
+    view=_background_view(); theme=view['themes'][0]
+    theme['externalRecent']=theme['externalRecent'][:1]
+    assert mpm.explanation_facts(view)[0]['text']=='現在位置・AI・半導体。報道A: 日本株が下落（下落率は拡大）'
+    theme['externalRecent'][0].update(kind='RELEASE_RESULT',textJa='公式: 前月比+0.3%')
+    theme['externalRecent'].append({'entryId':'background','kind':'NEWS','at':'2026-11-05T22:00:00Z','textJa':'報道B: 設備投資の減速を警戒'})
+    theme['pricing']={'ffImpliedRatePct':3.925}
+    theme['nextEvent']={'title':'次回発表','eventTimeUtc':'2026-11-10T12:30:00Z'}
+    fact,=mpm.explanation_facts(view)
+    assert fact['verification']=='VERIFIED' and '前月比+0.3%' in fact['text']
+    assert '3.925%' in fact['text'] and '次: 次回発表' in fact['text']
+    assert '関連報道:' not in fact['text']
+
+
+def test_duplicate_related_leads_do_not_invent_a_second_source():
+    view=_background_view(); theme=view['themes'][0]
+    theme['externalRecent'][1]['textJa']='報道B: 日本株が下落'
+    assert '関連報道:' not in mpm.explanation_facts(view)[0]['text']

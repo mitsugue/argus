@@ -626,6 +626,39 @@ def emerging_themes(memory: Mapping[str, Any], *, now: datetime,
     return [theme for _, theme in chosen[:EMERGING_LIMIT]]
 
 
+def _related_report_text(theme, *, as_of, limit):
+    """Retained report leads, not a new causal conclusion or a clipped number."""
+    recent = list(theme.get("externalRecent") or [])[:RECENT_ENTRIES]
+    if (theme.get("status") != "ACTIVE" or len(recent) < 2 or as_of is None
+            or recent[0].get("kind") not in {"NEWS", "PUBLIC_HEADLINE"}
+            or recent[0].get("publicCheck")
+            or _instant(recent[0].get("at")) is None
+            or _instant(recent[0].get("at")) > as_of):
+        return None
+    titles = []
+    for row in recent:
+        at = _instant(row.get("at"))
+        if (row.get("kind") not in {"NEWS", "PUBLIC_HEADLINE"} or row.get("publicCheck")
+                or at is None or at > as_of or as_of - at > timedelta(days=ACTIVE_DAYS)):
+            continue
+        title = str(row.get("textJa") or "").split("（", 1)[0].strip()
+        label, separator, body = title.partition(": ")
+        if separator and len(label) <= 32:
+            title = body.strip()
+        if title and title not in titles:
+            titles.append(title)
+    if len(titles) < 2 or len(titles[0]) > limit:
+        return None
+    text = titles[0]
+    added = 0
+    for title in titles[1:]:
+        candidate = text + ("。関連報道: " if not added else " / ") + title
+        if len(candidate) <= limit:
+            text = candidate
+            added += 1
+    return text if added else None
+
+
 def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
     """One bounded fact per theme with entries, for the integrated explanation.
 
@@ -633,10 +666,12 @@ def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
     the AI reads the market's position from these before the other evidence.
     """
     facts = []
+    as_of = _instant(view.get("asOf"))
     for theme in view.get("themes") or []:
         if theme["status"] == "EMPTY":
             continue
         bits = [f"現在位置・{theme['labelJa']}" + ("(新しい話題)" if theme.get("emerging") else "")]
+        report_index = None
         if theme.get("externalRecent"):
             head = theme["externalRecent"][0]
             mark = head.get("publicCheck") or {}
@@ -644,6 +679,7 @@ def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
                 # Plan A: the integrated view reads the finding before the report.
                 bits.append(f"【{_CHECK_MARK_JA[mark['claim']]}】" + (mark.get("textJa") or "")[:60]
                             if mark["claim"] == "CONTRADICTED" else f"【{_CHECK_MARK_JA[mark['claim']]}】")
+            report_index = len(bits)
             bits.append(head["textJa"])
         elif theme.get("lastReaction"):
             bits.append(theme["lastReaction"]["textJa"])
@@ -653,6 +689,12 @@ def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
             bits.append(f"次: {theme['nextEvent']['title']}（{theme['nextEvent']['eventTimeUtc'][:16].replace('T', ' ')}Z）")
         if theme["status"] == "QUIET":
             bits.append("最近の動きなし")
+        if report_index is not None:
+            other = bits[:report_index] + bits[report_index + 1:]
+            remaining = 160 - len("。".join(other)) - 1
+            reports = _related_report_text(theme, as_of=as_of, limit=remaining)
+            if reports is not None:
+                bits[report_index] = reports
         recent = theme.get("externalRecent") or []
         latest = recent[0] if recent else {}
         measured = (latest.get('kind') == 'RELEASE_RESULT' or
