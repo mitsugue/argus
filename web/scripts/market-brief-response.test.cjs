@@ -103,3 +103,38 @@ requestFailed=true;
 assert.ok(renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:true}))
  .includes('更新確認待ち・保存版'));
 console.log('生成待ち・作成中・実際の失敗を区別する表示 PASS');
+
+// A rejected optional layout must not hide a newer, validated six-section edition.
+const intentContext={exports:{},Date,Set,Map,URL,require(name){
+ if(name==='./marketBrief') return ctx.exports;
+ if(name==='./japanMarketComparison') return {validJapanMarketComparison(){throw new Error('unexpected chart in fixture');}};
+ return require(name);
+}};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/lib/presentationIntent.ts','utf8'),
+ {compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,intentContext);
+const intent=intentContext.exports;
+const retainedDoc=structuredClone(doc);
+retainedDoc.presentationStatus='GENERATED';
+retainedDoc.unifiedSummary.sections.view.textJa='以前の市場の見方です。';
+retainedDoc.presentationCatalog={contextId:doc.unifiedContext.contextId,inventoryId:'e'.repeat(64),surface:'today',subject:'N225',horizonSessions:5,
+ elements:Object.keys(sections).map(id=>({id,kind:'text',payloadId:'f'.repeat(64),evidenceIds:[fact.evidenceId],mandatory:true,urgent:false}))};
+retainedDoc.presentationPlan={schemaVersion:'argus-presentation-intent-v1',planId:'d'.repeat(64),contextId:doc.unifiedContext.contextId,
+ inventoryId:'e'.repeat(64),surface:'today',subject:'N225',horizonSessions:5,intentJa:'現在の根拠を短く伝える',actionAuthority:false,
+ elements:Object.keys(sections).map(id=>({id,purposeJa:'見立てと根拠',placement:id==='view'?'lead':'support',emphasis:id==='view'?'primary':'normal'}))};
+assert.equal(intent.hasEditorialIntent(retainedDoc),true);
+for(const presentationStatus of ['INVALID_RESPONSE','UNAVAILABLE']) {
+ const current=structuredClone(doc);current.generatedAt='2026-09-12T11:00:00Z';
+ current.unifiedSummary.sections.view.textJa='AI関連株への売りが日本株にも波及しています。';
+ current.presentationStatus=presentationStatus;current.presentationPlan=null;current.retainedPresentation=retainedDoc;
+ const unchanged=JSON.stringify(current);
+ assert.equal(valid(current),true);
+ assert.equal(intent.readableBriefEdition(current),current);
+ assert.equal(intent.editorialEdition(current),null,'a valid current summary uses its own fixed layout, not older prose');
+ assert.equal(JSON.stringify(current),unchanged,'selection never rewrites saved text, inputs or layout');
+ const rejected=structuredClone(current);rejected.unifiedSummary.sections.view.evidenceIds=[old];
+ assert.equal(valid(rejected),false);
+ assert.equal(intent.readableBriefEdition(rejected).generatedAt,retainedDoc.generatedAt,'invalid text still retains the valid edition');
+ assert.equal(intent.editorialEdition(rejected).generatedAt,retainedDoc.generatedAt);
+}
+assert.equal(intent.editorialEdition(retainedDoc),retainedDoc);
+console.log('有効な最新本文を不採用の表示構成で隠さない・無効本文の旧版保持 PASS');
