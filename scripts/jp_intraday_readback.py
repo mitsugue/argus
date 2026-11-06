@@ -135,6 +135,7 @@ def main(output):
     except Exception as exc: result['errorClass'] = str(exc) if isinstance(exc,ValueError) and re.fullmatch(r'[A-Z_]+',str(exc)) else type(exc).__name__
     result.update(readCount=reads, elapsedSeconds=round(time.monotonic() - start, 3))
     (out / 'intraday.json').write_text(json.dumps(result, ensure_ascii=False, allow_nan=False) + '\n')
+    return 0 if len(result['samples']) == 2 and result.get('status') == 'TWO_CACHED_SAMPLES_RECORDED_NOT_DEVICE_ACCEPTANCE' else 1
 
 
-if __name__ == '__main__': main(sys.argv[1])
+if __name__ == '__main__': sys.exit(main(sys.argv[1]))
