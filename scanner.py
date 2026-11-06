@@ -35434,13 +35434,26 @@ def _dl_resolve_matured(now_iso, max_records=None, return_stats=False,
     except (TypeError, ValueError):
         now_utc = datetime.now(pytz.utc)
 
+    def _issued_market_date(fc, value):
+        kind = {"JP": argus_market_clock.JP_EQUITY,
+                "US": argus_market_clock.US_EQUITY}.get(
+                    str(fc.get("market") or "").upper())
+        try:
+            instant = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if kind is None or instant.tzinfo is None:
+                return None
+            return argus_market_clock.market_session(kind, instant)["marketDate"]
+        except (TypeError, ValueError, OverflowError):
+            return None
+
     def _candidate(fc):
         fid = fc.get("id")
-        issued_date = str(fc.get("issuedAt") or "")[:10]
+        issued_date = _issued_market_date(fc, fc.get("issuedAt"))
         if not fid or fc.get("mockData"):
             return False
         # next_session成熟: 発行日より後の営業日終値が観測できたら解決対象
-        if not issued_date or issued_date >= now_iso[:10]:
+        current_market_date = _issued_market_date(fc, now_iso)
+        if not issued_date or not current_market_date or issued_date >= current_market_date:
             return False                 # 成熟前/legacy時刻不明は解決しない
         market_code = str(fc.get("market") or "").upper()
         asset_market = (
@@ -35474,7 +35487,7 @@ def _dl_resolve_matured(now_iso, max_records=None, return_stats=False,
                 time.monotonic() >= float(deadline_monotonic):
             break
         fid = fc.get("id")
-        issued_date = str(fc.get("issuedAt") or "")[:10]
+        issued_date = _issued_market_date(fc, fc.get("issuedAt"))
         existing = next((o for o in _OUTCOME_LEDGER
                          if o.get("forecastId") == fid), None)
         processed += 1
