@@ -571,6 +571,33 @@ def page_provenance(value: Mapping[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def headline_context(context, *, as_of):
+    """Request-time comparison aids, without choosing the model's lead story.
+
+    The source timestamps keep their meanings. A newly read old article is
+    not newly published, and an updated position summary is not a new event.
+    This is added only to the outgoing request, not the source-input digest.
+    """
+    prior = {row.get("evidenceId") for row in context.get("previousFacts", [])}
+    candidates = []
+    for row in context.get("facts", []):
+        if row.get("priority") != "P0" or not row.get("evidenceId"):
+            continue
+        provenance = row.get("provenance") or {}
+        candidates.append({
+            "evidenceId": row["evidenceId"], "source": row.get("source"),
+            "verification": row.get("verification"),
+            "publishedAt": provenance.get("publishedAt"),
+            "receivedAt": provenance.get("receivedAt"),
+            "observedAt": provenance.get("observedAt"),
+            "changedEvidenceSincePrevious": row["evidenceId"] not in prior,
+        })
+    return {"schemaVersion": "brief-headline-comparison-v1", "asOf": as_of,
+            "previousAt": context.get("previousAt"), "candidates": candidates,
+            "selectionBy": "INTEGRATED_AI", "fixedWinner": None,
+            "receiptIsPublication": False, "changedEvidenceIsNewEvent": False}
+
+
 def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Bind explanation references to the exact fact snapshot supplied to GPT.
 
