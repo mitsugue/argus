@@ -424,3 +424,85 @@ def test_first_receipts_and_selected_rows_are_kept_and_checked(tmp_path):
     conn = sqlite3.connect(path); conn.execute("UPDATE selected_feature_inputs SET body=replace(body,'3000','3001')"); conn.commit(); conn.close()
     with pytest.raises(ValueError, match='private_selected_integrity'):
         backup.synchronize(path, Remote())
+
+
+import hashlib,json,threading
+from pathlib import Path
+import pytest
+import argus_market_input_backup as backup
+
+
+def _fixed_chunks(monkeypatch, count=6):
+    raws=[f'isolated-original-{n}'.encode() for n in range(count)]
+    chunks=[{'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)} for raw in raws]
+    manifest={'schemaVersion':backup.SCHEMA,'scope':'PUBLIC_MARKET_INPUTS','ownerRecordsIncluded':False,
+        'credentialsIncluded':False,'originalArchiveSha256':hashlib.sha256(b''.join(raws)).hexdigest(),
+        'archiveBytes':sum(map(len,raws)),'chunks':chunks,'counts':{'financial':0},'actionAuthority':False}
+    def snapshot(path,directory,**kwargs):
+        for item,raw in zip(chunks,raws):(Path(directory)/item['sha256']).write_bytes(raw)
+        return manifest
+    monkeypatch.setattr(backup,'snapshot',snapshot)
+    keys=[backup.PREFIX+'/chunks/'+c['sha256']+'.bin' for c in chunks]
+    return manifest,dict(zip(keys,raws))
+
+
+class _ReadWindowRemote:
+    base='https://api.github.com/repos/mitsugue/argus-l2b-private/contents/'
+    def __init__(self,files,overlap=False):
+        self.files=dict(files);self.overlap=overlap;self.active=0;self.peak=0;self.gets=[];self.puts=[]
+        self.guard=threading.Lock();self.two_readers=threading.Event();self.first_write_read_count=None
+    def _read_json(self,url):return {'private':True}
+    def get(self,key):
+        if '/chunks/' not in key:return self.files.get(key),None
+        with self.guard:
+            self.active+=1;self.peak=max(self.peak,self.active);self.gets.append(key)
+            if self.active==2:self.two_readers.set()
+            pair=len(self.gets)<=2
+        try:
+            if self.overlap and pair:
+                assert self.two_readers.wait(3),'existing chunk reads stayed serial'
+            return self.files.get(key),None
+        finally:
+            with self.guard:self.active-=1
+    def put(self,key,raw,expected_version):
+        assert threading.current_thread() is threading.main_thread()
+        assert expected_version is None
+        if self.first_write_read_count is None:self.first_write_read_count=len(self.gets)
+        self.puts.append(key);self.files[key]=raw
+
+
+def test_two_immutable_reads_overlap_without_growing_the_window(monkeypatch,tmp_path):
+    manifest,files=_fixed_chunks(monkeypatch,count=141);remote=_ReadWindowRemote(files,overlap=True)
+    result=backup.synchronize(tmp_path/'unused.sqlite3',remote)
+    assert result['status']=='VERIFIED' and remote.peak==2
+    assert len(remote.gets)==141 and set(remote.gets)==set(files)
+    assert len(remote.puts)==1 and '/manifests/' in remote.puts[0]
+    assert json.loads(remote.files[remote.puts[0]])==manifest
+
+
+def test_missing_chunks_write_in_original_order_and_each_is_read_back(monkeypatch,tmp_path):
+    manifest,files=_fixed_chunks(monkeypatch);keys=list(files);remote=_ReadWindowRemote({k:v for k,v in files.items() if k not in keys[:2]})
+    result=backup.synchronize(tmp_path/'unused.sqlite3',remote)
+    assert result['status']=='VERIFIED' and remote.puts[:2]==keys[:2]
+    assert remote.first_write_read_count<=2
+    assert len(remote.gets)==8 and all(remote.files[k]==v for k,v in files.items())
+    assert len(remote.puts)==3 and json.loads(remote.files[remote.puts[-1]])==manifest
+
+
+def test_conflicting_prefetched_chunk_prevents_manifest_and_new_reads(monkeypatch,tmp_path):
+    _,files=_fixed_chunks(monkeypatch);files[next(iter(files))]=b'altered';remote=_ReadWindowRemote(files)
+    with pytest.raises(ValueError,match='private_original_backup_conflict'):
+        backup.synchronize(tmp_path/'unused.sqlite3',remote)
+    assert remote.puts==[] and len(remote.gets)<=2
+
+
+def test_failed_written_chunk_readback_never_publishes_manifest(monkeypatch,tmp_path):
+    _,files=_fixed_chunks(monkeypatch);keys=list(files)
+    class WrongReadback(_ReadWindowRemote):
+        def get(self,key):
+            raw,version=super().get(key)
+            return (b'wrong',version) if key in self.puts else (raw,version)
+    remote=WrongReadback({k:v for k,v in files.items() if k!=keys[0]})
+    with pytest.raises(ValueError,match='private_original_backup_readback'):
+        backup.synchronize(tmp_path/'unused.sqlite3',remote)
+    assert remote.puts==[keys[0]] and not any('/manifests/' in k for k in remote.files)
