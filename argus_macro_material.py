@@ -349,16 +349,20 @@ def reaction_facts(records, *, now_iso):
     now = _at(now_iso)
     facts = []
     for item in released_materials(records, now_iso=now_iso):
-        record = next((r for r in records if material_id(r.get('eventId')) == item['eventId']
+        record = next((r for r in records if isinstance(r, dict)
+            and material_id(r.get('eventId')) == item['eventId']
             and any(m['sourceRowSha256'] == item['sourceRowSha256']
                     for m in released_materials([r], now_iso=now_iso))), None)
         if record is None:
             continue
         raw = record.get('releaseReaction') or {}
-        if (raw.get('eventId') != record['eventId']
+        if (not isinstance(raw, dict) or raw.get('eventId') != record['eventId']
                 or _at(raw.get('eventTimeUtc')) != _at(record.get('eventTimeUtc'))):
             continue
-        reaction = revalidate(raw)
+        try:
+            reaction = revalidate(raw)
+        except (TypeError, ValueError, AttributeError, OverflowError):
+            continue
         baseline = reaction.get('baselineComparisonValues') or {}
         for name, _ in reversed(WINDOWS):
             window = reaction['windows'].get(name) or {}

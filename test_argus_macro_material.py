@@ -100,6 +100,17 @@ def test_reaction_binds_the_selected_result_revision_not_the_first_same_id():
     assert material.reaction_facts([old, new], now_iso=NOW) == []
 
 
+@pytest.mark.parametrize('malformed', ['reaction', 'baseline', 'values'])
+def test_bad_optional_reaction_does_not_hide_the_received_result(malformed):
+    r = reaction_row()
+    if malformed == 'reaction': r['releaseReaction'] = ['invalid']
+    if malformed == 'baseline': r['releaseReaction']['baseline'] = ['invalid']
+    if malformed == 'values':
+        for w in r['releaseReaction']['windows'].values(): w['values'] = ['invalid']
+    assert material.reaction_facts([None, r], now_iso=NOW) == []
+    assert selected(r)[0]['materialOrigin'] == 'OFFICIAL_MACRO_RESULT'
+
+
 def test_result_is_material_without_news_or_causal_confirmation_and_keeps_original():
     r=row(); original=copy.deepcopy(r); result=selected(r)[0]
     assert result['materialOrigin']=='OFFICIAL_MACRO_RESULT' and result['severity']=='HIGH'
