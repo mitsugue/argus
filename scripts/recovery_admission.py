@@ -102,13 +102,13 @@ EXPECTED_DUAL_SCOPE_RECOVERY_PAYLOAD_DIFF_SHA256 = (
 )
 
 EXPECTED_RECOVERY_PAYLOAD_DIFF_SHA256 = (
-    "f0116995adc518850a9170a7ba0584e7d87acca46c88afe57ff550d3edf208d7"
+    "71021393a295c1451a4fa265ec281743c00181027768f4bbaf217f23f741550a"
 )
 
 # This owner-authorized staged analysis delivery pins BOTH implementation diffs. A paired
 # certificate proves only the Recovery half; the existing Product certificate
 # is independently mandatory before merge and before any Pages deployment.
-EXPECTED_PAIRED_PRODUCT_DIFF_SHA256: str | None = "de408377be37cbe8bf39ebabb8b902101488e1499f292c03e95b35c4d2328e55"
+EXPECTED_PAIRED_PRODUCT_DIFF_SHA256: str | None = "03669d6dc2bfefc3bc104ee7ede8a116a1be25528b67fbcab00e513aeada43cf"
 PAIRED_CLASSIFICATION = "PRODUCT_AND_RECOVERY"
 
 # This is a one-time owner-authorized Product delivery that necessarily touches
