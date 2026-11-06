@@ -5,6 +5,8 @@ Source receipts and revisions are immutable; this is a backup adapter, not a
 second collection lane or a claim of historical publication vintage.
 """
 import base64
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import math
@@ -18,11 +20,13 @@ import argus_earnings_history as earnings
 import jp_market_acquisition as sources
 import argus_credit_conditions as credit
 import argus_jgb_auction as auctions
-from argus_analysis_history_backup import CHUNK_BYTES, MAX_ARCHIVE_BYTES, MAX_SYNC_SECONDS
+from argus_analysis_history_backup import (CHUNK_BYTES, MAX_ARCHIVE_BYTES, MAX_SYNC_SECONDS,
+                                           HistoryRemoteReadError)
 
 PRIVATE_REPO='mitsugue/argus-l2b-private'
 PREFIX='market-analysis/source-inputs/v1'
 SCHEMA='argus-private-market-inputs-v1'
+CHUNK_READ_WINDOW=2
 SECTOR_CODES={str(n) for n in range(1617,1634)}
 DIAGNOSTIC_PHASES={'CONFIGURATION','VISIBILITY','SNAPSHOT','SNAPSHOT_ORIGINALS',
                    'SNAPSHOT_OBSERVATIONS','SNAPSHOT_DATE_COVERAGE','SNAPSHOT_SELECTED',
@@ -40,8 +44,17 @@ DIAGNOSTIC_ERRORS={'private_original_backup_destination','private_selected_integ
     'history_remote_blob_integrity_invalid','history_remote_write_bound'}
 
 
+DIAGNOSTIC_HTTP_READ_ERRORS = {
+    f'history_remote_read_http_{status}'
+    for status in (400,401,403,408,409,413,422,429,500,502,503,504)}
+DIAGNOSTIC_ERRORS |= DIAGNOSTIC_HTTP_READ_ERRORS
+
+
 def diagnostic_error(exc):
     # Only exact protocol constants may escape; exceptions can contain inputs.
+    if isinstance(exc, HistoryRemoteReadError):
+        category=f'history_remote_read_http_{exc.status_code}'
+        if category in DIAGNOSTIC_HTTP_READ_ERRORS:return category
     text=str(exc)
     return text if text in DIAGNOSTIC_ERRORS else 'UNCLASSIFIED'
 
@@ -62,7 +75,8 @@ def status_projection(state, *, worker_active=False):
     if state.get('errorCategory') in DIAGNOSTIC_ERRORS|{'UNCLASSIFIED'}:
         out['errorCategory']=state['errorCategory']
     if state.get('errorClass') in {'ValueError','TimeoutError','OSError','RuntimeError',
-            'ConnectionError','ReadTimeout','ConnectTimeout','HTTPError','WorkerStartFailed'}:
+            'ConnectionError','ReadTimeout','ConnectTimeout','HTTPError','WorkerStartFailed',
+            'HistoryRemoteReadError'}:
         out['errorClass']=state['errorClass']
     for key in ('chunksTotal','chunksProcessed','archiveBytes'):
         value=state.get(key)
@@ -355,6 +369,36 @@ def snapshot(path,directory,*,check_budget=None,progress=None):
             'chunks':chunks,'counts':counts,'actionAuthority':False}
 
 
+def _prefetched_chunks(directory,chunks,remote,*,started,check_budget):
+    """At most two immutable reads; the caller alone checks/writes in order."""
+    def read(chunk):
+        # The transport also keeps its existing shared deadline. Do not emit
+        # parent-worker CPU/phase diagnostics from a reader thread.
+        if time.monotonic()-started>=MAX_SYNC_SECONDS:
+            raise ValueError('private_original_backup_deadline')
+        raw=(Path(directory)/chunk['sha256']).read_bytes()
+        if _hash(raw)!=chunk['sha256']:raise ValueError('private_original_backup_chunk')
+        return raw,remote.get(PREFIX+'/chunks/'+chunk['sha256']+'.bin')
+    pending=deque();remaining=iter(chunks)
+    pool=ThreadPoolExecutor(max_workers=CHUNK_READ_WINDOW,thread_name_prefix='source-backup-read')
+    def enqueue():
+        check_budget()
+        chunk=next(remaining,None)
+        if chunk is not None:pending.append((chunk,pool.submit(read,chunk)))
+    try:
+        for _ in range(CHUNK_READ_WINDOW):enqueue()
+        while pending:
+            chunk,task=pending.popleft()
+            item=task.result()
+            yield chunk,item
+            # Release the consumed future/body before filling the next slot.
+            del task,item
+            enqueue()
+    finally:
+        for _,task in pending:task.cancel()
+        pool.shutdown(wait=True,cancel_futures=True)
+
+
 def synchronize(path,remote,*,progress=None):
     # Reuse the existing configured Contents connection, but require exactly
     # the owner-approved private repository before the first outbound body.
@@ -393,10 +437,12 @@ def synchronize(path,remote,*,progress=None):
             manifest=snapshot(path,directory,check_budget=budget,progress=report)
             report('SNAPSHOT_CHUNKS',counts=manifest['counts'],archiveBytes=manifest['archiveBytes'],
                    chunksTotal=len(manifest['chunks']),chunksProcessed=0)
-            def immutable(key,raw,kind):
+            unread=object()
+            def immutable(key,raw,kind,existing=unread):
                 budget()
-                report(kind+'_READ')
-                old,version=remote.get(key)
+                if existing is unread or current_phase!=kind+'_READ':
+                    report(kind+'_READ')
+                old,version=remote.get(key) if existing is unread else existing
                 budget()
                 if old is not None:
                     if old!=raw:raise ValueError('private_original_backup_conflict')
@@ -409,11 +455,15 @@ def synchronize(path,remote,*,progress=None):
                 reread,_=remote.get(key)
                 budget()
                 if reread!=raw:raise ValueError('private_original_backup_readback')
-            for index,chunk in enumerate(manifest['chunks']):
-                raw=(Path(directory)/chunk['sha256']).read_bytes()
-                if _hash(raw)!=chunk['sha256']:raise ValueError('private_original_backup_chunk')
-                immutable(PREFIX+'/chunks/'+chunk['sha256']+'.bin',raw,'CHUNK')
-                report('CHUNK_READBACK',chunksProcessed=index+1)
+            report('CHUNK_READ');budget()
+            reads=_prefetched_chunks(directory,manifest['chunks'],remote,started=started,check_budget=budget)
+            try:
+                for index,(chunk,(raw,existing)) in enumerate(reads):
+                    immutable(PREFIX+'/chunks/'+chunk['sha256']+'.bin',raw,'CHUNK',existing)
+                    report('CHUNK_READBACK',chunksProcessed=index+1)
+                    del raw,existing
+            finally:
+                reads.close()
             encoded=sources._json(manifest).encode();identity=_hash(encoded)
             immutable(PREFIX+'/manifests/'+identity+'.json',encoded,'MANIFEST')
             report('COMPLETE')

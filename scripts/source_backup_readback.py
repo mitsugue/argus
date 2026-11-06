@@ -4,7 +4,7 @@ import hashlib,json,math,os,re,sys,time
 from pathlib import Path
 import urllib.request,urllib.error
 import argus_market_input_backup as backup
-EXPECTED='97fc511722dadecb614a2f5ff1cffa146a406477'
+EXPECTED='55fa64e3723d7e4d2740e4add007bb895928837b'
 BASE='https://argus-backend-3j2m.onrender.com'
 LIMIT=1048576
 class NoRedirect(urllib.request.HTTPRedirectHandler):

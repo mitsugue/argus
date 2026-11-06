@@ -1,4 +1,4 @@
-# One bounded read after release 239 collection and the unchanged 180s backup budget.
+# One fixed status read after release 240 collection and its unchanged 180s backup budget.
 name: jp-index-readback
 on:
   push:
