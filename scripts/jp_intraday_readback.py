@@ -13,7 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-EXPECTED = '717072492f1ded2426e6f5a35aeea219e83a6074'
+EXPECTED = '992ebcc90ffef4c30181bf4423a3a13a3afe1f01'
 BASE = 'https://argus-backend-3j2m.onrender.com'
 
 
@@ -128,4 +128,55 @@ def main(output):
     return 0 if len(result['samples']) == 2 and result.get('status') == 'TWO_CACHED_SAMPLES_RECORDED_NOT_DEVICE_ACCEPTANCE' else 1
 
 
-if __name__ == '__main__': sys.exit(main(sys.argv[1]))
+def rejection_read(output):
+    """One new-reason read after delivery; no repeat of the two-sample test."""
+    out = Path(output); out.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic(); reads = 0
+    result = {'schemaVersion': 'jp-delayed-fixed-rejection-readback-v1',
+              'expectedBackend': EXPECTED, 'retryCount': 0,
+              'previousTwoSampleRun': 42137272124,
+              'twoSampleReadsNotRepeated': True, 'maximumReads': 3,
+              'newCollectorStarts': 0, 'newAiCalls': 0,
+              'ownerSymbolsOrPricesRecorded': False}
+    opener = urllib.request.build_opener(NoRedirect())
+    def get(path):
+        nonlocal reads
+        if reads >= 3 or time.monotonic() - started + 20 > 90:
+            raise ValueError('READ_BUDGET')
+        reads += 1
+        request = urllib.request.Request(BASE + path, headers={
+            'X-ARGUS-ADMIN-TOKEN': os.environ['ARGUS_ADMIN_TOKEN'],
+            'Accept': 'application/json'})
+        with opener.open(request, timeout=20) as response:
+            raw = response.read(1048577)
+            if response.status != 200: raise ValueError('HTTP_STATUS')
+        if len(raw) > 1048576: raise ValueError('BODY_LIMIT')
+        return json.loads(raw), hashlib.sha256(raw).hexdigest()
+    try:
+        health, _ = get('/healthz')
+        if health.get('buildSha') != EXPECTED: raise ValueError('BACKEND_CHANGED')
+        result['backendSha'] = health['buildSha']
+        result['backendVersion'] = health.get('backendVersion')
+        document, _ = get('/api/argus/jp-watchlist-codes')
+        codes = members(document)
+        if not codes: raise ValueError('MEMBERSHIP_EMPTY')
+        result['scopeDigest'] = hashlib.sha256(json.dumps(codes, separators=(',', ':')).encode()).hexdigest()
+        result['scopeIncludesTrustedHints'] = True
+        watch, body_hash = get('/api/argus/japan-watchlist?symbols=' + urllib.parse.quote(','.join(codes)))
+        result['readAt'] = datetime.now(timezone.utc).isoformat()
+        result['bodyHash'] = body_hash
+        result['delayed'], _ = projection(watch, codes, time.time())
+        result['status'] = 'FIXED_REJECTION_SAMPLE_RECORDED_NOT_DEVICE_ACCEPTANCE'
+    except urllib.error.HTTPError as exc:
+        result.update(errorClass='HTTP_ERROR', http=exc.code)
+    except Exception as exc:
+        result['errorClass'] = str(exc) if isinstance(exc, ValueError) and re.fullmatch(r'[A-Z_]+', str(exc)) else type(exc).__name__
+    result.update(readCount=reads, elapsedSeconds=round(time.monotonic() - started, 3))
+    (out / 'rejections.json').write_text(json.dumps(result, ensure_ascii=False, allow_nan=False) + '\n')
+    return 0 if result.get('status') == 'FIXED_REJECTION_SAMPLE_RECORDED_NOT_DEVICE_ACCEPTANCE' else 1
+
+
+if __name__ == '__main__':
+    if os.environ.get('ARGUS_JP_READBACK_MODE') != 'rejections':
+        raise SystemExit('READBACK_MODE_REQUIRED')
+    sys.exit(rejection_read(sys.argv[1]))
