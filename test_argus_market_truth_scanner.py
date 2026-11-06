@@ -140,6 +140,67 @@ def test_moomoo_push_ingestion_and_cached_read_never_use_transport_as_live(
     assert all(cached[symbol]["transportAgeSec"] == 0 for symbol in cached)
 
 
+def test_snapshot_read_preserves_explicit_delayed_entitlement_and_identity(monkeypatch):
+    now = scanner.datetime.fromisoformat("2026-11-06T07:06:20+00:00").timestamp()
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    row = {"symbol": "QQQ", "price": 100.0, "changePct": -1.0,
+           "volume": 1000, "source": "moomoo", "status": "delayed",
+           "freshness": "delayed", "delayClass": "15m",
+           "realtimeEvidence": False, "sourceTimestamp": "2026-11-06T07:06:10Z",
+           "receivedAt": "2026-11-06T07:06:12Z"}
+    original = {"status": "delayed", "quotes": [row]}
+    before = copy.deepcopy(original)
+    cached = scanner._canonical_quote_snapshot_age(original, "quotes")
+    assert cached["quotes"][0]["status"] == "delayed"
+    assert cached["quotes"][0]["delayClass"] == "15m"
+    assert cached["quotes"][0]["realtimeEvidence"] is False
+    observations = scanner._canonical_quote_observations(
+        [("US", "moomoo", row), ("US", "moomoo", cached["quotes"][0])],
+        "2026-11-06T07:06:20Z")
+    assert len(observations) == 1
+    assert observations[0]["freshness"] == argus_market_data_truth.DELAYED
+    assert argus_market_data_truth.observations_as_of(
+        observations, "2026-11-06T07:06:20Z") == observations
+    assert original == before
+
+
+def test_snapshot_read_never_promotes_partial_stale_or_delayed_rows(monkeypatch):
+    now = 1_800_000_000.0
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    for status in ("delayed", "partial", "stale"):
+        row = {"symbol": "QQQ", "price": 100.0, "status": status,
+               "freshness": status, "sourceTimestamp": _epoch_iso(now - 1),
+               "receivedAt": _epoch_iso(now), "delayClass": "UNKNOWN"}
+        out = scanner._canonical_quote_snapshot_age(
+            {"status": "partial", "quotes": [row]}, "quotes")
+        assert out["status"] == "partial"
+        assert out["quotes"][0]["status"] == status
+        assert out["quotes"][0]["realtimeEvidence"] is False
+
+
+def test_snapshot_live_rows_age_and_real_price_conflicts_remain_rejected(monkeypatch):
+    now = 1_800_000_000.0
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    fresh = {"symbol": "QQQ", "price": 100.0, "status": "live",
+             "source": "moomoo", "sourceTimestamp": _epoch_iso(now - 1),
+             "receivedAt": _epoch_iso(now)}
+    out = scanner._canonical_quote_snapshot_age(
+        {"status": "live", "quotes": [fresh]}, "quotes")
+    assert out["quotes"][0]["status"] == "live"
+    old = dict(fresh, sourceTimestamp=_epoch_iso(now - 3600))
+    assert scanner._canonical_quote_snapshot_age(
+        {"status": "live", "quotes": [old]}, "quotes")["quotes"][0]["status"] == "delayed"
+    observations = scanner._canonical_quote_observations(
+        [("US", "moomoo", fresh), ("US", "moomoo", dict(fresh, price=101.0))],
+        _epoch_iso(now))
+    try:
+        argus_market_data_truth.observations_as_of(observations, _epoch_iso(now))
+    except ValueError as exc:
+        assert str(exc) == "conflicting_revision"
+    else:
+        raise AssertionError("A real price conflict must still be rejected")
+
+
 def test_moomoo_push_invalid_source_time_cannot_enter_history_or_events(
         monkeypatch):
     now = 1_800_000_000.0

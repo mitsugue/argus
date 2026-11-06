@@ -3768,8 +3768,20 @@ def _canonical_quote_snapshot_age(snapshot, rows_key):
         row = dict(raw) if isinstance(raw, dict) else raw
         if isinstance(row, dict) and str(row.get("status") or "").lower() \
                 not in ("mock", "unavailable", "offline", "error"):
+            original_status = str(row.get("status") or "").lower()
             row.update(_canonical_quote_source_age(
                 row.get("sourceTimestamp")))
+            # A recent timestamp cannot upgrade an explicit provider delay or
+            # incomplete/stale input. Use the same downgrade-only contract as
+            # the individual cached quote path, preserving its original receipt.
+            if original_status and original_status != "live" \
+                    and row.get("status") == "live":
+                row.update({
+                    "status": original_status,
+                    "freshness": raw.get("freshness") or "delayed",
+                    "delayClass": raw.get("delayClass") or "UNKNOWN",
+                    "realtimeEvidence": False,
+                })
         rows.append(row)
     result = {**snapshot, rows_key: rows}
     statuses = [str(row.get("status") or "").lower()
