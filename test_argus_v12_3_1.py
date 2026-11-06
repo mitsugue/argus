@@ -336,7 +336,7 @@ class OutcomeAndJournalIntegrationTests(unittest.TestCase):
                                   "interruptions": [], "previousSoak": None})
             os.environ["RENDER_GIT_COMMIT"] = "abc1234" + "0" * 33
             fc = {"id": "fc-route", "symbol": "TEST",
-                  "issuedAt": "2026-01-01T00:00:00Z",
+                  "issuedAt": "2026-01-01T12:00:00Z",
                   "forecastHorizon": "next_session", "origin": "forward_live"}
             scanner._FORECAST_LEDGER.append(fc)
             client = scanner.app.test_client()

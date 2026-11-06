@@ -35423,6 +35423,25 @@ def _price_history_cached(symbol, *, market, issued_day, now):
                         market=selected_market, issued_day=issued_day, now=now)
 
 
+def _mission_forecast_inputs(market):
+    """Select this mission's market before applying the existing eight-item cap."""
+    kind = {"JP": argus_market_clock.JP_EQUITY,
+            "US": argus_market_clock.US_EQUITY}.get(market)
+    if kind is None and market != "ALL":
+        return []
+    selected = []
+    for symbol, investigation in _OSINT_STORE.items():
+        symbol_kind = argus_market_clock.asset_market(symbol)
+        symbol_market = {argus_market_clock.JP_EQUITY: "JP",
+                         argus_market_clock.US_EQUITY: "US"}.get(symbol_kind)
+        if not symbol or symbol_market is None or (kind is not None and symbol_kind != kind):
+            continue
+        selected.append((symbol, investigation, symbol_market))
+        if len(selected) == 8:
+            break
+    return selected
+
+
 def _dl_resolve_matured(now_iso, max_records=None, return_stats=False,
                          deadline_monotonic=None):
     """成熟成果を同一Outcomeで再解決。cached価格のみ・0値採点なし・冪等。"""
@@ -35434,13 +35453,33 @@ def _dl_resolve_matured(now_iso, max_records=None, return_stats=False,
     except (TypeError, ValueError):
         now_utc = datetime.now(pytz.utc)
 
+    def _issued_market_date(fc, value):
+        kind = {"JP": argus_market_clock.JP_EQUITY,
+                "US": argus_market_clock.US_EQUITY}.get(
+                    str(fc.get("market") or "").upper())
+        symbol_kind = argus_market_clock.asset_market(str(fc.get("symbol") or ""))
+        if kind is not None and kind != symbol_kind:
+            return None  # An inconsistent immutable forecast cannot be reinterpreted.
+        if kind is None:
+            kind = symbol_kind
+        zone = {argus_market_clock.JP_EQUITY: TZ_JST,
+                argus_market_clock.US_EQUITY: TZ_ET}.get(kind)
+        try:
+            instant = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if zone is None or instant.tzinfo is None:
+                return None
+            return instant.astimezone(zone).date().isoformat()
+        except (TypeError, ValueError, OverflowError):
+            return None
+
     def _candidate(fc):
         fid = fc.get("id")
-        issued_date = str(fc.get("issuedAt") or "")[:10]
+        issued_date = _issued_market_date(fc, fc.get("issuedAt"))
         if not fid or fc.get("mockData"):
             return False
         # next_session成熟: 発行日より後の営業日終値が観測できたら解決対象
-        if not issued_date or issued_date >= now_iso[:10]:
+        current_market_date = _issued_market_date(fc, now_iso)
+        if not issued_date or not current_market_date or issued_date >= current_market_date:
             return False                 # 成熟前/legacy時刻不明は解決しない
         market_code = str(fc.get("market") or "").upper()
         asset_market = (
@@ -35474,7 +35513,7 @@ def _dl_resolve_matured(now_iso, max_records=None, return_stats=False,
                 time.monotonic() >= float(deadline_monotonic):
             break
         fid = fc.get("id")
-        issued_date = str(fc.get("issuedAt") or "")[:10]
+        issued_date = _issued_market_date(fc, fc.get("issuedAt"))
         existing = next((o for o in _OUTCOME_LEDGER
                          if o.get("forecastId") == fid), None)
         processed += 1
@@ -36393,9 +36432,9 @@ def _api_argus_admin_missions_tick_impl():
                         mission_operation_token, {"result": "ok"})
                     continue
                 # 不変予測発行(成果を知る前・冪等はミッションキーで保証)
-                for sym, inv in list(_OSINT_STORE.items())[:8]:
+                for sym, inv, forecast_market in _mission_forecast_inputs(m["market"]):
                     rec = argus_decision_ledger.forecast_record(
-                        symbol=sym, market=m["market"],
+                        symbol=sym, market=forecast_market,
                         issued_at=now_iso, horizon="next_session",
                         target_type="catalyst_verdict",
                         forecast_value=(inv.get("catalystVerdict") or {}).get(

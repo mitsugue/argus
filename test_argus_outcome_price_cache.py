@@ -63,7 +63,9 @@ def test_real_scanner_resolves_with_received_cache_and_never_fetches(monkeypatch
                                         'closes': [110, 100]}}}
     monkeypatch.setattr(scanner, cache_name, cache)
     monkeypatch.setattr(scanner, '_FORECAST_LEDGER', [{'id': 'cache-only-prediction',
-        'symbol': symbol, 'market': market, 'issuedAt': '2026-11-04T08:30:00+09:00',
+        'symbol': symbol, 'market': market,
+        'issuedAt': ('2026-11-04T08:30:00+09:00' if market == 'JP'
+                     else '2026-11-04T08:30:00-05:00'),
         'forecastHorizon': 'next_session', 'origin': 'forward_live'}])
     monkeypatch.setattr(scanner, '_OUTCOME_LEDGER', [])
     monkeypatch.setattr(scanner, '_journal', lambda *a, **k: None)
@@ -92,3 +94,107 @@ def test_expiry_is_not_a_substitute_for_recorded_receipt(monkeypatch):
         'data': {'dates': ['2026-11-05', '2026-11-04'], 'closes': [110, 100]}}})
     assert scanner._price_history_cached('9999', market='JP',
         issued_day='2026-11-04', now=NOW) == []
+
+
+@pytest.mark.parametrize('market,issued,days,now', [
+    ('US', issued, ['2026-10-02', '2026-10-05'], '2026-10-06T12:00:00Z')
+    for issued in ('2026-10-03T08:30:00+09:00', '2026-10-02T23:30:00Z',
+                   '2026-10-02T19:30:00-04:00')
+] + [
+    ('US', issued, ['2026-11-06', '2026-11-09'], '2026-11-10T12:00:00Z')
+    for issued in ('2026-11-07T08:30:00+09:00', '2026-11-06T23:30:00Z',
+                   '2026-11-06T18:30:00-05:00')
+] + [
+    ('JP', issued, ['2026-11-04', '2026-11-05'], '2026-11-06T00:00:00Z')
+    for issued in ('2026-11-04T08:30:00+09:00', '2026-11-03T23:30:00Z')
+] + [('US_IMPLIED', '2026-11-07T08:30:00+09:00',
+      ['2026-11-06', '2026-11-09'], '2026-11-10T12:00:00Z')])
+def test_resolver_uses_market_date_of_original_instant(monkeypatch, market, issued, days, now):
+    implied_market = market == 'US_IMPLIED'
+    market = 'US' if implied_market else market
+    symbol = 'DATEONLY' if market == 'US' else '9999'
+    cache_name = '_TD_HISTORY_CACHE' if market == 'US' else '_JQ_HISTORY_CACHE'
+    cache = {symbol: {'expires': time.time() + 600, 'acquiredAt': now,
+        'provider': 'twelvedata', 'data': {'dates': days, 'closes': [100, 110]}}}
+    forecasts = [{'id': 'market-date-prediction', 'symbol': symbol, 'market': market,
+                  'issuedAt': issued, 'forecastHorizon': 'next_session',
+                  'origin': 'forward_live'}]
+    if implied_market:
+        forecasts[0].pop('market')
+    original_forecasts, original_cache = deepcopy(forecasts), deepcopy(cache)
+    monkeypatch.setattr(scanner, cache_name, cache)
+    monkeypatch.setattr(scanner, '_FORECAST_LEDGER', forecasts)
+    monkeypatch.setattr(scanner, '_OUTCOME_LEDGER', [])
+    monkeypatch.setattr(scanner, '_journal', lambda *a, **k: None)
+    def forbidden(*a, **k): raise AssertionError('provider/AI/write attempted')
+    for name in ['_chart_history', '_jq_price_history', '_td_price_history',
+                 '_us_price_history', '_execute_ai_judgment']:
+        monkeypatch.setattr(scanner, name, forbidden)
+    assert scanner._dl_resolve_matured(now) == 1
+    result = deepcopy(scanner._OUTCOME_LEDGER)
+    assert result[0]['absoluteReturnPct'] == 10.0
+    assert scanner._dl_resolve_matured(now) == 0
+    assert scanner._OUTCOME_LEDGER == result
+    assert forecasts == original_forecasts and cache == original_cache
+
+
+@pytest.mark.parametrize('issued', ['2026-11-04', '2026-11-04T08:30:00', '', 'invalid'])
+def test_ambiguous_issue_instant_never_requests_price_pair(monkeypatch, issued):
+    forecasts = [{'id': 'invalid-market-date', 'symbol': 'DATEONLY', 'market': 'US',
+                  'issuedAt': issued, 'forecastHorizon': 'next_session'}]
+    monkeypatch.setattr(scanner, '_FORECAST_LEDGER', forecasts)
+    monkeypatch.setattr(scanner, '_OUTCOME_LEDGER', [])
+    def forbidden(*a, **k): raise AssertionError('ambiguous date reached price reader')
+    monkeypatch.setattr(scanner, '_price_history_cached', forbidden)
+    monkeypatch.setattr(scanner, '_journal', forbidden)
+    assert scanner._dl_resolve_matured(NOW) == 0
+    assert scanner._OUTCOME_LEDGER == []
+
+
+@pytest.mark.parametrize('market,symbol', [('US', '9999'), ('JP', 'SPY')])
+def test_inconsistent_original_market_is_not_resigned_or_scored(monkeypatch, market, symbol):
+    import argus_decision_ledger as ledger
+    fc = ledger.forecast_record(symbol=symbol, market=market,
+        issued_at='2026-11-04T08:30:00+09:00', horizon='next_session',
+        target_type='catalyst_verdict', forecast_value='unknown')
+    before = deepcopy(fc)
+    monkeypatch.setattr(scanner, '_FORECAST_LEDGER', [fc])
+    monkeypatch.setattr(scanner, '_OUTCOME_LEDGER', [])
+    def forbidden(*a, **k): raise AssertionError('inconsistent forecast was read or changed')
+    monkeypatch.setattr(scanner, '_price_history_cached', forbidden)
+    monkeypatch.setattr(scanner, '_journal', forbidden)
+    assert scanner._dl_resolve_matured(NOW) == 0
+    assert fc == before and ledger.verify_forecast_integrity(fc)
+    assert scanner._OUTCOME_LEDGER == []
+
+
+@pytest.mark.parametrize('market', ['JP', 'US', 'ALL'])
+def test_actual_issuance_loop_selects_market_before_cap(monkeypatch, market):
+    import ast
+    import inspect
+    import argus_decision_ledger as ledger
+    # Run the product's actual issuance loop with its real record/hash writer.
+    tree = ast.parse(inspect.getsource(scanner._api_argus_admin_missions_tick_impl))
+    loop = next(n for n in ast.walk(tree) if isinstance(n, ast.For)
+        and isinstance(n.iter, ast.Call) and isinstance(n.iter.func, ast.Name)
+        and n.iter.func.id == '_mission_forecast_inputs')
+    jp = [str(9000+i) for i in range(10)]
+    us = ['SPY', 'QQQ', 'SMH', 'IWM', 'TLT', 'HYG', 'GLD', 'NVDA', 'AAPL', 'TSLA']
+    desired = jp if market in ('JP', 'ALL') else us
+    other = [] if market == 'ALL' else (us if market == 'JP' else jp)
+    store = {symbol: {'id':'synthetic-'+symbol, 'catalystVerdict':{'verdict':'unknown'}}
+             for symbol in other + desired}
+    original = deepcopy(store)
+    monkeypatch.setattr(scanner, '_OSINT_STORE', store)
+    records = []; journal = []
+    env = dict(scanner.__dict__, m={'market':market}, now_iso=NOW,
+        session_date=NOW[:10], epoch='synthetic', _FORECAST_LEDGER=records,
+        _journal=lambda *a, **k: journal.append((a,k)))
+    code = compile(ast.Module(body=[loop],type_ignores=[]), '<actual-issuance-loop>', 'exec')
+    exec(code, env)
+    assert [r['symbol'] for r in records] == desired[:8]
+    assert all(r['market'] == ('JP' if market == 'ALL' else market)
+               and ledger.verify_forecast_integrity(r) for r in records)
+    before = deepcopy(records)
+    exec(code, env)
+    assert records == before and len(journal) == 8 and store == original

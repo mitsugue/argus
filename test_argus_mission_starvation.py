@@ -36,7 +36,7 @@ def _run_tick(*, ledger_seconds, short_rows, forecasts=0, missions=3):
             now = scanner._ai_now_iso()
             for number in range(forecasts):
                 scanner._FORECAST_LEDGER.append({
-                    "id": f"fc-{number}", "symbol": f"S{number}", "market": "JP",
+                    "id": f"fc-{number}", "symbol": str(9000 + number), "market": "JP",
                     "issuedAt": "2026-09-01T09:00:00+09:00"})
             for number in range(missions):
                 scanner._MISSIONS.append(argus_scheduler.mission(
