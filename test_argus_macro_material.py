@@ -23,6 +23,83 @@ def selected(r=None, now=NOW):
     return material.released_materials([r or row()], now_iso=now)
 
 
+def reaction_row():
+    import argus_macro_release_reaction as reaction
+    r = row('NFP')
+    def capture(at, rate, equity):
+        return {'capturedAt': at, 'captureStartedAt': at, 'source': reaction.PROVIDER,
+                'values': {symbol: {'price': price, 'tradedAt': at, 'receivedAt': at}
+                           for symbol, price in [('ZQ=F', rate), ('NQ=F', equity)]}}
+    r['releaseReaction'] = reaction.build(r['eventId'], r['eventTimeUtc'],
+        capture('2026-10-14T12:28:00Z', 96.0, 20000),
+        {'+5m': capture('2026-10-14T12:35:00Z', 95.99, 20020),
+         '+60m': capture('2026-10-14T13:30:00Z', 96.0, 20040)})
+    return r
+
+
+def test_received_reaction_reaches_headline_candidates_even_after_newer_news():
+    r = reaction_row(); original = copy.deepcopy(r)
+    fact, = material.reaction_facts([r], now_iso=NOW)
+    assert fact['priority'] == 'P0' and fact['verification'] == 'VERIFIED'
+    assert '+60m' in fact['text'] and '+0.0bp' in fact['text'] and '+0.20%' in fact['text']
+    p = fact['provenance']
+    assert p['receivedAt'] == p['observedAt'] == '2026-10-14T13:30:00+00:00'
+    assert p['publishedAt'] is None and p['causalAttributionVerified'] is False
+    assert p['quantitativeSurpriseVerified'] is False
+    b = brief.compose_brief(now_iso=NOW, released_events=selected(r), news_events=[])
+    # A later news lead cannot replace the independent measured fact.
+    b['facts'].append({'text': '新しい関連報道', 'source': 'macro_release_news',
+                      'priority': 'P0', 'verification': 'CORROBORATED'})
+    b['facts'].append(fact)
+    context = brief.unified_context(b)
+    assert any(f['source'] == 'macro_release_reaction' for f in context['facts'])
+    assert r == original
+
+
+@pytest.mark.parametrize('failure', ['identity', 'event_time', 'no_baseline', 'bad_source', 'invalid_prices'])
+def test_reaction_facts_reject_foreign_or_unmeasurable_evidence(failure):
+    r = reaction_row(); reaction = r['releaseReaction']
+    if failure == 'identity': reaction['eventId'] = 'other-release'
+    if failure == 'event_time': reaction['eventTimeUtc'] = '2026-10-13T12:30:00Z'
+    if failure == 'no_baseline': reaction['baseline'] = None
+    for w in reaction['windows'].values():
+        if failure == 'bad_source': w['source'] = 'another-provider'
+        if failure == 'invalid_prices':
+            for q in w['values'].values(): q['price'] = True
+    assert material.reaction_facts([r], now_iso=NOW) == []
+
+
+def test_reaction_facts_respect_receipt_cutoff_and_do_not_extend_result_lifetime():
+    r = reaction_row()
+    w = r['releaseReaction']['windows']['+60m']
+    w['observedAt'] = '2026-10-14T13:40:00Z'
+    for q in w['values'].values(): q['receivedAt'] = '2026-10-14T13:40:00Z'
+    prior, = material.reaction_facts([r], now_iso='2026-10-14T13:35:00Z')
+    assert prior['provenance']['window'] == '+5m'
+    current, = material.reaction_facts([r], now_iso='2026-10-14T13:41:00Z')
+    assert current['provenance']['window'] == '+60m'
+    assert current['provenance']['receivedAt'] != current['provenance']['observedAt']
+    assert material.reaction_facts([r], now_iso='2026-10-16T12:30:01Z') == []
+
+
+def test_reaction_content_revision_changes_evidence_without_changing_result():
+    r = reaction_row()
+    before, = material.reaction_facts([r], now_iso=NOW)
+    r['releaseReaction']['windows']['+60m']['values']['NQ=F']['price'] = 20060
+    after, = material.reaction_facts([r], now_iso=NOW)
+    assert before['provenance']['actualSourceSha256'] == after['provenance']['actualSourceSha256']
+    assert before['provenance']['sourceRowSha256'] != after['provenance']['sourceRowSha256']
+    assert '+0.30%' in after['text']
+
+
+def test_reaction_binds_the_selected_result_revision_not_the_first_same_id():
+    old = reaction_row(); new = copy.deepcopy(old)
+    new['actual']['availableFrom'] = new['actual']['receivedAt'] = '2026-10-14T14:00:00Z'
+    new['actual']['metrics']['headlineCpiYoY'] = 3.8
+    new.pop('releaseReaction')
+    assert material.reaction_facts([old, new], now_iso=NOW) == []
+
+
 def test_result_is_material_without_news_or_causal_confirmation_and_keeps_original():
     r=row(); original=copy.deepcopy(r); result=selected(r)[0]
     assert result['materialOrigin']=='OFFICIAL_MACRO_RESULT' and result['severity']=='HIGH'

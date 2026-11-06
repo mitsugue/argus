@@ -337,3 +337,54 @@ def context_facts(materials, contexts):
                     'sourceRowSha256':context.get('sourceDigest'),
                     'quantitativeSurpriseVerified':False,'causalAttributionVerified':False}})
     return facts
+
+
+def reaction_facts(records, *, now_iso):
+    """Current received release reactions, independently of newer news leads.
+
+    Recompute from the existing quote clocks; neither a saved summary nor
+    receipt of a newer article proves a market move or its cause.
+    """
+    from argus_macro_release_reaction import revalidate, WINDOWS
+    now = _at(now_iso)
+    facts = []
+    for item in released_materials(records, now_iso=now_iso):
+        record = next((r for r in records if material_id(r.get('eventId')) == item['eventId']
+            and any(m['sourceRowSha256'] == item['sourceRowSha256']
+                    for m in released_materials([r], now_iso=now_iso))), None)
+        if record is None:
+            continue
+        raw = record.get('releaseReaction') or {}
+        if (raw.get('eventId') != record['eventId']
+                or _at(raw.get('eventTimeUtc')) != _at(record.get('eventTimeUtc'))):
+            continue
+        reaction = revalidate(raw)
+        baseline = reaction.get('baselineComparisonValues') or {}
+        for name, _ in reversed(WINDOWS):
+            window = reaction['windows'].get(name) or {}
+            values = window.get('comparisonValues') or {}
+            moves = window.get('moves') or {}
+            capture_at = _at(window.get('observedAt'))
+            if (capture_at is None or capture_at > now or not values or not baseline
+                    or not any(_finite(v) for k, v in moves.items() if 'Move' in k)):
+                continue
+            quotes = [*baseline.values(), *values.values()]
+            clocks = [_at(q.get(k)) for q in quotes for k in ('receivedAt', 'tradedAt')]
+            if any(at is None or at > now for at in clocks):
+                continue
+            evidence = {'eventId': record['eventId'], 'eventTimeUtc': record['eventTimeUtc'],
+                        'actualSourceSha256': item['sourceRowSha256'], 'window': name,
+                        'baseline': baseline, 'after': values, 'moves': moves}
+            digest = hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=False,
+                separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+            facts.append({'text': _CODES[record['eventCode']][0] + ' ' + window['summaryJa'],
+                'priority': 'P0', 'source': 'macro_release_reaction', 'verification': 'VERIFIED',
+                'provenance': {'scope': 'published_metadata_snapshot', 'eventId': item['eventId'],
+                    'sourceEventId': record['eventId'], 'revision': None, 'publishedAt': None,
+                    'receivedAt': max(_at(q['receivedAt']) for q in quotes).isoformat(),
+                    'observedAt': max(_at(q['tradedAt']) for q in values.values()).isoformat(),
+                    'sourceLabel': reaction['source'], 'url': None, 'window': name,
+                    'sourceRowSha256': digest, 'actualSourceSha256': item['sourceRowSha256'],
+                    'quantitativeSurpriseVerified': False, 'causalAttributionVerified': False}})
+            break
+    return facts

@@ -18714,6 +18714,8 @@ def _compose_market_brief():
         imminent_events=imminent,
         next_events=upcoming)
     brief['facts'].extend(argus_macro_material.context_facts(released_events, release_contexts))
+    brief['facts'].extend(argus_macro_material.reaction_facts(
+        release_records, now_iso=brief['generatedAt']))
     # The received articles' own extracted points, most important first.
     brief['facts'].extend(argus_market_brief.news_detail_facts(news_events))
     try:
@@ -18775,6 +18777,7 @@ def _market_brief_ai_polish(brief):
         "headlineComparison.asOfを判断時点に、最新の公式発表・新しい報道・実測反応・継続中の重大リスクを比較する。"
         "新しさ、市場への影響、確認の確かさ、前回から何が変わったかを合わせ、今最も知らせるべき材料をviewの主題に選ぶ。"
         "重要指標の結果が新たに届いた直後は有力な先頭候補です。市場予想差や反応が未確認でも結果の到着自体は重要です。"
+        "macro_release_reactionは時刻を照合した実測です。そこにある反応を未確認とせず、反応が小さいことと未取得を区別する。実測を因果確定や市場予想差へ置き換えない。"
         "新しいという理由だけで固定せず、以前の急落や別のリスクを優先するなら、その理由をreasonsで短く示す。"
         "選んだ材料の根拠IDをviewに付け、主題の交代または継続をchangesで説明する。欠測の予想差・因果関係は推測しない。"
         "publishedAtは公表、receivedAtは受領、observedAtは観測の時点です。後読みや要約更新を新しい発生とみなさない。"

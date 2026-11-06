@@ -78,7 +78,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_market_data_truth.py': 'dd1996634d4b1e63a6f291e1a958b0698bb400eb',
     # 受領済みの公式結果を既存の見立てとニュースへ渡す正確な内容。
     'argus_macro_material.py': 'fdabb0863e0df5de12e4dd6c835e232ce7c65bc2',
-    'test_argus_macro_material.py': 'b5e68b9722079359a1f74f72a21c527e80d94332',
+    'test_argus_macro_material.py': '04fc1c171faf52544e873b5ac91a6d421823980b',
     'docs/operations/official-macro-material.md': 'fe1a36ec2fac6168851d76a14f5407575f371763',
     'web/scripts/official-macro-results.test.cjs': '2b17eeccf570ae468d8cf156f7f0c0a6d54a7ebf',
     # 通常復帰の本人確認と暗号化済み表示復元に限った正確な検査済み内容。
