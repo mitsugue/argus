@@ -107,8 +107,11 @@ def test_expiry_is_not_a_substitute_for_recorded_receipt(monkeypatch):
 ] + [
     ('JP', issued, ['2026-11-04', '2026-11-05'], '2026-11-06T00:00:00Z')
     for issued in ('2026-11-04T08:30:00+09:00', '2026-11-03T23:30:00Z')
-])
+] + [('US_IMPLIED', '2026-11-07T08:30:00+09:00',
+      ['2026-11-06', '2026-11-09'], '2026-11-10T12:00:00Z')])
 def test_resolver_uses_market_date_of_original_instant(monkeypatch, market, issued, days, now):
+    implied_market = market == 'US_IMPLIED'
+    market = 'US' if implied_market else market
     symbol = 'DATEONLY' if market == 'US' else '9999'
     cache_name = '_TD_HISTORY_CACHE' if market == 'US' else '_JQ_HISTORY_CACHE'
     cache = {symbol: {'expires': time.time() + 600, 'acquiredAt': now,
@@ -116,6 +119,8 @@ def test_resolver_uses_market_date_of_original_instant(monkeypatch, market, issu
     forecasts = [{'id': 'market-date-prediction', 'symbol': symbol, 'market': market,
                   'issuedAt': issued, 'forecastHorizon': 'next_session',
                   'origin': 'forward_live'}]
+    if implied_market:
+        forecasts[0].pop('market')
     original_forecasts, original_cache = deepcopy(forecasts), deepcopy(cache)
     monkeypatch.setattr(scanner, cache_name, cache)
     monkeypatch.setattr(scanner, '_FORECAST_LEDGER', forecasts)

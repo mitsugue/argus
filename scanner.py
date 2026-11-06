@@ -35438,11 +35438,15 @@ def _dl_resolve_matured(now_iso, max_records=None, return_stats=False,
         kind = {"JP": argus_market_clock.JP_EQUITY,
                 "US": argus_market_clock.US_EQUITY}.get(
                     str(fc.get("market") or "").upper())
+        if kind is None:
+            kind = argus_market_clock.asset_market(str(fc.get("symbol") or ""))
+        zone = {argus_market_clock.JP_EQUITY: TZ_JST,
+                argus_market_clock.US_EQUITY: TZ_ET}.get(kind)
         try:
             instant = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-            if kind is None or instant.tzinfo is None:
+            if zone is None or instant.tzinfo is None:
                 return None
-            return argus_market_clock.market_session(kind, instant)["marketDate"]
+            return instant.astimezone(zone).date().isoformat()
         except (TypeError, ValueError, OverflowError):
             return None
 
