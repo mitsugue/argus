@@ -348,7 +348,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dialogue/OwnerOverview.tsx': 'bffc59eb134b260698646ed146fbd3871f501cf9',
     'web/src/components/dialogue/OwnerOverview.css': 'abbeb648911495be4ef4a62248d40c925ebffa8a',
     'web/scripts/product-integrity.test.cjs': '12ab62a39972e106fc7dde2e1c9c5709c5940c69',
-    'web/src/lib/presentationIntent.ts': '19e8431fe6b6063988a387584f53ea6b3c75726b',
+    'web/src/lib/presentationIntent.ts': '8a8a77623c68d52e3767791a412aeb69d55b9253',
     'web/src/components/today/ArgusEditorialSurface.tsx': 'ffb95e6d77a4884d62664165352a18d13fa0626d',
     'web/src/components/today/ArgusEditorialSurface.css': '97dca89b41a2b445440392c04b5ed49309545d24',
     'test_argus_presentation_intent.py': 'e79beae902a1382fae9e5ea3359e09301abf9733',
