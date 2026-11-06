@@ -331,3 +331,38 @@ def test_repeated_identical_chunk_does_not_repeat_a_prefetched_missing_write(tmp
     backup._publish_chunks(remote, [chunk, chunk], tmp_path)
     assert len(remote.puts) == 1
     assert remote.files[backup.PREFIX + '/chunks/' + identity + '.bin'] == raw
+
+
+@pytest.mark.parametrize('status', [401,403,429,500,502,503,504])
+def test_remote_read_http_status_is_typed_without_body_headers_or_retry(status):
+    import argus_market_input_backup as originals
+    calls=[]
+    class Response:
+        status_code=status
+        closed=False
+        headers={'Authorization':'synthetic-private-value','X-Private':'not-for-diagnostics'}
+        def iter_content(self,size):raise AssertionError('error body read')
+        def close(self):self.closed=True
+    response=Response()
+    def http(method,url,**kwargs):calls.append(method);return response
+    remote=backup.GitHubStore(repo='test-owner/test-private',headers={},http=http)
+    with pytest.raises(ValueError,match='^history_remote_read_unavailable$') as caught:
+        remote.get('fixed-existing-object')
+    assert getattr(caught.value,'status_code',None)==status
+    category=originals.diagnostic_error(caught.value)
+    assert category==f'history_remote_read_http_{status}'
+    projected=originals.status_projection({'status':'FAILED','errorClass':type(caught.value).__name__,
+        'errorCategory':category,'headers':response.headers,'body':'synthetic-private-value'})
+    assert projected=={'status':'FAILED','workerActive':False,
+        'errorClass':'HistoryRemoteReadError','errorCategory':category}
+    assert calls==['GET'] and response.closed
+
+
+def test_unknown_http_status_and_untyped_exception_do_not_expand_diagnostic_text():
+    import argus_market_input_backup as originals
+    error=ValueError('history_remote_read_unavailable');error.status_code=403
+    assert originals.diagnostic_error(error)=='history_remote_read_unavailable'
+    assert originals.diagnostic_error(backup.HistoryRemoteReadError(418))=='history_remote_read_unavailable'
+    assert originals.diagnostic_error(ValueError('synthetic-private-value'))=='UNCLASSIFIED'
+    assert originals.status_projection({'status':'FAILED','errorCategory':'history_remote_read_http_418',
+        'errorClass':'UntrustedError'})=={'status':'FAILED','workerActive':False}
