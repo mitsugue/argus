@@ -20,7 +20,8 @@ import argus_earnings_history as earnings
 import jp_market_acquisition as sources
 import argus_credit_conditions as credit
 import argus_jgb_auction as auctions
-from argus_analysis_history_backup import CHUNK_BYTES, MAX_ARCHIVE_BYTES, MAX_SYNC_SECONDS
+from argus_analysis_history_backup import (CHUNK_BYTES, MAX_ARCHIVE_BYTES, MAX_SYNC_SECONDS,
+                                           HistoryRemoteReadError)
 
 PRIVATE_REPO='mitsugue/argus-l2b-private'
 PREFIX='market-analysis/source-inputs/v1'
@@ -43,8 +44,17 @@ DIAGNOSTIC_ERRORS={'private_original_backup_destination','private_selected_integ
     'history_remote_blob_integrity_invalid','history_remote_write_bound'}
 
 
+DIAGNOSTIC_HTTP_READ_ERRORS = {
+    f'history_remote_read_http_{status}'
+    for status in (400,401,403,408,409,413,422,429,500,502,503,504)}
+DIAGNOSTIC_ERRORS |= DIAGNOSTIC_HTTP_READ_ERRORS
+
+
 def diagnostic_error(exc):
     # Only exact protocol constants may escape; exceptions can contain inputs.
+    if isinstance(exc, HistoryRemoteReadError):
+        category=f'history_remote_read_http_{exc.status_code}'
+        if category in DIAGNOSTIC_HTTP_READ_ERRORS:return category
     text=str(exc)
     return text if text in DIAGNOSTIC_ERRORS else 'UNCLASSIFIED'
 
@@ -65,7 +75,8 @@ def status_projection(state, *, worker_active=False):
     if state.get('errorCategory') in DIAGNOSTIC_ERRORS|{'UNCLASSIFIED'}:
         out['errorCategory']=state['errorCategory']
     if state.get('errorClass') in {'ValueError','TimeoutError','OSError','RuntimeError',
-            'ConnectionError','ReadTimeout','ConnectTimeout','HTTPError','WorkerStartFailed'}:
+            'ConnectionError','ReadTimeout','ConnectTimeout','HTTPError','WorkerStartFailed',
+            'HistoryRemoteReadError'}:
         out['errorClass']=state['errorClass']
     for key in ('chunksTotal','chunksProcessed','archiveBytes'):
         value=state.get(key)

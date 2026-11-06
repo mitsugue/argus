@@ -264,6 +264,14 @@ def synchronize_v1(path, remote, *, last_verified_head=None):
                 'storage': 'EXISTING_PRIVATE_REPOSITORY', 'actionAuthority': False}
 
 
+class HistoryRemoteReadError(ValueError):
+    """A fixed transport category plus a scalar status; never response content."""
+    def __init__(self, status_code):
+        super().__init__('history_remote_read_unavailable')
+        self.status_code = (status_code if type(status_code) is int
+                            and 100 <= status_code <= 599 else None)
+
+
 class GitHubStore:
     """Bounded Contents API on the already configured authenticated connection."""
     write_message = 'Save immutable public market analysis recovery'
@@ -297,7 +305,7 @@ class GitHubStore:
         try:
             self._check_deadline()
             if response.status_code == 404: return None
-            if response.status_code != 200: raise ValueError('history_remote_read_unavailable')
+            if response.status_code != 200: raise HistoryRemoteReadError(response.status_code)
             parts = []; total = 0
             for part in response.iter_content(32768):
                 self._check_deadline()
