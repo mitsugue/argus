@@ -335,7 +335,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/dashboard/OsintDeepDive.tsx': 'df633e3f5170da5d5eb653b7269460a46ece9baa',
     'web/src/components/dashboard/AddAssetModal.tsx': '1bffa7862c536eb0f84fdcdb3971d472cc94ba6c',
     'web/src/components/assetDesk/AssetResearchPanel.tsx': '69d8e0ab11ff66008cfe0b76049e6699a08afe54',
-    'test_argus_v12_3_1.py': '418ef7c191c389740a453a01b35386ffa3dea26e',
+    'test_argus_v12_3_1.py': '0b8efe11ced92e152f111096a44fdec5294b11cf',
     'web/src/components/dashboard/SystemHealthPopover.tsx': '9360fe75e73412502ae2c673914e56c3d8327a75',
     'web/src/routes/DataQualityPage.tsx': '722dac36f536d466edd90b57befdb63700e1c453',
     'web/src/components/common/TriangleStepLoader.tsx': '3408e291f4bf3cd0e357515ce89388da58352e9b',
