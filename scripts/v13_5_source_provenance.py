@@ -77,7 +77,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # 時点検査の全証明一致・入れ子の独立所有・検査後の原入力変更を検証した正確な内容。
     'test_argus_market_data_truth.py': 'dd1996634d4b1e63a6f291e1a958b0698bb400eb',
     # 受領済みの公式結果を既存の見立てとニュースへ渡す正確な内容。
-    'argus_macro_material.py': 'fdabb0863e0df5de12e4dd6c835e232ce7c65bc2',
+    'argus_macro_material.py': 'a93003313d6737e69f48c9769e45f5c5c09ee9dc',
     'test_argus_macro_material.py': 'ea6f6a0f04a2d89d14da1564c613420b6acba98f',
     'docs/operations/official-macro-material.md': 'fe1a36ec2fac6168851d76a14f5407575f371763',
     'web/scripts/official-macro-results.test.cjs': '2b17eeccf570ae468d8cf156f7f0c0a6d54a7ebf',
