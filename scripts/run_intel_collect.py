@@ -310,12 +310,22 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
                     result = body.get("result") or {}
                     failed_feeds = result.get("failedFeeds") or []
                     all_feeds_failed = bool(result.get("feeds")) and len(failed_feeds) >= result["feeds"]
+                    input_warm = result.get("jpMarketEngineInputWarm")
+                    input_failed = isinstance(input_warm, dict) and "error" in input_warm
+                    status, error = body["status"], body.get("errorClass")
+                    if all_feeds_failed:
+                        status, error = "failed", "all_intel_feeds_unavailable"
+                    elif status == "done" and input_failed:
+                        # Worker termination does not establish that the required
+                        # input preparation finished. Keep its original private
+                        # result and fail without restarting or extending work.
+                        status, error = "failed", "market_inputs_unavailable"
                     if private_runtime is not None:
                         _capture_private_runtime(base=base, headers=headers, expected=body,
                             request=request, clock=clock, deadline=deadline, sink=private_runtime)
-                    return {"status": "failed" if all_feeds_failed else body["status"], "runId": run_id,
+                    return {"status": status, "runId": run_id,
                             "startedAt": body.get("startedAt"), "finishedAt": body.get("finishedAt"),
-                            "errorClass": "all_intel_feeds_unavailable" if all_feeds_failed else body.get("errorClass"),
+                            "errorClass": error,
                             "collected": result.get("collected"), "stored": result.get("stored"),
                             "failedFeedCount": len(failed_feeds), "feedCount": result.get("feeds"),
                             # 2026-10-19: the public feed names (no payload), so a failing feed can be named.
