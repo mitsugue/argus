@@ -319,7 +319,19 @@ def _sequence(episode: Mapping[str, Any]) -> list[tuple[str, ...]]:
     return [tuple(sorted(tokens)) for _, tokens in sorted(days.items())]
 
 
-def _edit_distance(left: Sequence[Any], right: Sequence[Any]) -> float:
+def _order_pattern(order):
+    """Prepare one immutable order's bit pattern within one backtest call."""
+    matches = {}
+    try:
+        for i, item in enumerate(order):
+            matches[item] = matches.get(item, 0) | (1 << i)
+    except TypeError:
+        return None
+    return matches
+
+
+def _edit_distance(left: Sequence[Any], right: Sequence[Any], *,
+                   left_pattern=None, right_pattern=None) -> float:
     """Exact normalized Levenshtein distance between simultaneous-day tokens.
 
     Bit vectors evaluate the same unit insertion/deletion/substitution matrix
@@ -335,13 +347,17 @@ def _edit_distance(left: Sequence[Any], right: Sequence[Any]) -> float:
     # longer than a machine word. Engine tokens are tuples of strings.
     if len(left) > len(right):
         left, right = right, left
-    matches = {}
+        left_pattern, right_pattern = right_pattern, left_pattern
+    matches = left_pattern
     try:
-        for i, item in enumerate(left):
-            matches[item] = matches.get(item, 0) | (1 << i)
+        if matches is None:
+            matches = {}
+            for i, item in enumerate(left):
+                matches[item] = matches.get(item, 0) | (1 << i)
         # Keep equality-only callers with unhashable tokens compatible too.
-        for item in right:
-            hash(item)
+        if right_pattern is None:
+            for item in right:
+                hash(item)
     except TypeError:
         previous = list(range(len(right) + 1))
         for i, item in enumerate(left, 1):
@@ -382,7 +398,8 @@ def weighted_distance(distances: Mapping[str, float | None], policy: AnalogPolic
 
 def component_distances(current: Mapping[str, Any], candidate: Mapping[str, Any], policy: AnalogPolicy, *,
                         current_shape=None, candidate_shape=None, current_order=None,
-                        candidate_order=None) -> dict[str, Any]:
+                        candidate_order=None, current_order_pattern=None,
+                        candidate_order_pattern=None) -> dict[str, Any]:
     """The four-component distance between two sealed episodes.
 
     Shared by the selection and by the walk-forward validation so both use
@@ -401,7 +418,9 @@ def component_distances(current: Mapping[str, Any], candidate: Mapping[str, Any]
     state_distance = math.sqrt(sum(v * v for v in state_deltas.values()) / len(common)) if common else None
     current_order = current_order if current_order is not None else _sequence(current)
     past_order = candidate_order if candidate_order is not None else _sequence(candidate)
-    order_distance = _edit_distance(current_order, past_order) if current_order and past_order else None
+    order_distance = (_edit_distance(current_order, past_order,
+                       left_pattern=current_order_pattern, right_pattern=candidate_order_pattern)
+                      if current_order and past_order else None)
     common_reactions = sorted(set(current["reactions"]) & set(candidate["reactions"]))
     reaction_distance = (math.sqrt(sum((current["reactions"][key]["value"] -
                                        candidate["reactions"][key]["value"]) ** 2

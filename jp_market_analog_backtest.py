@@ -22,7 +22,7 @@ import math
 import statistics
 from typing import Any, Callable, Mapping, Sequence
 
-from jp_market_analogs import (AnalogPolicy, _sequence, _shape, component_distances,
+from jp_market_analogs import (AnalogPolicy, _sequence, _shape, _order_pattern, component_distances,
                                robust_feature_scales)
 from jp_market_engine import _knowledge_time, _instant
 
@@ -165,11 +165,11 @@ def weight_search(candidates, closes, session_dates, *, policy: AnalogPolicy, st
     Component distances are computed once per (evaluation, candidate) and only
     re-weighted.
     """
-    from jp_market_analogs import weighted_distance
     positions = {day: index for index, day in enumerate(session_dates)}
     ordered = sorted((c for c in candidates if c.get("status") == "AVAILABLE" and c["anchorDate"] in positions),
                      key=lambda c: positions[c["anchorDate"]])
     prepared = [(positions[c["anchorDate"]], c, _shape(c), _sequence(c)) for c in ordered]
+    order_patterns = [_order_pattern(order) for _, _, _, order in prepared]
     last_position = len(session_dates) - 1
     max_h = max(HORIZONS)
     policies = (yearly_policies(state_rows, [c["anchorDate"][:4] for c in ordered], policy, recent_years)
@@ -181,6 +181,9 @@ def weight_search(candidates, closes, session_dates, *, policy: AnalogPolicy, st
     weight_policies = [AnalogPolicy(**{**{k: getattr(policy, k) for k in ("policy_id", "lookback_sessions",
                        "maximum_candidates", "minimum_separation_sessions", "maximum_distance", "shape_scale_pct",
                        "state_scales")}, "component_weights": weights}) for weights in grid]
+    # Each policy and each availability pattern has the same denominator for
+    # every pair. Retain at most the four components' 16 patterns, not pairs.
+    weight_vectors = [{} for _ in weight_policies]
     records = {index: [] for index in range(len(grid))}
     for i in evaluation_indices:
         pos, current, shape, order = prepared[i]
@@ -191,12 +194,23 @@ def weight_search(candidates, closes, session_dates, *, policy: AnalogPolicy, st
             if pos - cpos < year_policy.lookback_sessions + 1:
                 continue
             item = component_distances(current, candidate, year_policy, current_shape=shape,
-                                       candidate_shape=cshape, current_order=order, candidate_order=corder)
-            parts.append((item["distances"], item["complete"], candidate["anchorDate"], cpos))
+                                       candidate_shape=cshape, current_order=order, candidate_order=corder,
+                                       current_order_pattern=order_patterns[i],
+                                       candidate_order_pattern=order_patterns[j])
+            available = tuple((key, value) for key, value in item["distances"].items() if value is not None)
+            keys = tuple(key for key, _ in available)
+            values = tuple(value for _, value in available)
+            parts.append((keys, values, item["complete"], candidate["anchorDate"], cpos))
+            if weight_vectors and keys not in weight_vectors[0]:
+                for index, weighted_policy in enumerate(weight_policies):
+                    weights = tuple(weighted_policy.weight_for(key) for key in keys)
+                    weight_vectors[index][keys] = (weights, sum(weights), not weighted_policy.component_weights)
         for index, weighted_policy in enumerate(weight_policies):
             scored = []
-            for distances, complete, anchor, cpos in parts:
-                distance = weighted_distance(distances, weighted_policy)
+            for keys, values, complete, anchor, cpos in parts:
+                weights, total, plain = weight_vectors[index][keys]
+                distance = (sum(values) / len(values) if plain else
+                            sum(weight * value for weight, value in zip(weights, values)) / total)
                 if distance <= year_policy.maximum_distance:
                     scored.append((not complete, distance, anchor, cpos))
             chosen = _select(scored, year_policy)
@@ -255,6 +269,7 @@ def walk_forward(candidates: Sequence[Mapping[str, Any]], closes: Mapping[str, f
     ordered = sorted((c for c in candidates if c.get("status") == "AVAILABLE" and c["anchorDate"] in positions),
                      key=lambda c: positions[c["anchorDate"]])
     prepared = [(positions[c["anchorDate"]], c, _shape(c), _sequence(c)) for c in ordered]
+    order_patterns = [_order_pattern(order) for _, _, _, order in prepared]
     last_position = len(session_dates) - 1
     max_h = max(HORIZONS)
     if policy_for_year is None:
@@ -275,7 +290,9 @@ def walk_forward(candidates: Sequence[Mapping[str, Any]], closes: Mapping[str, f
             if pos - cpos < year_policy.lookback_sessions + 1:
                 continue
             parts = component_distances(current, candidate, year_policy, current_shape=shape,
-                                        candidate_shape=cshape, current_order=order, candidate_order=corder)
+                                        candidate_shape=cshape, current_order=order, candidate_order=corder,
+                                        current_order_pattern=order_patterns[i],
+                                        candidate_order_pattern=order_patterns[j])
             if parts["distance"] <= year_policy.maximum_distance:
                 scored.append((not parts["complete"], parts["distance"], candidate["anchorDate"], cpos))
         scored.sort()

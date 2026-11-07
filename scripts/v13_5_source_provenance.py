@@ -35,12 +35,16 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # Exact bounded per-call comparison preparation and numerical parity.
+    'test_jp_market_backtest_preparation.py': '32b5ced0657ba19d31a1a4331c51d7ce7287fc57',
+    'docs/operations/comparison-preparation-reuse.md': '437fb2e16bcfe0106cab537408e1c896d228c300',
+
     # 既存の入力更新の実行側だけを記録する固定項目と境界検査。
     'argus_input_preparation_timing.py': 'e01f0302fb8718b4ff66fcbee0f612005791522b',
     'test_argus_input_preparation_timing.py': '5a12cef1c03e86cc5b9512a215ef5574c7096469',
     'docs/operations/input-preparation-timing.md': 'e3eb0a5f70ec302504ce154497335fcbffdad539',
     # Exact edit-distance implementation parity regression.
-    'test_jp_market_order_distance.py': '595bf31bdd6dfda62bedf06a274f1ce1f634a197',
+    'test_jp_market_order_distance.py': '3fb226c65d432bd7f2c835ab2833150aa768830d',
     'test_argus_macro_post_completion.py': 'bd7f1067e525f024c7d09321ef0feb6bb788e0fe',
     # Exact retired-residency and private-loader ownership regression.
     'test_argus_retired_asset_residency_runtime.py': 'd615682758101fd655c5d9d45fd3266ff1d70880',
@@ -446,7 +450,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_cpi_display_rounding.py': '1615a9459bf8763a1bba6978b46c8f895271a1db',
     'docs/V13_6_ANALYSIS_ACCEPTANCE.md': '1eec780bbdf73a3120cf2cf3ba7c0df16f68f4d9',
     'docs/V13_6_COMPUTE_CONTRACT.md': '4ad0e52d419c261b24be8775d9c635bd310e9417',
-    'jp_market_analogs.py': '5218713abd6bc75ffdb887b5ac9e900a76464c6e',
+    'jp_market_analogs.py': 'a516a80e810babdf77d2193a380487925df93550',
     'jp_market_dynamics.py': '36624677a01861c4adfa706e4d5b9dfa405212dd',
     'jp_market_events.py': '9798f7172c58c3d94748641d4ca67fd4dde6f4cf',
     'jp_market_features.py': '58cd21c88b7d730a8f187e06ba5131c5dbac89da',
