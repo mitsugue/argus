@@ -1,4 +1,5 @@
 """Owner diagnostic privacy, partial progress and existing warm boundary."""
+from argus_input_preparation_timing import InputPreparationTiming
 import ast
 import copy
 import json
@@ -97,7 +98,8 @@ def _existing_endpoint(state):
     def forbidden():
         calls.append("forbidden")
         raise AssertionError("No provider, collection, history or AI call is permitted")
-    scope = {"request": request, "jsonify": jsonify, "copy": copy,
+    scope = {"_MARKET_INPUT_PREPARATION_TIMING": InputPreparationTiming(),
+             "request": request, "jsonify": jsonify, "copy": copy,
              "_require_admin": lambda: (True, None, 200) if request.headers.get("X-ARGUS-ADMIN-TOKEN") == "synthetic-admin" else (False, {"error": "unauthorized"}, 401),
              "_MEMORY_ATTRIBUTION": SimpleNamespace(view=lambda: {}),
              "_MEMORY_OPERATIONS": SimpleNamespace(view=lambda: {}),
