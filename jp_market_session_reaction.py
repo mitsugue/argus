@@ -32,6 +32,30 @@ RESEARCH_AVAILABILITY = 'RESEARCH_KNOWN_AT_ENDPOINT_CLOSE'
 
 
 def measure(*, event, rows, sessions, cutoff, instrument=INSTRUMENT, research_availability=False):
+    return _measure(event=event, rows=rows, sessions=sessions, cutoff=cutoff,
+                    instrument=instrument, research_availability=research_availability,
+                    _session_close=session_close)
+
+
+def _batch_measurer():
+    # Only this pure date conversion is prepared across a single adapter call.
+    # Every event still validates its calendar, prices, receipts and provenance.
+    # The bounded cache dies with the call; no input rows or results are retained.
+    from bisect import bisect_left
+    from functools import lru_cache, partial
+    close = lru_cache(maxsize=3000)(session_close)
+    @lru_cache(maxsize=1)
+    def timeline(days):
+        return tuple(close(day) for day in days)
+    def split(sessions, at):
+        days = tuple(sessions)
+        position = bisect_left(timeline(days), at)
+        return days[:position], days[position:]
+    return partial(_measure, _session_close=close, _split_sessions=split)
+
+
+def _measure(*, event, rows, sessions, cutoff, _session_close,
+             instrument=INSTRUMENT, research_availability=False, _split_sessions=None):
     if instrument != INSTRUMENT:
         raise ValueError('cash_index_identity_required')
     if len(rows) > 3000 or len(sessions) > 3000:
@@ -50,8 +74,13 @@ def measure(*, event, rows, sessions, cutoff, instrument=INSTRUMENT, research_av
         raise ValueError('research_time_basis_requires_research_availability')
     if not research_availability and event.get('timeBasis') not in {'OFFICIAL_EMBARGO_BOUNDARY', 'VERIFIED_ACTUAL_PUBLICATION'}:
         raise ValueError('scheduled_time_is_not_actual_evidence')
-    before = [day for day in sessions if session_close(day) < at]
-    after = [day for day in sessions if session_close(day) >= at]
+    if _split_sessions is None:
+        before = [day for day in sessions if _session_close(day) < at]
+        after = [day for day in sessions if _session_close(day) >= at]
+    else:
+        # The complete ordered calendar was validated above on every event.
+        # bisect_left keeps an event exactly at the close in the after side.
+        before, after = _split_sessions(sessions, at)
     if not before:
         raise ValueError('baseline_calendar_missing')
     baseline = before[-1]
@@ -77,7 +106,7 @@ def measure(*, event, rows, sessions, cutoff, instrument=INSTRUMENT, research_av
                'basis': 'RECONSTRUCTED_DAILY_CLOSE_REFERENCE', 'actionAuthority': False, 'probability': None}
         if len(after) < count:
             out['reason'] = 'future_session_calendar_missing'
-        elif session_close(span[-1]) > now:
+        elif _session_close(span[-1]) > now:
             out['reason'] = 'endpoint_not_closed'
         elif any(day not in prices for day in span):
             out['reason'] = 'price_session_missing'
@@ -93,7 +122,7 @@ def measure(*, event, rows, sessions, cutoff, instrument=INSTRUMENT, research_av
                         raise ValueError('invalid_price')
                     if instant(row['receivedAt']) > now:
                         raise ValueError('price_receipt_after_cutoff')
-                    if instant(row['receivedAt']) < session_close(row['date']):
+                    if instant(row['receivedAt']) < _session_close(row['date']):
                         raise ValueError('price_receipt_before_close')
                     if not row.get('sourceSha256') or not row.get('sourceRef'):
                         raise ValueError('price_provenance_missing')
@@ -101,7 +130,7 @@ def measure(*, event, rows, sessions, cutoff, instrument=INSTRUMENT, research_av
             except (ValueError, KeyError, InvalidOperation):
                 out['reason'] = 'price_or_receipt_invalid'
             else:
-                known = (session_close(span[-1]) if research_availability else
+                known = (_session_close(span[-1]) if research_availability else
                          max([received, *[instant(row['receivedAt']) for row in selected]]))
                 out.update(status='AVAILABLE', value=float((values[-1] / values[0] - 1) * 100),
                            periodEnd=span[-1], date=span[-1], availableFrom=known.isoformat(),
