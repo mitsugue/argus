@@ -44,7 +44,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_jp_market_candidate_window_cache.py': '0bbf16a9e608e414bc1c475b2f0d0d93f6e06d73',
     # Exact bounded per-call comparison preparation and numerical parity.
     'test_jp_market_backtest_preparation.py': '32b5ced0657ba19d31a1a4331c51d7ce7287fc57',
-    'docs/operations/comparison-preparation-reuse.md': '7840e7b7bf2734daf49c3b25ac2c97f66b15ec46',
+    'docs/operations/comparison-preparation-reuse.md': 'fe5baf3ebb9fda9976d1e5f536d5ff61b4aa4bcb',
 
     # 既存の入力更新の実行側だけを記録する固定項目と境界検査。
     'argus_input_preparation_timing.py': 'e01f0302fb8718b4ff66fcbee0f612005791522b',
@@ -746,6 +746,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_comparison_inputs.py",
+    "argus_comparison_inputs.py",
     "test_outcome_retry_unittest.py",
     "test_argus_outcome_price_cache.py",
     "argus_outcome_price_cache.py",
