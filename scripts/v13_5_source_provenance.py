@@ -35,6 +35,10 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # 既存の入力更新の実行側だけを記録する固定項目と境界検査。
+    'argus_input_preparation_timing.py': 'e01f0302fb8718b4ff66fcbee0f612005791522b',
+    'test_argus_input_preparation_timing.py': '5a12cef1c03e86cc5b9512a215ef5574c7096469',
+    'docs/operations/input-preparation-timing.md': 'e3eb0a5f70ec302504ce154497335fcbffdad539',
     # Exact edit-distance implementation parity regression.
     'test_jp_market_order_distance.py': '595bf31bdd6dfda62bedf06a274f1ce1f634a197',
     'test_argus_macro_post_completion.py': 'bd7f1067e525f024c7d09321ef0feb6bb788e0fe',
