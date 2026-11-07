@@ -18876,6 +18876,13 @@ def _market_brief_ai_polish(brief):
                     if plan is not None:
                         diagnostic["presentationRepair"] = {"from": str(exc), "changes": changes[:12]}
                         return plan
+            if str(exc) == "presentation_caption_evidence":
+                guidance = argus_presentation_intent.caption_reference_guidance(
+                    value.get("presentation"), presentation_catalog, context)
+                if guidance:
+                    diagnostic["presentationCitationErrors"] = [
+                        {"id": row["id"], "invalidReferenceCount": row["invalidReferenceCount"],
+                         "allowedReferenceCount": len(row["allowedEvidenceIds"])} for row in guidance]
             diagnostic.update(status="REJECTED", reason="presentation_invalid",
                               section="presentation", detail=str(exc))
             return None
@@ -18893,6 +18900,19 @@ def _market_brief_ai_polish(brief):
             + "。数値は根拠欄とチャートに残すので、説明文では新しい数値や丸めた値を使わず、方向と条件を言葉で説明してください。"
             "根拠IDとFACT/INFERENCE/UNKNOWNの条件を守り、全6項目と表示候補を全て含むpresentationを返してください。\n前の回答: "
             + json.dumps(compact_references(raw) if raw else original_raw, ensure_ascii=False))
+        if isinstance(raw, dict) and validation.get("detail") == "presentation_caption_evidence":
+            guidance = argus_presentation_intent.caption_reference_guidance(
+                raw.get("presentation"), presentation_catalog, context)
+            if guidance:
+                # The established short-reference contract maps evidenceIds,
+                # not arbitrary field names. Keep the allowed-pool label but
+                # serialize its references through that exact existing lane.
+                guidance = [{**row, "allowedEvidenceIds": compact_references(
+                    {"evidenceIds": row["allowedEvidenceIds"]})["evidenceIds"]} for row in guidance]
+                correction += ("\n引用の修正対象: " + json.dumps(guidance, ensure_ascii=False)
+                    + "。各idのcaptionはallowedEvidenceIdsだけを使い、本文もその根拠が支える範囲へ書き直してください。"
+                    "元の主張を保つために無関係な根拠へ付け替えてはいけません。"
+                    "別候補の根拠で述べたい内容は、その候補のcaptionで述べてください。")
         diag = {}
         raw = _openai_prose(correction, max_out=5200,
             system=argus_presentation_intent.VOICE,
