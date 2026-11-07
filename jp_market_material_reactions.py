@@ -9,7 +9,7 @@ from datetime import date
 import math
 import re
 
-from jp_market_session_reaction import measure, instant, fingerprint, INSTRUMENT
+from jp_market_session_reaction import measure, _batch_measurer, instant, fingerprint, INSTRUMENT
 
 MAX_EVENTS = 200
 MAX_BARS = 3000
@@ -83,6 +83,7 @@ def cached_reactions(records, *, rows, sessions, cutoff):
     if len(records) > MAX_EVENTS:
         raise ValueError('macro_event_bound_exceeded')
     reasons = Counter(); output = []
+    batch_measure = _batch_measurer()
     for record in records:
         evidence = record.get('eventTimeEvidence')
         if not isinstance(evidence, dict):
@@ -100,7 +101,7 @@ def cached_reactions(records, *, rows, sessions, cutoff):
             reasons['actual_publication_proof_missing'] += 1
             continue
         try:
-            references = measure(event=event, rows=rows, sessions=sessions, cutoff=cutoff)
+            references = batch_measure(event=event, rows=rows, sessions=sessions, cutoff=cutoff)
         except (ValueError, KeyError, TypeError, AttributeError):
             reasons['event_or_cash_evidence_invalid'] += 1
             continue
@@ -140,10 +141,11 @@ def historical_reactions(events, *, rows, sessions, cutoff, exclude=()):
     if len(events) > MAX_HISTORICAL_EVENTS:
         raise ValueError('historical_event_bound_exceeded')
     taken = set(exclude); reasons = Counter(); output = []
+    batch_measure = _batch_measurer()
     for event in events:
         try:
-            references = measure(event=event, rows=rows, sessions=sessions, cutoff=cutoff,
-                                 research_availability=True)
+            references = batch_measure(event=event, rows=rows, sessions=sessions, cutoff=cutoff,
+                                       research_availability=True)
         except (ValueError, KeyError, TypeError, AttributeError):
             reasons['historical_event_or_cash_evidence_invalid'] += 1
             continue
