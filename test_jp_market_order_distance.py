@@ -9,7 +9,7 @@ import jp_market_analogs as analogs
 from test_jp_market_analogs import DAYS, POLICY, episode
 
 
-def matrix_distance(left, right):
+def matrix_distance(left, right, *, left_pattern=None, right_pattern=None):
     """Independent unit-cost dynamic-programming reference."""
     matrix = [[0] * (len(right) + 1) for _ in range(len(left) + 1)]
     for i in range(len(left) + 1):
