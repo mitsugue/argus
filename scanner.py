@@ -43927,16 +43927,21 @@ def _jp_market_comparison_calculate(horizon):
             "states": _JP_MARKET_FEATURE_HISTORY.get("features", ()),
             "conditions": _JP_MARKET_FEATURE_HISTORY.get("conditions", ()),
             "reactions": material["rows"], "research": research["rows"]})
+        import argus_comparison_inputs
+        comparison_inputs = argus_comparison_inputs.prepare({
+            "states": _JP_MARKET_FEATURE_HISTORY.get("features", ()),
+            "conditions": _JP_MARKET_FEATURE_HISTORY.get("conditions", ()),
+            "reactions": material["rows"], "research": research["rows"]})
         result = jp_market_price_paths.cached_index_comparison(
             rows, cutoff=cutoff, session_dates=sessions, horizon_sessions=horizon,
             acquired_at=cached.get("acquiredAt"),
             # The same current estimate as the morning map and D04. An
             # unavailable estimate is not substituted by the old PER lane.
             valuation=(_level_map_current_valuation(cutoff, nikkei_rows=rows) or {"basis": jp_market_level_map.EPS_BASIS}),
-            state_rows=_JP_MARKET_FEATURE_HISTORY.get("features", ()),
-            condition_rows=_JP_MARKET_FEATURE_HISTORY.get("conditions", ()),
-            reaction_rows=material["rows"],
-            research_reaction_rows=research["rows"],
+            state_rows=comparison_inputs["states"],
+            condition_rows=comparison_inputs["conditions"],
+            reaction_rows=comparison_inputs["reactions"],
+            research_reaction_rows=comparison_inputs["research"],
             # Walk-forward validation, computed when the history or the
             # policy changes and shared by the four horizons (2026-09-30).
             backtest_cache=_JP_ANALOG_BACKTEST_CACHE)
