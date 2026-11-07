@@ -99,6 +99,44 @@ def _validate_caption(value: Any, source: Mapping[str, Any], context: Mapping[st
         raise ValueError('presentation_caption_unsupported_claim')
 
 
+def caption_reference_guidance(plan: Any, catalog: Mapping[str, Any],
+                               context: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Bounded correction hints from the existing inventory, never model text.
+
+    These hints cannot admit a plan. The unchanged validator checks the next
+    answer, including each caption's claims and verification scope. Unknown
+    identifiers are counted; caption text is not read or reflected.
+    """
+    if not isinstance(plan, Mapping) or not isinstance(plan.get('elements'), list):
+        return []
+    known = {r['id']: r for r in catalog.get('elements', []) if isinstance(r, Mapping)
+             and isinstance(r.get('id'), str)}
+    facts = {r['evidenceId'] for r in context.get('facts', []) if isinstance(r, Mapping)
+             and isinstance(r.get('evidenceId'), str)}
+    result = []
+    seen = set()
+    for row in plan['elements'][:MAX_ELEMENTS]:
+        if not isinstance(row, Mapping) or not isinstance(row.get('id'), str):
+            continue
+        identifier = row['id']
+        source = known.get(identifier)
+        caption = row.get('caption')
+        if (source is None or not identifier.startswith('evidence-') or identifier in seen
+                or not isinstance(caption, Mapping) or not isinstance(caption.get('evidenceIds'), list)):
+            continue
+        seen.add(identifier)
+        allowed = [ref for ref in source.get('evidenceIds', [])
+                   if isinstance(ref, str) and ref in facts][:24]
+        invalid = sum(not isinstance(ref, str) or ref not in allowed
+                      for ref in caption['evidenceIds'][:24])
+        if invalid:
+            result.append({'id': identifier, 'invalidReferenceCount': invalid,
+                           'allowedEvidenceIds': allowed})
+            if len(result) == 6:
+                break
+    return result
+
+
 def validate_plan(value: Any, catalog: Mapping[str, Any], context=None) -> dict[str, Any]:
     """No omitted inventory entries, replaced prices, or demoted urgent items."""
     expected = {k: v for k, v in catalog.items() if k != 'inventoryId'}
