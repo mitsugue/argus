@@ -117,6 +117,67 @@ def test_public_brief_does_not_start_or_run_the_independent_ai_worker(monkeypatc
     assert calls == []
 
 
+def test_headline_comparison_keeps_publication_receipt_and_previous_evidence_distinct():
+    old = {'evidenceId': 'old', 'priority': 'P0', 'source': 'trusted_mail',
+           'verification': 'UNCONFIRMED', 'provenance': {
+               'publishedAt': '2026-11-05T08:00:00Z', 'receivedAt': '2026-11-06T13:40:00Z'}}
+    release = {'evidenceId': 'new', 'priority': 'P0', 'source': 'official_macro_result',
+               'verification': 'VERIFIED', 'provenance': {
+                   'publishedAt': None, 'receivedAt': '2026-11-06T13:35:07Z'}}
+    context = {'facts': [old, release, {'evidenceId': 'position', 'priority': 'P1'}],
+               'previousFacts': [old], 'previousAt': '2026-11-06T13:00:00Z'}
+    before = copy.deepcopy(context)
+    result = mb.headline_context(context, as_of='2026-11-06T13:50:00Z')
+    assert context == before
+    assert [r['evidenceId'] for r in result['candidates']] == ['old', 'new']
+    assert result['candidates'][0]['publishedAt'] == '2026-11-05T08:00:00Z'
+    assert result['candidates'][0]['changedEvidenceSincePrevious'] is False
+    assert result['candidates'][1]['publishedAt'] is None
+    assert result['candidates'][1]['changedEvidenceSincePrevious'] is True
+    assert result['fixedWinner'] is None and result['receiptIsPublication'] is False
+
+
+@pytest.mark.parametrize('selected', [0, 1])
+def test_integrated_ai_can_choose_new_material_or_continuing_risk_without_an_extra_call(monkeypatch, selected):
+    b = brief()
+    b['facts'] = [
+        {'text': '雇用統計の結果を受領。市場予想との差は未確認。', 'verification': 'VERIFIED',
+         'priority': 'P0', 'source': 'official_macro_result',
+         'provenance': {'receivedAt': '2026-09-12T09:58:00Z'}},
+        {'text': '株式市場の急落が継続。', 'verification': 'VERIFIED',
+         'priority': 'P0', 'source': 'official_sensor',
+         'provenance': {'observedAt': '2026-09-12T09:59:00Z'}}]
+    context = mb.unified_context(b)
+    b['unifiedContext'] = context
+    before = copy.deepcopy(context)
+    calls = []
+    def provider(user, **kwargs):
+        short, raw = model_response(user)
+        calls.append(short)
+        assert short['headlineComparison']['asOf'] == b['generatedAt']
+        assert short['headlineComparison']['selectionBy'] == 'INTEGRATED_AI'
+        refs = [r['evidenceId'] for r in short['facts']]
+        assert [r['evidenceId'] for r in short['headlineComparison']['candidates']] == refs
+        assert '新しいという理由だけで固定せず' in user
+        for name in ('view', 'reasons', 'next', 'invalidation'):
+            raw[name] = {'textJa': '材料の変化を確認します。', 'kind': 'INFERENCE', 'evidenceIds': refs}
+        raw['view']['evidenceIds'] = [refs[selected]]
+        raw['view']['textJa'] = ('雇用統計の結果を受け、市場の反応を見ています。' if selected == 0 else
+                                 '急落の継続を最も警戒しています。')
+        raw['reasons']['textJa'] = ('新たな雇用統計を中心に見ます。' if selected == 0 else
+                                    '雇用統計より、進行中の株安の影響を重く見ています。')
+        kwargs['diagnostic'].update(outcome='ok')
+        return raw
+    monkeypatch.setattr(scanner, '_openai_prose', provider)
+    result = scanner._market_brief_ai_polish(b)
+    assert len(calls) == 1 and result['unifiedStatus'] == 'GENERATED'
+    assert result['unifiedContext'] == before
+    decision = result['headlineDecision']
+    assert decision['selectedEvidenceIds'] == [context['facts'][selected]['evidenceId']]
+    assert decision['selectionReason'] == result['unifiedSummary']['sections']['reasons']
+    assert result['aiText']['nowJa'] == result['unifiedSummary']['sections']['view']['textJa']
+
+
 def brief(text="VIX 20、上昇を観測", verified="VERIFIED", source="official_sensor"):
     return mb.compose_brief(now_iso="2026-09-12T10:00:00Z", shock_events=[
         {"severity": "HIGH", "headlineJa": text}]) | {
@@ -136,7 +197,7 @@ def response(context):
 
 def model_response(user):
     instruction, payload = user.split("\n", 1)
-    context = json.loads(payload.split("\n前の回答は", 1)[0])
+    context = json.loads(payload.split("\n前の回答は", 1)[0].split("\n必須:", 1)[0])
     catalog = json.loads(instruction.split("表示候補: ", 1)[1])
     result = response(context)
     ordered = sorted(catalog['elements'], key=lambda row: 0 if row['id']=='view' else 1 if row['urgent'] else 2)

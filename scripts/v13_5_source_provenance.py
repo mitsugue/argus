@@ -77,8 +77,8 @@ REVIEWED_EXTENSION_BLOBS = {
     # 時点検査の全証明一致・入れ子の独立所有・検査後の原入力変更を検証した正確な内容。
     'test_argus_market_data_truth.py': 'dd1996634d4b1e63a6f291e1a958b0698bb400eb',
     # 受領済みの公式結果を既存の見立てとニュースへ渡す正確な内容。
-    'argus_macro_material.py': 'fdabb0863e0df5de12e4dd6c835e232ce7c65bc2',
-    'test_argus_macro_material.py': 'b5e68b9722079359a1f74f72a21c527e80d94332',
+    'argus_macro_material.py': 'a93003313d6737e69f48c9769e45f5c5c09ee9dc',
+    'test_argus_macro_material.py': 'ea6f6a0f04a2d89d14da1564c613420b6acba98f',
     'docs/operations/official-macro-material.md': 'fe1a36ec2fac6168851d76a14f5407575f371763',
     'web/scripts/official-macro-results.test.cjs': '2b17eeccf570ae468d8cf156f7f0c0a6d54a7ebf',
     # 通常復帰の本人確認と暗号化済み表示復元に限った正確な検査済み内容。
@@ -454,7 +454,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_ai_usage_store.py': '03dce630d6b901cc3e4277c78a7a241b2fac724a',
     'test_argus_macro_result_revisions.py': '6b073b4822de5ba05d77133e171d28082ff54cf1',
     'test_argus_macro_results.py': '36001f5c58b9f9b21f50fa08a935a7e1bd763fe7',
-    'test_argus_unified_brief.py': '80ac20a586d40f8da40f340095b2a07c20e0c67e',
+    'test_argus_unified_brief.py': 'beafbfeb22bc2b5f3c334a59f0377dd96a4974b0',
     'test_jp_market_analogs.py': 'eebf74ab91de195eaed4587dd4f08bf384f17b30',
     'test_jp_market_comparison_runtime.py': '5661ce8d69b9c630b7685ac98c92d4ca6b369b24',
     'test_jp_market_dynamics.py': 'dab9901948bb7c6ab339ee5d4b7a8244eeb79cf6',
