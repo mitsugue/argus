@@ -43664,6 +43664,7 @@ def _index_research_warm():
             key_started = time.monotonic()
             key_cpu_started = time.thread_time()
             calibration_key_before = _JP_ANALOG_BACKTEST_CACHE.get("key")
+            _JP_ANALOG_BACKTEST_CACHE.pop("candidatePreparation", None)
             kind = None
             try:
                 kind, index, interval = key.split(":")
@@ -43709,6 +43710,9 @@ def _index_research_warm():
                         outcome["calibrationStatus"] = (
                             "REUSED" if calibration_key_before == calibration_key_after else "CALCULATED"
                         ) if complete else "NOT_EVALUABLE"
+                        preparation = _JP_ANALOG_BACKTEST_CACHE.get("candidatePreparation")
+                        if complete and isinstance(preparation, dict):
+                            outcome["candidatePreparation"] = copy.deepcopy(preparation)
         _INDEX_RESEARCH_STATUS.update(status="PARTIAL" if failures else "AVAILABLE",
             updated=updated, unavailable=failures, retained=retained, lastCompletedAt=_ai_now_iso(),
             outcomes=outcomes, currentTarget=None)

@@ -163,3 +163,26 @@ def test_failed_study_is_not_reported_as_a_cache_hit(monkeypatch):
         if key.startswith('comparison:'):
             assert row['status'] == 'exception' and row['calibrationStatus'] == 'NOT_EVALUABLE'
             assert row['elapsedSeconds'] >= 0 and row['cpuSeconds'] >= 0
+
+
+def test_candidate_preparation_observation_is_private_and_never_stale(monkeypatch):
+    research_host(monkeypatch, restored=True)
+    preparation = {'status': 'REBUILT', 'changedInputs': ['research'], 'builtCandidates': 120,
+                   'elapsedSeconds': 3.0, 'cpuSeconds': 2.5}
+    def compare(horizon):
+        scanner._JP_ANALOG_BACKTEST_CACHE['candidatePreparation'] = deepcopy(preparation)
+        return {'status': 'available', 'comparison': {'horizonSessions': horizon}}
+    monkeypatch.setattr(scanner, '_jp_market_comparison_calculate', compare)
+    scanner._index_research_warm()
+    assert scanner._INDEX_RESEARCH_STATUS['outcomes']['comparison:N225:1']['candidatePreparation'] == preparation
+    assert 'candidatePreparation' not in json.dumps(scanner._INDEX_RESEARCH_REPORTS)
+    scanner._INDEX_RESEARCH_STATUS['lastAttemptMonotonic'] = -1e20
+    def fail(horizon):
+        assert 'candidatePreparation' not in scanner._JP_ANALOG_BACKTEST_CACHE
+        raise ValueError('synthetic_failure_before_candidate')
+    monkeypatch.setattr(scanner, '_jp_market_comparison_calculate', fail)
+    scanner._index_research_warm()
+    for key, value in scanner._INDEX_RESEARCH_STATUS['outcomes'].items():
+        if key.startswith('comparison:'):
+            assert value['calibrationStatus'] == 'NOT_EVALUABLE'
+            assert 'candidatePreparation' not in value

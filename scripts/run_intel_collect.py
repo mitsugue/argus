@@ -96,6 +96,19 @@ def private_runtime_record(body, expected):
             'cpuSeconds': _private_seconds(row.get('cpuSeconds')),
             'calibrationStatus': row.get('calibrationStatus') if row.get('calibrationStatus') in
                 ('REUSED', 'CALCULATED', 'NOT_EVALUABLE') else None}
+        preparation = row.get('candidatePreparation')
+        if isinstance(preparation, dict):
+            changes = preparation.get('changedInputs')
+            count = preparation.get('builtCandidates')
+            outcomes[key]['candidatePreparation'] = {
+                'status': preparation.get('status') if preparation.get('status') in
+                    ('COLD', 'REBUILT', 'REUSED', 'UNKNOWN_BASELINE', 'UNCACHEABLE') else None,
+                'changedInputs': [name for name in
+                    ('prices', 'states', 'conditions', 'reactions', 'research', 'calendar', 'policy')
+                    if isinstance(changes, list) and name in changes],
+                'builtCandidates': count if type(count) is int and 0 <= count <= 3000 else None,
+                'elapsedSeconds': _private_seconds(preparation.get('elapsedSeconds')),
+                'cpuSeconds': _private_seconds(preparation.get('cpuSeconds'))}
     bounds = {key: _private_stamp(expected.get(key)) for key in ('startedAt', 'finishedAt')}
     research_bounds = {key: _private_stamp(research.get(key))
                        for key in ('lastStartedAt', 'lastCompletedAt')}

@@ -184,6 +184,23 @@ def test_runtime_projection_is_closed_and_does_not_infer_collection_cpu_ownershi
     assert private_runtime_record(raw, expected)['currentRssMib'] is None
 
 
+def test_candidate_preparation_projection_never_exports_components_or_free_text():
+    from scripts.run_intel_collect import private_runtime_record
+    raw = runtime_fixture()
+    row = raw['indexResearch']['outcomes']['comparison:N225:1']
+    row['candidatePreparation'] = {'status': 'REBUILT', 'changedInputs': ['research', 'private-marker'],
+        'builtCandidates': 2400, 'elapsedSeconds': 28.5, 'cpuSeconds': 28.0,
+        'inputComponents': {'research': 'a'*64}, 'body': 'private-marker'}
+    projected = private_runtime_record(raw, {})['research']['outcomes']['comparison:N225:1']['candidatePreparation']
+    assert projected == {'status': 'REBUILT', 'changedInputs': ['research'], 'builtCandidates': 2400,
+                         'elapsedSeconds': 28.5, 'cpuSeconds': 28.0}
+    row['candidatePreparation'].update(status=['private-marker'], changedInputs={'private-marker': 1},
+                                     builtCandidates=True, elapsedSeconds=float('inf'), cpuSeconds=-1)
+    projected = private_runtime_record(raw, {})['research']['outcomes']['comparison:N225:1']['candidatePreparation']
+    assert projected == {'status': None, 'changedInputs': [], 'builtCandidates': None,
+                         'elapsedSeconds': None, 'cpuSeconds': None}
+
+
 def test_existing_runtime_readback_retains_closed_memory_and_allocator_identity_only():
     from scripts.run_intel_collect import private_runtime_record
     raw = runtime_fixture()
