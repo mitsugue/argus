@@ -368,7 +368,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/today/ArgusEditorialSurface.css': '97dca89b41a2b445440392c04b5ed49309545d24',
     'test_argus_presentation_intent.py': 'e79beae902a1382fae9e5ea3359e09301abf9733',
     'docs/V13_6_PRESENTATION_INTENT.md': '88d35d6f5f603628e7e89bae56308e16b7c76ea6',
-    'argus_presentation_intent.py': '9ac401c4ea52103cb0efeedcf5774d25b78cda7d',
+    'argus_presentation_intent.py': 'a62e555b2e95762c55db7150a380fc6d81cc86c7',
     'argus_persistent_storage.py': 'c62ab9a1d6c5c2c273f93772115d31622b7f15e5',
     'test_argus_checkpoint_stream_batches.py': 'a3e03b9cb28f6f62b88096bf651ef4eef02d451f',
     'web/src/components/today/ReadingHierarchy.css': 'de8728db9522569115d5d1219e1907445bba7161',
@@ -746,6 +746,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_presentation_citation_guidance.py",
     "test_argus_comparison_inputs.py",
     "argus_comparison_inputs.py",
     "test_outcome_retry_unittest.py",
