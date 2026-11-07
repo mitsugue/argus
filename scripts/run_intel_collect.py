@@ -17,6 +17,7 @@ from urllib.error import URLError
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.workflow_http import request_json
+from argus_input_preparation_timing import projection as input_preparation_projection
 
 
 STAGES = frozenset(('news_feeds', 'news_translation', 'news_ranking', 'news_persist',
@@ -120,6 +121,8 @@ def private_runtime_record(body, expected):
             'persistenceStatus': 'VERIFIED' if research.get('persistenceStatus') == 'VERIFIED' else None},
         'currentRssMib': rss(body.get('currentRssMib')), 'peakRssMib': rss(body.get('peakRssMib')),
         'memoryObservation': _private_memory_record(body)}
+    if isinstance(body.get('marketInputPreparation'), dict):
+        value['marketInputPreparation'] = input_preparation_projection(body['marketInputPreparation'])
     history = collect.get('completedMemoryWindows')
     if isinstance(history, list):
         completed = [_private_completed_runtime(row) for row in history[-3:]]
@@ -202,6 +205,7 @@ def _private_completed_runtime(row):
     body = {
         'intelCollect': {'currentRun': row.get('observedCollection')},
         'indexResearch': research,
+        'marketInputPreparation': row.get('marketInputPreparation'),
         'currentRssMib': row.get('currentRssMib'), 'peakRssMib': row.get('peakRssMib'),
         'startupRss': memory.get('startupRssMib'),
         'allocatorReclaim': {'startupPolicy': {

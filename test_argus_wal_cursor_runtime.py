@@ -1,4 +1,5 @@
 """Actual runtime consumers keep replay intact and record real completions only."""
+from argus_input_preparation_timing import InputPreparationTiming
 import ast
 import copy
 import hashlib
@@ -124,6 +125,7 @@ def runtime_namespace():
     ns = functions('_intel_collect_completed_memory_observation',
                    '_intel_collect_record_completion', '_intel_collect_tracked', extra={
         'threading': SimpleNamespace(Thread=DeferredThread),
+        '_MARKET_INPUT_PREPARATION_TIMING': InputPreparationTiming(),
         '_INDEX_RESEARCH_STATUS': body['indexResearch'],
         '_MEMORY_OPERATIONS': SimpleNamespace(view=lambda: copy.deepcopy(body['operationAttribution'])),
         '_ALLOCATOR_RECLAIM_STATE': body['allocatorReclaim'], '_STARTUP_RSS': body['startupRss'],

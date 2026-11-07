@@ -35,6 +35,10 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    # 既存の入力更新の実行側だけを記録する固定項目と境界検査。
+    'argus_input_preparation_timing.py': 'e01f0302fb8718b4ff66fcbee0f612005791522b',
+    'test_argus_input_preparation_timing.py': '5a12cef1c03e86cc5b9512a215ef5574c7096469',
+    'docs/operations/input-preparation-timing.md': 'e3eb0a5f70ec302504ce154497335fcbffdad539',
     # Exact edit-distance implementation parity regression.
     'test_jp_market_order_distance.py': '595bf31bdd6dfda62bedf06a274f1ce1f634a197',
     'test_argus_macro_post_completion.py': 'bd7f1067e525f024c7d09321ef0feb6bb788e0fe',
@@ -544,7 +548,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_wal_cursor_and_report_scalars.py': '21696065d68b3c488c22a2f26e9ec01cf8d4c69b',
     'docs/ops/wal-cursor-lifetime.md': '3837bb40b4ee79690e46252515ed8b0efffa5cd5',
     'test_argus_completed_runtime_history.py': 'b037bf4ab0aa8c7a32bd6c53dd39c675f79c9fa5',
-    'test_argus_wal_cursor_runtime.py': '69f034cd4927ebcad500bc36212729157a74f5c7',
+    'test_argus_wal_cursor_runtime.py': '99ffe3d377fbb2555e6bee67a12f7916c8d9ca69',
     'test_caos_explicit_ordinary_dispatch.py': 'a4f831ad42d06eea78ad590dd10cca5f8573a40f',
 }
 

@@ -10261,6 +10261,8 @@ _INTEL_COLLECT_PROCESS_STARTED = time.monotonic()
 _INTEL_COLLECT_LAST = {"finishedMonotonic": None, "finishedAt": None, "status": None, "trigger": None,
                        "residentStarted": 0}
 _INTEL_COLLECT_CONTEXT = threading.local()
+from argus_input_preparation_timing import InputPreparationTiming
+_MARKET_INPUT_PREPARATION_TIMING = InputPreparationTiming()
 _INTEL_COLLECT_STAGES = frozenset((
     "news_feeds", "news_translation", "news_ranking", "news_persist",
     "investor_types", "calendar", "jsf", "jp_watchlist", "us_watchlist",
@@ -10274,6 +10276,7 @@ _INTEL_COLLECT_STAGES = frozenset((
 
 def _intel_collect_stage(name):
     """Admin tracking only: fixed stage IDs and durations, never data or symbols."""
+    _MARKET_INPUT_PREPARATION_TIMING.stage(name)
     run_id = getattr(_INTEL_COLLECT_CONTEXT, "run_id", None)
     if not run_id or name not in _INTEL_COLLECT_STAGES:
         return
@@ -10305,6 +10308,7 @@ def _intel_collect_completed_memory_observation(completed):
     return private_runtime_record({
         "intelCollect": {"currentRun": completed},
         "indexResearch": research,
+        "marketInputPreparation": _MARKET_INPUT_PREPARATION_TIMING.view(),
         "operationAttribution": operations,
         "allocatorReclaim": {"startupPolicy": copy.deepcopy(
             _ALLOCATOR_RECLAIM_STATE.get("startupPolicy") or {})},
@@ -35803,6 +35807,7 @@ def api_argus_admin_memory_attribution():
     payload["checkpointPersist"] = _diagnostic_counters_copy(_CHECKPOINT_PERSIST_STATS)
     payload["briefSchedule"] = copy.deepcopy(_MARKET_BRIEF_SCHEDULE)
     payload["financialVerify"] = dict(_JP_FINANCIAL_VERIFY)
+    payload["marketInputPreparation"] = _MARKET_INPUT_PREPARATION_TIMING.view()
     payload["analysisHistoryForm"] = copy.deepcopy(_ANALYSIS_HISTORY_FORM)
     payload["materialReactionResearch"] = _material_research_diagnostics()
     from scripts.run_intel_collect import private_timing_record
@@ -45201,7 +45206,8 @@ def _jp_market_engine_pit_inputs(*, warm=False):
         return _jp_market_engine_pit_inputs_impl(warm=False)
     result, mode = _single_flight(
         "internal:jp-market-input-warm",
-        lambda: _jp_market_engine_pit_inputs_impl(warm=True),
+        lambda: _MARKET_INPUT_PREPARATION_TIMING.run(
+            lambda: _jp_market_engine_pit_inputs_impl(warm=True)),
         # 合流待ちも既存の収集上限900秒以内。外側の収集900秒と
         # 公開読取45秒は不変。完了結果を次の更新へ持ち越さない。
         wait_sec=900.0)
