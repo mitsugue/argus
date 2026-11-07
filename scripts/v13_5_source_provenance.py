@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.249"
+PRODUCT_VERSION = "v13.8.250"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -49,7 +49,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # 既存の入力更新の実行側だけを記録する固定項目と境界検査。
     'argus_input_preparation_timing.py': 'e01f0302fb8718b4ff66fcbee0f612005791522b',
     'test_argus_input_preparation_timing.py': '5a12cef1c03e86cc5b9512a215ef5574c7096469',
-    'docs/operations/input-preparation-timing.md': 'e3eb0a5f70ec302504ce154497335fcbffdad539',
+    'docs/operations/input-preparation-timing.md': 'd4d4dc902daba0cf99b1b2099823cc0a6daddfef',
     # Exact edit-distance implementation parity regression.
     'test_jp_market_order_distance.py': '3fb226c65d432bd7f2c835ab2833150aa768830d',
     'test_argus_macro_post_completion.py': 'bd7f1067e525f024c7d09321ef0feb6bb788e0fe',
@@ -217,7 +217,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': 'f5634eb47f9fe238f8e403d4b6f8f2ca9fccbf45',
+    'web/scripts/owner-today-https.mjs': '2b1ed841420f698bce1c6f526b8e44b66df2054f',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',

@@ -370,3 +370,61 @@ def test_joining_an_existing_collection_polls_its_original_identity():
     assert result["status"] == "done" and result["runId"] == "already-running"
     assert calls == [{"async": True, "requestId": "new-request-1"},
                      {"statusOnly": True, "requestId": "already-running"}]
+
+
+def test_finished_worker_with_input_warm_error_never_passes():
+    for error in ("TimeoutError", "ValueError", "", None):
+        warm = {"error": error}
+        calls = []
+        def request(**kwargs):
+            calls.append(kwargs["method"])
+            return 200, json.dumps({"status": "done", "runId": "test-run-1",
+                "result": {"feeds": 20, "failedFeeds": [], "stored": 40,
+                           "jpMarketEngineInputWarm": warm}})
+        result = run(base="https://example.test", token="fixture", request_id="test-run-1",
+                     request=request)
+        assert result["status"] == "failed"
+        assert result["errorClass"] == "market_inputs_unavailable"
+        assert result["jpMarketEngineInputWarm"] == warm
+        assert calls == ["POST"]
+
+
+def test_input_warm_success_and_legacy_absence_keep_partial_feed_behavior():
+    for payload in ({}, {"jpMarketEngineInputWarm": {"nikkei": "yahoo_ohlcv", "credit": "missing"}}):
+        result = run(base="https://example.test", token="fixture", request_id="test-run-1",
+            request=lambda **kw: (200, json.dumps({"status": "done", "runId": "test-run-1",
+                "result": {"feeds": 20, "failedFeeds": ["feed-a"], **payload}})))
+        assert result["status"] == "done" and result["errorClass"] is None
+        assert result["failedFeedCount"] == 1
+
+
+def test_input_warm_failure_keeps_original_terminal_failure_precedence():
+    for status, feeds, expected in (("failed", [], "RuntimeError"),
+                                  ("done", ["feed-a", "feed-b"], "all_intel_feeds_unavailable")):
+        result = run(base="https://example.test", token="fixture", request_id="test-run-1",
+            request=lambda **kw: (200, json.dumps({"status": status, "runId": "test-run-1",
+                "errorClass": "RuntimeError" if status == "failed" else None,
+                "result": {"feeds": 2, "failedFeeds": feeds,
+                           "jpMarketEngineInputWarm": {"error": "TimeoutError"}}})))
+        assert result["status"] == "failed" and result["errorClass"] == expected
+
+
+def test_input_warm_error_after_join_keeps_identity_and_one_existing_readback():
+    calls, saved, tick = [], [], [0]
+    replies = iter([{"status": "running", "runId": "joined-run-1"},
+                    {"status": "done", "runId": "joined-run-1", "result": {
+                        "jpMarketEngineInputWarm": {"error": "TimeoutError"}}}])
+    def request(**kwargs):
+        calls.append((kwargs["method"], json.loads(kwargs["data"]) if kwargs["data"] else None))
+        if kwargs["method"] == "GET":
+            return 200, json.dumps(runtime_fixture())
+        return 200, json.dumps(next(replies))
+    def sleep(n):
+        tick[0] += n
+    result = run(base="https://example.test", token="fixture", request_id="test-run-1",
+        request=request, clock=lambda: tick[0], sleep=sleep, private_runtime=saved.append)
+    assert result["status"] == "failed" and result["errorClass"] == "market_inputs_unavailable"
+    assert result["runId"] == "joined-run-1"
+    assert calls == [("POST", {"async": True, "requestId": "test-run-1"}),
+                     ("POST", {"statusOnly": True, "requestId": "joined-run-1"}), ("GET", None)]
+    assert len(saved) == 1
