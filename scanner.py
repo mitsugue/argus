@@ -43921,6 +43921,12 @@ def _jp_market_comparison_calculate(horizon):
             stateRows=_JP_MARKET_FEATURE_HISTORY.get("features", ()),
             conditionRows=_JP_MARKET_FEATURE_HISTORY.get("conditions", ()),
             reactionRows=material["rows"], researchReactionRows=research["rows"])
+        import argus_comparison_preparation
+        preparation = argus_comparison_preparation.begin(_JP_ANALOG_BACKTEST_CACHE, {
+            "prices": rows, "calendar": sessions,
+            "states": _JP_MARKET_FEATURE_HISTORY.get("features", ()),
+            "conditions": _JP_MARKET_FEATURE_HISTORY.get("conditions", ()),
+            "reactions": material["rows"], "research": research["rows"]})
         result = jp_market_price_paths.cached_index_comparison(
             rows, cutoff=cutoff, session_dates=sessions, horizon_sessions=horizon,
             acquired_at=cached.get("acquiredAt"),
@@ -43934,6 +43940,7 @@ def _jp_market_comparison_calculate(horizon):
             # Walk-forward validation, computed when the history or the
             # policy changes and shared by the four horizons (2026-09-30).
             backtest_cache=_JP_ANALOG_BACKTEST_CACHE)
+        argus_comparison_preparation.finish(_JP_ANALOG_BACKTEST_CACHE, preparation)
         result["materialReactionAcquisition"] = {**material["diagnostics"], "recordsOmittedByBound": omitted,
                                                  "historicalReleases": {**research["diagnostics"],
                                                                         "source": _jp_historical_release_status()}}

@@ -10,7 +10,6 @@ from __future__ import annotations
 import copy
 import math
 import statistics
-import time
 from typing import Any, Mapping, Sequence
 
 from jp_market_engine import _instant
@@ -570,8 +569,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     # the same sealed candidates (the dominant cost on one CPU). They depend
     # only on the knowable bars, the evidence rows, the calendar and the
     # policy, never on the horizon, so identical inputs reuse the first build.
-    preparation_started, preparation_cpu = time.perf_counter(), time.thread_time()
-    candidate_key, input_components = None, {}
+    candidate_key = None
     if backtest_cache is not None:
         try:
             # Current receipts still enter the current episode above. Only
@@ -585,27 +583,16 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
             def candidate_rows(rows):
                 return [row for row in rows if not isinstance(row, Mapping)
                         or (_knowledge_time(row) or candidate_cutoff) <= candidate_cutoff]
-            key_material = {"schema": "sealed-candidates-v2-history-cutoff", "bars": _hash(visible),
+            candidate_key = _hash({"schema": "sealed-candidates-v2-history-cutoff", "bars": _hash(visible),
                                    "evidence": [_hash(candidate_rows(rows)) for rows in evidence],
                                    "research": _hash(candidate_rows(research_reaction_rows)),
                                    "researchEnabled": research,
                                    "sessions": _hash(list(session_dates)), "policy": policy.policy_id,
                                    "scales": list(policy.state_scales), "weights": list(policy.component_weights),
-                                   "lookback": policy.lookback_sessions}
-            candidate_key = _hash(key_material)
-            # Small digests only, within the existing single candidate generation.
-            # They diagnose a rebuild; they never change its admission key.
-            input_components = {"prices": key_material["bars"],
-                **dict(zip(("states", "conditions", "reactions"), key_material["evidence"])),
-                "research": key_material["research"], "calendar": key_material["sessions"],
-                "policy": _hash({k: key_material[k] for k in
-                    ("policy", "scales", "weights", "lookback", "researchEnabled")})}
+                                   "lookback": policy.lookback_sessions})
         except (TypeError, ValueError):
             candidate_key = None
     reused = (backtest_cache or {}).get("sealedCandidates") if candidate_key else None
-    prior_components = dict((reused or {}).get("inputComponents") or {})
-    previous_generation = bool(reused)
-    reused_generation = bool(reused and reused.get("key") == candidate_key)
     if reused and reused.get("key") == candidate_key:
         candidates, candidates_with = list(reused["candidates"]), list(reused["candidatesWith"])
         excluded = dict(reused["excluded"])
@@ -634,18 +621,7 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
                 candidates_with.append(episode_with(episode, row["date"] + "T23:59:59Z", window_rows))
     if candidate_key and not (reused and reused.get("key") == candidate_key):
         backtest_cache["sealedCandidates"] = {"key": candidate_key, "candidates": tuple(candidates),
-                                              "candidatesWith": tuple(candidates_with), "excluded": dict(excluded),
-                                              "inputComponents": input_components}
-    if reused_generation:
-        reused["inputComponents"] = input_components
-    preparation = {
-        "status": ("REUSED" if reused_generation else "REBUILT" if prior_components else
-                   "UNKNOWN_BASELINE" if previous_generation else "COLD") if candidate_key else "UNCACHEABLE",
-        "changedInputs": [k for k in input_components if prior_components and
-                          prior_components.get(k) != input_components[k]],
-        "builtCandidates": 0 if reused_generation else len(candidates),
-        "elapsedSeconds": round(max(0, time.perf_counter() - preparation_started), 3),
-        "cpuSeconds": round(max(0, time.thread_time() - preparation_cpu), 3)}
+                                              "candidatesWith": tuple(candidates_with), "excluded": dict(excluded)}
     validation, search = None, None
     selection_policy = policy
     if backtest_cache is not None:
@@ -711,9 +687,6 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
         if search and search.get("adopted"):
             from dataclasses import replace
             selection_policy = replace(selection_policy, component_weights=tuple(sorted(search["chosenWeights"].items())))
-        # Not part of reports or persisted calibration; no originals or hashes
-        # leave the candidate cache through this fixed diagnostic summary.
-        backtest_cache["candidatePreparation"] = preparation
     selection = select_episodes(current, candidates, session_dates=session_dates, policy=policy,
                                 ranking_policy=selection_policy)
     selected = {row["snapshotId"] for row in selection["selected"]}
