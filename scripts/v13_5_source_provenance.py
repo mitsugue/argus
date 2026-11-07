@@ -35,13 +35,16 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_comparison_preparation.py': '36d7569049e9851b4d6cc49bd140261c8440d2a4',
+    'argus_comparison_preparation.py': '3b1de681f55db9acca279c44e7e4adc6d3d9b8f8',
+    # 候補再作成の固定項目と数値・来歴不変の正確な検査。
     # Exact batch-local reaction close preparation and unchanged validation.
     'test_jp_market_reaction_preparation.py': '351a468f9c4751e144e728b5ff14554f0945ac29',
     # Exact historical-candidate cutoff cache and receipt boundary regressions.
     'test_jp_market_candidate_window_cache.py': '0bbf16a9e608e414bc1c475b2f0d0d93f6e06d73',
     # Exact bounded per-call comparison preparation and numerical parity.
     'test_jp_market_backtest_preparation.py': '32b5ced0657ba19d31a1a4331c51d7ce7287fc57',
-    'docs/operations/comparison-preparation-reuse.md': '8b1c32105ac025005259d59447f8f128b551596a',
+    'docs/operations/comparison-preparation-reuse.md': '7840e7b7bf2734daf49c3b25ac2c97f66b15ec46',
 
     # 既存の入力更新の実行側だけを記録する固定項目と境界検査。
     'argus_input_preparation_timing.py': 'e01f0302fb8718b4ff66fcbee0f612005791522b',
