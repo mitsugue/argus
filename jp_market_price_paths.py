@@ -572,9 +572,21 @@ def cached_index_comparison(bars: Sequence[Mapping[str, Any]], *, cutoff: str,
     candidate_key = None
     if backtest_cache is not None:
         try:
-            candidate_key = _hash({"schema": "sealed-candidates-v1", "bars": _hash(visible),
-                                   "evidence": [_hash(list(rows)) for rows in evidence],
-                                   "research": _hash(list(research_reaction_rows)),
+            # Current receipts still enter the current episode above. Only
+            # receipts knowable by a historical candidate can change that
+            # candidate graph; newer receipts need not rebuild all anchors.
+            # Keep malformed knowledge conservatively in the content key.
+            from jp_market_engine import _knowledge_time
+            last_candidate = len(visible) - policy.lookback_sessions - 2
+            candidate_cutoff = (_instant(visible[last_candidate]["date"] + "T23:59:59Z")
+                                if last_candidate >= policy.lookback_sessions else _instant(cutoff))
+            def candidate_rows(rows):
+                return [row for row in rows if not isinstance(row, Mapping)
+                        or (_knowledge_time(row) or candidate_cutoff) <= candidate_cutoff]
+            candidate_key = _hash({"schema": "sealed-candidates-v2-history-cutoff", "bars": _hash(visible),
+                                   "evidence": [_hash(candidate_rows(rows)) for rows in evidence],
+                                   "research": _hash(candidate_rows(research_reaction_rows)),
+                                   "researchEnabled": research,
                                    "sessions": _hash(list(session_dates)), "policy": policy.policy_id,
                                    "scales": list(policy.state_scales), "weights": list(policy.component_weights),
                                    "lookback": policy.lookback_sessions})
