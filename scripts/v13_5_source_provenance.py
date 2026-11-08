@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_owner_retained_completion.py': '752f87c422a2825356f60852184e9a1b7d9d9c62',
+    'docs/operations/owner-overview-retained-save.md': 'd16a54029abe24649ba6fcc6010987d70c9291f1',
     'test_private_diagnostics_conflict.py': '1fcf2e634f32a4346af75b0ad7ead5d0ac0cef39',
     'docs/operations/private-diagnostics-conflicts.md': '6cf5d663d424c539690ed4d13005efff81be511f',
     'test_argus_owner_presentation_required.py': '66e4a7e1456d813da524ec9d2c6945024de499f5',
@@ -417,10 +419,10 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_analysis_history_backup.py': 'f011bf50f23c32554ffd2c55dd003086ac434bc4',
     'argus_explanation_contract.py': '5d91e091673c587dc68e5800dd445357e9095f20',
     'argus_owner_dialogue.py': 'c8511ab387a2e7be05c266d744e6c17ec819d99b',
-    'argus_owner_dialogue_api.py': 'a8e618aa7f63c7bded77fc6f3bd9f7ba1fbae22b',
+    'argus_owner_dialogue_api.py': 'ee8f7af46b505c2fb42f00b76ac522b6242bd0d2',
     'argus_owner_dialogue_backup.py': 'fc782c50eeb15322bea22f9846915b960eea2c62',
     'argus_owner_dialogue_recovery.py': 'f975e33adf0691f3e44c3982b3438da89a464a35',
-    'argus_owner_recovery_diagnostics.py': '5457322945ea01e675158b904f41e517620a8c24',
+    'argus_owner_recovery_diagnostics.py': '6d7256d46bd0b20ac3905124e765e613e526efea',
     'test_argus_owner_recovery_diagnostics.py': '8d827b16de376093c72c7c236595369244f484cb',
     'test_argus_owner_dialogue_historical_contract.py': '081d12269d80978873ace28f2aa2805deb8119b0',
     'test_argus_owner_context_bound.py': 'da10450385f085b5b47953606e315ee9f21c3e7b',
