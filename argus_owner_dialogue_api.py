@@ -96,7 +96,8 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
     save_failures = {}
     registered_cursor = 0
     overview_state_lock = threading.Lock()
-    overview_state = {'status':'NOT_RUN','lastCheckedAt':None}
+    overview_state = {'status':'NOT_RUN','lastCheckedAt':None,
+        'pendingUnsavedResults':0,'retainedPersistenceStatus':None}
 
     def overview_status():
         # The existing diagnostic reads only this memo, never the DB/provider.
@@ -120,6 +121,33 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             try:recovery_trigger(force=True)
             except Exception:pass
 
+    def complete_exact(path, identity, result):
+        store.complete(path, identity, result)
+        saved = store.read(path, identity, boot_id)
+        if not saved or saved.get('result') != store.decode(store.sealed(result)):
+            raise ValueError('dialogue_completion_readback')
+
+    def persist_retained(path, identity):
+        """Caller holds lock. Preserve the paid response, receipt and timestamp."""
+        result = save_failures.get(identity)
+        if result is None:return None
+        try:
+            complete_exact(path, identity, result)
+        except Exception:
+            with overview_state_lock:
+                overview_state.update(pendingUnsavedResults=len(save_failures),
+                    retainedPersistenceStatus='FAILED')
+            raise
+        save_failures.pop(identity, None)
+        from argus_owner_recovery_diagnostics import validation_projection
+        with overview_state_lock:
+            overview_state.update(pendingUnsavedResults=len(save_failures),
+                retainedPersistenceStatus='PERSISTED',lastCompletionStatus=result['status'],
+                lastCompletedAt=result['completedAt'],
+                lastValidationReason=validation_projection(result.get('validation'))['reason'])
+        changed()
+        return result['status']
+
     def worker(path, identity, context):
         try:
             binding = context.get('overviewInputs')
@@ -130,9 +158,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         except Exception as exc:
             result = {'status':'FAILED', 'answer':None, 'completedAt':now(), 'errorClass':type(exc).__name__}
         try:
-            store.complete(path, identity, result)
-            if store.read(path, identity, boot_id)['result']['status'] != result['status']:
-                raise ValueError('dialogue_completion_readback')
+            complete_exact(path, identity, result)
             from argus_owner_recovery_diagnostics import validation_projection
             validation = result.get('validation') or {}
             with overview_state_lock:
@@ -143,7 +169,11 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         except Exception:
             # Retain an already paid result for a later explicit status request.
             # Never call the provider again to recover a failed local write.
-            with lock: save_failures[identity] = result
+            with lock:
+                save_failures[identity] = result
+                with overview_state_lock:
+                    overview_state.update(pendingUnsavedResults=len(save_failures),
+                        retainedPersistenceStatus='PENDING')
 
     def response(value, code=200):
         out = jsonify(value); out.status_code = code
@@ -351,8 +381,22 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
 
     def _refresh_subject_overviews(limit=20):
         """Advance one saved subject overview without requiring an open browser."""
-        path=storage_path();state=remote_status()
-        if not path or not state.get('generationReady'):
+        path=storage_path()
+        if not path:
+            return {'status':'WAITING','started':0}
+        # A failed local write leaves a paid response in memory and a RUNNING
+        # request in SQLite. Save one retained result before considering another
+        # generation. The existing 30-second tick owns the cadence; no new clock.
+        with lock:
+            if save_failures:
+                identity=next(iter(save_failures))
+                try:outcome=persist_retained(path, identity)
+                except Exception:
+                    return {'status':'UNAVAILABLE','started':0,
+                        'lastErrorCode':'completion_persistence_failed'}
+                return {'status':'CURRENT' if outcome=='SUCCEEDED' else 'UNAVAILABLE','started':0}
+        state=remote_status()
+        if not state.get('generationReady'):
             return {'status':'WAITING','started':0}
         current=deepcopy(market_brief() or {})
         if current.get('unifiedStatus') in ('AWAITING_AI', 'UNAVAILABLE', 'INVALID_RESPONSE'):
@@ -547,13 +591,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             identity=store.request_id(body.get('requestId'))
             if action=='save':
                 with lock:
-                    unsaved=save_failures.get(identity)
-                    if unsaved:
-                        store.complete(path,identity,unsaved)
-                        if store.read(path,identity,boot_id)['result']['status']!=unsaved['status']:
-                            raise ValueError('dialogue_completion_readback')
-                        save_failures.pop(identity,None)
-                        changed()
+                    persist_retained(path, identity)
                 item=store.read(path,identity,boot_id)
                 return response(decorate(item) or {'error':'not_found'},200 if item else 404)
             if action=='status':

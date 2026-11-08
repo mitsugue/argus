@@ -31,7 +31,7 @@ VALIDATION_REASONS = frozenset(('six_section_schema_required', 'section_schema_i
     'section_field_invalid', 'unknown_evidence_reference', 'evidence_reference_required',
     'owner_context_unavailable', 'previous_context_unavailable', 'fact_requires_verified_references',
     'unsupported_authority_or_probability', 'validation_method_scope_mismatch',
-    'unsupported_numeric_tokens', 'hypothesis_must_remain_explicit_inference'))
+    'unsupported_numeric_tokens', 'hypothesis_must_remain_explicit_inference', 'presentation_invalid'))
 
 
 def completion_difference(original, rebuilt, validation=None):
@@ -148,16 +148,20 @@ def subject_overviews(value):
             result[key] = None
     for key in ('registeredSubjects','savedSubjects','missingSubjects','currentPolicySubjects',
             'presentationReadySubjects','contextIntegrityFailures','jpComparisonAvailableSubjects',
-            'jpComparisonBoundSubjects','jpSectorBoundSubjects','jpComparisonCitedSubjects','unavailableSubjects'):
+            'jpComparisonBoundSubjects','jpSectorBoundSubjects','jpComparisonCitedSubjects','unavailableSubjects',
+            'pendingUnsavedResults'):
         count = value.get(key)
         result[key] = count if type(count) is int and 0<=count<=1000000 else None
     code = value.get('lastErrorCode')
     allowed = {'private_context_size_bound','market_context_unavailable','market_context_integrity',
         'market_facts_invalid','subject_material_bound','previous_context_integrity',
-        'previous_context_from_future','dialogue_previous_fact_reference_invalid','retrieval_record_integrity'}
+        'previous_context_from_future','dialogue_previous_fact_reference_invalid','retrieval_record_integrity',
+        'completion_persistence_failed'}
     result['lastErrorCode'] = code if code is None or isinstance(code,str) and code in allowed else 'OTHER'
     outcome = value.get('lastCompletionStatus')
     result['lastCompletionStatus'] = outcome if outcome in ('SUCCEEDED','REJECTED','FAILED','UNAVAILABLE') else None
     reason = value.get('lastValidationReason')
     result['lastValidationReason'] = reason if reason is None or isinstance(reason,str) and reason in VALIDATION_REASONS else 'OTHER'
+    saved = value.get('retainedPersistenceStatus')
+    result['retainedPersistenceStatus'] = saved if saved in ('PENDING','PERSISTED','FAILED') else None
     return result
