@@ -134,6 +134,9 @@ def private_runtime_record(body, expected):
         'memoryObservation': _private_memory_record(body)}
     if isinstance(body.get('marketInputPreparation'), dict):
         value['marketInputPreparation'] = input_preparation_projection(body['marketInputPreparation'])
+    if isinstance(body.get('ownerDialogueRecovery'), dict):
+        from argus_owner_recovery_diagnostics import status as recovery_projection
+        value['ownerDialogueRecovery'] = recovery_projection(body['ownerDialogueRecovery'])
     history = collect.get('completedMemoryWindows')
     if isinstance(history, list):
         completed = [_private_completed_runtime(row) for row in history[-3:]]
@@ -217,6 +220,7 @@ def _private_completed_runtime(row):
         'intelCollect': {'currentRun': row.get('observedCollection')},
         'indexResearch': research,
         'marketInputPreparation': row.get('marketInputPreparation'),
+        'ownerDialogueRecovery': row.get('ownerDialogueRecovery'),
         'currentRssMib': row.get('currentRssMib'), 'peakRssMib': row.get('peakRssMib'),
         'startupRss': memory.get('startupRssMib'),
         'allocatorReclaim': {'startupPolicy': {
