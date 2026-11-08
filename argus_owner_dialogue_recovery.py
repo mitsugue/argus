@@ -2,6 +2,7 @@
 import threading
 import time
 import argus_owner_dialogue_backup as backup
+import argus_owner_recovery_diagnostics as diagnostics
 
 
 class RecoveryWorker:
@@ -9,7 +10,7 @@ class RecoveryWorker:
         self.storage_path=storage_path;self.configuration=configuration;self.keys=keys;self.remote=remote;self.now=now
         self._lock=threading.Lock();self._state_lock=threading.Lock();self._pending=False
         self._state={'status':'NOT_RUN','lastAttemptAt':None,'lastVerifiedAt':None,'lastAttemptMonotonic':None,
-            'restoredThisBoot':False,'configurationId':None,'headVersion':None,'errorClass':None}
+            'restoredThisBoot':False,'configurationId':None,'headVersion':None,'errorClass':None,'failure':None}
 
     def status(self):
         configured,identity=self.configuration()
@@ -36,7 +37,7 @@ class RecoveryWorker:
                 configured,identity=self.configuration()
                 with self._state_lock:
                     self._pending=False;previous=dict(self._state)
-                    self._state.update(status='RUNNING',lastAttemptAt=self.now(),lastAttemptMonotonic=time.monotonic())
+                    self._state.update(status='RUNNING',lastAttemptAt=self.now(),lastAttemptMonotonic=time.monotonic(),failure=None)
                 path=self.storage_path()
                 if not configured:
                     with self._state_lock:self._state.update(status='NOT_CONFIGURED')
@@ -45,9 +46,9 @@ class RecoveryWorker:
                     if not path:raise ValueError('dialogue_recovery_durable_path_unavailable')
                     result=backup.synchronize(path,self.remote(),self.keys(),previous=previous if previous['configurationId']==identity else None)
                     with self._state_lock:
-                        self._state.update(result,lastVerifiedAt=self.now(),restoredThisBoot=True,configurationId=identity,errorClass=None)
+                        self._state.update(result,lastVerifiedAt=self.now(),restoredThisBoot=True,configurationId=identity,errorClass=None,failure=None)
                 except Exception as exc:
-                    with self._state_lock:self._state.update(status='FAILED',errorClass=type(exc).__name__)
+                    with self._state_lock:self._state.update(status='FAILED',errorClass=type(exc).__name__,failure=diagnostics.failure(exc))
                     return
                 with self._state_lock:again=self._pending
                 if not again:return

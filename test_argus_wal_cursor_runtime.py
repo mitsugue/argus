@@ -126,6 +126,9 @@ def runtime_namespace():
                    '_intel_collect_record_completion', '_intel_collect_tracked', extra={
         'threading': SimpleNamespace(Thread=DeferredThread),
         '_MARKET_INPUT_PREPARATION_TIMING': InputPreparationTiming(),
+        '_OWNER_DIALOGUE_RECOVERY': SimpleNamespace(status=lambda: {
+            'status': 'FAILED', 'generationReady': False, 'restoredThisBoot': False,
+            'failure': {'phase': 'remote_records', 'code': 'dialogue_backup_answer_invalid'}}),
         '_INDEX_RESEARCH_STATUS': body['indexResearch'],
         '_MEMORY_OPERATIONS': SimpleNamespace(view=lambda: copy.deepcopy(body['operationAttribution'])),
         '_ALLOCATOR_RECLAIM_STATE': body['allocatorReclaim'], '_STARTUP_RSS': body['startupRss'],
@@ -156,6 +159,8 @@ def test_history_is_bounded_and_records_only_actual_terminal_work():
         assert history[-1]['observedCollection']['finishedAt'] == finish
         assert history[-1]['memoryObservation']['capturedAt'] == finish
         assert history[-1]['researchWindowWithinExpectedCollection'] is True
+        assert history[-1]['ownerDialogueRecovery']['failure']['phase'] == 'remote_records'
+        assert history[-1]['ownerDialogueRecovery']['generationReady'] is False
         assert 'private-result-sentinel' not in json.dumps(history)
     assert [r['observedCollection']['startedAt'] for r in history] == [
         f'2026-11-01T00:0{i}:00Z' for i in (1, 2, 3)]

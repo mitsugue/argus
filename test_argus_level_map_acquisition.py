@@ -103,6 +103,9 @@ def _existing_endpoint(state):
              "_require_admin": lambda: (True, None, 200) if request.headers.get("X-ARGUS-ADMIN-TOKEN") == "synthetic-admin" else (False, {"error": "unauthorized"}, 401),
              "_MEMORY_ATTRIBUTION": SimpleNamespace(view=lambda: {}),
              "_MEMORY_OPERATIONS": SimpleNamespace(view=lambda: {}),
+             "_OWNER_DIALOGUE_RECOVERY": SimpleNamespace(status=lambda: {
+                 'status': 'FAILED', 'generationReady': False,
+                 'restoredThisBoot': False}, tick=forbidden),
              "_ALLOCATOR_RECLAIM_STATE": {}, "_STARTUP_RSS": {}, "_HEAVY_TICK_STATE": {},
              "_process_peak_memory_mb": lambda: 1, "_startup_rss_mib": lambda: 1,
              "_market_store_residency_projection": lambda: {}, "_LEVEL_MAP": state,
@@ -141,6 +144,7 @@ def test_existing_get_requires_auth_and_explicit_opt_in_without_collection():
         read = client.get("/api/argus/admin/memory-attribution?level-map-inputs=1", headers={"X-ARGUS-ADMIN-TOKEN": "synthetic-admin"})
     assert denied.status_code == 401 and "levelMapInputs" not in denied.get_json()
     assert ordinary.status_code == 200 and "levelMapInputs" not in ordinary.get_json()
+    assert ordinary.get_json()['ownerDialogueRecovery']['generationReady'] is False
     view = read.get_json()["levelMapInputs"]
     assert read.status_code == 200 and view["currentCursor"] == "2017-04-12"
     assert view["admittedEstimateCount"] == 1

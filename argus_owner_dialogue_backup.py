@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import argus_analysis_history_backup as transport
 import argus_owner_dialogue as dialogue
 import argus_owner_dialogue_store as store
+import argus_owner_recovery_diagnostics as diagnostics
 
 PREFIX='owner-dialogue/v1'
 SCHEMA='argus-owner-dialogue-backup-v1'
@@ -114,7 +115,10 @@ def _completion(raw,context):
             # record an invalid intent. Preserve that state, not an invented plan.
             if presentation_status is None: rebuilt.pop('presentationStatus', None)
             else: rebuilt['presentationStatus'] = presentation_status
-        if rebuilt != answer: raise ValueError('dialogue_backup_answer_invalid')
+        if rebuilt != answer:
+            error = ValueError('dialogue_backup_answer_invalid')
+            error._argus_recovery_answer = diagnostics.completion_difference(answer, rebuilt)
+            raise error
     elif value.get('answer') is not None:raise ValueError('dialogue_backup_unaccepted_answer')
     return value
 
@@ -194,30 +198,30 @@ def _head(remote):
 def synchronize(path,remote,keys,*,previous=None):
     """Private transport is verified before any owner data can leave this process."""
     if keys.get('status')!='configured' or not keys.get('current'):raise ValueError('dialogue_backup_keys_required')
-    remote.assert_private()
-    head,version=_head(remote);known=previous or {};restored=None;remote_plain_sha=None;encrypted_key=None
+    diagnostics.phase('private_repository', remote.assert_private)
+    head,version=diagnostics.phase('remote_head', _head, remote);known=previous or {};restored=None;remote_plain_sha=None;encrypted_key=None
     if head and (not Path(path).exists() or known.get('headVersion')!=version):
         parts=[]
         for chunk in head['chunks']:
-            part,_=remote.get(PREFIX+'/chunks/'+chunk['sha256']+'.bin')
+            part,_=diagnostics.phase('remote_chunks', remote.get, PREFIX+'/chunks/'+chunk['sha256']+'.bin')
             if part is None or len(part)!=chunk['bytes'] or transport.digest(part)!=chunk['sha256']:raise ValueError('dialogue_backup_chunk_corrupt')
             parts.append(part)
         cipher=b''.join(parts)
         if transport.digest(cipher)!=head['cipherSha256']:raise ValueError('dialogue_backup_cipher_corrupt')
-        plain,encrypted_key=_decrypt(cipher,keys)
-        restored=restore(path,plain);remote_plain_sha=transport.digest(plain)
+        plain,encrypted_key=diagnostics.phase('decrypt', _decrypt, cipher, keys)
+        restored=diagnostics.phase('remote_records', restore, path, plain);remote_plain_sha=transport.digest(plain)
     elif head:
         remote_plain_sha=known.get('archiveSha256');encrypted_key=known.get('keyId')
-    store.initialize(path);plain,counts=snapshot(path);plain_sha=transport.digest(plain)
+    store.initialize(path);plain,counts=diagnostics.phase('local_records', snapshot, path);plain_sha=transport.digest(plain)
     if plain_sha!=remote_plain_sha or encrypted_key!=keys['current']['keyId']:
         cipher=_encrypt(plain,keys['current']);chunks=[]
         for pos in range(0,len(cipher),CHUNK_BYTES):
             part=cipher[pos:pos+CHUNK_BYTES];identity=transport.digest(part)
-            transport._immutable(remote,PREFIX+'/chunks/'+identity+'.bin',part)
+            diagnostics.phase('remote_write', transport._immutable, remote, PREFIX+'/chunks/'+identity+'.bin',part)
             chunks.append({'sha256':identity,'bytes':len(part)})
         head={'schemaVersion':SCHEMA,'cipherSha256':transport.digest(cipher),'cipherBytes':len(cipher),'chunks':chunks}
-        remote.put(PREFIX+'/head.json',transport.encode(head),expected_version=version)
-    verified,version=_head(remote)
+        diagnostics.phase('remote_write', remote.put, PREFIX+'/head.json',transport.encode(head),expected_version=version)
+    verified,version=diagnostics.phase('readback', _head, remote)
     if verified!=head:raise ValueError('dialogue_backup_head_readback_changed')
     return {'status':'VERIFIED','headVersion':version,'archiveSha256':plain_sha,'counts':counts,
         'restoredCounts':restored,'keyId':keys['current']['keyId'],'encryption':'AES_256_GCM_HKDF_SHA256',

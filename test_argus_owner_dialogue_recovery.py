@@ -80,3 +80,57 @@ def test_old_unknown_edition_opens_recovery_gate_without_resuming_pending_ai(tmp
     assert response.status_code == 200
     assert response.json['remoteBackup']['generationReady'] is True
     assert not calls and not triggers and remote.puts == puts
+
+
+def test_failed_local_snapshot_keeps_generation_blocked_and_reports_no_saved_text(tmp_path):
+    import uuid
+    import json
+    import argus_owner_dialogue_store as store
+    path = tmp_path/'local';store.initialize(path)
+    c, result = saved_unknown_edition()
+    result['answer']['sections']['reasons']['textJa'] = ' ' + result['answer']['sections']['reasons']['textJa']
+    identity = str(uuid.uuid4())
+    store.submit(path, identity=identity, input_hash='a'*64, boot_id='old', context=c)
+    store.complete(path, identity, result)
+    before = path.read_bytes();remote = Remote()
+    worker = RecoveryWorker(storage_path=lambda:path,configuration=lambda:(True,'config'),
+        keys=keys,remote=lambda:remote,now=lambda:AT)
+    assert worker._lock.acquire(False);worker._run()
+    state = worker.status()
+    assert state['generationReady'] is False and state['restoredThisBoot'] is False
+    assert state['status'] == 'FAILED' and state['errorClass'] == 'ValueError'
+    assert state['failure']['phase'] == 'local_records'
+    assert state['failure']['code'] == 'dialogue_backup_answer_invalid'
+    assert state['failure']['answer']['sectionFields'] == {'reasons': ['textJa']}
+    assert identity not in json.dumps(state)
+    assert result['answer']['sections']['reasons']['textJa'] not in json.dumps(state)
+    assert path.read_bytes() == before and not remote.puts
+
+
+def test_remote_rejection_is_distinct_from_local_snapshot_and_does_not_restore_rows(tmp_path):
+    import json
+    import argus_owner_dialogue_store as store
+    path = tmp_path/'source';add(path)
+    raw, _ = backup.snapshot(path)
+    rows = [json.loads(line) for line in raw.splitlines()]
+    saved = rows[-1]['value']
+    saved['answer']['sections']['reasons']['textJa'] = ' ' + saved['answer']['sections']['reasons']['textJa']
+    saved.pop('recordDigest')
+    rows[-1]['value'] = json.loads(store.sealed(saved))
+    raw = b''.join(backup.transport.encode(row) + b'\n' for row in rows)
+    cipher = backup._encrypt(raw, keys()['current']);remote = Remote()
+    identity = backup.transport.digest(cipher)
+    remote.files[backup.PREFIX+'/chunks/'+identity+'.bin'] = cipher
+    remote.files[backup.PREFIX+'/head.json'] = backup.transport.encode({
+        'schemaVersion': backup.SCHEMA, 'cipherBytes': len(cipher), 'cipherSha256': identity,
+        'chunks': [{'sha256': identity, 'bytes': len(cipher)}]})
+    cold = tmp_path/'cold'
+    worker = RecoveryWorker(storage_path=lambda:cold,configuration=lambda:(True,'config'),
+        keys=keys,remote=lambda:remote,now=lambda:AT)
+    assert worker._lock.acquire(False);worker._run()
+    state = worker.status()
+    assert state['status'] == 'FAILED' and state['generationReady'] is False
+    assert state['failure']['phase'] == 'remote_records'
+    assert state['failure']['code'] == 'dialogue_backup_answer_invalid'
+    assert state['failure']['answer']['sectionFields'] == {'reasons': ['textJa']}
+    assert not cold.exists() and not remote.puts

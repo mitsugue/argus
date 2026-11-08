@@ -200,3 +200,17 @@ def test_unknown_wording_compatibility_does_not_replace_record_digest_validation
     sealed['answer']['sections']['impact']['textJa'] = '別の文章です。'
     with pytest.raises(ValueError, match='dialogue_record_integrity'):
         backup._completion(json.dumps(sealed), c)
+
+
+def test_remaining_completion_difference_is_rejected_with_fixed_field_names_only(tmp_path):
+    c, result = saved_unknown_edition()
+    result['answer']['sections']['reasons']['textJa'] = ' ' + result['answer']['sections']['reasons']['textJa']
+    before = copy.deepcopy(result)
+    with pytest.raises(ValueError, match='dialogue_backup_answer_invalid') as caught:
+        backup._completion(store.sealed(result), c)
+    from argus_owner_recovery_diagnostics import failure
+    detail = failure(caught.value)['answer']
+    assert detail['rebuiltAccepted'] is True
+    assert detail['changedFields'] == ['sections']
+    assert detail['sectionFields'] == {'reasons': ['textJa']}
+    assert result == before
