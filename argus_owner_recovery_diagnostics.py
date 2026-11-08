@@ -27,9 +27,14 @@ ANSWER_FIELDS = ('schemaVersion', 'contextId', 'sections', 'actionAuthority',
     'presentationCatalog', 'presentationPlan', 'scope', 'subject',
     'horizonSessions', 'isHypotheticalConversation', 'calculatedHypothesis',
     'officialMarketStateMutation', 'officialPositionMutation', 'officialPredictionMutation')
+VALIDATION_REASONS = frozenset(('six_section_schema_required', 'section_schema_invalid',
+    'section_field_invalid', 'unknown_evidence_reference', 'evidence_reference_required',
+    'owner_context_unavailable', 'previous_context_unavailable', 'fact_requires_verified_references',
+    'unsupported_authority_or_probability', 'validation_method_scope_mismatch',
+    'unsupported_numeric_tokens', 'hypothesis_must_remain_explicit_inference'))
 
 
-def completion_difference(original, rebuilt):
+def completion_difference(original, rebuilt, validation=None):
     accepted = isinstance(rebuilt, dict)
     old = original if isinstance(original, dict) else {}
     new = rebuilt if accepted else {}
@@ -43,10 +48,30 @@ def completion_difference(original, rebuilt):
             a = a if isinstance(a, dict) else {}
             b = b if isinstance(b, dict) else {}
             sections[name] = [field for field in SECTION_FIELDS if a.get(field) != b.get(field)]
-    return {'rebuiltAccepted': accepted,
+    result = {'rebuiltAccepted': accepted,
         'changedFields': [key for key in ANSWER_FIELDS if accepted and old.get(key) != new.get(key)],
         'otherFieldsChanged': accepted and bool((set(old) ^ set(new)) - set(ANSWER_FIELDS)),
         'sectionFields': sections}
+    if isinstance(validation, dict) and validation.get('status') == 'REJECTED':
+        result['validation'] = validation_projection(validation)
+    return result
+
+
+def validation_projection(value):
+    value = value if isinstance(value, dict) else {}
+    reason = value.get('reason');section = value.get('section')
+    result = {'reason': reason if isinstance(reason, str) and reason in VALIDATION_REASONS else 'OTHER',
+        'section': section if isinstance(section, str) and section in SECTIONS else None}
+    fields = value.get('fieldIssues')
+    if isinstance(fields, dict):
+        result['fieldIssues'] = {}
+        for key in ('textCharacters', 'referenceCount'):
+            count = fields.get(key)
+            result['fieldIssues'][key] = count if type(count) is int and 0 <= count <= 1000000 else None
+        for key in ('kindAllowed', 'referencesDistinctStrings'):
+            flag = fields.get(key)
+            result['fieldIssues'][key] = flag if type(flag) is bool else None
+    return result
 
 
 def phase(name, callback, *args, **kwargs):
@@ -82,6 +107,8 @@ def project_failure(value):
             'sectionFields': {key: [field for field in SECTION_FIELDS if field in section_fields[key]]
                 for key in SECTIONS if isinstance(section_fields, dict)
                 and isinstance(section_fields.get(key), list)}}
+        if isinstance(answer.get('validation'), dict):
+            result['answer']['validation'] = validation_projection(answer['validation'])
     return result
 
 

@@ -65,3 +65,37 @@ def test_existing_collection_read_saves_failure_privately_without_an_extra_reque
     assert private[0]['ownerDialogueRecovery']['generationReady'] is False
     assert private[0]['ownerDialogueRecovery']['failure']['phase'] == 'remote_records'
     assert 'remote_records' not in json.dumps(public) and 'test-secret' not in json.dumps(private)
+
+
+@pytest.mark.parametrize('fault,expected', [('number', 'unsupported_numeric_tokens'),
+    ('reference', 'unknown_evidence_reference'), ('authority', 'unsupported_authority_or_probability')])
+def test_validator_rejection_keeps_only_fixed_reason_and_section(fault, expected):
+    import argus_owner_dialogue_backup as backup
+    import argus_owner_dialogue_store as store
+    from test_argus_owner_dialogue_backup import saved_unknown_edition
+    context, result = saved_unknown_edition()
+    row = result['answer']['sections']['impact']
+    if fault == 'number': row['textJa'] = '必要な情報は987654321件です。'
+    if fault == 'reference': row['evidenceIds'] = ['private-source-reference-sentinel']
+    if fault == 'authority': row['textJa'] = '上昇する確率が高いです。'
+    before = copy.deepcopy(result)
+    with pytest.raises(ValueError, match='dialogue_backup_answer_invalid') as caught:
+        backup._completion(store.sealed(result), context)
+    projected = diagnostics.failure(caught.value)['answer']
+    assert projected['rebuiltAccepted'] is False
+    assert projected['validation'] == {'reason': expected, 'section': 'impact'}
+    assert '987654321' not in json.dumps(projected)
+    assert 'private-source-reference-sentinel' not in json.dumps(projected)
+    assert result == before
+
+
+def test_validation_projection_discards_text_tokens_and_unsafe_field_issues():
+    value = {'reason': 'private-sentinel', 'section': 'private-sentinel',
+        'unsupportedNumericTokens': ['987654321'],
+        'fieldIssues': {'textCharacters': True, 'referenceCount': 'private-sentinel',
+            'kindAllowed': False, 'referencesDistinctStrings': True, 'textJa': 'private-sentinel'}}
+    output = diagnostics.validation_projection(value)
+    assert output['reason'] == 'OTHER' and output['section'] is None
+    assert output['fieldIssues'] == {'textCharacters': None, 'referenceCount': None,
+        'kindAllowed': False, 'referencesDistinctStrings': True}
+    assert 'private-sentinel' not in json.dumps(output) and '987654321' not in json.dumps(output)
