@@ -215,7 +215,8 @@ def test_http_failure_logs_only_fixed_status_without_reading_body(tmp_path, monk
     monkeypatch.setenv('PRIVATE_DIAGNOSTICS_TOKEN','SECRET_TOKEN')
     monkeypatch.setattr(store,'store',lambda kind,run,files,token,**kwargs: original(kind,run,files,token,opener=opener,**kwargs))
     assert store.main(['--kind','warm','--run-id','123',str(path)])==1
-    assert len(calls)==1
+    assert len(calls)==(2 if status==409 else 1)
+    assert [r.get_method() for r in calls]==(['PUT','GET'] if status==409 else ['PUT'])
     assert capsys.readouterr().out==f'private diagnostics: not stored (private_store_failed; {code})\n'
 
 

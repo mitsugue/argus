@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -56,21 +57,73 @@ def http_failure_code(status):
     return 'HTTP_OTHER'
 
 
-def store(kind, run_id, files, token, *, run_attempt=1, opener=urllib.request.urlopen):
+def _remaining(deadline, maximum=60):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise PrivateStoreError('DEADLINE')
+    return min(maximum, remaining)
+
+
+def _create(request, opener, deadline):
+    try:
+        with opener(request, timeout=_remaining(deadline)) as response:
+            if response.status not in (200, 201):
+                raise PrivateStoreError(http_failure_code(response.status))
+    except urllib.error.HTTPError as exc:
+        raise PrivateStoreError(http_failure_code(exc.code)) from None
+
+
+def _existing_after_conflict(request, raw, opener, deadline):
+    headers = {key: value for key, value in request.header_items()
+               if key.lower() in ('authorization', 'x-github-api-version')}
+    headers['Accept'] = 'application/vnd.github.raw+json'
+    current = urllib.request.Request(request.full_url + '?ref=main', headers=headers)
+    try:
+        with opener(current, timeout=_remaining(deadline, 15)) as response:
+            if response.status == 404:
+                return False
+            if response.status != 200:
+                raise PrivateStoreError(http_failure_code(response.status))
+            existing = response.read(MAX_BYTES + 1)
+            _remaining(deadline)
+            if existing != raw:
+                raise PrivateStoreError('IMMUTABLE_CONFLICT')
+            return True
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False
+        raise PrivateStoreError(http_failure_code(exc.code)) from None
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def _open(request, *, timeout):
+    return urllib.request.build_opener(_NoRedirect()).open(request, timeout=timeout)
+
+
+def store(kind, run_id, files, token, *, run_attempt=1, opener=_open):
     if not token:
         raise ValueError('private_token_missing')
     for path, destination in destinations(kind, run_id, files, run_attempt=run_attempt):
+        deadline = time.monotonic() + 60
+        raw = path.read_bytes()
         body = json.dumps({'message': f'diagnostics {kind} {run_id}', 'branch': 'main',
-                           'content': base64.b64encode(path.read_bytes()).decode()}).encode()
+                           'content': base64.b64encode(raw).decode()}).encode()
         request = urllib.request.Request(f'https://api.github.com/repos/{REPOSITORY}/contents/{destination}',
             data=body, method='PUT', headers={'Authorization': 'Bearer ' + token,
             'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'})
         try:
-            with opener(request, timeout=60) as response:
-                if response.status not in (200, 201):
-                    raise PrivateStoreError(http_failure_code(response.status))
-        except urllib.error.HTTPError as exc:
-            raise PrivateStoreError(http_failure_code(exc.code)) from None
+            _create(request, opener, deadline)
+        except PrivateStoreError as exc:
+            if exc.failure_code != 'HTTP_409':
+                raise
+            # Another writer can advance main between Contents API commits.
+            # Resolve this observed conflict once, without a sha/overwrite PUT.
+            if not _existing_after_conflict(request, raw, opener, deadline):
+                _create(request, opener, deadline)
     return len(files)
 
 

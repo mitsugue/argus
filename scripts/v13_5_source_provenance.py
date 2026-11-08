@@ -35,6 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_private_diagnostics_conflict.py': '1fcf2e634f32a4346af75b0ad7ead5d0ac0cef39',
+    'docs/operations/private-diagnostics-conflicts.md': '6cf5d663d424c539690ed4d13005efff81be511f',
     'test_argus_owner_presentation_required.py': '66e4a7e1456d813da524ec9d2c6945024de499f5',
     'docs/operations/dated-sector-classification.md': '1aa25e239c968f10587fee97066db6c40d670b4c',
     'test_argus_dated_classification.py': '0f8e90de50c9f5c23b042ef1fff729555a5abccc',
