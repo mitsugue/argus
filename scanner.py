@@ -45240,13 +45240,13 @@ def _jp_market_engine_pit_inputs(*, warm=False):
     if not warm:
         # 公開読取は待ち合わせず、従来どおり保存済み入力だけを読む。
         return _jp_market_engine_pit_inputs_impl(warm=False)
-    result, mode = _single_flight(
-        "internal:jp-market-input-warm",
-        lambda: _MARKET_INPUT_PREPARATION_TIMING.run(
-            lambda: _jp_market_engine_pit_inputs_impl(warm=True)),
-        # 合流待ちも既存の収集上限900秒以内。外側の収集900秒と
-        # 公開読取45秒は不変。完了結果を次の更新へ持ち越さない。
-        wait_sec=900.0)
+    result, mode = _MARKET_INPUT_PREPARATION_TIMING.observe_flight(
+        lambda compute: _single_flight(
+            "internal:jp-market-input-warm", compute,
+            # 合流待ちも既存の収集上限900秒以内。外側の収集900秒と
+            # 公開読取45秒は不変。完了結果を次の更新へ持ち越さない。
+            wait_sec=900.0),
+        lambda: _jp_market_engine_pit_inputs_impl(warm=True))
     if mode == "busy":
         raise TimeoutError("market_input_warm_in_progress")
     return result

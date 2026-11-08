@@ -11,6 +11,7 @@ STAGES = frozenset((
     'pit_feature_history', 'pit_feature_sources', 'pit_feature_ledger',
     'pit_feature_reconcile', 'pit_feature_build', 'pit_feature_persist',
     'pit_research', 'pit_backup'))
+MAX_FLIGHT_CALLS = 3
 
 
 def _seconds(value):
@@ -27,10 +28,26 @@ def _stamp(value):
     return None
 
 
+def _count(value):
+    return value if type(value) is int and 0 <= value < 2**63 else None
+
+
+def _flight_projection(value):
+    row = value if isinstance(value, dict) else {}
+    return {'callSequence': _count(row.get('callSequence')),
+        'status': row.get('status') if row.get('status') in ('RUNNING', 'DONE', 'FAILED') else None,
+        'mode': row.get('mode') if row.get('mode') in ('computed', 'joined', 'busy') else None,
+        'startedAt': _stamp(row.get('startedAt')), 'finishedAt': _stamp(row.get('finishedAt')),
+        'elapsedSeconds': _seconds(row.get('elapsedSeconds')),
+        'preparationSequenceAtStart': _count(row.get('preparationSequenceAtStart')),
+        'preparationSequenceAtEnd': _count(row.get('preparationSequenceAtEnd'))}
+
+
 def projection(value):
     """非公開診断へ渡す項目を再限定する。工程中の他スレッドCPUは推計しない。"""
     row = value if isinstance(value, dict) else {}
     stages = row.get('completedStages')
+    calls = row.get('flightCalls')
     return {'schemaVersion': 'argus-input-preparation-timing-v1',
         'status': row.get('status') if row.get('status') in ('NOT_STARTED', 'RUNNING', 'DONE', 'FAILED') else None,
         'sequence': row.get('sequence') if type(row.get('sequence')) is int and 0 <= row['sequence'] < 2**63 else None,
@@ -45,11 +62,14 @@ def projection(value):
             'stage': item['stage'], 'elapsedSeconds': _seconds(item.get('elapsedSeconds')),
             'cpuSeconds': _seconds(item.get('cpuSeconds'))}
             for item in (stages if isinstance(stages, list) else [])[-len(STAGES):]
-            if isinstance(item, dict) and type(item.get('stage')) is str and item['stage'] in STAGES]}
+            if isinstance(item, dict) and type(item.get('stage')) is str and item['stage'] in STAGES],
+        'flightCalls': [_flight_projection(item) for item in
+            (calls if isinstance(calls, list) else [])[-MAX_FLIGHT_CALLS:] if isinstance(item, dict)],
+        'droppedFlightCallCount': _count(row.get('droppedFlightCallCount'))}
 
 
 class InputPreparationTiming:
-    """同時実行をまとめる既存処理の実行側だけを計測。直近1回、固定件数。"""
+    """実行側の直近1回と、同じ更新を呼んだ直近3回を別々に計測。"""
     def __init__(self, *, clock=time.monotonic, cpu=time.thread_time, stamp=None):
         self._clock, self._cpu = clock, cpu
         self._stamp = stamp or (lambda: datetime.now(timezone.utc).isoformat())
@@ -57,6 +77,8 @@ class InputPreparationTiming:
         self._owner = None
         self._started = self._stage_started = self._cpu_started = self._stage_cpu = None
         self._row = {'status': 'NOT_STARTED', 'sequence': 0, 'completedStages': [], 'droppedStageCount': 0}
+        self._flight_calls = []
+        self._call_sequence = self._dropped_calls = 0
 
     def _cpu_now(self):
         try:
@@ -114,9 +136,41 @@ class InputPreparationTiming:
                     stageElapsedSeconds=self._delta(now, self._stage_started))
                 self._owner = None
 
+    def observe_flight(self, dispatch, callback):
+        """既存の返却modeを記録するだけ。待機期限・結果・例外を変えない。"""
+        row = None
+        try:
+            with self._lock:
+                started = self._clock()
+                self._call_sequence += 1
+                row = {'callSequence': self._call_sequence, 'status': 'RUNNING', 'mode': None,
+                    'startedAt': self._stamp(), 'finishedAt': None,
+                    'preparationSequenceAtStart': self._row['sequence']}
+                self._flight_calls.append(row)
+                self._dropped_calls += max(0, len(self._flight_calls) - MAX_FLIGHT_CALLS)
+                del self._flight_calls[:-MAX_FLIGHT_CALLS]
+        except Exception:
+            row = None                         # 計時不能でも元の処理を実行する
+        mode, status = None, 'FAILED'
+        try:
+            result, mode = dispatch(lambda: self.run(callback))
+            status = 'DONE'
+            return result, mode
+        finally:
+            if row is not None:
+                try:
+                    with self._lock:
+                        row.update(status=status, mode=mode, finishedAt=self._stamp(),
+                            elapsedSeconds=self._delta(self._clock(), started),
+                            preparationSequenceAtEnd=self._row['sequence'])
+                except Exception:
+                    pass                       # 観測失敗で元の結果・例外を置換しない
+
     def view(self):
         with self._lock:
             row = dict(self._row)
+            row.update(flightCalls=[dict(call) for call in self._flight_calls],
+                       droppedFlightCallCount=self._dropped_calls)
             if self._owner is not None:
                 now = self._clock()
                 row.update(elapsedSeconds=self._delta(now, self._started), cpuSeconds=None,
