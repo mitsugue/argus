@@ -568,10 +568,29 @@ def prompt(context, *, prepared_context=None, prepared_catalog=None):
 
 
 def validate_answer(value, context, *, diagnostic=None):
+    return _validate_answer(value, context, diagnostic=diagnostic,
+        prose_validator=argus_explanation_contract.validate_unified_ai)
+
+
+def validate_saved_answer(value, context, *, completed_at, diagnostic=None):
+    """Current checks first; only the dated pre-binding archive contract may differ."""
+    details = {}
+    result = validate_answer(value, context, diagnostic=details)
+    if result is None and details.get('reason') == 'validation_method_scope_mismatch':
+        def saved_prose(prose, current, *, diagnostic):
+            return argus_explanation_contract.validate_saved_unified_ai(
+                prose, current, completed_at=completed_at, diagnostic=diagnostic)
+        result = _validate_answer(value, context, diagnostic=details, prose_validator=saved_prose)
+    if isinstance(diagnostic, dict):
+        diagnostic.update(details)
+    return result
+
+
+def _validate_answer(value, context, *, diagnostic, prose_validator):
     require_allowed(value)
     from argus_presentation_intent import dialogue_inventory, validate_plan
     prose = {k: v for k, v in value.items() if k != 'presentation'} if isinstance(value, Mapping) else value
-    answer=argus_explanation_contract.validate_unified_ai(prose,context,diagnostic=diagnostic)
+    answer=prose_validator(prose,context,diagnostic=diagnostic)
     if answer is None:return None
     hypothesis_ids={f['evidenceId'] for f in context['facts']+context['previousFacts'] if f.get('evidenceKind')=='HYPOTHESIS'}
     for row in answer['sections'].values():

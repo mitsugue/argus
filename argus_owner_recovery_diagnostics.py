@@ -128,7 +128,7 @@ def status(value):
             result[key] = None
     for key in ('counts', 'restoredCounts'):
         row = value.get(key)
-        result[key] = {name: row[name] for name in ('requests', 'completions')
+        result[key] = {name: row[name] for name in ('requests', 'completions', 'historicalMethodScopeCompletions')
             if type(row.get(name)) is int and 0 <= row[name] <= 1000000} if isinstance(row, dict) else None
     result['failure'] = project_failure(value['failure']) if isinstance(value.get('failure'), dict) else None
     return result
