@@ -198,3 +198,42 @@ def test_scheduled_runs_keep_response_bodies_out_of_the_public_log():
         for line in banned:
             assert line not in text, (name, line)
         assert 'private_diagnostics_store.py' in text and 'stored privately' in text, name
+
+@pytest.mark.parametrize('status,code', [(400,'HTTP_400'),(401,'HTTP_401'),(403,'HTTP_403'),(404,'HTTP_404'),(409,'HTTP_409'),(422,'HTTP_422'),(429,'HTTP_429'),(500,'HTTP_5XX'),(503,'HTTP_5XX'),(599,'HTTP_5XX'),(418,'HTTP_OTHER')])
+def test_http_failure_logs_only_fixed_status_without_reading_body(tmp_path, monkeypatch, capsys, status, code):
+    import io
+    import urllib.error
+    path=tmp_path/'note.json';path.write_text('PRIVATE_RECORD')
+    calls=[]
+    class UnreadableBody(io.BytesIO):
+        def read(self,*args):
+            pytest.fail('private HTTP error body must not be read')
+    def opener(request,timeout):
+        calls.append(request)
+        raise urllib.error.HTTPError('https://private.test/SECRET_PATH',status,'SECRET_REASON',{},UnreadableBody(b'SECRET_BODY'))
+    original=store.store
+    monkeypatch.setenv('PRIVATE_DIAGNOSTICS_TOKEN','SECRET_TOKEN')
+    monkeypatch.setattr(store,'store',lambda kind,run,files,token,**kwargs: original(kind,run,files,token,opener=opener,**kwargs))
+    assert store.main(['--kind','warm','--run-id','123',str(path)])==1
+    assert len(calls)==1
+    assert capsys.readouterr().out==f'private diagnostics: not stored (private_store_failed; {code})\n'
+
+
+def test_unexpected_http_response_has_fixed_failure_status(tmp_path):
+    path=tmp_path/'note.json';path.write_text('PRIVATE_RECORD')
+    class Denied(Response):
+        status=403
+    with pytest.raises(store.PrivateStoreError) as exc:
+        store.store('warm','123',[path],'SECRET_TOKEN',opener=lambda *a,**k:Denied())
+    assert str(exc.value)=='private_store_failed'
+    assert exc.value.failure_code=='HTTP_403'
+
+
+@pytest.mark.parametrize('error_type,expected', [(OSError,'private_transport_failed'),(ValueError,'private_store_failed')])
+def test_unexpected_private_error_text_is_never_printed(tmp_path, monkeypatch, capsys, error_type, expected):
+    path=tmp_path/'note.json';path.write_text('PRIVATE_RECORD')
+    def fail(*args,**kwargs):
+        raise error_type('SECRET_URL_BODY_TOKEN')
+    monkeypatch.setattr(store,'store',fail)
+    assert store.main(['--kind','warm','--run-id','123',str(path)])==1
+    assert capsys.readouterr().out==f'private diagnostics: not stored ({expected})\n'

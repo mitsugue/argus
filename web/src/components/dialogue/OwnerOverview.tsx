@@ -44,7 +44,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
   useEffect(()=>{
     if((!token&&!session)||!base){setFetching(false);return;}
     const cached = revision === 0 ? savedReadCache.get(cacheKey) : undefined;
-    if(cached?.edition){setEdition(cached.edition);setError('');setFetching(false);return;}
+    if(cached?.edition){setEdition(cached.edition);setError('');setFetching(false);}
     let stopped=false;let timer:number|undefined;let requestId:string|undefined;
     let active:AbortController|undefined;let pending=false;
     setError('');
@@ -83,9 +83,11 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
       }catch{if(!stopped)setError('接続できません');}
       finally{window.clearTimeout(timeout);active=undefined;if(!stopped)setFetching(false);}
     };
-    const stopVisible=subscribeInitialVisibleRead(()=>void load());
-    const stopPoll=scheduleVisibleInterval(()=>{if(pending)void load();},30_000);
-    if(cached?.error){setError(cached.error);pending=true;}else void load();
+    const stopVisible=subscribeInitialVisibleRead(()=>void load(),Boolean(cached?.edition));
+    // A fresh saved answer may arrive without changing the shared market context.
+    // Reuse the existing visible cadence; expiry reads never start AI work.
+    const stopPoll=scheduleVisibleInterval(()=>{if(pending||!savedReadCache.get(cacheKey))void load();},30_000);
+    if(cached?.error){setError(cached.error);pending=true;}else if(!cached?.edition)void load();
     return()=>{stopped=true;active?.abort();stopVisible();stopPoll();if(timer!==undefined)window.clearTimeout(timer);};
   },[requestKey,token,session,cacheKey,base,contextId,revision]);
   const job=edition?.job;

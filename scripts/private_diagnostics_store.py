@@ -42,6 +42,20 @@ def destinations(kind, run_id, files, *, run_attempt=1):
     return out
 
 
+class PrivateStoreError(ValueError):
+    def __init__(self, failure_code):
+        super().__init__('private_store_failed')
+        self.failure_code = failure_code
+
+
+def http_failure_code(status):
+    if type(status) is int and status in (400, 401, 403, 404, 409, 422, 429):
+        return f'HTTP_{status}'
+    if type(status) is int and 500 <= status <= 599:
+        return 'HTTP_5XX'
+    return 'HTTP_OTHER'
+
+
 def store(kind, run_id, files, token, *, run_attempt=1, opener=urllib.request.urlopen):
     if not token:
         raise ValueError('private_token_missing')
@@ -54,9 +68,9 @@ def store(kind, run_id, files, token, *, run_attempt=1, opener=urllib.request.ur
         try:
             with opener(request, timeout=60) as response:
                 if response.status not in (200, 201):
-                    raise ValueError('private_store_failed')
-        except urllib.error.HTTPError:
-            raise ValueError('private_store_failed') from None
+                    raise PrivateStoreError(http_failure_code(response.status))
+        except urllib.error.HTTPError as exc:
+            raise PrivateStoreError(http_failure_code(exc.code)) from None
     return len(files)
 
 
@@ -76,7 +90,16 @@ def main(argv=None):
         count = store(args.kind, args.run_id, [f for f in files if f.exists()],
                       os.environ.get('PRIVATE_DIAGNOSTICS_TOKEN', ''), run_attempt=args.run_attempt)
     except (ValueError, OSError) as exc:
-        print(f'private diagnostics: not stored ({exc})')
+        code = exc.failure_code if isinstance(exc, PrivateStoreError) else None
+        if code is not None:
+            print(f'private diagnostics: not stored (private_store_failed; {code})')
+        else:
+            known = {'invalid_diagnostics_destination', 'diagnostics_file_count',
+                     'invalid_diagnostics_attempt', 'diagnostics_file_invalid',
+                     'diagnostics_file_name', 'private_token_missing'}
+            reason = str(exc) if isinstance(exc, ValueError) and str(exc) in known else (
+                'private_transport_failed' if isinstance(exc, OSError) else 'private_store_failed')
+            print(f'private diagnostics: not stored ({reason})')
         return 1
     print(f'private diagnostics: stored {count} file(s)')
     return 0
