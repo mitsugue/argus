@@ -337,7 +337,7 @@ def test_sector_retention_failure_keeps_quotes_and_does_not_fetch_again(monkeypa
     monkeypatch.setattr(scanner,'_JP_MARKET_ENGINE_MARKET_VIEW_MEMO',{'ts':1})
     monkeypatch.setattr(scanner,'_JP_WATCHLIST',[])
     monkeypatch.setattr(scanner.jp_market_internals,'SECTORS',{'synthetic':{'symbol':'1617'}})
-    monkeypatch.setattr(scanner,'_jq_master',lambda:[])
+    monkeypatch.setattr(scanner,'_jp_classification_warm',lambda deadline:{})
     monkeypatch.setattr(scanner,'_JQUANTS_API_KEY','synthetic')
     monkeypatch.setattr(scanner,'_cost_policy_durable_enabled',lambda:True)
     monkeypatch.setattr(scanner,'_DURABILITY_PATHS',{'root':str(tmp_path)})

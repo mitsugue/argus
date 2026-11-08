@@ -661,7 +661,7 @@ def prompt(context, *, prepared_context=None, prepared_catalog=None):
         '根拠がない原因の断定、未観測の注文、信用期日の一律売却を主張しないでください。'
         '銘柄に関連付けた報道は確認候補です。企業への実際の影響、記事全文、決算の公式結果、価格反応の原因を確認したとは扱いません。'
         '市場の中で変わったこと、質問への答え、自分への影響、次に確認すること、見方を変える条件を簡潔に述べます。'
-        'JSONのみ。view/reasons/changes/impact/next/invalidationの6項目、それぞれtextJa(240字以内),'
+        'JSONのみ。view/reasons/changes/impact/next/invalidationの6項目とpresentationを返します。6項目はそれぞれtextJa(240字以内),'
         'kind(FACT/INFERENCE/UNKNOWN),evidenceIds(参照IDの配列)だけを持つオブジェクトです。'
         'viewは60字以内、他の項目は120字以内を目安に、結論と重要な条件に絞ります。'
         'evidenceIdsは項目ごとに重複なしで最大6件。重要な根拠を選び、全根拠を列挙しません。'
@@ -718,6 +718,10 @@ def _validate_answer(value, context, *, diagnostic, prose_validator):
                 'presentationPlan': validate_plan(value['presentation'], catalog)}
         except ValueError:
             presentation = {'presentationStatus': 'INVALID_RESPONSE'}
+    if context.get('presentationRequired') is True and presentation['presentationStatus'] != 'GENERATED':
+        if diagnostic is not None:
+            diagnostic.update(status='REJECTED',reason='presentation_invalid',section='presentation')
+        return None
     return {**answer, **presentation,'schemaVersion':'argus-owner-dialogue-answer-v1','scope':'OWNER_PRIVATE',
         'subject':deepcopy(context['subject']),'horizonSessions':context['horizonSessions'],
         'isHypotheticalConversation':context['isHypotheticalConversation'],

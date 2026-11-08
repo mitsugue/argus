@@ -27,8 +27,10 @@ def generate_answer(context, generate):
             purpose='owner_dialogue', diagnostic=diagnostic)
         value = restore_references(value)
         answer = dialogue.validate_answer(value, context, diagnostic=validation) if value else None
-        if answer and 'presentation' in value and answer.get('presentationStatus') != 'GENERATED':
+        if answer and (context.get('presentationRequired') is True or 'presentation' in value) \
+                and answer.get('presentationStatus') != 'GENERATED':
             validation.update(status='REJECTED', reason='presentation_invalid', section='presentation')
+            answer = None
         attempts.append({'provider': deepcopy(diagnostic), 'validation': deepcopy(validation)})
         if attempt or not value or validation.get('reason') not in {
                 'unsupported_numeric_tokens', 'fact_requires_verified_references',
@@ -211,6 +213,8 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         if omitted:
             context['eventFocusOmitted'] = omitted
         context['intent'] = 'SUBJECT_OVERVIEW'
+        if policy.get('presentationRequired') is True:
+            context['presentationRequired'] = True
         context['historyStatus'] = 'LOCAL_DURABLE'
         attach_previous_view(context, previous)
         context['contextId'] = dialogue.digest({k:v for k,v in context.items() if k!='contextId'})

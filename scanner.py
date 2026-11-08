@@ -19232,8 +19232,13 @@ _OWNER_DIALOGUE_RECOVERY = argus_owner_dialogue_recovery.RecoveryWorker(
 def _owner_dialogue_subject_comparison(*, brief, symbol, market, horizon, cutoff):
     if market != "JP" or not isinstance(symbol, str) or not re.fullmatch(r"[0-9A-Z]{4}", symbol):
         return None
-    meta = next((r for r in (_JQ_MASTER_CACHE.get("data") or []) if r.get("code4") == symbol), {})
-    classification = {k: meta.get(k) for k in ("sector17Code", "sector33Code", "effectiveDate", "receivedAt")}
+    import argus_market_classification
+    period = argus_owner_dialogue_api.dialogue.market_internals(brief, horizon) or {}
+    meta = argus_market_classification.lookup(_JQ_MASTER_CACHE, symbol, period.get("endDate"))
+    if meta is None:
+        retained = (_JP_INTERNALS_CACHE.get("classifications") or {}).get(symbol) or {}
+        meta = retained if retained.get("effectiveDate") == period.get("endDate") else {}
+    classification = {k: meta.get(k) for k in ("sector17Code", "sector33Code", "effectiveDate", "receivedAt", "sourceSnapshotSha256")}
     classification["source"] = "J-Quants V2 equities/master"
     return argus_owner_dialogue_api.dialogue.cached_subject_comparison(
         brief=brief, symbol=symbol, horizon=horizon, cutoff=cutoff,
@@ -19361,7 +19366,7 @@ def _owner_overview_generation_policy():
     return {"model": _OPENAI_MODEL, "ruleVersion": revision,
             "ruleVersionKind": "generation-source-sha256-v1",
             "provider": "openai", "endpoint": "responses",
-            "maxOutputTokens": 3000, "maxValidationAttempts": 2,
+            "maxOutputTokens": 3000, "maxValidationAttempts": 2, "presentationRequired": True,
             "providerSettingsDigest": digest({
                 key: os.environ.get(key, "") for key in
                 ("OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID")})}
@@ -44192,6 +44197,40 @@ def _jp_earnings_reaction_codes():
         return []  # Original-store failures cannot break sector/registered prices.
 
 
+def _jp_classification_warm(deadline):
+    """Use observed prices and the preceding received classification edition."""
+    import argus_market_classification
+    latest = argus_market_clock.latest_completed_session_date(
+        argus_market_clock.JP_EQUITY, datetime.now(pytz.utc))
+    observed = _jp_market_internals_cached().get("asOfDate")
+    try:
+        observed_day = datetime.fromisoformat(observed).date()
+        if (not latest - timedelta(days=100) <= observed_day <= latest
+                or not argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, observed_day)):
+            observed_day = latest
+    except (TypeError, ValueError):
+        observed_day = latest
+    days = [observed_day.isoformat()]
+    # Acquisition follows saved producer inputs, never an AI explanation.
+    prior_dates = []
+    for row in _JP_INTERNALS_CACHE.get("classifications", {}).values():
+        try:
+            retained = datetime.fromisoformat(row["effectiveDate"]).date()
+            if (observed_day - timedelta(days=100) <= retained <= observed_day
+                    and argus_market_clock.canonical_trading_day(argus_market_clock.JP_EQUITY, retained)):
+                prior_dates.append(retained.isoformat())
+        except (KeyError, ValueError, TypeError):
+            pass
+    if prior_dates and max(prior_dates) not in days:
+        days.append(max(prior_dates))
+    result = argus_market_classification.warm(_JQ_MASTER_CACHE, days,
+        get=requests.get, base=_JQUANTS_BASE, headers={"x-api-key": _JQUANTS_API_KEY},
+        now_iso=_ai_now_iso, monotonic=time.monotonic, wall_time=time.time, deadline=deadline)
+    _JP_INTERNALS_ACQUISITION["classification"] = result
+    return {code: argus_market_classification.lookup(_JQ_MASTER_CACHE, code, days[0])
+            for code in (row["symbol"] for row in _JP_WATCHLIST)}
+
+
 def _jp_internals_warm():
     """Short daily-bar windows on the existing authenticated collection lane."""
     import sqlite3
@@ -44204,16 +44243,10 @@ def _jp_internals_warm():
         if last is not None and time.monotonic() - last < 1800: return
         _JP_INTERNALS_ACQUISITION.update(status="RUNNING", lastAttemptAt=_ai_now_iso(), lastAttemptMonotonic=time.monotonic())
         public = [r["symbol"] for r in _JP_WATCHLIST]
-        master = _jq_master()
-        for row in master:
-            if row.get("code4") in public and row.get("sector17Code"):
-                _JP_INTERNALS_CACHE["classifications"][row["code4"]] = {
-                    "sector17Code": row["sector17Code"], "sector33Code": row.get("sector33Code"),
-                    "effectiveDate": row.get("effectiveDate"), "receivedAt": row.get("receivedAt"),
-                    "source": "J-Quants V2 equities/master"}
+        deadline = time.monotonic() + 150
         sector_symbols = ["1306", *[r["symbol"] for r in jp_market_internals.SECTORS.values()]]
         symbols = list(dict.fromkeys([*sector_symbols, *public, *_jp_earnings_reaction_codes()]))
-        deadline = time.monotonic() + 150; failed = []; updated = []
+        failed = []; updated = []
         start = (datetime.now(TZ_JST) - timedelta(days=100)).date().isoformat()
         for symbol in symbols:
             if time.monotonic() >= deadline:
@@ -44260,6 +44293,9 @@ def _jp_internals_warm():
             except Exception as exc:
                 failed.append(symbol)
                 _JP_INTERNALS_ACQUISITION["lastErrorClass"] = type(exc).__name__
+        for code, classification in _jp_classification_warm(deadline).items():
+            if classification is not None:
+                _JP_INTERNALS_CACHE["classifications"][code] = classification
         _JP_INTERNALS_ACQUISITION.update(status="AVAILABLE" if not failed else "PARTIAL", failedSymbols=failed, updatedSymbols=updated)
         if updated: _JP_INTERNALS_ACQUISITION["lastSuccessfulAcquisitionAt"] = _ai_now_iso()
         try: _jp_internals_storage()
@@ -44291,8 +44327,10 @@ def _jp_market_internals_cached():
         index_rows = (prices.get("NIKKEI_225_INDEX") or {}).get("rows") or []
         def contributions(horizon, start, end):
             return _jp_index_contribution_for(start, end, index_rows)
+        import argus_market_classification
         result = jp_market_internals.build_snapshot(session_dates=sessions, cutoff=cutoff, prices=prices,
             symbols=[r["symbol"] for r in _JP_WATCHLIST], classifications=_JP_INTERNALS_CACHE["classifications"],
+            classification_editions=argus_market_classification.editions(_JQ_MASTER_CACHE),
             breadth=jp_market_internals.breadth_from_ledger(observations, cutoff=cutoff),
             index_contributions=contributions)
         result["acquisition"] = {k: v for k, v in _JP_INTERNALS_ACQUISITION.items() if k != "lastAttemptMonotonic"}
