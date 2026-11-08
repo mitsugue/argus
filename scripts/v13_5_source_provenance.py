@@ -35,7 +35,8 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    'docs/operations/dated-sector-classification.md': '44ccc349ea588bcb45a6d13e158578f04d4fe97a',
+    'test_argus_owner_presentation_required.py': '66e4a7e1456d813da524ec9d2c6945024de499f5',
+    'docs/operations/dated-sector-classification.md': '1aa25e239c968f10587fee97066db6c40d670b4c',
     'test_argus_dated_classification.py': '0f8e90de50c9f5c23b042ef1fff729555a5abccc',
     'argus_market_classification.py': '4b2e733f059841ebc2b349a1a0d5f4c1f5ed8948',
     'test_argus_comparison_preparation.py': '36d7569049e9851b4d6cc49bd140261c8440d2a4',
@@ -413,8 +414,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_ai_usage_runtime.py': 'a547929955acabfd3ae74d3cbd9224f1448d2862',
     'argus_analysis_history_backup.py': 'f011bf50f23c32554ffd2c55dd003086ac434bc4',
     'argus_explanation_contract.py': '5d91e091673c587dc68e5800dd445357e9095f20',
-    'argus_owner_dialogue.py': 'e26f280d3e1962fa83dd39d5be78722db0a111e9',
-    'argus_owner_dialogue_api.py': '5769914683befca161af651df07f1e862ff37dec',
+    'argus_owner_dialogue.py': 'c8511ab387a2e7be05c266d744e6c17ec819d99b',
+    'argus_owner_dialogue_api.py': 'a8e618aa7f63c7bded77fc6f3bd9f7ba1fbae22b',
     'argus_owner_dialogue_backup.py': 'fc782c50eeb15322bea22f9846915b960eea2c62',
     'argus_owner_dialogue_recovery.py': 'f975e33adf0691f3e44c3982b3438da89a464a35',
     'argus_owner_recovery_diagnostics.py': '5457322945ea01e675158b904f41e517620a8c24',

@@ -19366,7 +19366,7 @@ def _owner_overview_generation_policy():
     return {"model": _OPENAI_MODEL, "ruleVersion": revision,
             "ruleVersionKind": "generation-source-sha256-v1",
             "provider": "openai", "endpoint": "responses",
-            "maxOutputTokens": 3000, "maxValidationAttempts": 2,
+            "maxOutputTokens": 3000, "maxValidationAttempts": 2, "presentationRequired": True,
             "providerSettingsDigest": digest({
                 key: os.environ.get(key, "") for key in
                 ("OPENAI_BASE_URL", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID")})}
