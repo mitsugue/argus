@@ -100,6 +100,15 @@ def _completion(raw,context):
             plan = answer.get('presentationPlan') or {}
             supplied['presentation'] = {key: plan.get(key) for key in ('inventoryId', 'intentJa', 'elements')}
         rebuilt = dialogue.validate_answer(supplied, context)
+        if rebuilt is not None:
+            # 元の本文を同じ根拠・数値・権限検査に通した後だけ、欠測時に
+            # 検証器が現行の定型文へ置き換えた2項目を保存当時の文へ戻す。
+            # 過去の説明・digestを書き換えず、他の本文や構成の差は拒否する。
+            for section, unavailable in (
+                    ('impact', not context.get('ownerContextAvailable')),
+                    ('changes', not (context.get('changes') or {}).get('comparisonAvailable'))):
+                if unavailable:
+                    rebuilt['sections'][section]['textJa'] = supplied[section]['textJa']
         if rebuilt is not None and presentation_status in (None, 'INVALID_RESPONSE'):
             # Older accepted prose can lack editorial intent, or explicitly
             # record an invalid intent. Preserve that state, not an invented plan.

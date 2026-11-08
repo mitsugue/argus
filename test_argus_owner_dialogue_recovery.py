@@ -5,7 +5,7 @@ import argus_owner_dialogue_api as api
 import argus_owner_dialogue_backup as backup
 from test_argus_owner_dialogue import AT, market_brief
 from test_argus_owner_dialogue_api import payload
-from test_argus_owner_dialogue_backup import Remote,keys,add
+from test_argus_owner_dialogue_backup import Remote,keys,add,saved_unknown_edition
 
 
 def test_recovery_worker_blocks_new_generation_until_initial_restore_and_reads_are_pure(tmp_path):
@@ -50,3 +50,33 @@ def test_api_recovery_gate_does_not_call_ai_and_history_does_not_trigger_sync(tm
     result=client.post('/api/argus/owner-dialogue',json={k:v for k,v in payload(brief, action='overview').items() if k not in ('requestId','question')})
     assert result.status_code==503 and result.json['error']=='dialogue_recovery_pending'
     assert calls==[] and len(triggers)==1 and not path.exists()
+
+
+def test_old_unknown_edition_opens_recovery_gate_without_resuming_pending_ai(tmp_path):
+    import uuid
+    import argus_owner_dialogue_store as store
+    original = tmp_path/'old'; store.initialize(original)
+    c, result = saved_unknown_edition(); identity = str(uuid.uuid4())
+    store.submit(original, identity=identity, input_hash='a'*64, boot_id='old', context=c)
+    store.complete(original, identity, result)
+    pending = add(original, pending=True)
+    before = store.read(original, identity, 'old')['result']
+    remote = Remote(); backup.synchronize(original, remote, keys())
+    cold = tmp_path/'cold'
+    worker = RecoveryWorker(storage_path=lambda:cold,
+        configuration=lambda:(True,'config'), keys=keys, remote=lambda:remote, now=lambda:AT)
+    assert worker.status()['generationReady'] is False
+    assert worker._lock.acquire(False); worker._run()
+    assert worker.status()['generationReady'] is True
+    assert worker.status()['restoredCounts'] == {'requests':2, 'completions':1}
+    assert store.read(cold, identity, 'new')['result'] == before
+    assert store.read(cold, pending, 'new')['status'] == 'INTERRUPTED'
+    calls = []; triggers = []; app = Flask(__name__)
+    api.register(app, authorize=lambda t:(True,None,200), storage_path=lambda:cold,
+        market_brief=market_brief, generate=lambda *a,**k:calls.append(1), now=lambda:AT,
+        recovery_status=worker.status, recovery_trigger=lambda **k:triggers.append(k))
+    puts = list(remote.puts)
+    response = app.test_client().post('/api/argus/owner-dialogue',json={'action':'history'})
+    assert response.status_code == 200
+    assert response.json['remoteBackup']['generationReady'] is True
+    assert not calls and not triggers and remote.puts == puts

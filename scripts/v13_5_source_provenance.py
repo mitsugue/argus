@@ -18,7 +18,7 @@ from typing import Any, Dict, Mapping, Optional
 
 
 SCHEMA = "argus-v13-5-source-provenance-v1"
-PRODUCT_VERSION = "v13.8.251"
+PRODUCT_VERSION = "v13.8.252"
 ACCEPTED_V13_SOURCE = "32adf932bbcf10ff7e90a5d3c2ea5d7700d52143"
 ACCEPTED_V13_TREE = "be11f4d0b740654670b054c8cc97f44bb4d1ef61"
 CANONICAL_REMOTE = "https://github.com/mitsugue/argus.git"
@@ -217,7 +217,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/OWNER_ARTIFACT_PROTECTION.md': 'c380ea1bb6877182168cdf437987a0f8361a9fa0',
     'web/src/lib/pwaIdentity.ts': '07dae9d8750dbc85cfc2b004076b2cc5e29f1f57',
     'web/scripts/pwa-identity.test.mjs': 'c13231bd7ae66e55fe871a894a8323b93fc06a08',
-    'web/scripts/owner-today-https.mjs': '8e651b75e6c042ea44382f939761741dc69e3f2d',
+    'web/scripts/owner-today-https.mjs': 'b75e518736f8d8bb2c9db6d21efef609e73f9869',
     'web/scripts/owner-today-fixture.py': '435727b6703437a46c3ba1bf8fbb62a8cb2b7849',
     'web/scripts/owner-today-browser-preload.mjs': '860cd4ab1e75151d35e82939a30d1abb6c0a5b39',
     'web/scripts/owner-pwa-migration-acceptance.mjs': '7020efef03895e2df2360d64ebf279248e39307b',
@@ -412,7 +412,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_explanation_contract.py': 'f5c906b9c46bf9808c196d7f894924313b9211f3',
     'argus_owner_dialogue.py': 'feb961fcd38e9f34eb9bc2efe0822f494b6d1eff',
     'argus_owner_dialogue_api.py': '625bea895225afedd66c5f7de32cf5bc2019b0da',
-    'argus_owner_dialogue_backup.py': '4560f85996da2d78a68ff0cb4e28a1cdb8bf50bc',
+    'argus_owner_dialogue_backup.py': '6cf6b632e5b242e416d9dfdb8e99e544edebb4da',
     'argus_owner_dialogue_recovery.py': 'bfc92ba9d12514167c622df5bcf04f87e945d721',
     'argus_owner_dialogue_store.py': '72422e35451def9da106bb200acd49e880a9a2f1',
     'argus_subject_materials.py': 'd23a8ed213d7baf211d1293d394ee300c626ebf6',
@@ -427,8 +427,8 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_owner_cached_inputs.py': '444cb79f894d9a756d42d0ad47ce646a3f1b36ea',
     'test_argus_owner_dialogue.py': 'bb51131cb51b1c0670050b0c0594b7113c1a0aec',
     'test_argus_owner_dialogue_api.py': 'cbced13c229e840f97c2a10c787ff229be655a21',
-    'test_argus_owner_dialogue_backup.py': 'cf675c0f2f17840c35e762a35feafc090cab8338',
-    'test_argus_owner_dialogue_recovery.py': 'acf706ac87e3ea5a686768bb22d9239e4576c126',
+    'test_argus_owner_dialogue_backup.py': 'a48b9292b10d0ab9a4436ecfdfe38a49c77c6997',
+    'test_argus_owner_dialogue_recovery.py': 'ff8c9f398092b1729f93c743ff0f44aa4e24a67a',
     'test_argus_subject_materials.py': '321b8881f911e5ce356e1684a471c68413498a3d',
     'test_jp_market_internals.py': '147e20e74c5502248265c8109bbfe573ec5bc2ec',
     'web/scripts/pwa-recovery.test.mjs': 'd2fc2ff86480cb685328e1341e61d4415285d8a6',
