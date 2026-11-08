@@ -136,3 +136,67 @@ def test_saved_edition_reference_and_answer_survive_encrypted_restart(tmp_path):
     backup.synchronize(cold,remote,keys());after=store.read(cold,identity,'new')
     assert after['context']==before['context'] and after['result']==before['result']
     assert after['context']['referenceEdition']['isCurrentMarketAnalysis'] is False
+
+
+def saved_unknown_edition(*, fields=('impact', 'changes')):
+    """以前の欠測説明を含む合成の保存版。原本fixtureは変更しない。"""
+    from argus_presentation_intent import dialogue_inventory
+    c = context()
+    catalog = dialogue_inventory(c)
+    supplied = answer()
+    supplied['presentation'] = {'inventoryId': catalog['inventoryId'],
+        'intentJa': '結論と根拠を順に読む', 'elements': [
+            {'id': row['id'], 'purposeJa': '保存した説明を読む',
+             'placement': 'lead' if row['id'] == 'view' else 'support',
+             'emphasis': 'primary' if row['id'] == 'view' else 'normal'}
+            for row in catalog['elements']]}
+    value = dialogue.validate_answer(supplied, c)
+    assert value is not None and value['presentationStatus'] == 'GENERATED'
+    old = {'impact': '銘柄ごとの影響を確認できる情報はありません。',
+           'changes': '以前の説明との違いは確認できていません。'}
+    for key in fields:
+        value['sections'][key]['textJa'] = old[key]
+    return c, {'status': 'SUCCEEDED', 'answer': value, 'completedAt': AT}
+
+
+@pytest.mark.parametrize('fields', [('impact',), ('changes',), ('impact', 'changes')])
+def test_old_unknown_wording_recovers_exactly_without_rewriting_saved_text(tmp_path, fields):
+    c, result = saved_unknown_edition(fields=fields)
+    path = tmp_path/'local'; store.initialize(path); identity = str(uuid.uuid4())
+    store.submit(path, identity=identity, input_hash='a'*64, boot_id='old', context=c)
+    store.complete(path, identity, result)
+    original = store.read(path, identity, 'old')
+    remote = Remote(); saved = backup.synchronize(path, remote, keys())
+    assert saved['counts'] == {'requests': 1, 'completions': 1}
+    cold = tmp_path/'cold'; restored = backup.synchronize(cold, remote, keys())
+    assert restored['restoredCounts'] == saved['counts']
+    after = store.read(cold, identity, 'new')
+    assert after['context'] == original['context']
+    assert after['result'] == original['result']
+    assert backup.snapshot(cold)[0] == backup.snapshot(path)[0]
+    assert all(result['answer']['sections'][key]['textJa'].encode() not in raw
+               for key in fields for raw in remote.files.values())
+
+
+@pytest.mark.parametrize('fault', ['number', 'authority', 'reference', 'kind',
+                                   'section_field', 'subject', 'presentation'])
+def test_old_unknown_wording_still_rejects_invalid_prose_and_metadata(fault):
+    c, result = saved_unknown_edition()
+    section = result['answer']['sections']['impact']
+    if fault == 'number': section['textJa'] = '必要な情報は987654321件です。'
+    elif fault == 'authority': section['textJa'] = '上昇する確率が高いです。'
+    elif fault == 'reference': section['evidenceIds'] = ['not-a-saved-fact']
+    elif fault == 'kind': section['kind'] = 'FACT'
+    elif fault == 'section_field': section['unexpected'] = True
+    elif fault == 'subject': result['answer']['subject'] = {'symbol': 'OTHER', 'market': 'US'}
+    elif fault == 'presentation': result['answer']['presentationPlan']['inventoryId'] = 'wrong'
+    with pytest.raises(ValueError, match='dialogue_backup_answer_invalid'):
+        backup._completion(store.sealed(result), c)
+
+
+def test_unknown_wording_compatibility_does_not_replace_record_digest_validation():
+    c, result = saved_unknown_edition()
+    sealed = json.loads(store.sealed(result))
+    sealed['answer']['sections']['impact']['textJa'] = '別の文章です。'
+    with pytest.raises(ValueError, match='dialogue_record_integrity'):
+        backup._completion(json.dumps(sealed), c)
