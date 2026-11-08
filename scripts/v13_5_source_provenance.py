@@ -35,6 +35,9 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'docs/operations/dated-sector-classification.md': '44ccc349ea588bcb45a6d13e158578f04d4fe97a',
+    'test_argus_dated_classification.py': '0f8e90de50c9f5c23b042ef1fff729555a5abccc',
+    'argus_market_classification.py': '4b2e733f059841ebc2b349a1a0d5f4c1f5ed8948',
     'test_argus_comparison_preparation.py': '36d7569049e9851b4d6cc49bd140261c8440d2a4',
     'argus_comparison_preparation.py': '3b1de681f55db9acca279c44e7e4adc6d3d9b8f8',
     # 候補再作成の固定項目と数値・来歴不変の正確な検査。
@@ -285,7 +288,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'bridge/moomoo_push.py': '5268c303608bad317a6e47bbe891a64860959674',
     'test_argus_saved_overview.py': 'a0a24d21fa9d37ee44d3e69a9e2991b3dbbe910a',
     'test_argus_overview_policy.py': '3051e457321f71c6e7a4ba1e9ce34179e42a0877',
-    'argus_overview_policy.py': '3f29c28fac1e6f491059e3a63e37dfec3f258bb2',
+    'argus_overview_policy.py': '337719c05fb14cc10168cb15235c6694c8cc4982',
     'test_jp_market_feature_delta.py': '5cf423e0f9514fa1a87841277adc4b50ea0ad035',
     'web/src/domain/watchlistProjection.ts': '36b5e0c3eba3a67ce9fec128f422ce3af89498cc',
     'web/scripts/watchlist-retirement.test.cjs': '6718c86f516c1162a62d49b008abdc93403c0dee',
@@ -425,18 +428,18 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/V13_6_AI_USAGE.md': 'f455ad3d0a366f2fad38564bbea7bc4e6bbf3856',
     'docs/V13_6_MARKET_INTERNALS.md': '3325050ada139f0ce5d73282ee54527963b65d46',
     'docs/V13_6_OWNER_DIALOGUE.md': '6363817a4c2378931c8ba2fb9f30dc3fd691ac21',
-    'jp_market_internals.py': 'b262b010f0389ec39bcbf711a9ecf515058de792',
+    'jp_market_internals.py': '5dc96759265e46e5fbf38e28f82e75160112902c',
     # PR #459 owner-approved GPT-only cost-cap regression coverage.  Keep the
     # exact reviewed blob pin; future test edits require separate review.
     'test_argus_ai_usage_runtime.py': '4b765dd3c8dde089634331897eb9d7010404feec',
     'test_argus_analysis_history_backup.py': '6eab4f89f70f19b77302a5151b6be675d72ee8b9',
-    'test_argus_owner_cached_inputs.py': '444cb79f894d9a756d42d0ad47ce646a3f1b36ea',
+    'test_argus_owner_cached_inputs.py': '886a899bad0cc448e97d99e756e769dc68ad6824',
     'test_argus_owner_dialogue.py': 'bb51131cb51b1c0670050b0c0594b7113c1a0aec',
     'test_argus_owner_dialogue_api.py': 'cbced13c229e840f97c2a10c787ff229be655a21',
     'test_argus_owner_dialogue_backup.py': '859b3d6bc77e878c2cc3b00622d07ebd1edfba8e',
     'test_argus_owner_dialogue_recovery.py': '5f35697d071ef4c329c4e4ff3123cc5bff29950f',
     'test_argus_subject_materials.py': '321b8881f911e5ce356e1684a471c68413498a3d',
-    'test_jp_market_internals.py': '147e20e74c5502248265c8109bbfe573ec5bc2ec',
+    'test_jp_market_internals.py': 'a2796008338bd41c05d5caceecb85fb8190e9ebf',
     'web/scripts/pwa-recovery.test.mjs': 'd2fc2ff86480cb685328e1341e61d4415285d8a6',
     'web/scripts/shared-market-context.test.cjs': '4f838a348ff036356ba3257f78c2be35d63a7588',
     'web/src/components/dialogue/OwnerDialogue.css': '99f542e0fc1391a58a1cb60ac1c5bec249fe9a28',

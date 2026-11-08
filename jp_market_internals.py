@@ -99,7 +99,7 @@ def breadth_from_ledger(observations, *, cutoff):
 
 
 def build_snapshot(*, session_dates, cutoff, prices, symbols, classifications, breadth=None,
-                   index_contributions=None):
+                   index_contributions=None, classification_editions=None):
     """Use one fixed public sample and exact endpoints for each independent horizon."""
     if len(symbols)>100 or len(set(symbols))!=len(symbols):raise ValueError('public_sample_bound_or_duplicate')
     if not session_dates or len(set(session_dates))!=len(session_dates) or session_dates!=sorted(session_dates):
@@ -117,6 +117,11 @@ def build_snapshot(*, session_dates, cutoff, prices, symbols, classifications, b
     comparable_end=(common or index_days or [latest_session])[-1]
     session_dates=[day for day in session_dates if day<=comparable_end]
     end=session_dates[-1];periods={}
+    dated = (classification_editions or {}).get(end)
+    active_classifications = classifications
+    if classification_editions is not None:
+        active_classifications = dated if isinstance(dated, dict) else {
+            code: row for code, row in classifications.items() if row.get('effectiveDate') == end}
     for horizon in (1,5,10,20):
         if len(session_dates)<=horizon:continue
         start=session_dates[-horizon-1]
@@ -132,7 +137,7 @@ def build_snapshot(*, session_dates, cutoff, prices, symbols, classifications, b
                     if result['status']==benchmark['status']=='AVAILABLE' else None})
         assets=[]
         for symbol in symbols:
-            result=calc(symbol);meta=classifications.get(symbol) or {};sector=None
+            result=calc(symbol);meta=active_classifications.get(symbol) or {};sector=None
             try:
                 if (_instant(meta['receivedAt'])<=_instant(cutoff) and meta['effectiveDate']<=end
                         and meta.get('source')=='J-Quants V2 equities/master'):
@@ -155,7 +160,7 @@ def build_snapshot(*, session_dates, cutoff, prices, symbols, classifications, b
                 {'status':'UNAVAILABLE','reason':'exact_index_members_weights_adjustment_and_divisor_not_connected'}),
             'directionScore':None,'actionAuthority':False}
     body={'schemaVersion':SCHEMA,'market':'JP','asOfDate':end,'periods':periods,
-          'breadth':breadth or {'status':'UNAVAILABLE'},'classificationBasis':'CURRENT_RECEIVED_MASTER',
+          'breadth':breadth or {'status':'UNAVAILABLE'},'classificationBasis':'DATED_RECEIVED_MASTER' if classification_editions is not None else 'CURRENT_RECEIVED_MASTER',
           'comparisonAvailability':{'latestCompletedSessionDate':latest_session,
               'comparedThrough':end,'latestSessionIncluded':end==latest_session},
           'actionAuthority':False,'automaticAiCalls':0,'predictiveProbabilityVerified':False,

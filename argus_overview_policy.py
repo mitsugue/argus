@@ -11,6 +11,7 @@ import json
 GENERATION_FILES = (
     'argus_overview_policy.py',
     'scanner.py',
+    'argus_market_classification.py',
     'argus_owner_dialogue.py',
     'argus_owner_dialogue_api.py',
     'argus_market_brief.py',
