@@ -346,7 +346,8 @@ def previous_facts(context):
     if codec == 'BOUNDED_DEFLATE_PREVIOUS_FACTS_V1':
         try:
             encoded=context['previousFactsPacked'];size=context['previousFactsByteLength']
-            if (context.get('ownerInputPolicy')!='WATCHLIST_ONLY_V1' or type(rows) is not list or rows
+            if (context.get('ownerInputPolicy')!='WATCHLIST_ONLY_V1'
+                    or type(context.get('previousFacts')) is not list or rows
                     or not isinstance(encoded,str) or len(encoded)>90000
                     or type(size) is not int or not 2<=size<=65536):
                 raise ValueError(error)

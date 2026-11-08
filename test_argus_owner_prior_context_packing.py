@@ -63,12 +63,13 @@ def test_reentrant_final_context_keeps_previous_prose_and_receipt():
     assert len(json.dumps(packed,ensure_ascii=False).encode())<=65536
 
 
-@pytest.mark.parametrize('fault',['digest','length','extra_rows','invalid_base64','trailing','truncated','expansion','forbidden'])
+@pytest.mark.parametrize('fault',['digest','length','extra_rows','false_rows','invalid_base64','trailing','truncated','expansion','forbidden'])
 def test_corrupt_or_unbounded_previous_payload_is_rejected(fault):
     old,c=changed_context()
     if fault=='digest':c['previousFactsSha256']='0'*64
     if fault=='length':c['previousFactsByteLength']+=1
     if fault=='extra_rows':c['previousFacts']=[old['facts'][0]]
+    if fault=='false_rows':c['previousFacts']=False
     if fault=='invalid_base64':c['previousFactsPacked']='!'
     if fault in ('trailing','truncated'):
         raw=base64.b64decode(c['previousFactsPacked'])
