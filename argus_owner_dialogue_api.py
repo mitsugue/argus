@@ -93,6 +93,13 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
     lock = threading.Lock()
     save_failures = {}
     registered_cursor = 0
+    overview_state_lock = threading.Lock()
+    overview_state = {'status':'NOT_RUN','lastCheckedAt':None}
+
+    def overview_status():
+        # The existing diagnostic reads only this memo, never the DB/provider.
+        with overview_state_lock:
+            return dict(overview_state)
 
     def remote_status():
         return recovery_status() if recovery_status else {'configured':False,'generationReady':True,'remoteRecoveryVerified':False}
@@ -124,6 +131,12 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             store.complete(path, identity, result)
             if store.read(path, identity, boot_id)['result']['status'] != result['status']:
                 raise ValueError('dialogue_completion_readback')
+            from argus_owner_recovery_diagnostics import validation_projection
+            validation = result.get('validation') or {}
+            with overview_state_lock:
+                overview_state.update(lastCompletionStatus=result['status'],
+                    lastCompletedAt=result['completedAt'],
+                    lastValidationReason=validation_projection(validation)['reason'] if validation else None)
             changed()
         except Exception:
             # Retain an already paid result for a later explicit status request.
@@ -205,8 +218,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         context['overviewInputs'] = {'schemaVersion':'argus-overview-inputs-v2',
             'digest':key, 'generationPolicyDigest':dialogue.digest(policy)}
         context['contextId'] = dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
-        if len(json.dumps(context,ensure_ascii=False).encode()) > 65536:
-            raise ValueError('private_context_size_bound')
+        context = dialogue.bounded_context(context)
         return context, key
 
     def current_or_start_overview(path, current, subject, horizon, owner, previous):
@@ -253,6 +265,48 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         # Market explanations with a saved period remain supported independently
         # of company registration. No new four-period fan-out is introduced.
         saved = store.latest_subject_overviews(path, boot_id, limit=50)
+        latest = {}
+        for item in saved:
+            c = item['context'];s = c.get('subject') or {}
+            key = (s.get('market'),s.get('symbol'))
+            if key in subjects and c.get('horizonSessions') == 5:
+                latest.setdefault(key,item)
+        policy_digest = dialogue.digest(generation_policy()) if generation_policy else None
+        counts = {'registeredSubjects':len(subjects),'savedSubjects':len(latest),
+            'missingSubjects':len(subjects)-len(latest),'currentPolicySubjects':0,
+            'presentationReadySubjects':0,'contextIntegrityFailures':0,
+            'jpComparisonAvailableSubjects':0,'jpComparisonBoundSubjects':0,
+            'jpSectorBoundSubjects':0,'jpComparisonCitedSubjects':0}
+        for key,item in latest.items():
+            c = item['context'];result = item['result']
+            if c.get('contextId') != dialogue.digest({k:v for k,v in c.items() if k!='contextId'}):
+                counts['contextIntegrityFailures'] += 1
+                continue
+            current_policy = (c.get('ownerInputPolicy')=='WATCHLIST_ONLY_V1' and policy_digest is not None
+                and (c.get('overviewInputs') or {}).get('generationPolicyDigest')==policy_digest)
+            counts['currentPolicySubjects'] += int(current_policy)
+            answer = result.get('answer') or {}
+            counts['presentationReadySubjects'] += int(current_policy and answer.get('presentationStatus')=='GENERATED')
+            available = bound = sector = cited = False
+            for fact in c.get('facts') or []:
+                value = fact.get('marketInput') or {}
+                if key[0]!='JP' or fact.get('source')!='subject_market_comparison' or value.get('status')!='AVAILABLE':
+                    continue
+                available = True
+                bound = (value.get('instrumentId')==key[1] and value.get('comparisonScope')=='OWNER_PRIVATE'
+                    and value.get('baseMarketContextId')==c.get('baseMarketContextId')
+                    and value.get('evidenceId')==dialogue.digest({k:v for k,v in value.items() if k!='evidenceId'})
+                    and bool(value.get('sourceSnapshotSha256')) and bool(value.get('marketIndexEvidenceId'))
+                    and bool(value.get('startDate')) and bool(value.get('endDate'))
+                    and value['startDate'] < value['endDate'])
+                sector = bound and bool(value.get('sectorEvidenceId'))
+                cited = bound and any(fact['evidenceId'] in row.get('evidenceIds',[])
+                    for row in (answer.get('sections') or {}).values() if isinstance(row,dict))
+            for name,flag in (('jpComparisonAvailableSubjects',available),('jpComparisonBoundSubjects',bound),
+                    ('jpSectorBoundSubjects',sector),('jpComparisonCitedSubjects',cited)):
+                counts[name] += int(flag)
+        with overview_state_lock:
+            overview_state.update(counts)
         candidates = {}
         for item in saved:
             subject = item['context'].get('subject') or {}
@@ -265,7 +319,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         # a failed subject must not starve every later registered subject.
         ordered = sorted(candidates.items(), key=lambda row:
             ((row[1] or {}).get('result', {}).get('completedAt', ''), row[0]))
-        unavailable = 0
+        unavailable = 0;last_error = None
         if ordered:
             start = registered_cursor % len(ordered)
             ordered = ordered[start:] + ordered[:start]
@@ -284,10 +338,14 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             except ValueError as exc:
                 if str(exc)=='dialogue_busy': return {'status':'BUSY','started':0}
                 unavailable += 1
+                allowed = {'private_context_size_bound','market_context_unavailable','market_context_integrity',
+                    'market_facts_invalid','subject_material_bound','previous_context_integrity',
+                    'previous_context_from_future','dialogue_previous_fact_reference_invalid','retrieval_record_integrity'}
+                last_error = str(exc) if str(exc) in allowed else 'OTHER'
         return {'status':'UNAVAILABLE' if unavailable else 'CURRENT','started':0,
-                'unavailableSubjects':unavailable}
+                'unavailableSubjects':unavailable,'lastErrorCode':last_error}
 
-    def refresh_subject_overviews(limit=20):
+    def _refresh_subject_overviews(limit=20):
         """Advance one saved subject overview without requiring an open browser."""
         path=storage_path();state=remote_status()
         if not path or not state.get('generationReady'):
@@ -365,6 +423,19 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 continue
             except Exception:return {'status':'UNAVAILABLE','started':0}
         return {'status':'CURRENT','started':0}
+
+    def refresh_subject_overviews(limit=20):
+        try:
+            result = _refresh_subject_overviews(limit)
+        except Exception:
+            with overview_state_lock:
+                overview_state.update(status='UNAVAILABLE',lastCheckedAt=now(),lastErrorCode='OTHER')
+            raise
+        with overview_state_lock:
+            overview_state.update(status=result['status'],lastCheckedAt=now(),
+                unavailableSubjects=result.get('unavailableSubjects'),
+                lastErrorCode=result.get('lastErrorCode'))
+        return result
 
     @app.route('/api/argus/owner-dialogue', methods=['POST'])
     def api_argus_owner_dialogue():
@@ -518,8 +589,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 attach_previous_view(context, previous)
                 context['historyStatus']='LOCAL_DURABLE'
                 context['retrievalRecord']=dialogue.retrieval_record(context)
-                if len(json.dumps(context, ensure_ascii=False).encode()) > 65536:
-                    raise ValueError('private_context_size_bound')
+                context = dialogue.bounded_context(context)
                 context['contextId']=dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
                 store.initialize(path)
                 created=store.submit(path,identity=identity,input_hash=input_hash,boot_id=boot_id,context=context)
@@ -538,4 +608,4 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         except Exception:
             return response({'error':'dialogue_storage_unavailable'},503)
 
-    return {'bootId':boot_id,'refreshSubjectOverviews':refresh_subject_overviews}
+    return {'bootId':boot_id,'refreshSubjectOverviews':refresh_subject_overviews,'overviewStatus':overview_status}

@@ -86,6 +86,9 @@ def _request(raw):
     if any(c.get(k) is not False for k in ('actionAuthority','officialMarketStateMutation','officialPositionMutation','officialPredictionMutation')):
         raise ValueError('dialogue_backup_authority_invalid')
     dialogue.instant(c['receivedAt'])
+    dialogue.previous_facts(c)
+    if c.get('previousFactEncoding') and c.get('retrievalRecord') != dialogue.retrieval_record(c):
+        raise ValueError('dialogue_backup_context_invalid')
     return value
 
 

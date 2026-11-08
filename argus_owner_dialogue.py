@@ -331,6 +331,70 @@ def event_focus(value, event_id, cutoff, *, market=None, symbol=None):
         'snapshot': selected, 'snapshotSha256': digest(selected)}, rows
 
 
+def previous_facts(context):
+    """Expand exact in-context references without reading another store."""
+    rows = context.get('previousFacts') or []
+    codec = context.get('previousFactEncoding')
+    if codec is None:
+        if ('previousFactsSha256' in context or any(isinstance(row,Mapping)
+                and 'sameAsCurrentFact' in row for row in rows)):
+            raise ValueError('dialogue_previous_fact_reference_invalid')
+        return rows
+    error = 'dialogue_previous_fact_reference_invalid'
+    if codec != 'EXACT_CURRENT_FACT_REFERENCES_V1' or not isinstance(rows, list):
+        raise ValueError(error)
+    current = context.get('facts') or []
+    by_id = {row.get('evidenceId'):row for row in current if isinstance(row, Mapping)}
+    if len(by_id) != len(current) or any(not isinstance(key,str) or not key for key in by_id):
+        raise ValueError(error)
+    result = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ValueError(error)
+        if 'sameAsCurrentFact' not in row:
+            if not isinstance(row.get('evidenceId'), str):
+                raise ValueError(error)
+            result.append(row)
+            continue
+        reference = row.get('sameAsCurrentFact')
+        if (set(row) != {'sameAsCurrentFact'} or type(reference) is not int
+                or not 0 <= reference < len(current)):
+            raise ValueError(error)
+        result.append(deepcopy(current[reference]))
+    if context.get('previousFactsSha256') != digest(result):
+        raise ValueError(error)
+    return result
+
+
+def bounded_context(context):
+    """Pack identical prior bodies only; the same 65,536-byte bound still applies."""
+    if len(json.dumps(context,ensure_ascii=False).encode()) <= 65536:
+        previous_facts(context)
+        return context
+    if context.get('ownerInputPolicy') != 'WATCHLIST_ONLY_V1' or context.get('previousFactEncoding'):
+        raise ValueError('private_context_size_bound')
+    current = context.get('facts') or []
+    by_id = {row.get('evidenceId'):row for row in current if isinstance(row,Mapping)}
+    if len(by_id) != len(current):
+        raise ValueError('private_context_size_bound')
+    packed = deepcopy(context)
+    positions = {row['evidenceId']:index for index,row in enumerate(current)}
+    packed['previousFacts'] = [
+        {'sameAsCurrentFact':positions[row['evidenceId']]}
+        if isinstance(row,Mapping) and row.get('evidenceId') in by_id
+        and digest(row) == digest(by_id[row['evidenceId']]) else deepcopy(row)
+        for row in context.get('previousFacts') or []]
+    packed['previousFactEncoding'] = 'EXACT_CURRENT_FACT_REFERENCES_V1'
+    packed['previousFactsSha256'] = digest(context.get('previousFacts') or [])
+    packed['explanationContractVersion'] = 'OWNER_WATCHLIST_CONTEXT_V2'
+    packed['retrievalRecord'] = retrieval_record(packed)
+    packed['contextId'] = digest({k:v for k,v in packed.items() if k!='contextId'})
+    previous_facts(packed)
+    if len(json.dumps(packed,ensure_ascii=False).encode()) > 65536:
+        raise ValueError('private_context_size_bound')
+    return packed
+
+
 def build_context(*, brief, symbol, market, horizon, question, received_at, owner=None,
                   previous=None, hypothesis=None, index_quote=None, eps_input=None, subject_comparison=None, material_facts=None, focus_event_id=None, event_snapshot=None, watchlist_only=False,
                   event_cutoff=None, previous_across_event_focus=False):
@@ -409,7 +473,9 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
         'changes':{'comparisonAvailable':bool(prior)},'historyStatus':'PROCESS_MEMORY_ONLY',
         'calculatedHypothesis':calculated,'isHypotheticalConversation':hypothesis is not None,'actionAuthority':False,
         'officialMarketStateMutation':False,'officialPositionMutation':False,'officialPredictionMutation':False}
-    if watchlist_only: context['ownerInputPolicy'] = 'WATCHLIST_ONLY_V1'
+    if watchlist_only:
+        context['ownerInputPolicy'] = 'WATCHLIST_ONLY_V1'
+        context['explanationContractVersion'] = 'OWNER_WATCHLIST_CONTEXT_V2'
     if market == 'JP' and isinstance(public.get('researchPackages'), list):
         context['researchPackages'] = [
             {**deepcopy(row), 'horizons': {str(horizon): deepcopy(row['horizons'][str(horizon)])},
@@ -417,8 +483,21 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
             for row in public['researchPackages'][:2]
             if isinstance(row, dict) and str(horizon) in (row.get('horizons') or {})]
     if market == 'JP' and isinstance(public.get('fiscalEnvironment'), Mapping):
-        context['fiscalEnvironment'] = deepcopy(public['fiscalEnvironment'])
-        context['fiscalEnvironment']['applicability'] = 'JAPAN_MACRO_CONTEXT_ONLY'
+        if watchlist_only and hypothesis is None:
+            # The registered overview uses every fiscal fact already scoped above.
+            # Full scenario payloads remain in the existing public edition and
+            # are retained here when an explicit fiscal assumption needs them.
+            reference = public['fiscalEnvironment']
+            context['fiscalEnvironmentReference'] = {'id':reference.get('id'),
+                'sourceContentSha256':digest(reference),
+                'applicability':'JAPAN_MACRO_CONTEXT_ONLY',
+                'factEvidenceIds':[row['evidenceId'] for row in facts
+                    if row.get('source')=='jp_fiscal_environment'],
+                'detailSource':'BASE_MARKET_CONTEXT_FISCAL_SCENARIOS'}
+            context['explanationContractVersion'] = 'OWNER_WATCHLIST_CONTEXT_V2'
+        else:
+            context['fiscalEnvironment'] = deepcopy(public['fiscalEnvironment'])
+            context['fiscalEnvironment']['applicability'] = 'JAPAN_MACRO_CONTEXT_ONLY'
     if selected_event is not None: context['eventFocus'] = selected_event
     if market == 'JP' and symbol == 'N225':
         snapshot = (brief.get('calculationSnapshots') or {}).get(str(horizon))
@@ -444,18 +523,20 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
             'omittedResultCount':len(linked['records']), 'omittedPackageDigest':linked['digest']}
         focus['snapshotSha256'] = digest(focus['snapshot'])
         context['retrievalRecord'] = retrieval_record(context)
-    if len(json.dumps(context,ensure_ascii=False).encode())>65536:raise ValueError('private_context_size_bound')
-    require_allowed(context);context['contextId']=digest(context);return context
+    require_allowed(context);context['contextId']=digest(context)
+    return bounded_context(context)
 
 
 def retrieval_record(context):
     """Describe the bounded current/previous edition selection, without another store."""
     current = context.get('facts') or []
-    previous = context.get('previousFacts') or []
+    previous = previous_facts(context)
     # Equality includes provenance, acquisition times, verification and the original ID.
     # A correction or contrary observation is never removed for low similarity.
-    shared = [row['evidenceId'] for row in previous if row in current]
-    changed = [row['evidenceId'] for row in previous if row not in current]
+    current_digests = {digest(row) for row in current} if context.get('previousFactEncoding') else None
+    identical = lambda row: digest(row) in current_digests if current_digests is not None else row in current
+    shared = [row['evidenceId'] for row in previous if identical(row)]
+    changed = [row['evidenceId'] for row in previous if not identical(row)]
     result = {
         'policyVersion': 'owner-edition-retrieval-v1',
         'scope': 'CURRENT_AND_PREVIOUS_MATCHING_EDITION',
@@ -487,7 +568,33 @@ def retrieval_record(context):
         result['counterevidenceSearchStatus'] = 'HISTORICAL_ORIGINAL_HYPOTHESES_ONLY' if memory.get('status') == 'AVAILABLE' else 'UNAVAILABLE'
         result['eventMemoryLookup'] = {k:deepcopy(memory.get(k)) for k in
             ('retrievalDigest','family','asOf','selection','coverage','omissions','scannedEventCount','matchingEventCount')}
+    if context.get('previousFactEncoding'):
+        positions = {row['evidenceId']:index for index,row in enumerate(current)}
+        result['selectionSha256'] = digest(result['selection'])
+        result['selectionEncoding'] = 'CURRENT_FACT_INDICES_V1'
+        result['selection'] = {name:[positions.get(identity,identity) for identity in values]
+            for name,values in result['selection'].items()}
     return result
+
+
+def expanded_retrieval_record(record, context):
+    """Resolve the ordered selection IDs from the same authenticated context."""
+    if record.get('selectionEncoding') is None:
+        return record
+    if record.get('selectionEncoding') != 'CURRENT_FACT_INDICES_V1':
+        raise ValueError('retrieval_record_integrity')
+    current = context.get('facts') or []
+    expanded = deepcopy(record)
+    try:
+        expanded['selection'] = {name:[current[identity]['evidenceId']
+            if type(identity) is int and 0 <= identity < len(current) else identity for identity in values]
+            for name,values in record['selection'].items()}
+        if digest(expanded['selection']) != expanded.pop('selectionSha256'):
+            raise ValueError('retrieval_record_integrity')
+        expanded.pop('selectionEncoding')
+    except (KeyError,TypeError,IndexError):
+        raise ValueError('retrieval_record_integrity') from None
+    return expanded
 
 
 def reasoning_context(context):
@@ -498,9 +605,14 @@ def reasoning_context(context):
         return value  # Previously saved contexts retain their original interpretation.
     if record != retrieval_record(context):
         raise ValueError('retrieval_record_integrity')
+    record = expanded_retrieval_record(record, context)
     current = value.get('facts') or []
-    previous = value.get('previousFacts') or []
-    value['previousFacts'] = [row for row in previous if row not in current]
+    previous = previous_facts(context)
+    current_digests = {digest(row) for row in current} if context.get('previousFactEncoding') else None
+    value['previousFacts'] = [row for row in previous
+        if (digest(row) not in current_digests if current_digests is not None else row not in current)]
+    value.pop('previousFactEncoding', None)
+    value.pop('previousFactsSha256', None)
     value['previousSharedEvidenceIds'] = record['selection']['previousSharedWithCurrent']
     event_snapshot = (value.get('eventFocus') or {}).get('snapshot') or {}
     memory = event_snapshot.get('relatedMemory') or {}
@@ -590,9 +702,10 @@ def _validate_answer(value, context, *, diagnostic, prose_validator):
     require_allowed(value)
     from argus_presentation_intent import dialogue_inventory, validate_plan
     prose = {k: v for k, v in value.items() if k != 'presentation'} if isinstance(value, Mapping) else value
-    answer=prose_validator(prose,context,diagnostic=diagnostic)
+    validation_context = {**context,'previousFacts':previous_facts(context)}
+    answer=prose_validator(prose,validation_context,diagnostic=diagnostic)
     if answer is None:return None
-    hypothesis_ids={f['evidenceId'] for f in context['facts']+context['previousFacts'] if f.get('evidenceKind')=='HYPOTHESIS'}
+    hypothesis_ids={f['evidenceId'] for f in context['facts']+validation_context['previousFacts'] if f.get('evidenceKind')=='HYPOTHESIS'}
     for row in answer['sections'].values():
         if hypothesis_ids.intersection(row['evidenceIds']) and ('仮定' not in row['textJa'] or row['kind']!='INFERENCE'):
             if diagnostic is not None:diagnostic.update(status='REJECTED',reason='hypothesis_must_remain_explicit_inference')
@@ -638,6 +751,8 @@ def overview_input_digest(context, generation_policy):
                 'previousView', 'previousRecord', 'previousViewUnavailableReason',
                 'changes', 'historyStatus', 'overviewInputs'):
         inputs.pop(key, None)
+    inputs.pop('previousFactEncoding', None)
+    inputs.pop('previousFactsSha256', None)
     if isinstance(inputs.get('owner'), dict):
         inputs['owner'].pop('receivedAt', None)
     for row in inputs.get('facts') or []:

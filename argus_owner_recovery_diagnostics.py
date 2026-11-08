@@ -132,3 +132,32 @@ def status(value):
             if type(row.get(name)) is int and 0 <= row[name] <= 1000000} if isinstance(row, dict) else None
     result['failure'] = project_failure(value['failure']) if isinstance(value.get('failure'), dict) else None
     return result
+
+
+def subject_overviews(value):
+    """Closed counts of the normal registered-overview tick, without identifiers."""
+    value = value if isinstance(value,dict) else {}
+    result = {'status':value.get('status') if value.get('status') in
+        ('NOT_RUN','WAITING','STARTED','BUSY','CURRENT','UNAVAILABLE') else None}
+    for key in ('lastCheckedAt','lastCompletedAt'):
+        raw = value.get(key)
+        try:
+            parsed = datetime.fromisoformat(raw.replace('Z','+00:00')) if isinstance(raw,str) and len(raw)<=64 else None
+            result[key] = raw if parsed is not None and parsed.tzinfo is not None else None
+        except ValueError:
+            result[key] = None
+    for key in ('registeredSubjects','savedSubjects','missingSubjects','currentPolicySubjects',
+            'presentationReadySubjects','contextIntegrityFailures','jpComparisonAvailableSubjects',
+            'jpComparisonBoundSubjects','jpSectorBoundSubjects','jpComparisonCitedSubjects','unavailableSubjects'):
+        count = value.get(key)
+        result[key] = count if type(count) is int and 0<=count<=1000000 else None
+    code = value.get('lastErrorCode')
+    allowed = {'private_context_size_bound','market_context_unavailable','market_context_integrity',
+        'market_facts_invalid','subject_material_bound','previous_context_integrity',
+        'previous_context_from_future','dialogue_previous_fact_reference_invalid','retrieval_record_integrity'}
+    result['lastErrorCode'] = code if code is None or isinstance(code,str) and code in allowed else 'OTHER'
+    outcome = value.get('lastCompletionStatus')
+    result['lastCompletionStatus'] = outcome if outcome in ('SUCCEEDED','REJECTED','FAILED','UNAVAILABLE') else None
+    reason = value.get('lastValidationReason')
+    result['lastValidationReason'] = reason if reason is None or isinstance(reason,str) and reason in VALIDATION_REASONS else 'OTHER'
+    return result

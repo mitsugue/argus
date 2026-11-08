@@ -10310,6 +10310,7 @@ def _intel_collect_completed_memory_observation(completed):
         "indexResearch": research,
         "marketInputPreparation": _MARKET_INPUT_PREPARATION_TIMING.view(),
         "ownerDialogueRecovery": _OWNER_DIALOGUE_RECOVERY.status(),
+        "ownerSubjectOverviews": globals().get('_OWNER_DIALOGUE_API',{}).get('overviewStatus',lambda:{})(),
         "operationAttribution": operations,
         "allocatorReclaim": {"startupPolicy": copy.deepcopy(
             _ALLOCATOR_RECLAIM_STATE.get("startupPolicy") or {})},
@@ -35830,6 +35831,7 @@ def api_argus_admin_memory_attribution():
     payload["financialVerify"] = dict(_JP_FINANCIAL_VERIFY)
     payload["marketInputPreparation"] = _MARKET_INPUT_PREPARATION_TIMING.view()
     payload["ownerDialogueRecovery"] = _OWNER_DIALOGUE_RECOVERY.status()
+    payload["ownerSubjectOverviews"] = globals().get('_OWNER_DIALOGUE_API',{}).get('overviewStatus',lambda:{})()
     payload["analysisHistoryForm"] = copy.deepcopy(_ANALYSIS_HISTORY_FORM)
     payload["materialReactionResearch"] = _material_research_diagnostics()
     from scripts.run_intel_collect import private_timing_record
