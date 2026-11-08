@@ -100,7 +100,8 @@ def _completion(raw,context):
         if presentation_status == 'GENERATED':
             plan = answer.get('presentationPlan') or {}
             supplied['presentation'] = {key: plan.get(key) for key in ('inventoryId', 'intentJa', 'elements')}
-        rebuilt = dialogue.validate_answer(supplied, context)
+        validation = {}
+        rebuilt = dialogue.validate_answer(supplied, context, diagnostic=validation)
         if rebuilt is not None:
             # 元の本文を同じ根拠・数値・権限検査に通した後だけ、欠測時に
             # 検証器が現行の定型文へ置き換えた2項目を保存当時の文へ戻す。
@@ -117,7 +118,7 @@ def _completion(raw,context):
             else: rebuilt['presentationStatus'] = presentation_status
         if rebuilt != answer:
             error = ValueError('dialogue_backup_answer_invalid')
-            error._argus_recovery_answer = diagnostics.completion_difference(answer, rebuilt)
+            error._argus_recovery_answer = diagnostics.completion_difference(answer, rebuilt, validation)
             raise error
     elif value.get('answer') is not None:raise ValueError('dialogue_backup_unaccepted_answer')
     return value
