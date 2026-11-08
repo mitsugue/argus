@@ -47,9 +47,9 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/operations/comparison-preparation-reuse.md': 'fe5baf3ebb9fda9976d1e5f536d5ff61b4aa4bcb',
 
     # 既存の入力更新の実行側だけを記録する固定項目と境界検査。
-    'argus_input_preparation_timing.py': 'e01f0302fb8718b4ff66fcbee0f612005791522b',
-    'test_argus_input_preparation_timing.py': '5a12cef1c03e86cc5b9512a215ef5574c7096469',
-    'docs/operations/input-preparation-timing.md': 'd4d4dc902daba0cf99b1b2099823cc0a6daddfef',
+    'argus_input_preparation_timing.py': '1c6801b04a2d6cfe28dd4589c83642b8e4ccfac2',
+    'test_argus_input_preparation_timing.py': 'eb30801b17df160e849b35d510af7f11d7333109',
+    'docs/operations/input-preparation-timing.md': 'cb547f4c57f1f25d39b2269ecf7ccc20b80c64b3',
     # Exact edit-distance implementation parity regression.
     'test_jp_market_order_distance.py': '3fb226c65d432bd7f2c835ab2833150aa768830d',
     'test_argus_macro_post_completion.py': 'bd7f1067e525f024c7d09321ef0feb6bb788e0fe',
