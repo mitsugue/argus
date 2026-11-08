@@ -4,6 +4,7 @@ import re
 import hashlib
 import json
 import copy
+from datetime import datetime
 from typing import Any,Dict,Mapping,Optional
 
 UNIFIED_FACT_LIMIT = 64
@@ -94,6 +95,49 @@ def validation_scope_error(text, facts):
 
 
 def validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic=None) -> Optional[Dict[str, Any]]:
+    """Current generation always binds benchmark claims to their subject."""
+    return _validate_unified_ai(value, context, diagnostic=diagnostic, bind_method_subject=True)
+
+
+def validate_saved_unified_ai(value, context, *, completed_at, diagnostic=None):
+    """Read pre-binding private editions under their archived prose contract.
+
+    The binding was introduced by c90ec471650825071507c914d3c00a6c6ce57114.
+    This is archive compatibility, never authority for a new assessment.
+    All other current reference, number, kind, length and authority checks run.
+    """
+    legacy = _pre_binding_saved_context(context, completed_at)
+    result = _validate_unified_ai(value, context, diagnostic=diagnostic, bind_method_subject=not legacy)
+    if result is not None and legacy and isinstance(diagnostic, dict):
+        diagnostic['savedContractPolicy'] = 'PRIVATE_PRE_METHOD_BINDING_V1'
+    return result
+
+
+def _pre_binding_saved_context(context, completed_at):
+    if (not isinstance(context, Mapping)
+            or context.get('scope') != 'OWNER_PRIVATE'
+            or context.get('schemaVersion') != 'argus-owner-dialogue-context-v1'
+            or 'explanationContractVersion' in context
+            or any(context.get(key) is not False for key in ('actionAuthority',
+                'officialMarketStateMutation', 'officialPositionMutation', 'officialPredictionMutation'))):
+        return False
+    facts, previous = context.get('facts'), context.get('previousFacts')
+    if (not isinstance(facts, list) or not isinstance(previous, list)
+            or any(not isinstance(row, Mapping) or 'validationSubject' in row for row in facts + previous)):
+        return False
+    stamps = (context.get('receivedAt'), completed_at)
+    if any(not isinstance(raw, str) or len(raw) > 64 for raw in stamps):
+        return False
+    try:
+        received, completed = (datetime.fromisoformat(raw.replace('Z', '+00:00')) for raw in stamps)
+        cutoff = datetime.fromisoformat('2026-09-19T19:44:41+00:00')
+        return (received.tzinfo is not None and completed.tzinfo is not None
+                and received <= completed < cutoff)
+    except ValueError:
+        return False
+
+
+def _validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic, bind_method_subject) -> Optional[Dict[str, Any]]:
     """Reject unsupported numbers, references and claims of observed inference.
 
     This is a structural constraint, not proof that every sentence is correct.
@@ -142,7 +186,7 @@ def validate_unified_ai(value: Any, context: Mapping[str, Any], *, diagnostic=No
             return rejected("fact_requires_verified_references", key)
         if any(p in text for p in _FORBIDDEN_BRIEF_PATTERNS) or "確率" in text:
             return rejected("unsupported_authority_or_probability", key)
-        scope_error = validation_scope_error(text, [allowed[ref] for ref in refs])
+        scope_error = validation_scope_error(text, [allowed[ref] for ref in refs]) if bind_method_subject else None
         if scope_error:
             return rejected(scope_error, key)
         allowed_digits = set().union(*(_digits_of(allowed[ref]["text"]) for ref in refs)) if refs else set()

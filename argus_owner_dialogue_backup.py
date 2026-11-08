@@ -89,7 +89,7 @@ def _request(raw):
     return value
 
 
-def _completion(raw,context):
+def _completion(raw,context,*,diagnostic=None):
     value=store.decode(raw)
     if value.get('status') not in ('SUCCEEDED','REJECTED','FAILED','UNAVAILABLE'):raise ValueError('dialogue_backup_result_invalid')
     dialogue.instant(value['completedAt'])
@@ -101,7 +101,8 @@ def _completion(raw,context):
             plan = answer.get('presentationPlan') or {}
             supplied['presentation'] = {key: plan.get(key) for key in ('inventoryId', 'intentJa', 'elements')}
         validation = {}
-        rebuilt = dialogue.validate_answer(supplied, context, diagnostic=validation)
+        rebuilt = dialogue.validate_saved_answer(supplied, context,
+            completed_at=value['completedAt'], diagnostic=validation)
         if rebuilt is not None:
             # 元の本文を同じ根拠・数値・権限検査に通した後だけ、欠測時に
             # 検証器が現行の定型文へ置き換えた2項目を保存当時の文へ戻す。
@@ -120,6 +121,8 @@ def _completion(raw,context):
             error = ValueError('dialogue_backup_answer_invalid')
             error._argus_recovery_answer = diagnostics.completion_difference(answer, rebuilt, validation)
             raise error
+        if isinstance(diagnostic, dict):
+            diagnostic['historicalMethodScope'] = validation.get('savedContractPolicy') == 'PRIVATE_PRE_METHOD_BINDING_V1'
     elif value.get('answer') is not None:raise ValueError('dialogue_backup_unaccepted_answer')
     return value
 
@@ -135,7 +138,11 @@ def snapshot(path):
             values=[{'kind':'request','value':request}]
             counts['requests']+=1
             if result is not None:
-                values.append({'kind':'completion','requestId':identity,'value':_completion(result,request['context'])});counts['completions']+=1
+                diagnostic = {}
+                completion = _completion(result,request['context'],diagnostic=diagnostic)
+                values.append({'kind':'completion','requestId':identity,'value':completion});counts['completions']+=1
+                if diagnostic.get('historicalMethodScope'):
+                    counts['historicalMethodScopeCompletions'] = counts.get('historicalMethodScopeCompletions',0)+1
             for row in values:
                 part=transport.encode(row)+b'\n';total+=len(part)
                 if total>MAX_ARCHIVE_BYTES:raise ValueError('dialogue_backup_archive_bound')
@@ -164,8 +171,11 @@ def restore(path,raw):
                 elif row.get('kind')=='completion' and set(row)=={'kind','requestId','value'}:
                     previous=db.execute('SELECT body FROM requests WHERE request_id=?',(row['requestId'],)).fetchone()
                     if not previous:raise ValueError('dialogue_backup_orphan_completion')
-                    _completion(body,_request(previous[0])['context'])
+                    diagnostic = {}
+                    _completion(body,_request(previous[0])['context'],diagnostic=diagnostic)
                     db.execute('INSERT INTO completions VALUES(?,?)',(row['requestId'],body));counts['completions']+=1
+                    if diagnostic.get('historicalMethodScope'):
+                        counts['historicalMethodScopeCompletions'] = counts.get('historicalMethodScopeCompletions',0)+1
                 else:raise ValueError('dialogue_backup_row_kind')
             db.execute('COMMIT')
         store.initialize(path)
