@@ -609,6 +609,7 @@ class _PriceHistoryReplay:
         self._series = series
         self._final_cutoff = final_cutoff
         self._final = _cutoff(final_cutoff)
+        self._owned = {}
         self._prepared = {}
 
     def history(self, source, instrument, cutoff, *, since=None, through=None,
@@ -618,24 +619,38 @@ class _PriceHistoryReplay:
         if limit > self._final:
             raise ValueError("price_replay_cutoff_outside_scope")
         scope = (source, instrument, unit)
-        if scope not in self._prepared:
-            prepared = []
-            for raw in _scoped_price_rows(self._series.get(source, ()), instrument, unit):
-                visible, _ = point_in_time_rows([raw], self._final_cutoff,
+        if scope not in self._owned:
+            # Keep one owned snapshot. Admission is lazy: an out-of-window
+            # malformed scope must not fail an earlier cutoff that ignores it.
+            rows = [_copy_row_reusing_scalars(row) for row in self._series.get(source, ())
+                    if isinstance(row, Mapping)]
+            self._owned[scope] = [(_day(row), row) for row in rows]
+            self._prepared[scope] = {}
+        active = []
+        for index, (day, raw) in enumerate(self._owned[scope]):
+            if ((since is not None and day < since)
+                    or (through is not None and day > through)):
+                continue
+            cache = self._prepared[scope]
+            if index not in cache:
+                scoped = _scoped_price_rows([raw], instrument, unit)
+                visible, _ = point_in_time_rows(scoped, self._final_cutoff,
                     _reuse_immutable_scalars=True, _include_proof=False)
-                if not visible:
-                    continue
-                row = visible[0]
-                field = row.get("seriesId") or row.get("field") or row.get("kind") or "OHLCV_BAR"
-                key = (str(row.get("instrumentId") or instrument).upper(), str(field), _day(row))
-                prepared.append((key, row.get("revision", 0), _knowledge_time(row),
-                                 date.fromisoformat(_day(row)), _sha256(row), row))
-            self._prepared[scope] = prepared
+                cache[index] = None
+                if visible:
+                    row = visible[0]
+                    field = row.get("seriesId") or row.get("field") or row.get("kind") or "OHLCV_BAR"
+                    key = (str(row.get("instrumentId") or instrument).upper(), str(field), day)
+                    cache[index] = (key, row.get("revision", 0), _knowledge_time(row),
+                                    date.fromisoformat(day), _sha256(row), row)
+                    self._owned[scope][index] = (day, row)
+            if cache[index] is not None:
+                active.append(cache[index])
+        # Scope every row in this window before selecting revisions, just as
+        # the ordinary caller does. This preserves malformed-scope precedence.
         admitted, seen = {}, {}
-        for key, revision, known, observed, content_hash, row in self._prepared[scope]:
-            if ((since is not None and key[2] < since)
-                    or (through is not None and key[2] > through)
-                    or known > limit or observed > limit.date()):
+        for key, revision, known, observed, content_hash, row in active:
+            if known > limit or observed > limit.date():
                 continue
             revision_key = (*key, revision)
             if revision_key in seen and seen[revision_key] != content_hash:

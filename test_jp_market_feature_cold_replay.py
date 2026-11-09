@@ -132,3 +132,21 @@ def test_mixed_revisions_receipts_and_date_windows_match_the_ordinary_path(monke
                 return ('rejected', str(error))
         assert outcome(lambda: features.build_feature_history(cutoffs=CUTOFFS, **source)) == outcome(
             lambda: ordinary_history(source, CUTOFFS, monkeypatch))
+
+
+@pytest.mark.parametrize('day', ['2020-01-01', '2027-01-01'])
+def test_malformed_scope_outside_all_requested_windows_does_not_enter_validation(day, monkeypatch):
+    source = data('normal')
+    source['price_series']['nikkei'].append({'instrumentId': 'NIKKEI_225_INDEX',
+        'field': {'invalid': 1}, 'date': day, 'availableFrom': day + 'T00:00:00Z', 'value': 99})
+    assert features.build_feature_history(cutoffs=CUTOFFS, **source) == ordinary_history(source, CUTOFFS, monkeypatch)
+
+
+def test_malformed_scope_inside_window_keeps_ordinary_failure_precedence(monkeypatch):
+    source = data('normal')
+    rows = source['price_series']['vix']
+    rows.extend([{**rows[6], 'value': 999}, {**rows[7], 'field': {'invalid': 1}}])
+    for calculate in (lambda: features.build_feature_history(cutoffs=CUTOFFS, **source),
+                      lambda: ordinary_history(source, CUTOFFS, monkeypatch)):
+        with pytest.raises(TypeError, match='unhashable'):
+            calculate()
