@@ -1,0 +1,53 @@
+name: 259画面待機条件の限定診断
+on:
+  push:
+    branches: [codex/mobile259-wait-diagnostic-20261109]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  focused-read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.0-noble@sha256:b27e719ecbfef153e13fd24e8341736733bf2658b229677eb21ff57ff5d7fb29
+      options: --ipc=host
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: 診断用の投影だけを一時領域へ保全
+        run: |
+          cp scripts/mobile259_wait_diagnostic.py "$RUNNER_TEMP/mobile259_wait_diagnostic.py"
+          git checkout --detach 6e9b181e0c07fde6b4e0e55083c9b1967ce5188e
+      - uses: ./.github/actions/acceptance-runtime-preflight
+        with:
+          candidate-sha: 62eea6b3f3e2670e28e28f12aa1aadf355e5730c
+          candidate-tree: 3bc6971a2364bf506f0520daa88d5e527b11a6aa
+          evidence-path: artifacts/diagnostic-runtime-proof.json
+      - name: 元の待機条件を変えず固定項目を投影
+        run: python3 -B "$RUNNER_TEMP/mobile259_wait_diagnostic.py"
+      - name: 同じ公開画面の12条件だけを読取
+        working-directory: web
+        env:
+          ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
+          ARGUS_EXPECTED_VERSION: 13.8.259
+          ARGUS_EXPECTED_SHA: 6e9b181e0c07fde6b4e0e55083c9b1967ce5188e
+          ARGUS_ACCEPTANCE_OWNER_AUTH: '1'
+          ARGUS_ACCEPTANCE_OWNER_ORIGIN: https://mitsugue.github.io
+          ARGUS_ACCEPTANCE_OWNER_PASSWORD: ${{ secrets.ARGUS_ACCEPTANCE_OWNER_PASSWORD }}
+          ARGUS_MOBILE_ACCEPTANCE_OUT: ../artifacts/mobile259-focused-private
+        run: node scripts/mobile259-focused-read.generated.mjs
+      - name: 固定分類だけを既存の非公開診断へ保存
+        if: always()
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: |
+          mkdir -p artifacts/runtime-diagnostics
+          if test -f artifacts/mobile259-focused-private/closed-wait-state.json; then
+            cp artifacts/mobile259-focused-private/closed-wait-state.json artifacts/runtime-diagnostics/closed-wait-state.json
+          fi
+          python3 -B scripts/private_diagnostics_store.py --kind runtime --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" artifacts/runtime-diagnostics
