@@ -19298,7 +19298,10 @@ def _owner_overview_events():
 
 def _owner_dialogue_subject_materials(*, symbol, market, cutoff):
     if market not in ("JP", "US") or not isinstance(symbol, str) or symbol == "N225": return None
-    return argus_subject_materials.news_facts(list(_INTEL_STORE), symbol=symbol, cutoff=cutoff)
+    _analyst_targets_load_saved()
+    earnings = copy.deepcopy((_ANALYST_TARGETS["items"].get(f"{market}:{symbol}") or {}).get("earnings"))
+    return argus_subject_materials.saved_facts(list(_INTEL_STORE), earnings=earnings,
+        symbol=symbol, market=market, cutoff=cutoff)
 
 _WEB_PUSH = argus_web_push.PushService(
     path=lambda: os.path.join(_DURABILITY_PATHS["root"], "web_push.sqlite3") if _cost_policy_durable_enabled() else None,

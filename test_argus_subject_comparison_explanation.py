@@ -25,7 +25,7 @@ def test_generation_prompt_asks_for_dates_populations_and_relative_not_absolute_
     original = deepcopy(context)
     text, restore, _ = dialogue.generation_prompt(context)
     assert '開始日〜終了日' in text and 'reasonsで引用' in text
-    assert '個別銘柄・日経225・業種ETFは異なる母集団' in text
+    assert '個別銘柄・日経平均・業種ETFは異なる母集団' in text
     assert '相対的に強いことを絶対的な上昇と取り違えず' in text
     assert '価格差だけから材料や下落の原因を断定せず' in text
     # Real fixture: index -10%, sector +10%, this stock +5%.

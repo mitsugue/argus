@@ -35,7 +35,7 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
-    'test_argus_subject_comparison_explanation.py': '0657d6d638b012303e0c1f1f685257c9eedbd97f',
+    'test_argus_subject_comparison_explanation.py': '7dbd8ed0045dc178bd8325e9c3cdd16450efd0e8',
     'test_argus_owner_archive_admission_reuse.py': '2b8de35e7c80d2385df71f26d9255f9a8d313888',
     'test_argus_owner_prior_view_packing.py': 'b035d463e7402ae433fa8c21915862332beecbc9',
     'docs/operations/owner-dialogue-segmented-recovery.md': '03fbe418fc9aa76bf216bfe674def29138ce9c05',
@@ -427,7 +427,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_ai_usage_runtime.py': 'a547929955acabfd3ae74d3cbd9224f1448d2862',
     'argus_analysis_history_backup.py': 'f011bf50f23c32554ffd2c55dd003086ac434bc4',
     'argus_explanation_contract.py': '5d91e091673c587dc68e5800dd445357e9095f20',
-    'argus_owner_dialogue.py': 'efaaacaf0eecce8b46934b22080c897a3f583fff',
+    'argus_owner_dialogue.py': '58fc85768fbfe9f61eb47e1d9dba98245d7a6bb7',
     'argus_owner_dialogue_api.py': 'e0495394f0e980168fa17e5bfae7c3dea80df041',
     'argus_owner_dialogue_backup.py': 'b8cd7af3cd09188889e82ed92b0978117f62fa35',
     'argus_owner_dialogue_recovery.py': 'f975e33adf0691f3e44c3982b3438da89a464a35',
@@ -438,7 +438,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/operations/registered-overview-input-bound.md': 'ddd1fff0787078a9d3d77fac9f73dd01eca8591a',
     'docs/operations/owner-dialogue-archive-contract.md': '5f41cfb5d563cabe8aa8b96766efca479d97b368',
     'argus_owner_dialogue_store.py': '72422e35451def9da106bb200acd49e880a9a2f1',
-    'argus_subject_materials.py': 'd23a8ed213d7baf211d1293d394ee300c626ebf6',
+    'argus_subject_materials.py': '2343d48d077816cccdef3ea52ba8cb63fbe4151a',
     'docs/V13_6_AI_USAGE.md': 'f455ad3d0a366f2fad38564bbea7bc4e6bbf3856',
     'docs/V13_6_MARKET_INTERNALS.md': '3325050ada139f0ce5d73282ee54527963b65d46',
     'docs/V13_6_OWNER_DIALOGUE.md': '6363817a4c2378931c8ba2fb9f30dc3fd691ac21',
@@ -452,7 +452,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_owner_dialogue_api.py': 'cbced13c229e840f97c2a10c787ff229be655a21',
     'test_argus_owner_dialogue_backup.py': '859b3d6bc77e878c2cc3b00622d07ebd1edfba8e',
     'test_argus_owner_dialogue_recovery.py': '5f35697d071ef4c329c4e4ff3123cc5bff29950f',
-    'test_argus_subject_materials.py': '321b8881f911e5ce356e1684a471c68413498a3d',
+    'test_argus_subject_materials.py': '9a088bb28eb88cca5e6e709873af0ef9cf47a99c',
     'test_jp_market_internals.py': 'a2796008338bd41c05d5caceecb85fb8190e9ebf',
     'web/scripts/pwa-recovery.test.mjs': 'd2fc2ff86480cb685328e1341e61d4415285d8a6',
     'web/scripts/shared-market-context.test.cjs': '4f838a348ff036356ba3257f78c2be35d63a7588',
