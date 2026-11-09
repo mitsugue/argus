@@ -116,34 +116,65 @@ def _sealed_head(value,current):
     return head
 
 
-def _spool(path,directory,remote,started):
+def _admit_part(raw,remote,started):
+    counts={'requests':0,'completions':0};current=None;completed=False
+    for line in raw.splitlines()[1:]:
+        _time(remote,started);row=json.loads(line);body=store.encoded(row['value'])
+        if row.get('kind')=='request' and set(row)=={'kind','value'}:
+            current=legacy._request(body);completed=False;counts['requests']+=1
+        elif row.get('kind')=='completion' and set(row)=={'kind','requestId','value'}:
+            if current is None or completed or row['requestId']!=current['requestId']:
+                raise ValueError('dialogue_backup_orphan_completion')
+            diagnostic={};legacy._completion(body,current['context'],diagnostic=diagnostic)
+            completed=True;counts['completions']+=1
+            if diagnostic.get('historicalMethodScope'):
+                counts['historicalMethodScopeCompletions']=counts.get('historicalMethodScopeCompletions',0)+1
+        else:raise ValueError('dialogue_backup_row_kind')
+    return counts
+
+
+def _spool(path,directory,remote,started,validated_segments=None):
     """End the consistent DB read before doing any network write."""
     cap=min(SEGMENT_BYTES,legacy.MAX_ARCHIVE_BYTES);target=min(SEGMENT_TARGET,cap)
+    accepted={row['plainSha256']:row for row in validated_segments or []}
     parts=[];batch=[HEADER];size=len(HEADER);part_counts={'requests':0,'completions':0}
     counts={'requests':0,'completions':0};logical=len(HEADER);digest=hashlib.sha256(HEADER)
     def emit():
-        raw=b''.join(batch);_space(directory,len(raw)*2)
+        raw=b''.join(batch);identity=transport.digest(raw);known=accepted.get(identity)
+        reused=bool(known and known['plainBytes']==len(raw)
+            and all(known['counts'].get(k)==v for k,v in part_counts.items()))
+        # Reuse admission only for byte-identical, authenticated source parts
+        # already validated in this process or by the full cold restore above.
+        actual=dict(known['counts']) if reused else _admit_part(raw,remote,started)
+        if any(actual.get(k)!=v for k,v in part_counts.items()):
+            raise ValueError('dialogue_backup_segment_integrity')
+        _add(counts,actual);_space(directory,len(raw)*2)
         file=Path(directory)/str(len(parts))
         with os.fdopen(os.open(file,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600),'wb') as handle:handle.write(raw)
-        parts.append({'file':file,'plainSha256':transport.digest(raw),'plainBytes':len(raw),'counts':dict(part_counts)})
+        parts.append({'file':file,'plainSha256':identity,'plainBytes':len(raw),
+            'counts':actual,'admissionReused':reused})
         if len(parts)>MAX_SEGMENTS:raise ValueError('dialogue_backup_segment_manifest_invalid')
     with closing(store.connect(path,True)) as db:
         db.execute('BEGIN')
         for identity,raw,result in db.execute('SELECT r.request_id,r.body,c.body FROM requests r LEFT JOIN completions c USING(request_id) ORDER BY r.sequence'):
-            _time(remote,started);request=legacy._request(raw)
-            if request['requestId']!=identity:raise ValueError('dialogue_backup_row_identity')
+            _time(remote,started)
+            if (not isinstance(raw,str) or len(raw.encode())>store.MAX_BYTES
+                    or result is not None and (not isinstance(result,str) or len(result.encode())>store.MAX_BYTES)):
+                raise ValueError('dialogue_backup_row_bound')
+            request=json.loads(raw)
+            if not isinstance(request,dict) or request.get('requestId')!=identity:
+                raise ValueError('dialogue_backup_row_identity')
             values=[{'kind':'request','value':request}];unit={'requests':1,'completions':0}
             if result is not None:
-                diagnostic={};completion=legacy._completion(result,request['context'],diagnostic=diagnostic)
+                completion=json.loads(result)
                 values.append({'kind':'completion','requestId':identity,'value':completion});unit['completions']=1
-                if diagnostic.get('historicalMethodScope'):unit['historicalMethodScopeCompletions']=1
             lines=[transport.encode(row)+b'\n' for row in values]
             if any(len(line)>store.MAX_BYTES+256 for line in lines):raise ValueError('dialogue_backup_row_bound')
             extra=sum(map(len,lines))
             if extra+len(HEADER)>cap:raise ValueError('dialogue_backup_archive_bound')
             if size>len(HEADER) and (size+extra>cap or size>=target):
                 emit();batch=[HEADER];size=len(HEADER);part_counts={'requests':0,'completions':0}
-            batch.extend(lines);size+=extra;_add(part_counts,unit);_add(counts,unit)
+            batch.extend(lines);size+=extra;_add(part_counts,unit)
             for line in lines:digest.update(line)
             logical+=extra
             if logical>MAX_LOGICAL_BYTES:raise ValueError('dialogue_backup_archive_bound')
@@ -193,11 +224,17 @@ def _restore(path,head,remote,keys,started):
 def synchronize(path,remote,keys,*,head,version,previous,restored=None):
     """Same single worker/CAS head; publish only after every part is verified."""
     started=time.monotonic();segmented=head and head.get('schemaVersion')==SCHEMA
-    if segmented and (not Path(path).exists() or previous.get('headVersion')!=version):
+    known=bool(segmented and previous.get('status')=='VERIFIED'
+        and previous.get('headVersion')==version
+        and previous.get('archiveSha256')==head['logicalSha256']
+        and _counts(previous.get('counts'))
+        and previous.get('counts')==head['counts'])
+    if segmented and (not Path(path).exists() or not known):
         restored=_restore(path,head,remote,keys,started)
     store.initialize(path);_space(Path(path).parent,2*min(SEGMENT_BYTES,legacy.MAX_ARCHIVE_BYTES))
     with tempfile.TemporaryDirectory(prefix='.owner-segment-export-',dir=Path(path).parent) as directory:
-        parts,counts,logical,logical_sha=diagnostics.phase('local_records',_spool,path,directory,remote,started)
+        parts,counts,logical,logical_sha=diagnostics.phase('local_records',_spool,path,directory,remote,started,
+            head['segments'] if segmented else None)
         old={row['plainSha256']:row for row in head['segments']} if segmented else {}
         entries=[]
         for part in parts:
@@ -226,4 +263,6 @@ def synchronize(path,remote,keys,*,head,version,previous,restored=None):
         'restoredCounts':restored,'keyId':keys['current']['keyId'],'encryption':'AES_256_GCM_HKDF_SHA256',
         'remoteRecoveryVerified':False,'archiveStorage':{'mode':'SEGMENTED_ENCRYPTED_V2',
             'parts':len(entries),'logicalBytes':logical,'largestPlainPartBytes':max(r['plainBytes'] for r in entries),
-            'plainPartLimit':min(SEGMENT_BYTES,legacy.MAX_ARCHIVE_BYTES),'legacyArchiveLimit':legacy.MAX_ARCHIVE_BYTES}}
+            'plainPartLimit':min(SEGMENT_BYTES,legacy.MAX_ARCHIVE_BYTES),'legacyArchiveLimit':legacy.MAX_ARCHIVE_BYTES,
+            'reusedValidatedPartCount':sum(part['admissionReused'] for part in parts),
+            'newlyValidatedPartCount':sum(not part['admissionReused'] for part in parts)}}
