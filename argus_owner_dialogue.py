@@ -841,7 +841,7 @@ def reasoning_context(context):
 
 
 def subject_comparison_instruction(context):
-    """Ask for a scoped comparison only when this private edition binds its input.
+    """Ask for a scoped comparison bound to private or common period inputs.
 
     This guides new prose; it does not rewrite or reject an archived answer,
     select a market verdict, or turn a price difference into a causal claim.
@@ -852,14 +852,31 @@ def subject_comparison_instruction(context):
         return ''
     for row in context.get('facts') or []:
         value = row.get('marketInput') or {}
+        private_bound = (value.get('comparisonScope') == 'OWNER_PRIVATE'
+            and value.get('baseMarketContextId') == context.get('baseMarketContextId')
+            and value.get('informationCutoff') == context.get('receivedAt'))
+        # Common sample rows are already selected by subject_fact from the
+        # authenticated common snapshot. Match its current horizon/date fact;
+        # do not borrow a partial private binding or a previous period.
+        common_bound = (not any(k in value for k in ('comparisonScope',
+            'baseMarketContextId', 'informationCutoff'))
+            and isinstance(value.get('startDate'), str) and isinstance(value.get('endDate'), str)
+            and any(f.get('source') == 'market_internals_calculation'
+                and (f.get('provenance') or {}).get('eventId') == f"market-internals-{context['horizonSessions']}"
+                and f.get('text', '').startswith(f"{value['startDate']}から{value['endDate']}の{context['horizonSessions']}営業日:")
+                for f in context.get('facts') or []))
+        source_value = {k:v for k,v in value.items() if k!='evidenceId'}
+        if common_bound:
+            # The common period row's source ID predates these derived fields;
+            # the enclosing fact ID still authenticates all of them together.
+            source_value = {k:v for k,v in source_value.items() if k not in
+                ('sector17Code','sectorNameJa','classification','relativeToNikkeiPct','relativeToSectorPct')}
         if (row.get('source') != 'subject_market_comparison'
                 or row.get('verification') != 'VERIFIED'
                 or value.get('status') != 'AVAILABLE'
                 or value.get('instrumentId') != subject.get('symbol')
-                or value.get('comparisonScope') != 'OWNER_PRIVATE'
-                or value.get('baseMarketContextId') != context.get('baseMarketContextId')
-                or value.get('informationCutoff') != context.get('receivedAt')
-                or value.get('evidenceId') != digest({k:v for k,v in value.items() if k!='evidenceId'})
+                or not (private_bound or common_bound)
+                or value.get('evidenceId') != digest(source_value)
                 or row.get('evidenceId') != 'dialogue-fact-'+digest({k:v for k,v in row.items() if k!='evidenceId'})):
             continue
         return ('銘柄の見立てでは、subject_market_comparisonの現在の根拠をreasonsで引用し、'

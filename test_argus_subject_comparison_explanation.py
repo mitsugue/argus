@@ -66,6 +66,33 @@ def test_missing_sector_does_not_manufacture_a_sector_or_cause():
     assert '業種の欠測は推測で補いません' in dialogue.subject_comparison_instruction(context)
 
 
+@pytest.mark.parametrize('fault', [None, 'period', 'horizon', 'missing_common_fact'])
+def test_registered_member_of_common_sample_also_gets_same_period_guidance(fault):
+    import argus_market_brief
+    import jp_market_internals
+    from test_jp_market_internals import snapshot, build
+    brief, history, _ = inputs()
+    prices, classifications=snapshot()
+    saved=build(prices,classifications,symbols=['1234'])
+    brief['calculationSnapshots']={'5':{'marketInternals':saved}}
+    facts=[f for f in brief['unifiedContext']['facts'] if f['source']!='market_internals_calculation']
+    brief['unifiedContext']=argus_market_brief.unified_context(
+        {'facts':facts+jp_market_internals.explanation_facts(saved)})
+    context=dialogue.build_context(brief=brief,symbol='1234',market='JP',horizon=5,
+        received_at=history['acquiredAt'],question='この銘柄の現在地は？',watchlist_only=True)
+    context['intent']='SUBJECT_OVERVIEW'
+    fact=next(f for f in context['facts'] if f.get('source')=='subject_market_comparison')
+    assert 'comparisonScope' not in fact['marketInput']
+    if fault=='period':
+        fact['marketInput']['startDate']='2026-01-01'
+        fact['marketInput']['evidenceId']=dialogue.digest({k:v for k,v in fact['marketInput'].items() if k!='evidenceId'})
+        fact['evidenceId']='dialogue-fact-'+dialogue.digest({k:v for k,v in fact.items() if k!='evidenceId'})
+    if fault=='horizon': context['horizonSessions']=20
+    if fault=='missing_common_fact':
+        context['facts']=[f for f in context['facts'] if f.get('source')!='market_internals_calculation']
+    assert bool(dialogue.subject_comparison_instruction(context)) is (fault is None)
+
+
 def test_original_saved_contract_and_context_bytes_are_not_modified_by_guidance():
     context=current(); original=deepcopy(context)
     before=json.dumps(context,ensure_ascii=False,sort_keys=True)
