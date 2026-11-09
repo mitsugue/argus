@@ -22,6 +22,7 @@ jobs:
       - name: 診断用の投影だけを一時領域へ保全
         run: |
           cp scripts/mobile259_wait_diagnostic.py "$RUNNER_TEMP/mobile259_wait_diagnostic.py"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git checkout --detach 6e9b181e0c07fde6b4e0e55083c9b1967ce5188e
       - uses: ./.github/actions/acceptance-runtime-preflight
         with:
@@ -49,5 +50,7 @@ jobs:
           mkdir -p artifacts/runtime-diagnostics
           if test -f artifacts/mobile259-focused-private/closed-wait-state.json; then
             cp artifacts/mobile259-focused-private/closed-wait-state.json artifacts/runtime-diagnostics/closed-wait-state.json
+          else
+            python3 -c 'import json; from pathlib import Path; Path("artifacts/runtime-diagnostics/closed-wait-state.json").write_text(json.dumps({"schemaVersion":"argus-mobile259-wait-diagnostic-v1","status":"BROWSER_NOT_REACHED","acceptanceClaimed":False,"rawOwnerDataIncluded":False}))'
           fi
           python3 -B scripts/private_diagnostics_store.py --kind runtime --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" artifacts/runtime-diagnostics
