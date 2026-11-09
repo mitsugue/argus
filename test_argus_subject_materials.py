@@ -184,3 +184,47 @@ def test_subject_prose_guidance_asks_for_business_materials_without_missingness_
         assert part in text
     assert dialogue.subject_material_instruction({**context,'intent':'OTHER'})==''
     assert dialogue.subject_material_instruction({**context,'subject':{'market':'JP','symbol':'N225'}})==''
+
+
+@pytest.mark.parametrize('value,expected',[(12345678901,'12345678901円（123.45678901億円）'),
+    (-12345678901,'-12345678901円（-123.45678901億円）'),(0,'0円'),(-0.0,'0円'),
+    (123456789.25,'123456789.25円（1.2345678925億円）')])
+def test_yen_text_preserves_complete_value_and_exact_large_unit(value,expected):
+    assert materials._yen_text(value)==expected
+
+
+@pytest.mark.parametrize('value,expected',[(1.234567890123456,'1.234567890123456'),
+    (0.000000123456789,'0.000000123456789'),(1000.0,'1000')])
+def test_eps_decimal_text_does_not_round_to_six_digits_or_use_exponents(value,expected):
+    assert materials._number_text(value)==expected
+
+
+def test_exact_earnings_amount_and_its_yen_unit_are_accepted_without_weakening_number_checks():
+    from test_argus_owner_dialogue import answer
+    row=earnings(source='J-Quants 決算短信',previous=None,estimate=None)
+    row['company']['operatingProfit']=12345678901;before=deepcopy(row)
+    fact,=materials.earnings_facts(row,symbol='1234',market='JP',cutoff=AT)
+    context=dialogue.build_context(brief=market_brief(),symbol='1234',market='JP',horizon=5,
+        question='この銘柄への影響は？',received_at=AT,material_facts=[fact])
+    for amount in ('12345678901円','123.45678901億円'):
+        value=answer();value['reasons']={'textJa':f'累計営業利益{amount}を確認します。',
+            'kind':'INFERENCE','evidenceIds':[fact['evidenceId']]}
+        assert dialogue.validate_answer(value,context) is not None
+    value['reasons']['textJa']='累計営業利益999999円を確認します。'
+    diagnostic={};assert dialogue.validate_answer(value,context,diagnostic=diagnostic) is None
+    assert diagnostic['reason']=='unsupported_numeric_tokens' and row==before
+
+
+def test_changed_numeric_wording_keeps_original_saved_facts_and_new_input_identity():
+    fact,=materials.earnings_facts(earnings(),symbol='1234',market='JP',cutoff=AT)
+    old=deepcopy(fact);old['materialInput'].pop('numericTextVersion')
+    old['text']=old['text'].replace('-250000000円（-2.5億円）','-2.5e+08円')
+    old['provenance']['sourceRowSha256']=materials._digest(old['materialInput'])
+    old['evidenceId']='subject-material-'+materials._digest({k:v for k,v in old.items() if k!='evidenceId'})
+    prior=dialogue.build_context(brief=market_brief(),symbol='1234',market='JP',horizon=5,
+        question='この銘柄への影響は？',received_at=AT,material_facts=[old]);original=deepcopy(prior)
+    current=dialogue.build_context(brief=market_brief(),symbol='1234',market='JP',horizon=5,
+        question='この銘柄への影響は？',received_at=AT,material_facts=[fact],previous=prior)
+    assert old in dialogue.previous_facts(current) and fact in current['facts']
+    assert prior==original and current['contextId']!=prior['contextId']
+    assert dialogue.overview_input_digest(current,{'model':'test'})!=dialogue.overview_input_digest(prior,{'model':'test'})

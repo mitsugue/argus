@@ -9,6 +9,7 @@ import sys
 import time
 import uuid
 import math
+import hashlib
 from datetime import datetime
 from pathlib import Path
 import tempfile
@@ -290,7 +291,24 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
     deadline = clock() + timeout
     started = False
     last_error = None
+    last_tracked = None
+    runtime_captured = False
     while clock() < deadline:
+        if (private_runtime is not None and not runtime_captured and last_tracked is not None
+                and deadline-clock() <= min(45, timeout/2)):
+            # Move the existing single diagnostic GET inside the same deadline.
+            # A timeout must not discard its live input-preparation position.
+            # This is a running snapshot, not proof of collection completion or
+            # of ownership of a different/global preparation flight.
+            runtime_captured = True
+            def early_runtime(value):
+                private_runtime({**value,'capturePoint':'BEFORE_DEADLINE_RUNNING',
+                    'trackedRunIdSha256':hashlib.sha256(run_id.encode()).hexdigest(),
+                    'trackedCollectionStatus':last_tracked['status']})
+            _capture_private_runtime(base=base, headers=headers, expected=last_tracked,
+                request=request, clock=clock, deadline=deadline, sink=early_runtime)
+            if clock() >= deadline:
+                break
         payload = {"requestId": run_id, "statusOnly" if started else "async": True}
         # If the initial connection is lost, submit the SAME identity again.
         # The server either starts it once or returns its existing record.
@@ -311,6 +329,7 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
                 if not isinstance(received_id, str) or not received_id or (started and received_id != run_id):
                     return {"status": "failed", "errorClass": "collect_run_identity_mismatch"}
                 run_id, started = received_id, True
+                last_tracked = body
                 if private_timing is not None:
                     private_timing(private_timing_record(body, include_run_context=True))
                 if body["status"] in ("done", "failed"):
@@ -328,7 +347,7 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
                         # input preparation finished. Keep its original private
                         # result and fail without restarting or extending work.
                         status, error = "failed", "market_inputs_unavailable"
-                    if private_runtime is not None:
+                    if private_runtime is not None and not runtime_captured:
                         _capture_private_runtime(base=base, headers=headers, expected=body,
                             request=request, clock=clock, deadline=deadline, sink=private_runtime)
                     return {"status": status, "runId": run_id,
@@ -351,6 +370,11 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
             else:
                 last_error = "collect_http_transient"
         sleep(max(0, min(5, deadline - clock())))
+    if private_runtime is not None and not runtime_captured:
+        # A slow final poll can consume the budget. Preserve that absence
+        # explicitly without another request or extending the deadline.
+        _capture_private_runtime(base=base, headers=headers, expected=last_tracked or {},
+            request=request, clock=clock, deadline=deadline, sink=private_runtime)
     return {"status": "failed", "runId": run_id,
             "errorClass": "collect_poll_timeout", "lastErrorClass": last_error}
 
