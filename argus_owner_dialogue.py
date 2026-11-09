@@ -37,7 +37,7 @@ class ContextCapacityError(ValueError):
             'finalStoredBytes':len(stored_context_bytes(final)),
             'currentFactsBytes':len(stored_context_bytes(context.get('facts') or [])),
             'priorFactsBytes':len(stored_context_bytes(prior)),
-            'previousViewBytes':len(stored_context_bytes(context.get('previousView'))),
+            'previousViewBytes':len(stored_context_bytes(previous_view(context))),
             'factCount':len(context.get('facts') or []),
             'codec':codec if codec in ('EXACT_CURRENT_FACT_REFERENCES_V1',
                 'BOUNDED_DEFLATE_PREVIOUS_FACTS_V1','BOUNDED_DICT_CHUNKS_PREVIOUS_FACTS_V1') else 'NONE'}
@@ -436,10 +436,77 @@ def previous_facts(context):
     return result
 
 
+PREVIOUS_VIEW_CODECS=('BOUNDED_DEFLATE_PREVIOUS_VIEW_V1',
+    'BOUNDED_CURRENT_DICT_PREVIOUS_VIEW_V1','BOUNDED_PRIOR_DICT_PREVIOUS_VIEW_V1')
+
+
+def _previous_view_dictionary(context,codec):
+    value=previous_facts(context) if codec=='BOUNDED_PRIOR_DICT_PREVIOUS_VIEW_V1' else context.get('facts') or []
+    raw=stored_context_bytes(value)
+    if len(raw)>65536:raise ValueError('dialogue_previous_view_reference_invalid')
+    return raw[-32768:]
+
+
+def previous_view(context):
+    """Restore only the saved prior prose, with an independent expansion bound."""
+    codec=context.get('previousViewEncoding')
+    fields=('previousViewPacked','previousViewByteLength','previousViewSha256')
+    error='dialogue_previous_view_reference_invalid'
+    if codec is None:
+        if any(name in context for name in fields):raise ValueError(error)
+        return context.get('previousView')
+    try:
+        size=context['previousViewByteLength'];encoded=context['previousViewPacked']
+        if (codec not in PREVIOUS_VIEW_CODECS
+                or context.get('ownerInputPolicy')!='WATCHLIST_ONLY_V1'
+                or context.get('previousView') is not None
+                or type(size) is not int or not 2<=size<=65536
+                or not isinstance(encoded,str) or len(encoded)>90000):
+            raise ValueError(error)
+        packed=base64.b64decode(encoded,validate=True)
+        if base64.b64encode(packed).decode('ascii')!=encoded:raise ValueError(error)
+        decoder=(zlib.decompressobj() if codec==PREVIOUS_VIEW_CODECS[0]
+            else zlib.decompressobj(zdict=_previous_view_dictionary(context,codec)))
+        raw=decoder.decompress(packed,size+1)
+        if (len(raw)!=size or not decoder.eof or decoder.unused_data
+                or decoder.unconsumed_tail):raise ValueError(error)
+        value=json.loads(raw)
+        if (not isinstance(value,dict) or stored_context_bytes(value)!=raw
+                or digest(value)!=context.get('previousViewSha256')):
+            raise ValueError(error)
+        require_allowed(value)
+        return value
+    except (ValueError,KeyError,TypeError,UnicodeError,zlib.error):
+        raise ValueError(error) from None
+
+
+def _pack_previous_view(context):
+    value=previous_view(context)
+    if not isinstance(value,dict):return context
+    raw=stored_context_bytes(value)
+    if len(raw)>65536:return context
+    choices=[]
+    for codec in PREVIOUS_VIEW_CODECS:
+        encoder=(zlib.compressobj(9) if codec==PREVIOUS_VIEW_CODECS[0]
+            else zlib.compressobj(9,zdict=_previous_view_dictionary(context,codec)))
+        encoded=base64.b64encode(encoder.compress(raw)+encoder.flush()).decode('ascii')
+        choices.append((len(encoded)+len(codec),codec,encoded))
+    _,codec,encoded=min(choices)
+    context['previousView']=None
+    context['previousViewEncoding']=codec
+    context['previousViewPacked']=encoded
+    context['previousViewByteLength']=len(raw)
+    context['previousViewSha256']=digest(value)
+    previous_view(context)
+    context['contextId']=digest({k:v for k,v in context.items() if k!='contextId'})
+    return context
+
+
 def bounded_context(context):
     """Losslessly pack prior evidence; retain the 65,536-byte stored bound."""
     if len(stored_context_bytes(context)) <= 65536:
         previous_facts(context)
+        previous_view(context)
         return context
     if context.get('ownerInputPolicy') != 'WATCHLIST_ONLY_V1':
         raise ValueError('private_context_size_bound')
@@ -493,7 +560,11 @@ def bounded_context(context):
     packed['contextId']=digest({k:v for k,v in packed.items() if k!='contextId'})
     previous_facts(packed)
     if len(stored_context_bytes(packed))>65536:
-        raise ContextCapacityError(context,prior=prior,packed=packed)
+        # Keep every prior word; the provider receives its complete expansion.
+        # Only the stored transport changes, within the same byte/decoder bounds.
+        packed=_pack_previous_view(packed)
+        if len(stored_context_bytes(packed))>65536:
+            raise ContextCapacityError(context,prior=prior,packed=packed)
     return packed
 
 
@@ -713,6 +784,11 @@ def expanded_retrieval_record(record, context):
 def reasoning_context(context):
     """Send unchanged evidence once; preserve complete, immutable saved editions."""
     value = deepcopy(context)
+    if context.get('previousViewEncoding') is not None:
+        value['previousView']=deepcopy(previous_view(context))
+    else:previous_view(context)
+    for name in ('previousViewEncoding','previousViewPacked','previousViewByteLength','previousViewSha256'):
+        value.pop(name,None)
     record = value.pop('retrievalRecord', None)
     if record is None:
         return value  # Previously saved contexts retain their original interpretation.
@@ -861,6 +937,7 @@ def overview_input_digest(context, generation_policy):
                    for k in ('model', 'ruleVersion'))):
         raise ValueError('overview_reuse_inputs_invalid')
     instant(context['receivedAt'])
+    previous_view(context)
     inputs = deepcopy(context)
     if 'retrievalRecord' in inputs:
         if inputs['retrievalRecord'] != retrieval_record(context):
@@ -874,6 +951,8 @@ def overview_input_digest(context, generation_policy):
     inputs.pop('previousFactsSha256', None)
     inputs.pop('previousFactsPacked', None)
     inputs.pop('previousFactsByteLength', None)
+    for name in ('previousViewEncoding','previousViewPacked','previousViewByteLength','previousViewSha256'):
+        inputs.pop(name,None)
     if isinstance(inputs.get('owner'), dict):
         inputs['owner'].pop('receivedAt', None)
     for row in inputs.get('facts') or []:

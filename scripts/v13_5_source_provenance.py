@@ -35,10 +35,11 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_owner_prior_view_packing.py': 'b035d463e7402ae433fa8c21915862332beecbc9',
     'docs/operations/owner-dialogue-segmented-recovery.md': 'dcfd0c220c79397de163c328eb21944503ab2fbb',
     'test_argus_owner_dialogue_segments.py': '2068c4d18a6631df81ee84a0c7996f01caf28348',
     'argus_owner_dialogue_segments.py': '5790b479a0c618bfd883090c0705cbb1ab678833',
-    'docs/operations/owner-prior-context-packing.md': '2b971e4cd20fbc74e526e3b36485741e000dd031',
+    'docs/operations/owner-prior-context-packing.md': '3ce455f49fb79106558ff813f3952886ec0a1660',
     'test_argus_owner_context_storage_bytes.py': '96dc265ed2851e3042e951b8a7758419cf400514',
     'test_argus_owner_prior_context_packing.py': '7a84f179b3cdf800417cbb98b6faa377debc7008',
     'test_argus_owner_retained_completion.py': '752f87c422a2825356f60852184e9a1b7d9d9c62',
@@ -424,11 +425,11 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_ai_usage_runtime.py': 'a547929955acabfd3ae74d3cbd9224f1448d2862',
     'argus_analysis_history_backup.py': 'f011bf50f23c32554ffd2c55dd003086ac434bc4',
     'argus_explanation_contract.py': '5d91e091673c587dc68e5800dd445357e9095f20',
-    'argus_owner_dialogue.py': '8fefc15f60f67dc8e32237fb7db5bd48066c503c',
+    'argus_owner_dialogue.py': '3f35b35fffe222a7879b6dd5a01243b96125273c',
     'argus_owner_dialogue_api.py': 'e0495394f0e980168fa17e5bfae7c3dea80df041',
-    'argus_owner_dialogue_backup.py': '37a73c67c75b91c5e29345bb60227047123c7963',
+    'argus_owner_dialogue_backup.py': 'b8cd7af3cd09188889e82ed92b0978117f62fa35',
     'argus_owner_dialogue_recovery.py': 'f975e33adf0691f3e44c3982b3438da89a464a35',
-    'argus_owner_recovery_diagnostics.py': '2d48086f59b46737c5a110352ca8b08bf2864ee3',
+    'argus_owner_recovery_diagnostics.py': 'eeb18cc03689fe3a3c604628bdd4916609170e91',
     'test_argus_owner_recovery_diagnostics.py': '8d827b16de376093c72c7c236595369244f484cb',
     'test_argus_owner_dialogue_historical_contract.py': '081d12269d80978873ace28f2aa2805deb8119b0',
     'test_argus_owner_context_bound.py': 'da10450385f085b5b47953606e315ee9f21c3e7b',
