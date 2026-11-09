@@ -535,8 +535,10 @@ def build_feature_history(*, cutoffs: Sequence[str], previous_history=None, **in
     # unchanged eligible inputs can reuse the saved endpoint without recursion.
     pending = ordered[len(reused):]
     latest = None if pending else deepcopy(previous_history["latest"])
+    price_replay = (_PriceHistoryReplay(inputs.get("price_series") or {}, ordered[-1])
+                    if len(pending) > 1 else None)
     for at in pending:
-        latest = build_market_features(cutoff=at, **inputs)
+        latest = build_market_features(cutoff=at, _price_replay=price_replay, **inputs)
         for group in groups:
             for row in latest[group]:
                 key = (group, row["instrumentId"], row["seriesId"], row["date"])
@@ -566,16 +568,15 @@ def _day(row):
     return str(row.get("periodEnd") or row.get("date") or "")[:10]
 
 
-def _history(rows, instrument, cutoff, *, unit=None, allow_negative=False):
+def _scoped_price_rows(rows, instrument, unit):
     allowed = {"flow.foreign"} if unit == "JPY" else {"close", "yield", "yield_pct"} if unit == "PERCENT" else {"close", "OHLCV_BAR"}
-    scoped = [dict(row) for row in rows if isinstance(row, Mapping) and
+    return [dict(row) for row in rows if isinstance(row, Mapping) and
               row.get("instrumentId") == instrument and (unit is None or row.get("unit") == unit) and
               (row.get("seriesId") or row.get("field") or row.get("kind") or
                ("OHLCV_BAR" if all(key in row for key in ("open", "high", "low", "close", "volume")) else "")) in allowed]
-    # The selected rows still undergo every PIT/revision/conflict check.
-    # This caller discards the proof; mutable values remain owned copies.
-    visible, _ = point_in_time_rows(
-        scoped, cutoff, _reuse_immutable_scalars=True, _include_proof=False)
+
+
+def _numeric_history(visible, *, allow_negative):
     result = []
     for row in visible:
         value = _number(row.get("close", row.get("value")))
@@ -584,6 +585,83 @@ def _history(rows, instrument, cutoff, *, unit=None, allow_negative=False):
     if len({_day(row) for row in result}) != len(result):
         raise ValueError("ambiguous_series_observation")
     return sorted(result, key=_day)
+
+
+def _history(rows, instrument, cutoff, *, unit=None, allow_negative=False):
+    scoped = _scoped_price_rows(rows, instrument, unit)
+    # The selected rows still undergo every PIT/revision/conflict check.
+    # This caller discards the proof; mutable values remain owned copies.
+    visible, _ = point_in_time_rows(
+        scoped, cutoff, _reuse_immutable_scalars=True, _include_proof=False)
+    return _numeric_history(visible, allow_negative=allow_negative)
+
+
+class _PriceHistoryReplay:
+    """Own validated price copies for one bounded feature-history calculation.
+
+    Every row enters through the original PIT validator. Only its immutable
+    admission metadata and content hash are reused across cutoffs. Publication,
+    observation date, revision selection and conflicts are checked at each
+    cutoff, after that cutoff's existing date window. No durable/global cache.
+    """
+    def __init__(self, series, final_cutoff):
+        from jp_market_engine import _cutoff
+        self._series = series
+        self._final_cutoff = final_cutoff
+        self._final = _cutoff(final_cutoff)
+        self._owned = {}
+        self._prepared = {}
+
+    def history(self, source, instrument, cutoff, *, since=None, through=None,
+                unit=None, allow_negative=False):
+        from jp_market_engine import _cutoff, _sha256, _copy_row_reusing_scalars
+        limit = _cutoff(cutoff)
+        if limit > self._final:
+            raise ValueError("price_replay_cutoff_outside_scope")
+        scope = (source, instrument, unit)
+        if scope not in self._owned:
+            # Keep one owned snapshot. Admission is lazy: an out-of-window
+            # malformed scope must not fail an earlier cutoff that ignores it.
+            rows = [_copy_row_reusing_scalars(row) for row in self._series.get(source, ())
+                    if isinstance(row, Mapping)]
+            self._owned[scope] = [(_day(row), row) for row in rows]
+            self._prepared[scope] = {}
+        active = []
+        for index, (day, raw) in enumerate(self._owned[scope]):
+            if ((since is not None and day < since)
+                    or (through is not None and day > through)):
+                continue
+            cache = self._prepared[scope]
+            if index not in cache:
+                scoped = _scoped_price_rows([raw], instrument, unit)
+                visible, _ = point_in_time_rows(scoped, self._final_cutoff,
+                    _reuse_immutable_scalars=True, _include_proof=False)
+                cache[index] = None
+                if visible:
+                    row = visible[0]
+                    field = row.get("seriesId") or row.get("field") or row.get("kind") or "OHLCV_BAR"
+                    key = (str(row.get("instrumentId") or instrument).upper(), str(field), day)
+                    cache[index] = (key, row.get("revision", 0), _knowledge_time(row),
+                                    date.fromisoformat(day), _sha256(row), row)
+                    self._owned[scope][index] = (day, row)
+            if cache[index] is not None:
+                active.append(cache[index])
+        # Scope every row in this window before selecting revisions, just as
+        # the ordinary caller does. This preserves malformed-scope precedence.
+        admitted, seen = {}, {}
+        for key, revision, known, observed, content_hash, row in active:
+            if known > limit or observed > limit.date():
+                continue
+            revision_key = (*key, revision)
+            if revision_key in seen and seen[revision_key] != content_hash:
+                raise ValueError("conflicting_row_revision:%s:%s:%s:%d" % revision_key)
+            seen[revision_key] = content_hash
+            rank = (revision, known, content_hash)
+            previous = admitted.get(key)
+            if previous is None or rank > previous[0]:
+                admitted[key] = (rank, row)
+        visible = [_copy_row_reusing_scalars(row) for _, row in admitted.values()]
+        return _numeric_history(visible, allow_negative=allow_negative)
 
 
 LOSS_PROXY_BASIS = "ARGUS_PROXY_MARGIN_COST_BASIS_26W"
@@ -687,7 +765,8 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
                           margin_1570: Sequence[Mapping[str, Any]] = (),
                           foreign_flow: Sequence[Mapping[str, Any]] = (),
                           valuation_loss: Sequence[Mapping[str, Any]] = (),
-                          sq_events: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
+                          sq_events: Sequence[Mapping[str, Any]] = (),
+                          _price_replay=None) -> dict[str, Any]:
     # Each cutoff needs only recent observations of every price series except
     # VIX (its MACD runs over the whole history). Rows dated after the cutoff are
     # never visible (every source's availability is on or after its date), and
@@ -705,7 +784,19 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
                 and (whole_history or _day(row) >= recent_from)]
     # Price series only: the weekly balances also feed the snapshot's audit
     # counts (credit dynamics' point-in-time proof), which must not change.
-    price_series = {key: window(rows, whole_history=(key == "vix")) for key, rows in price_series.items()}
+    if _price_replay is None:
+        price_series = {key: window(rows, whole_history=(key == "vix")) for key, rows in price_series.items()}
+    def price_history(key, instrument, *, unit=None, allow_negative=False, since=None):
+        lower = None if key == "vix" else recent_from
+        if since is not None:
+            lower = max(lower, since) if lower else since
+        if _price_replay is not None:
+            return _price_replay.history(key, instrument, cutoff, since=lower, through=through,
+                                         unit=unit, allow_negative=allow_negative)
+        rows = price_series.get(key, ())
+        if since is not None:
+            rows = [row for row in rows if _day(row) >= since]
+        return _history(rows, instrument, cutoff, unit=unit, allow_negative=allow_negative)
     # 1570 balances became daily from the 2026-09-25 application date; every
     # consumer below is weekly (2026-10-03).
     margin_1570 = week_final_rows(margin_1570)
@@ -793,11 +884,11 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
         # term); the loss is that basis against the latest close. Labelled
         # ARGUS_PROXY on the feature and in the chart; never an official value.
         proxy = margin_cost_basis_loss_proxy(
-            two_market_credit, _history(price_series.get("nikkei", ()), INSTRUMENT, cutoff), cutoff=cutoff)
+            two_market_credit, price_history("nikkei", INSTRUMENT), cutoff=cutoff)
         if proxy:
             emit("credit.loss_pct", proxy["lossPct"], proxy["inputs"], basis=LOSS_PROXY_BASIS)
 
-    vix = _history(price_series.get("vix", ()), "VIX", cutoff)
+    vix = price_history("vix", "VIX")
     if vix:
         emit("vix.level", vix[-1]["numericValue"], [vix[-1]])
     if len(vix) >= 6:
@@ -821,22 +912,22 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
                                    "availableFrom": known_prefix[index].isoformat(),
                                    "sourceRef": "derived:vix-macd-12-26-9", "validationStatus": "UNVALIDATED"})
 
-    nikkei = _history(price_series.get("nikkei", ()), INSTRUMENT, cutoff)
-    sp500 = _history(price_series.get("sp500", ()), "SP500_INDEX", cutoff)
+    nikkei = price_history("nikkei", INSTRUMENT)
+    sp500 = price_history("sp500", "SP500_INDEX")
     if len(nikkei) >= 21 and len(sp500) >= 21:
         jp = nikkei[-1]["numericValue"] / nikkei[-21]["numericValue"] - 1
         us = sp500[-1]["numericValue"] / sp500[-21]["numericValue"] - 1
         emit("relative_jp_us.return20", (jp - us) * 100, nikkei[-21:] + sp500[-21:])
 
-    fx = _history(price_series.get("usdjpy", ()), "USDJPY", cutoff)
+    fx = price_history("usdjpy", "USDJPY")
     if len(fx) >= 6:
         emit("fx.usdjpy_change5", (fx[-1]["numericValue"] / fx[-6]["numericValue"] - 1) * 100, fx[-6:])
     for key, instrument, field in (("jp10y", "JP10Y", "rate.jp10y_change5"), ("us10y", "US10Y", "rate.us10y_change5")):
-        rates = _history(price_series.get(key, ()), instrument, cutoff, unit="PERCENT", allow_negative=True)
+        rates = price_history(key, instrument, unit="PERCENT", allow_negative=True)
         if len(rates) >= 6:
             emit(field, rates[-1]["numericValue"] - rates[-6]["numericValue"], rates[-6:])
 
-    topix = _history(price_series.get("topix", ()), "TOPIX_INDEX", cutoff)
+    topix = price_history("topix", "TOPIX_INDEX")
     by_date = {_day(row): row for row in topix}
     if len(nikkei) >= 6 and all(_day(row) in by_date for row in nikkei[-6:]):
         jp_rows = nikkei[-6:]
@@ -918,7 +1009,7 @@ def build_market_features(*, cutoff: str, price_series: Mapping[str, Sequence[Ma
             value = (jp_now["numericValue"] / jp_then["numericValue"] - us_now["numericValue"] / us_then["numericValue"]) * 100
             rs_points.append((_day(jp_now), value, [jp_now, jp_then, us_now, us_then]))
         conditions.extend(_sign_transitions(rs_points, lambda v: v > 0, SIGN_CONDITION_IDS["D03"], cutoff_day))
-    per_rows = _history([r for r in price_series.get("index_per", ()) if _day(r) >= scan_from], "NIKKEI_225_PER", cutoff)
+    per_rows = price_history("index_per", "NIKKEI_225_PER", since=scan_from)
     conditions.extend(_sign_transitions([(_day(r), r["numericValue"], [r]) for r in per_rows],
                                         lambda v: v >= D04_INDEX_PER_THRESHOLD, SIGN_CONDITION_IDS["D04"], cutoff_day))
     flows, _ = _pit([dict(r) for r in foreign_flow if isinstance(r, Mapping)
