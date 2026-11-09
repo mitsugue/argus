@@ -1,6 +1,7 @@
 """Changing editions retain every original fact within the stored byte bound."""
 import base64
 import copy
+import hashlib
 import json
 import uuid
 import zlib
@@ -36,6 +37,67 @@ def changed_context():
 
 def original_prior(c):
     return [r for r in c['facts'] if r.get('source')!='owner_report' and r.get('evidenceKind')!='OWNER_REPORTED']
+
+
+def metadata_edition(revision):
+    b=market_brief();rows=[]
+    for i in range(64):
+        h=lambda label:hashlib.sha256((label+str(i)).encode()).hexdigest()
+        row=d.fact('市場の比較根拠です。'+h('text')+f' 改訂{revision}。','market_context',kind='UNKNOWN')
+        row['provenance']={'sourceResponseSha256':h('response'),'sourceRowSha256':h('row'),
+            'url':'https://example.test/'+h('url'),'receivedAt':'2026-09-19T00:00:00Z'}
+        row['selected']={str(j):h('item'+str(j)) for j in range(2)};rows.append(row)
+    public=b['unifiedContext'];public['facts']=rows
+    public['contextId']=d.digest({k:v for k,v in public.items() if k!='contextId'})
+    return b
+
+
+def chunked_context():
+    old=context(metadata_edition(0));c=context(metadata_edition(1),old)
+    assert c['previousFactEncoding']=='BOUNDED_DICT_CHUNKS_PREVIOUS_FACTS_V1'
+    return old,c
+
+
+def test_dictionary_chunks_keep_complete_provenance_and_reordered_json_keys():
+    old,c=chunked_context()
+    assert d.previous_facts(c)==original_prior(old)
+    assert len(json.dumps(c,ensure_ascii=False).encode())<=65536
+    sorted_copy=json.loads(json.dumps(c,sort_keys=True))
+    assert d.previous_facts(sorted_copy)==original_prior(old)
+    distinct=[r for r in original_prior(old)
+        if d.digest(r) not in {d.digest(x) for x in c['facts']}]
+    assert d.reasoning_context(sorted_copy)['previousFacts']==distinct
+
+
+@pytest.mark.parametrize('fault',['dictionary','missing','extra','reorder','expansion'])
+def test_bad_dictionary_chunk_boundaries_are_rejected(fault):
+    old,c=chunked_context();parts=c['previousFactsPacked']
+    if fault=='dictionary':c['facts'][0]['text']+='変更'
+    if fault=='missing':parts.pop()
+    if fault=='extra':parts.append(parts[-1])
+    if fault=='reorder':parts[0],parts[1]=parts[1],parts[0]
+    if fault=='expansion':
+        encoder=zlib.compressobj(zdict=d._prior_dictionary(c,0))
+        parts[0]=base64.b64encode(encoder.compress(b' '*1000000)+encoder.flush()).decode()
+    with pytest.raises(ValueError,match='previous_fact_reference'):d.previous_facts(c)
+
+
+def test_oversized_new_encoded_context_is_rejected_by_archive():
+    old,c=chunked_context();c['unexpectedPadding']='x'*65536
+    c['contextId']=d.digest({k:v for k,v in c.items() if k!='contextId'})
+    raw=store.sealed({'requestId':str(uuid.uuid4()),'inputHash':'a'*64,'bootId':'old','context':c})
+    with pytest.raises(ValueError,match='dialogue_backup_context_invalid'):backup._request(raw)
+
+
+def test_chunked_archive_restores_complete_original_record(tmp_path):
+    old,c=chunked_context();identity=str(uuid.uuid4());path=tmp_path/'original';store.initialize(path)
+    store.submit(path,identity=identity,input_hash='a'*64,boot_id='old',context=c)
+    validated=d.validate_answer(answer(),c);assert validated is not None
+    store.complete(path,identity,{'status':'SUCCEEDED','answer':validated,'completedAt':AT})
+    remote=Remote();backup.synchronize(path,remote,keys());cold=tmp_path/'cold';backup.synchronize(cold,remote,keys())
+    actual=store.read(cold,identity,'new')['context']
+    assert actual==c and d.previous_facts(actual)==original_prior(old)
+    assert backup.snapshot(cold)[0]==backup.snapshot(path)[0]
 
 
 def test_changed_editions_preserve_all_previous_facts_and_provider_input():
