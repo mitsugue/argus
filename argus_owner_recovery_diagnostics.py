@@ -19,7 +19,9 @@ CODES = frozenset(('dialogue_backup_answer_invalid', 'dialogue_backup_context_in
     'dialogue_backup_archive_schema', 'dialogue_backup_row_bound',
     'dialogue_backup_row_identity', 'dialogue_backup_row_kind',
     'dialogue_backup_orphan_completion', 'dialogue_backup_head_readback_changed',
-    'dialogue_recovery_durable_path_unavailable', 'dialogue_backup_deadline'))
+    'dialogue_recovery_durable_path_unavailable', 'dialogue_backup_deadline',
+    'dialogue_backup_segment_manifest_invalid','dialogue_backup_segment_integrity',
+    'dialogue_backup_segment_storage_headroom'))
 SECTIONS = ('view', 'reasons', 'changes', 'impact', 'invalidation', 'next')
 SECTION_FIELDS = ('textJa', 'evidenceIds', 'kind')
 ANSWER_FIELDS = ('schemaVersion', 'contextId', 'sections', 'actionAuthority',
@@ -131,6 +133,14 @@ def status(value):
         result[key] = {name: row[name] for name in ('requests', 'completions', 'historicalMethodScopeCompletions')
             if type(row.get(name)) is int and 0 <= row[name] <= 1000000} if isinstance(row, dict) else None
     result['failure'] = project_failure(value['failure']) if isinstance(value.get('failure'), dict) else None
+    storage=value.get('archiveStorage')
+    if isinstance(storage,dict):
+        result['archiveStorage']={'mode':storage.get('mode') if storage.get('mode')=='SEGMENTED_ENCRYPTED_V2' else None}
+        for name,limit in (('parts',1000),('logicalBytes',4*1024*1024*1024),
+                ('largestPlainPartBytes',8*1024*1024),('plainPartLimit',8*1024*1024),
+                ('legacyArchiveLimit',32*1024*1024)):
+            count=storage.get(name)
+            result['archiveStorage'][name]=count if type(count) is int and 0<=count<=limit else None
     return result
 
 
