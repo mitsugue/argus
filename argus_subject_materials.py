@@ -7,6 +7,7 @@ from datetime import datetime
 from datetime import date
 from zoneinfo import ZoneInfo
 import math
+from decimal import Decimal
 import argus_research_mesh
 from argus_product_naming import require_allowed
 
@@ -74,6 +75,25 @@ def _currency(value):
     return isinstance(value,str) and len(value)==3 and value.isascii() and value.isupper() and value.isalpha()
 
 
+def _number_text(value):
+    # Preserve the cache's canonical decimal value; :g silently rounds at six
+    # significant digits and scientific notation is unsuitable for this prose.
+    number=Decimal(str(value))
+    if number.is_zero():return '0'
+    text=format(number,'f')
+    return text.rstrip('0').rstrip('.') if '.' in text else text
+
+
+def _yen_text(value):
+    text=_number_text(value)+'円'
+    number=Decimal(str(value))
+    if abs(number)>=100000000:
+        parts=number.as_tuple()
+        scaled=Decimal((parts.sign,parts.digits,parts.exponent-8))
+        text+='（'+_number_text(scaled)+'億円）'
+    return text
+
+
 def _day(value, *, latest):
     try:return isinstance(value,str) and date.fromisoformat(value).isoformat()==value and value<=latest
     except ValueError:return False
@@ -89,7 +109,8 @@ def earnings_facts(earnings, *, symbol, market, cutoff):
             or (earnings.get('symbol'),earnings.get('market'))!=(symbol,market)):return []
     now=_instant(cutoff)
     today=now.astimezone(ZoneInfo('Asia/Tokyo' if market=='JP' else 'America/New_York')).date().isoformat()
-    selected={'symbol':symbol,'market':market,'projectionOnly':True,'priceMoveCauseVerified':False}
+    selected={'symbol':symbol,'market':market,'projectionOnly':True,'priceMoveCauseVerified':False,
+        'numericTextVersion':'EXACT_DECIMAL_YEN_UNITS_V1'}
     parts=[];receipts=[]
     company=earnings.get('company')
     if (market=='JP' and isinstance(company,dict) and company.get('source')=='J-Quants 決算短信'
@@ -103,7 +124,7 @@ def earnings_facts(earnings, *, symbol, market, cutoff):
             if not (_day(disclosed,latest=receipt_day) and _day(period,latest=disclosed)):raise ValueError('actual_date')
             actual={k:company[k] for k in ('source','currency','consolidated','disclosedDate','periodEnd','operatingProfit','receivedAt')}
             scope='連結' if company['consolidated'] else '単体'
-            parts.append(f"{disclosed}公表、{period}期末の{scope}累計営業利益{company['operatingProfit']:g}円。")
+            parts.append(f"{disclosed}公表、{period}期末の{scope}累計営業利益{_yen_text(company['operatingProfit'])}。")
             fiscal=company.get('fiscalYearEnd')
             forecast=company.get('forecastOperatingProfit')
             try:
@@ -115,7 +136,7 @@ def earnings_facts(earnings, *, symbol, market, cutoff):
                         or fiscal<period or not _day(plan_disclosed,latest=plan_day) or plan_disclosed<disclosed):
                     raise ValueError('plan_date')
                 actual.update({k:company[k] for k in ('fiscalYearEnd','forecastOperatingProfit','forecastDisclosedDate','forecastReceivedAt')})
-                parts.append(f"{plan_disclosed}公表の{fiscal}期通期会社予想は営業利益{forecast:g}円。")
+                parts.append(f"{plan_disclosed}公表の{fiscal}期通期会社予想は営業利益{_yen_text(forecast)}。")
                 receipts.append(company['forecastReceivedAt'])
             except (KeyError,ValueError,TypeError):pass
             selected['company']=actual;receipts.append(company['receivedAt'])
@@ -129,21 +150,21 @@ def earnings_facts(earnings, *, symbol, market, cutoff):
             if (isinstance(previous,dict) and _day(previous.get('periodEnd'),latest=today)
                     and _number(previous.get('epsActual')) and _currency(previous.get('currency'))):
                 row={k:previous[k] for k in ('periodEnd','epsActual','currency')}
-                sentence=f"{row['periodEnd']}期末の実績EPS{row['epsActual']:g}{row['currency']}"
+                sentence=f"{row['periodEnd']}期末の実績EPS{_number_text(row['epsActual'])}{row['currency']}"
                 if _number(previous.get('epsEstimate')):
-                    row['epsEstimate']=previous['epsEstimate'];sentence+=f"、同期間の市場予想EPS{row['epsEstimate']:g}{row['currency']}"
+                    row['epsEstimate']=previous['epsEstimate'];sentence+=f"、同期間の市場予想EPS{_number_text(row['epsEstimate'])}{row['currency']}"
                 vendor['previous']=row;parts.append(sentence+'。')
             count=estimate.get('analysts') if isinstance(estimate,dict) else None
             if (isinstance(estimate,dict) and _day(estimate.get('periodEnd'),latest=(now.date()+timedelta(days=370)).isoformat())
                     and _number(estimate.get('eps')) and _currency(estimate.get('epsCurrency'))
                     and type(count) is int and 1<=count<=1000):
                 row={k:estimate[k] for k in ('periodEnd','eps','epsCurrency','analysts')}
-                sentence=f"{row['periodEnd']}期末の市場予想EPS{row['eps']:g}{row['epsCurrency']}、{count}人"
+                sentence=f"{row['periodEnd']}期末の市場予想EPS{_number_text(row['eps'])}{row['epsCurrency']}、{count}人"
                 if (_number(estimate.get('epsLow')) and _number(estimate.get('epsHigh'))
                         and estimate['epsLow']<=estimate['eps']<=estimate['epsHigh']):
-                    row.update({k:estimate[k] for k in ('epsLow','epsHigh')});sentence+=f"、予想幅{row['epsLow']:g}〜{row['epsHigh']:g}{row['epsCurrency']}"
+                    row.update({k:estimate[k] for k in ('epsLow','epsHigh')});sentence+=f"、予想幅{_number_text(row['epsLow'])}〜{_number_text(row['epsHigh'])}{row['epsCurrency']}"
                 if _number(estimate.get('eps30DaysAgo')):
-                    row['eps30DaysAgo']=estimate['eps30DaysAgo'];sentence+=f"、30日前の予想EPS{row['eps30DaysAgo']:g}{row['epsCurrency']}"
+                    row['eps30DaysAgo']=estimate['eps30DaysAgo'];sentence+=f"、30日前の予想EPS{_number_text(row['eps30DaysAgo'])}{row['epsCurrency']}"
                 vendor['estimate']=row;parts.append(sentence+'。')
             if vendor:
                 vendor.update(source='Yahoo Finance',receivedAt=earnings['fetchedAt']);selected['vendor']=vendor;receipts.append(earnings['fetchedAt'])

@@ -265,7 +265,7 @@ def test_private_runtime_is_one_get_after_original_collection_with_no_stdout_det
     result = run(base='https://example.test', token='secret-test-value', request_id='test-run-1',
                  request=request, private_runtime=records.append)
     assert [c['method'] for c in calls] == ['POST', 'GET']
-    assert calls[1]['url'] == 'https://example.test/api/argus/admin/memory-attribution'
+    assert calls[1]['url'] == 'https://example.test/api/argus/admin/memory-attribution?threads=1'
     assert calls[1]['data'] is None and calls[1]['timeout'] <= 15
     assert records[0]['available'] and result['status'] == 'done'
     for value in ('cpuSeconds', 'resident', 'secret-test-value', 'owner-test-value'):
@@ -428,3 +428,83 @@ def test_input_warm_error_after_join_keeps_identity_and_one_existing_readback():
     assert calls == [("POST", {"async": True, "requestId": "test-run-1"}),
                      ("POST", {"statusOnly": True, "requestId": "joined-run-1"}), ("GET", None)]
     assert len(saved) == 1
+
+
+def test_deadline_running_capture_keeps_original_budget_identity_and_one_existing_get():
+    import hashlib
+    calls,tick,saved=[],[0],[]
+    tracked={'status':'running','runId':'joined-run-1','startedAt':'2026-11-01T00:00:00Z'}
+    def request(**kw):
+        calls.append(kw)
+        if kw['method']=='GET':
+            assert kw['timeout']<=10-tick[0]
+            tick[0]+=1
+            value=runtime_fixture();value['marketInputPreparation']={'status':'RUNNING','stage':'pit_research',
+                'sequence':1,'body':'private-test-value'}
+            return 200,json.dumps(value)
+        return 200,json.dumps(tracked)
+    result=run(base='https://example.test',token='secret',timeout=10,request_id='initial-run',
+        request=request,clock=lambda:tick[0],sleep=lambda n:tick.__setitem__(0,tick[0]+n),private_runtime=saved.append)
+    assert result['status']=='failed' and result['errorClass']=='collect_poll_timeout'
+    assert tick[0]==10 and result['runId']=='joined-run-1'
+    assert sum(c['method']=='GET' for c in calls)==1 and len(saved)==1
+    assert json.loads(calls[0]['data'])=={'async':True,'requestId':'initial-run'}
+    assert all(json.loads(c['data'])=={'statusOnly':True,'requestId':'joined-run-1'} for c in calls[1:] if c['method']=='POST')
+    assert saved[0]['capturePoint']=='BEFORE_DEADLINE_RUNNING'
+    assert saved[0]['trackedRunIdSha256']==hashlib.sha256(b'joined-run-1').hexdigest()
+    assert saved[0]['marketInputPreparation']['stage']=='pit_research'
+    assert not saved[0]['collectionTimingBoundsMatch']
+    assert 'private-test-value' not in json.dumps(saved) and 'capturePoint' not in result
+
+
+def test_early_diagnostic_is_not_repeated_when_worker_later_finishes_or_read_fails():
+    for diagnostic_code in (200,403):
+        tick,calls,saved=[0],[],[]
+        def request(**kw):
+            calls.append(kw['method'])
+            if kw['method']=='GET':
+                return diagnostic_code,json.dumps(runtime_fixture())
+            status='done' if calls.count('POST')==2 else 'running'
+            return 200,json.dumps({'status':status,'runId':'test-run-1'})
+        result=run(base='https://example.test',token='secret',timeout=10,request_id='test-run-1',
+            request=request,clock=lambda:tick[0],sleep=lambda n:tick.__setitem__(0,tick[0]+n),private_runtime=saved.append)
+        assert result['status']=='done' and calls==['POST','GET','POST'] and len(saved)==1
+        assert saved[0]['capturePoint']=='BEFORE_DEADLINE_RUNNING'
+        if diagnostic_code==403:assert not saved[0]['available']
+
+
+def test_final_slow_poll_preserves_unavailable_runtime_without_request_after_deadline():
+    tick,calls,saved=[0],[],[]
+    def request(**kw):
+        calls.append(kw['method']);tick[0]=10
+        return 200,json.dumps({'status':'running','runId':'test-run-1'})
+    result=run(base='https://example.test',token='secret',timeout=10,request_id='test-run-1',
+        request=request,clock=lambda:tick[0],sleep=lambda _:None,private_runtime=saved.append)
+    assert result['errorClass']=='collect_poll_timeout' and calls==['POST'] and tick[0]==10
+    assert saved==[{'schemaVersion':'argus-collect-private-runtime-v1','available':False,'errorClass':'runtime_budget_exhausted'}]
+
+
+def test_runtime_thread_projection_keeps_only_bounded_code_locations():
+    from scripts.run_intel_collect import private_runtime_record
+    raw=runtime_fixture();raw['runtimeThreads']={'generatedAt':'2026-11-01T00:00:40Z','threadCount':3,
+        'token':'private-thread-marker','threads':[{'name':'private-thread-marker','locals':{'secret':'private-thread-marker'},
+            'frames':[{'file':'/private-thread-marker/scanner.py','function':'_collect_market_inputs','line':123},
+                      {'file':'/private-thread-marker/threading.py','function':'wait','line':2},
+                      {'file':'secret.key','function':'private-thread-marker','line':1},
+                      {'file':'argus_test.py','function':'private-thread-marker','line':3}]},
+            {'name':'private-thread-marker','frames':[{'file':'threading.py','function':'wait','line':1}]}]}
+    value=private_runtime_record(raw,{})['runtimeThreadFrames']
+    assert value['framesByThread']==[[{'file':'scanner.py','function':'_collect_market_inputs','line':123},
+                                      {'file':'threading.py','function':'wait','line':2}]]
+    assert value['threadCount']==3 and not value['namesArgumentsLocalsOrEnvironmentIncluded']
+    assert 'private-thread-marker' not in json.dumps(value)
+
+
+def test_runtime_thread_projection_rejects_malformed_metadata_and_bounds_expansion():
+    from scripts.run_intel_collect import _private_thread_frames
+    frame={'file':'argus_test.py','function':'compute','line':1}
+    value=_private_thread_frames({'generatedAt':'private-marker','threadCount':True,
+        'threads':[{'frames':[frame]*50}]*100})
+    assert len(value['framesByThread'])==64 and all(len(r)==18 for r in value['framesByThread'])
+    assert value['capturedAt'] is None and value['threadCount'] is None
+    assert _private_thread_frames({'threads':{}})['framesByThread']==[]

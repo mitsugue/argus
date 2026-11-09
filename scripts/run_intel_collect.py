@@ -9,6 +9,8 @@ import sys
 import time
 import uuid
 import math
+import hashlib
+import re
 from datetime import datetime
 from pathlib import Path
 import tempfile
@@ -140,6 +142,8 @@ def private_runtime_record(body, expected):
     if isinstance(body.get('ownerSubjectOverviews'), dict):
         from argus_owner_recovery_diagnostics import subject_overviews
         value['ownerSubjectOverviews'] = subject_overviews(body['ownerSubjectOverviews'])
+    if isinstance(body.get('runtimeThreads'), dict):
+        value['runtimeThreadFrames'] = _private_thread_frames(body['runtimeThreads'])
     history = collect.get('completedMemoryWindows')
     if isinstance(history, list):
         completed = [_private_completed_runtime(row) for row in history[-3:]]
@@ -147,6 +151,32 @@ def private_runtime_record(body, expected):
         if completed:
             value['completedOrdinaryWindows'] = completed
     return value
+
+
+def _private_thread_frames(value):
+    """Code locations only: no names, arguments, locals, paths or environments."""
+    rows=[]
+    threads=value.get('threads')
+    waits={'threading.py','thread.py','_base.py','socket.py','ssl.py',
+           'sessions.py','adapters.py','connection.py','connectionpool.py'}
+    for thread in (threads if isinstance(threads,list) else [])[:64]:
+        if not isinstance(thread,dict):continue
+        raw=thread.get('frames');frames=[];internal=False
+        for frame in (raw if isinstance(raw,list) else [])[-18:]:
+            if not isinstance(frame,dict):continue
+            filename=frame.get('file');function=frame.get('function');line=frame.get('line')
+            if not isinstance(filename,str) or len(filename)>240:continue
+            filename=Path(filename).name
+            own=(filename=='scanner.py' or filename.startswith(('argus_','jp_market_')))
+            if (not (own or filename in waits) or not re.fullmatch(r'[A-Za-z0-9_]+\.py',filename)
+                    or not isinstance(function,str) or not re.fullmatch(r'[A-Za-z_<][A-Za-z0-9_.<>]{0,79}',function)
+                    or type(line) is not int or not 0<=line<=100000):continue
+            frames.append({'file':filename,'function':function,'line':line});internal|=own
+        if internal:rows.append(frames)
+    count=value.get('threadCount')
+    return {'schemaVersion':'argus-private-thread-frames-v1','capturedAt':_private_stamp(value.get('generatedAt')),
+        'threadCount':count if type(count) is int and 0<=count<=4096 else None,
+        'framesByThread':rows,'namesArgumentsLocalsOrEnvironmentIncluded':False}
 
 
 def _private_memory_record(body):
@@ -250,7 +280,7 @@ def _capture_private_runtime(*, base, headers, expected, request, clock, deadlin
     try:
         remaining = deadline - clock()
         if remaining > 0:
-            code, raw = request(url=base.rstrip('/') + '/api/argus/admin/memory-attribution',
+            code, raw = request(url=base.rstrip('/') + '/api/argus/admin/memory-attribution?threads=1',
                 method='GET', headers=headers, data=None, timeout=min(15, remaining))
             value = {**unavailable, 'errorClass': 'runtime_response_unavailable'}
             if 200 <= code < 300 and len(raw) <= 1024 * 1024:
@@ -290,7 +320,24 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
     deadline = clock() + timeout
     started = False
     last_error = None
+    last_tracked = None
+    runtime_captured = False
     while clock() < deadline:
+        if (private_runtime is not None and not runtime_captured and last_tracked is not None
+                and deadline-clock() <= min(45, timeout/2)):
+            # Move the existing single diagnostic GET inside the same deadline.
+            # A timeout must not discard its live input-preparation position.
+            # This is a running snapshot, not proof of collection completion or
+            # of ownership of a different/global preparation flight.
+            runtime_captured = True
+            def early_runtime(value):
+                private_runtime({**value,'capturePoint':'BEFORE_DEADLINE_RUNNING',
+                    'trackedRunIdSha256':hashlib.sha256(run_id.encode()).hexdigest(),
+                    'trackedCollectionStatus':last_tracked['status']})
+            _capture_private_runtime(base=base, headers=headers, expected=last_tracked,
+                request=request, clock=clock, deadline=deadline, sink=early_runtime)
+            if clock() >= deadline:
+                break
         payload = {"requestId": run_id, "statusOnly" if started else "async": True}
         # If the initial connection is lost, submit the SAME identity again.
         # The server either starts it once or returns its existing record.
@@ -311,6 +358,7 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
                 if not isinstance(received_id, str) or not received_id or (started and received_id != run_id):
                     return {"status": "failed", "errorClass": "collect_run_identity_mismatch"}
                 run_id, started = received_id, True
+                last_tracked = body
                 if private_timing is not None:
                     private_timing(private_timing_record(body, include_run_context=True))
                 if body["status"] in ("done", "failed"):
@@ -328,7 +376,7 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
                         # input preparation finished. Keep its original private
                         # result and fail without restarting or extending work.
                         status, error = "failed", "market_inputs_unavailable"
-                    if private_runtime is not None:
+                    if private_runtime is not None and not runtime_captured:
                         _capture_private_runtime(base=base, headers=headers, expected=body,
                             request=request, clock=clock, deadline=deadline, sink=private_runtime)
                     return {"status": status, "runId": run_id,
@@ -351,6 +399,11 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
             else:
                 last_error = "collect_http_transient"
         sleep(max(0, min(5, deadline - clock())))
+    if private_runtime is not None and not runtime_captured:
+        # A slow final poll can consume the budget. Preserve that absence
+        # explicitly without another request or extending the deadline.
+        _capture_private_runtime(base=base, headers=headers, expected=last_tracked or {},
+            request=request, clock=clock, deadline=deadline, sink=private_runtime)
     return {"status": "failed", "runId": run_id,
             "errorClass": "collect_poll_timeout", "lastErrorClass": last_error}
 
