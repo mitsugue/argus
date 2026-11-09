@@ -840,6 +840,55 @@ def reasoning_context(context):
     return value
 
 
+def subject_comparison_instruction(context):
+    """Ask for a scoped comparison bound to private or common period inputs.
+
+    This guides new prose; it does not rewrite or reject an archived answer,
+    select a market verdict, or turn a price difference into a causal claim.
+    """
+    subject = context.get('subject') or {}
+    if (context.get('intent') != 'SUBJECT_OVERVIEW' or subject.get('market') != 'JP'
+            or subject.get('symbol') == 'N225'):
+        return ''
+    for row in context.get('facts') or []:
+        value = row.get('marketInput') or {}
+        private_bound = (value.get('comparisonScope') == 'OWNER_PRIVATE'
+            and value.get('baseMarketContextId') == context.get('baseMarketContextId')
+            and value.get('informationCutoff') == context.get('receivedAt'))
+        # Common sample rows are already selected by subject_fact from the
+        # authenticated common snapshot. Match its current horizon/date fact;
+        # do not borrow a partial private binding or a previous period.
+        common_bound = (not any(k in value for k in ('comparisonScope',
+            'baseMarketContextId', 'informationCutoff'))
+            and isinstance(value.get('startDate'), str) and isinstance(value.get('endDate'), str)
+            and any(f.get('source') == 'market_internals_calculation'
+                and (f.get('provenance') or {}).get('eventId') == f"market-internals-{context['horizonSessions']}"
+                and f.get('text', '').startswith(f"{value['startDate']}から{value['endDate']}の{context['horizonSessions']}営業日:")
+                for f in context.get('facts') or []))
+        source_value = {k:v for k,v in value.items() if k!='evidenceId'}
+        if common_bound:
+            # The common period row's source ID predates these derived fields;
+            # the enclosing fact ID still authenticates all of them together.
+            source_value = {k:v for k,v in source_value.items() if k not in
+                ('sector17Code','sectorNameJa','classification','relativeToNikkeiPct','relativeToSectorPct')}
+        if (row.get('source') != 'subject_market_comparison'
+                or row.get('verification') != 'VERIFIED'
+                or value.get('status') != 'AVAILABLE'
+                or value.get('instrumentId') != subject.get('symbol')
+                or not (private_bound or common_bound)
+                or value.get('evidenceId') != digest(source_value)
+                or row.get('evidenceId') != 'dialogue-fact-'+digest({k:v for k,v in row.items() if k!='evidenceId'})):
+            continue
+        return ('銘柄の見立てでは、subject_market_comparisonの現在の根拠をreasonsで引用し、'
+            '開始日〜終了日を明示して、対象銘柄と日経平均の強弱を短く説明してください。'
+            '業種比較も利用できる場合は同じ期間の業種ETFとの強弱を述べ、'
+            '個別銘柄・日経225・業種ETFは異なる母集団だと分かる表現にしてください。'
+            '相対的に強いことを絶対的な上昇と取り違えず、指数下落と業種上昇は両立します。'
+            '日数だけや別期間の数字で代用せず、業種の欠測は推測で補いません。'
+            '価格差だけから材料や下落の原因を断定せず、原因は別の根拠がある場合だけ説明します。')
+    return ''
+
+
 def prompt(context, *, prepared_context=None, prepared_catalog=None):
     require_allowed(context)
     from argus_presentation_intent import VOICE, dialogue_inventory, generation_instruction
@@ -866,7 +915,8 @@ def prompt(context, *, prepared_context=None, prepared_catalog=None):
         'retrievalCoverageの検索範囲を超えて過去を網羅した、反証が存在しない、と断定しません。現在と前回で異なる根拠や不明点は、支持・反対の両方から検討します。'
         'outcomeWindowsは元の仮説について後から観測した結果です。当時の予測・別期間の結果・現在の見通しを分け、originと観測窓を保ちます。結果がない、UNSCORABLE、DATA_GATEDを成功やゼロ変化とせず、結果から原因・的中率・売買判断を作りません。'
         'relatedPredictionResultsは、出来事を当時の根拠に含めていた正本予測と実測結果の対応です。対象銘柄と期間を明示し、出来事による因果関係・仮説の的中・校正された確率とは解釈しません。UNSCORABLEは未評価であり、別の銘柄や期間の結果で代用しません。'
-        '\n入力データ:\n'+json.dumps(reasoning_context(context) if prepared_context is None else prepared_context,ensure_ascii=False,separators=(',',':'))
+        + subject_comparison_instruction(context)
+        + '\n入力データ:\n'+json.dumps(reasoning_context(context) if prepared_context is None else prepared_context,ensure_ascii=False,separators=(',',':'))
         + '\n' + generation_instruction(dialogue_inventory(context) if prepared_catalog is None else prepared_catalog))
 
 
