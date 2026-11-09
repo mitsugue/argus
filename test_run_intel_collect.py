@@ -265,7 +265,7 @@ def test_private_runtime_is_one_get_after_original_collection_with_no_stdout_det
     result = run(base='https://example.test', token='secret-test-value', request_id='test-run-1',
                  request=request, private_runtime=records.append)
     assert [c['method'] for c in calls] == ['POST', 'GET']
-    assert calls[1]['url'] == 'https://example.test/api/argus/admin/memory-attribution'
+    assert calls[1]['url'] == 'https://example.test/api/argus/admin/memory-attribution?threads=1'
     assert calls[1]['data'] is None and calls[1]['timeout'] <= 15
     assert records[0]['available'] and result['status'] == 'done'
     for value in ('cpuSeconds', 'resident', 'secret-test-value', 'owner-test-value'):
@@ -482,3 +482,29 @@ def test_final_slow_poll_preserves_unavailable_runtime_without_request_after_dea
         request=request,clock=lambda:tick[0],sleep=lambda _:None,private_runtime=saved.append)
     assert result['errorClass']=='collect_poll_timeout' and calls==['POST'] and tick[0]==10
     assert saved==[{'schemaVersion':'argus-collect-private-runtime-v1','available':False,'errorClass':'runtime_budget_exhausted'}]
+
+
+def test_runtime_thread_projection_keeps_only_bounded_code_locations():
+    from scripts.run_intel_collect import private_runtime_record
+    raw=runtime_fixture();raw['runtimeThreads']={'generatedAt':'2026-11-01T00:00:40Z','threadCount':3,
+        'token':'private-thread-marker','threads':[{'name':'private-thread-marker','locals':{'secret':'private-thread-marker'},
+            'frames':[{'file':'/private-thread-marker/scanner.py','function':'_collect_market_inputs','line':123},
+                      {'file':'/private-thread-marker/threading.py','function':'wait','line':2},
+                      {'file':'secret.key','function':'private-thread-marker','line':1},
+                      {'file':'argus_test.py','function':'private-thread-marker','line':3}]},
+            {'name':'private-thread-marker','frames':[{'file':'threading.py','function':'wait','line':1}]}]}
+    value=private_runtime_record(raw,{})['runtimeThreadFrames']
+    assert value['framesByThread']==[[{'file':'scanner.py','function':'_collect_market_inputs','line':123},
+                                      {'file':'threading.py','function':'wait','line':2}]]
+    assert value['threadCount']==3 and not value['namesArgumentsLocalsOrEnvironmentIncluded']
+    assert 'private-thread-marker' not in json.dumps(value)
+
+
+def test_runtime_thread_projection_rejects_malformed_metadata_and_bounds_expansion():
+    from scripts.run_intel_collect import _private_thread_frames
+    frame={'file':'argus_test.py','function':'compute','line':1}
+    value=_private_thread_frames({'generatedAt':'private-marker','threadCount':True,
+        'threads':[{'frames':[frame]*50}]*100})
+    assert len(value['framesByThread'])==64 and all(len(r)==18 for r in value['framesByThread'])
+    assert value['capturedAt'] is None and value['threadCount'] is None
+    assert _private_thread_frames({'threads':{}})['framesByThread']==[]

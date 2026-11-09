@@ -180,7 +180,8 @@ def test_subject_prose_guidance_asks_for_business_materials_without_missingness_
     context['intent']='SUBJECT_OVERVIEW'
     context['contextId']=dialogue.digest({k:v for k,v in context.items() if k!='contextId'})
     text=dialogue.prompt(context)
-    for part in ('保存決算・会社予想・市場予想・関連報道','何が変わったか','原因ではありません','一文','繰り返さず'):
+    for part in ('保存決算・会社予想・市場予想・関連報道','何が変わったか','原因ではありません','一文','繰り返さず',
+                 '桁数や円・億円の表記だけの違いを業績や会社予想の変更と解釈せず'):
         assert part in text
     assert dialogue.subject_material_instruction({**context,'intent':'OTHER'})==''
     assert dialogue.subject_material_instruction({**context,'subject':{'market':'JP','symbol':'N225'}})==''
@@ -222,9 +223,15 @@ def test_changed_numeric_wording_keeps_original_saved_facts_and_new_input_identi
     old['provenance']['sourceRowSha256']=materials._digest(old['materialInput'])
     old['evidenceId']='subject-material-'+materials._digest({k:v for k,v in old.items() if k!='evidenceId'})
     prior=dialogue.build_context(brief=market_brief(),symbol='1234',market='JP',horizon=5,
-        question='この銘柄への影響は？',received_at=AT,material_facts=[old]);original=deepcopy(prior)
+        question='この銘柄への影響は？',received_at=AT,material_facts=[old])
+    prior['intent']='SUBJECT_OVERVIEW'
+    prior['contextId']=dialogue.digest({k:v for k,v in prior.items() if k!='contextId'})
+    original=deepcopy(prior)
     current=dialogue.build_context(brief=market_brief(),symbol='1234',market='JP',horizon=5,
         question='この銘柄への影響は？',received_at=AT,material_facts=[fact],previous=prior)
+    current['intent']='SUBJECT_OVERVIEW'
+    current['contextId']=dialogue.digest({k:v for k,v in current.items() if k!='contextId'})
     assert old in dialogue.previous_facts(current) and fact in current['facts']
     assert prior==original and current['contextId']!=prior['contextId']
-    assert dialogue.overview_input_digest(current,{'model':'test'})!=dialogue.overview_input_digest(prior,{'model':'test'})
+    policy={'model':'test','ruleVersion':'same-generation-source'}
+    assert dialogue.overview_input_digest(current,policy)!=dialogue.overview_input_digest(prior,policy)
