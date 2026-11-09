@@ -87,6 +87,10 @@ def _request(raw):
         raise ValueError('dialogue_backup_authority_invalid')
     dialogue.instant(c['receivedAt'])
     dialogue.previous_facts(c)
+    if (c.get('previousFactEncoding') in ('BOUNDED_DEFLATE_PREVIOUS_FACTS_V1',
+            'BOUNDED_DICT_CHUNKS_PREVIOUS_FACTS_V1')
+            and len(json.dumps(c,ensure_ascii=False).encode())>65536):
+        raise ValueError('dialogue_backup_context_invalid')
     if c.get('previousFactEncoding') and c.get('retrievalRecord') != dialogue.retrieval_record(c):
         raise ValueError('dialogue_backup_context_invalid')
     return value

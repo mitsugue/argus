@@ -1,10 +1,12 @@
 """Pure, private explanation context; no provider calls, storage or trade mutation."""
 from copy import deepcopy
 from datetime import datetime
+import base64
 import hashlib
 import json
 import math
 import re
+import zlib
 from collections.abc import Mapping
 import argus_explanation_contract
 import argus_jp_fiscal_monitor
@@ -331,17 +333,62 @@ def event_focus(value, event_id, cutoff, *, market=None, symbol=None):
         'snapshot': selected, 'snapshotSha256': digest(selected)}, rows
 
 
+def _prior_dictionary(context, offset):
+    raw=json.dumps(context.get('facts') or [],ensure_ascii=False,sort_keys=True,
+        separators=(',',':'),allow_nan=False).encode()
+    if len(raw)>65536:raise ValueError('dialogue_previous_fact_reference_invalid')
+    start=max(0,offset-8192)
+    return raw[start:offset+24576]
+
+
 def previous_facts(context):
     """Expand exact in-context references without reading another store."""
     rows = context.get('previousFacts') or []
     codec = context.get('previousFactEncoding')
     if codec is None:
-        if ('previousFactsSha256' in context or any(isinstance(row,Mapping)
+        if (any(key in context for key in ('previousFactsSha256','previousFactsPacked','previousFactsByteLength')) or any(isinstance(row,Mapping)
                 and 'sameAsCurrentFact' in row for row in rows)):
             raise ValueError('dialogue_previous_fact_reference_invalid')
         return rows
     error = 'dialogue_previous_fact_reference_invalid'
+    if codec in ('BOUNDED_DEFLATE_PREVIOUS_FACTS_V1','BOUNDED_DICT_CHUNKS_PREVIOUS_FACTS_V1'):
+        try:
+            encoded=context['previousFactsPacked'];size=context['previousFactsByteLength']
+            if (context.get('ownerInputPolicy')!='WATCHLIST_ONLY_V1'
+                    or type(context.get('previousFacts')) is not list or rows
+                    or type(size) is not int or not 2<=size<=65536):
+                raise ValueError(error)
+            chunked=codec=='BOUNDED_DICT_CHUNKS_PREVIOUS_FACTS_V1'
+            if chunked:
+                if type(encoded) is not list or len(encoded)!=(size+16383)//16384:
+                    raise ValueError(error)
+                parts=encoded
+            else:parts=[encoded]
+            bodies=[]
+            for index,part in enumerate(parts):
+                limit=min(16384,size-index*16384) if chunked else size
+                if not isinstance(part,str) or len(part)>90000:raise ValueError(error)
+                packed=base64.b64decode(part,validate=True)
+                if base64.b64encode(packed).decode('ascii')!=part:raise ValueError(error)
+                decoder=(zlib.decompressobj(zdict=_prior_dictionary(context,index*16384))
+                    if chunked else zlib.decompressobj())
+                body=decoder.decompress(packed,limit+1)
+                if (len(body)!=limit or not decoder.eof or decoder.unused_data
+                        or decoder.unconsumed_tail):raise ValueError(error)
+                bodies.append(body)
+            raw=b''.join(bodies)
+            result=json.loads(raw)
+            if (not isinstance(result,list) or any(not isinstance(row,dict)
+                    or not isinstance(row.get('evidenceId'),str) or not row['evidenceId'] for row in result)
+                    or context.get('previousFactsSha256')!=digest(result)):
+                raise ValueError(error)
+            require_allowed(result)
+            return result
+        except (ValueError,KeyError,TypeError,UnicodeError,zlib.error):
+            raise ValueError(error) from None
     if codec != 'EXACT_CURRENT_FACT_REFERENCES_V1' or not isinstance(rows, list):
+        raise ValueError(error)
+    if any(key in context for key in ('previousFactsPacked','previousFactsByteLength')):
         raise ValueError(error)
     current = context.get('facts') or []
     by_id = {row.get('evidenceId'):row for row in current if isinstance(row, Mapping)}
@@ -367,30 +414,62 @@ def previous_facts(context):
 
 
 def bounded_context(context):
-    """Pack identical prior bodies only; the same 65,536-byte bound still applies."""
+    """Losslessly pack prior evidence; retain the 65,536-byte stored bound."""
     if len(json.dumps(context,ensure_ascii=False).encode()) <= 65536:
         previous_facts(context)
         return context
-    if context.get('ownerInputPolicy') != 'WATCHLIST_ONLY_V1' or context.get('previousFactEncoding'):
+    if context.get('ownerInputPolicy') != 'WATCHLIST_ONLY_V1':
         raise ValueError('private_context_size_bound')
+    prior=previous_facts(context)
     current = context.get('facts') or []
     by_id = {row.get('evidenceId'):row for row in current if isinstance(row,Mapping)}
     if len(by_id) != len(current):
         raise ValueError('private_context_size_bound')
     packed = deepcopy(context)
+    packed.pop('previousFactsPacked',None)
+    packed.pop('previousFactsByteLength',None)
     positions = {row['evidenceId']:index for index,row in enumerate(current)}
     packed['previousFacts'] = [
         {'sameAsCurrentFact':positions[row['evidenceId']]}
         if isinstance(row,Mapping) and row.get('evidenceId') in by_id
         and digest(row) == digest(by_id[row['evidenceId']]) else deepcopy(row)
-        for row in context.get('previousFacts') or []]
+        for row in prior]
     packed['previousFactEncoding'] = 'EXACT_CURRENT_FACT_REFERENCES_V1'
-    packed['previousFactsSha256'] = digest(context.get('previousFacts') or [])
+    packed['previousFactsSha256'] = digest(prior)
     packed['explanationContractVersion'] = 'OWNER_WATCHLIST_CONTEXT_V2'
     packed['retrievalRecord'] = retrieval_record(packed)
     packed['contextId'] = digest({k:v for k,v in packed.items() if k!='contextId'})
     previous_facts(packed)
-    if len(json.dumps(packed,ensure_ascii=False).encode()) > 65536:
+    if len(json.dumps(packed,ensure_ascii=False).encode()) <= 65536:return packed
+    # The prior edition already fits the original bound. Compress only that
+    # immutable selection, with a bounded decoder and a complete content hash.
+    # Current facts, contrary evidence, timestamps and prose are never trimmed.
+    raw=json.dumps(prior,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
+    if len(raw)>65536:raise ValueError('private_context_size_bound')
+    packed['previousFacts']=[]
+    packed['previousFactEncoding']='BOUNDED_DEFLATE_PREVIOUS_FACTS_V1'
+    packed['previousFactsPacked']=base64.b64encode(zlib.compress(raw)).decode('ascii')
+    packed['previousFactsByteLength']=len(raw)
+    packed['retrievalRecord']=retrieval_record(packed)
+    packed['contextId']=digest({k:v for k,v in packed.items() if k!='contextId'})
+    previous_facts(packed)
+    if len(json.dumps(packed,ensure_ascii=False).encode())<=65536:return packed
+    # Bounded independent chunks can also reference the already authenticated
+    # current facts as a deterministic dictionary. No dictionary is stored,
+    # no evidence is discarded, and reordered/corrected inputs still roundtrip.
+    if len(json.dumps(current,ensure_ascii=False,separators=(',',':')).encode())>65536:
+        raise ValueError('private_context_size_bound')
+    parts=[]
+    for offset in range(0,len(raw),16384):
+        encoder=zlib.compressobj(zdict=_prior_dictionary(context,offset))
+        body=encoder.compress(raw[offset:offset+16384])+encoder.flush()
+        parts.append(base64.b64encode(body).decode('ascii'))
+    packed['previousFactEncoding']='BOUNDED_DICT_CHUNKS_PREVIOUS_FACTS_V1'
+    packed['previousFactsPacked']=parts
+    packed['retrievalRecord']=retrieval_record(packed)
+    packed['contextId']=digest({k:v for k,v in packed.items() if k!='contextId'})
+    previous_facts(packed)
+    if len(json.dumps(packed,ensure_ascii=False).encode())>65536:
         raise ValueError('private_context_size_bound')
     return packed
 
@@ -574,6 +653,12 @@ def retrieval_record(context):
         result['selectionEncoding'] = 'CURRENT_FACT_INDICES_V1'
         result['selection'] = {name:[positions.get(identity,identity) for identity in values]
             for name,values in result['selection'].items()}
+        if context.get('previousFactEncoding') in ('BOUNDED_DEFLATE_PREVIOUS_FACTS_V1','BOUNDED_DICT_CHUNKS_PREVIOUS_FACTS_V1'):
+            prior_positions={row['evidenceId']:index for index,row in enumerate(previous)}
+            result['selectionEncoding']='CURRENT_AND_PREVIOUS_FACT_INDICES_V2'
+            result['selection']={name:[{'prior':prior_positions[item]}
+                if isinstance(item,str) and item in prior_positions else item for item in values]
+                for name,values in result['selection'].items()}
     return result
 
 
@@ -581,13 +666,18 @@ def expanded_retrieval_record(record, context):
     """Resolve the ordered selection IDs from the same authenticated context."""
     if record.get('selectionEncoding') is None:
         return record
-    if record.get('selectionEncoding') != 'CURRENT_FACT_INDICES_V1':
+    if record.get('selectionEncoding') not in ('CURRENT_FACT_INDICES_V1','CURRENT_AND_PREVIOUS_FACT_INDICES_V2'):
         raise ValueError('retrieval_record_integrity')
     current = context.get('facts') or []
     expanded = deepcopy(record)
     try:
-        expanded['selection'] = {name:[current[identity]['evidenceId']
-            if type(identity) is int and 0 <= identity < len(current) else identity for identity in values]
+        prior=previous_facts(context) if record['selectionEncoding']=='CURRENT_AND_PREVIOUS_FACT_INDICES_V2' else []
+        def resolve(identity):
+            if type(identity) is int and 0<=identity<len(current):return current[identity]['evidenceId']
+            if isinstance(identity,dict) and set(identity)=={'prior'} and type(identity['prior']) is int and 0<=identity['prior']<len(prior):
+                return prior[identity['prior']]['evidenceId']
+            return identity
+        expanded['selection'] = {name:[resolve(identity) for identity in values]
             for name,values in record['selection'].items()}
         if digest(expanded['selection']) != expanded.pop('selectionSha256'):
             raise ValueError('retrieval_record_integrity')
@@ -613,6 +703,8 @@ def reasoning_context(context):
         if (digest(row) not in current_digests if current_digests is not None else row not in current)]
     value.pop('previousFactEncoding', None)
     value.pop('previousFactsSha256', None)
+    value.pop('previousFactsPacked', None)
+    value.pop('previousFactsByteLength', None)
     value['previousSharedEvidenceIds'] = record['selection']['previousSharedWithCurrent']
     event_snapshot = (value.get('eventFocus') or {}).get('snapshot') or {}
     memory = event_snapshot.get('relatedMemory') or {}
@@ -757,6 +849,8 @@ def overview_input_digest(context, generation_policy):
         inputs.pop(key, None)
     inputs.pop('previousFactEncoding', None)
     inputs.pop('previousFactsSha256', None)
+    inputs.pop('previousFactsPacked', None)
+    inputs.pop('previousFactsByteLength', None)
     if isinstance(inputs.get('owner'), dict):
         inputs['owner'].pop('receivedAt', None)
     for row in inputs.get('facts') or []:
