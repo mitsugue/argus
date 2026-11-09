@@ -21,7 +21,7 @@ CODES = frozenset(('dialogue_backup_answer_invalid', 'dialogue_backup_context_in
     'dialogue_backup_orphan_completion', 'dialogue_backup_head_readback_changed',
     'dialogue_recovery_durable_path_unavailable', 'dialogue_backup_deadline',
     'dialogue_backup_segment_manifest_invalid','dialogue_backup_segment_integrity',
-    'dialogue_backup_segment_storage_headroom'))
+    'dialogue_backup_segment_storage_headroom','dialogue_previous_view_reference_invalid'))
 SECTIONS = ('view', 'reasons', 'changes', 'impact', 'invalidation', 'next')
 SECTION_FIELDS = ('textJa', 'evidenceIds', 'kind')
 ANSWER_FIELDS = ('schemaVersion', 'contextId', 'sections', 'actionAuthority',
@@ -185,7 +185,8 @@ def subject_overviews(value):
     code = value.get('lastErrorCode')
     allowed = {'private_context_size_bound','market_context_unavailable','market_context_integrity',
         'market_facts_invalid','subject_material_bound','previous_context_integrity',
-        'previous_context_from_future','dialogue_previous_fact_reference_invalid','retrieval_record_integrity',
+        'previous_context_from_future','dialogue_previous_fact_reference_invalid',
+        'dialogue_previous_view_reference_invalid','retrieval_record_integrity',
         'completion_persistence_failed'}
     result['lastErrorCode'] = code if code is None or isinstance(code,str) and code in allowed else 'OTHER'
     outcome = value.get('lastCompletionStatus')
