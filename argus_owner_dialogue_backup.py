@@ -44,8 +44,10 @@ def _encrypt(raw,current):
     return len(encoded).to_bytes(4,'big')+encoded+AESGCM(_key(current['key'],salt)).encrypt(nonce,packed,encoded)
 
 
-def _decrypt(raw,keys):
-    if len(raw)>MAX_CIPHER_BYTES or len(raw)<20:raise ValueError('dialogue_backup_cipher_bound')
+def _decrypt(raw,keys,*,maximum_bytes=None):
+    limit=MAX_ARCHIVE_BYTES if maximum_bytes is None else min(maximum_bytes,MAX_ARCHIVE_BYTES)
+    if type(limit) is not int or limit<1:raise ValueError('dialogue_backup_header_bound')
+    if len(raw)>min(MAX_CIPHER_BYTES,limit+4096) or len(raw)<20:raise ValueError('dialogue_backup_cipher_bound')
     size=int.from_bytes(raw[:4],'big')
     if not 1<=size<=2048:raise ValueError('dialogue_backup_header_bound')
     encoded=raw[4:4+size];header=json.loads(encoded)
@@ -57,7 +59,7 @@ def _decrypt(raw,keys):
                 or set(header)!=fields|{'codec','plainBytes'}
                 or header.get('codec') not in ('identity','zlib')
                 or type(header.get('plainBytes')) is not int
-                or not 0<=header['plainBytes']<=MAX_ARCHIVE_BYTES))):
+                or not 0<=header['plainBytes']<=limit))):
         raise ValueError('dialogue_backup_header_invalid')
     selected=next((keys.get(k) for k in ('current','previous') if (keys.get(k) or {}).get('keyId')==header['keyId']),None)
     if not selected:raise ValueError('dialogue_backup_key_unavailable')
@@ -72,7 +74,7 @@ def _decrypt(raw,keys):
             if not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
                 raise ValueError('dialogue_backup_compression_invalid')
         if len(plain)!=header['plainBytes']:raise ValueError('dialogue_backup_plain_size_invalid')
-    if len(plain)>MAX_ARCHIVE_BYTES:raise ValueError('dialogue_backup_archive_bound')
+    if len(plain)>limit:raise ValueError('dialogue_backup_archive_bound')
     return plain,header['keyId']
 
 
@@ -89,7 +91,7 @@ def _request(raw):
     dialogue.previous_facts(c)
     if (c.get('previousFactEncoding') in ('BOUNDED_DEFLATE_PREVIOUS_FACTS_V1',
             'BOUNDED_DICT_CHUNKS_PREVIOUS_FACTS_V1')
-            and len(json.dumps(c,ensure_ascii=False).encode())>65536):
+            and len(dialogue.stored_context_bytes(c))>65536):
         raise ValueError('dialogue_backup_context_invalid')
     if c.get('previousFactEncoding') and c.get('retrievalRecord') != dialogue.retrieval_record(c):
         raise ValueError('dialogue_backup_context_invalid')
@@ -185,25 +187,33 @@ def restore(path,raw):
                         counts['historicalMethodScopeCompletions'] = counts.get('historicalMethodScopeCompletions',0)+1
                 else:raise ValueError('dialogue_backup_row_kind')
             db.execute('COMMIT')
-        store.initialize(path)
-        with closing(store.connect(path)) as db:
-            db.execute('ATTACH DATABASE ? AS recovered',(str(staging),));db.execute('BEGIN IMMEDIATE')
-            for table in ('requests','completions'):
-                if db.execute(f'SELECT 1 FROM main.{table} a JOIN recovered.{table} b USING(request_id) WHERE a.body<>b.body LIMIT 1').fetchone():
-                    raise ValueError('dialogue_backup_immutable_conflict')
-                fields='request_id,input_hash,boot_id,body' if table=='requests' else 'request_id,body'
-                order=' ORDER BY sequence' if table=='requests' else ''
-                db.execute(f'INSERT INTO main.{table}({fields}) SELECT {fields} FROM recovered.{table} WHERE request_id NOT IN (SELECT request_id FROM main.{table})'+order)
-            db.execute('COMMIT')
+        _merge_staging(path,staging)
         return counts
 
 
-def _head(remote):
+def _merge_staging(path,staging):
+    """All source rows have passed admission before this single atomic merge."""
+    store.initialize(path)
+    with closing(store.connect(path)) as db:
+        db.execute('ATTACH DATABASE ? AS recovered',(str(staging),));db.execute('BEGIN IMMEDIATE')
+        for table in ('requests','completions'):
+            if db.execute(f'SELECT 1 FROM main.{table} a JOIN recovered.{table} b USING(request_id) WHERE a.body<>b.body LIMIT 1').fetchone():
+                raise ValueError('dialogue_backup_immutable_conflict')
+            fields='request_id,input_hash,boot_id,body' if table=='requests' else 'request_id,body'
+            order=' ORDER BY sequence' if table=='requests' else ''
+            db.execute(f'INSERT INTO main.{table}({fields}) SELECT {fields} FROM recovered.{table} WHERE request_id NOT IN (SELECT request_id FROM main.{table})'+order)
+        db.execute('COMMIT')
+
+
+def _head(remote,keys=None):
     raw,version=remote.get(PREFIX+'/head.json')
     if raw is None:
         if version is not None:raise ValueError('dialogue_backup_head_missing')
         return None,None
     value=json.loads(raw)
+    if isinstance(value,dict) and value.get('schemaVersion')=='argus-owner-dialogue-segmented-head-v2':
+        import argus_owner_dialogue_segments as segmented
+        return segmented.open_head(raw,keys),version
     if set(value)!={'schemaVersion','cipherSha256','cipherBytes','chunks'} or value['schemaVersion']!=SCHEMA or not transport.valid_digest(value['cipherSha256']):
         raise ValueError('dialogue_backup_head_invalid')
     chunks=value['chunks']
@@ -217,7 +227,10 @@ def synchronize(path,remote,keys,*,previous=None):
     """Private transport is verified before any owner data can leave this process."""
     if keys.get('status')!='configured' or not keys.get('current'):raise ValueError('dialogue_backup_keys_required')
     diagnostics.phase('private_repository', remote.assert_private)
-    head,version=diagnostics.phase('remote_head', _head, remote);known=previous or {};restored=None;remote_plain_sha=None;encrypted_key=None
+    head,version=diagnostics.phase('remote_head', _head, remote, keys);known=previous or {};restored=None;remote_plain_sha=None;encrypted_key=None
+    if head and head.get('schemaVersion')=='argus-owner-dialogue-segmented-manifest-v2':
+        import argus_owner_dialogue_segments as segmented
+        return segmented.synchronize(path,remote,keys,head=head,version=version,previous=known)
     if head and (not Path(path).exists() or known.get('headVersion')!=version):
         parts=[]
         for chunk in head['chunks']:
@@ -228,9 +241,19 @@ def synchronize(path,remote,keys,*,previous=None):
         if transport.digest(cipher)!=head['cipherSha256']:raise ValueError('dialogue_backup_cipher_corrupt')
         plain,encrypted_key=diagnostics.phase('decrypt', _decrypt, cipher, keys)
         restored=diagnostics.phase('remote_records', restore, path, plain);remote_plain_sha=transport.digest(plain)
+        del plain,cipher,parts
     elif head:
         remote_plain_sha=known.get('archiveSha256');encrypted_key=known.get('keyId')
-    store.initialize(path);plain,counts=diagnostics.phase('local_records', snapshot, path);plain_sha=transport.digest(plain)
+    store.initialize(path);overflow=False
+    try:plain,counts=diagnostics.phase('local_records', snapshot, path)
+    except ValueError as exc:
+        if str(exc)!='dialogue_backup_archive_bound':raise
+        overflow=True
+    if overflow:
+        import argus_owner_dialogue_segments as segmented
+        return segmented.synchronize(path,remote,keys,head=head,version=version,
+            previous=known,restored=restored)
+    plain_sha=transport.digest(plain)
     if plain_sha!=remote_plain_sha or encrypted_key!=keys['current']['keyId']:
         cipher=_encrypt(plain,keys['current']);chunks=[]
         for pos in range(0,len(cipher),CHUNK_BYTES):
@@ -239,7 +262,7 @@ def synchronize(path,remote,keys,*,previous=None):
             chunks.append({'sha256':identity,'bytes':len(part)})
         head={'schemaVersion':SCHEMA,'cipherSha256':transport.digest(cipher),'cipherBytes':len(cipher),'chunks':chunks}
         diagnostics.phase('remote_write', remote.put, PREFIX+'/head.json',transport.encode(head),expected_version=version)
-    verified,version=diagnostics.phase('readback', _head, remote)
+    verified,version=diagnostics.phase('readback', _head, remote, keys)
     if verified!=head:raise ValueError('dialogue_backup_head_readback_changed')
     return {'status':'VERIFIED','headVersion':version,'archiveSha256':plain_sha,'counts':counts,
         'restoredCounts':restored,'keyId':keys['current']['keyId'],'encryption':'AES_256_GCM_HKDF_SHA256',

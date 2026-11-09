@@ -21,6 +21,29 @@ def digest(value):
     return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
 
 
+def stored_context_bytes(context):
+    """Match the canonical UTF-8 JSON used by the existing immutable store."""
+    return json.dumps(context,ensure_ascii=False,sort_keys=True,
+        separators=(',',':'),allow_nan=False).encode('utf-8')
+
+
+class ContextCapacityError(ValueError):
+    """Only closed byte counts survive a failed context preparation."""
+    def __init__(self, context, *, prior, packed=None):
+        final=context if packed is None else packed
+        codec=final.get('previousFactEncoding')
+        self.capacity={'phase':'FINAL_OVERVIEW' if context.get('intent')=='SUBJECT_OVERVIEW' else 'BUILD_CONTEXT',
+            'originalStoredBytes':len(stored_context_bytes(context)),
+            'finalStoredBytes':len(stored_context_bytes(final)),
+            'currentFactsBytes':len(stored_context_bytes(context.get('facts') or [])),
+            'priorFactsBytes':len(stored_context_bytes(prior)),
+            'previousViewBytes':len(stored_context_bytes(context.get('previousView'))),
+            'factCount':len(context.get('facts') or []),
+            'codec':codec if codec in ('EXACT_CURRENT_FACT_REFERENCES_V1',
+                'BOUNDED_DEFLATE_PREVIOUS_FACTS_V1','BOUNDED_DICT_CHUNKS_PREVIOUS_FACTS_V1') else 'NONE'}
+        super().__init__('private_context_size_bound')
+
+
 def instant(value):
     parsed=datetime.fromisoformat(str(value).replace('Z','+00:00'))
     if parsed.tzinfo is None:raise ValueError('timezone_required')
@@ -415,7 +438,7 @@ def previous_facts(context):
 
 def bounded_context(context):
     """Losslessly pack prior evidence; retain the 65,536-byte stored bound."""
-    if len(json.dumps(context,ensure_ascii=False).encode()) <= 65536:
+    if len(stored_context_bytes(context)) <= 65536:
         previous_facts(context)
         return context
     if context.get('ownerInputPolicy') != 'WATCHLIST_ONLY_V1':
@@ -440,12 +463,12 @@ def bounded_context(context):
     packed['retrievalRecord'] = retrieval_record(packed)
     packed['contextId'] = digest({k:v for k,v in packed.items() if k!='contextId'})
     previous_facts(packed)
-    if len(json.dumps(packed,ensure_ascii=False).encode()) <= 65536:return packed
+    if len(stored_context_bytes(packed)) <= 65536:return packed
     # The prior edition already fits the original bound. Compress only that
     # immutable selection, with a bounded decoder and a complete content hash.
     # Current facts, contrary evidence, timestamps and prose are never trimmed.
     raw=json.dumps(prior,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
-    if len(raw)>65536:raise ValueError('private_context_size_bound')
+    if len(raw)>65536:raise ContextCapacityError(context,prior=prior,packed=packed)
     packed['previousFacts']=[]
     packed['previousFactEncoding']='BOUNDED_DEFLATE_PREVIOUS_FACTS_V1'
     packed['previousFactsPacked']=base64.b64encode(zlib.compress(raw)).decode('ascii')
@@ -453,12 +476,12 @@ def bounded_context(context):
     packed['retrievalRecord']=retrieval_record(packed)
     packed['contextId']=digest({k:v for k,v in packed.items() if k!='contextId'})
     previous_facts(packed)
-    if len(json.dumps(packed,ensure_ascii=False).encode())<=65536:return packed
+    if len(stored_context_bytes(packed))<=65536:return packed
     # Bounded independent chunks can also reference the already authenticated
     # current facts as a deterministic dictionary. No dictionary is stored,
     # no evidence is discarded, and reordered/corrected inputs still roundtrip.
     if len(json.dumps(current,ensure_ascii=False,separators=(',',':')).encode())>65536:
-        raise ValueError('private_context_size_bound')
+        raise ContextCapacityError(context,prior=prior,packed=packed)
     parts=[]
     for offset in range(0,len(raw),16384):
         encoder=zlib.compressobj(zdict=_prior_dictionary(context,offset))
@@ -469,8 +492,8 @@ def bounded_context(context):
     packed['retrievalRecord']=retrieval_record(packed)
     packed['contextId']=digest({k:v for k,v in packed.items() if k!='contextId'})
     previous_facts(packed)
-    if len(json.dumps(packed,ensure_ascii=False).encode())>65536:
-        raise ValueError('private_context_size_bound')
+    if len(stored_context_bytes(packed))>65536:
+        raise ContextCapacityError(context,prior=prior,packed=packed)
     return packed
 
 

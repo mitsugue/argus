@@ -19,7 +19,9 @@ CODES = frozenset(('dialogue_backup_answer_invalid', 'dialogue_backup_context_in
     'dialogue_backup_archive_schema', 'dialogue_backup_row_bound',
     'dialogue_backup_row_identity', 'dialogue_backup_row_kind',
     'dialogue_backup_orphan_completion', 'dialogue_backup_head_readback_changed',
-    'dialogue_recovery_durable_path_unavailable', 'dialogue_backup_deadline'))
+    'dialogue_recovery_durable_path_unavailable', 'dialogue_backup_deadline',
+    'dialogue_backup_segment_manifest_invalid','dialogue_backup_segment_integrity',
+    'dialogue_backup_segment_storage_headroom'))
 SECTIONS = ('view', 'reasons', 'changes', 'impact', 'invalidation', 'next')
 SECTION_FIELDS = ('textJa', 'evidenceIds', 'kind')
 ANSWER_FIELDS = ('schemaVersion', 'contextId', 'sections', 'actionAuthority',
@@ -131,6 +133,34 @@ def status(value):
         result[key] = {name: row[name] for name in ('requests', 'completions', 'historicalMethodScopeCompletions')
             if type(row.get(name)) is int and 0 <= row[name] <= 1000000} if isinstance(row, dict) else None
     result['failure'] = project_failure(value['failure']) if isinstance(value.get('failure'), dict) else None
+    storage=value.get('archiveStorage')
+    if isinstance(storage,dict):
+        result['archiveStorage']={'mode':storage.get('mode') if storage.get('mode')=='SEGMENTED_ENCRYPTED_V2' else None}
+        for name,limit in (('parts',1000),('logicalBytes',4*1024*1024*1024),
+                ('largestPlainPartBytes',8*1024*1024),('plainPartLimit',8*1024*1024),
+                ('legacyArchiveLimit',32*1024*1024)):
+            count=storage.get(name)
+            result['archiveStorage'][name]=count if type(count) is int and 0<=count<=limit else None
+    return result
+
+
+def capacity_failure(value):
+    """Project byte counts only; never retain context, evidence or exception text."""
+    if not isinstance(value,dict):return None
+    raw=value.get('observedAt')
+    try:
+        at=datetime.fromisoformat(raw.replace('Z','+00:00')) if isinstance(raw,str) and len(raw)<=64 else None
+        stamp=raw if at is not None and at.tzinfo is not None else None
+    except ValueError:stamp=None
+    result={'schemaVersion':'argus-private-context-capacity-v1','observedAt':stamp,
+        'phase':value.get('phase') if value.get('phase') in ('BUILD_CONTEXT','FINAL_OVERVIEW') else 'UNKNOWN',
+        'codec':value.get('codec') if value.get('codec') in ('NONE','EXACT_CURRENT_FACT_REFERENCES_V1',
+            'BOUNDED_DEFLATE_PREVIOUS_FACTS_V1','BOUNDED_DICT_CHUNKS_PREVIOUS_FACTS_V1') else 'UNKNOWN',
+        'measurement':'STORE_CANONICAL_UTF8','storedByteLimit':65536}
+    for name in ('originalStoredBytes','finalStoredBytes','currentFactsBytes',
+            'priorFactsBytes','previousViewBytes','factCount'):
+        count=value.get(name)
+        result[name]=count if type(count) is int and 0<=count<=1000000 else None
     return result
 
 
@@ -164,4 +194,5 @@ def subject_overviews(value):
     result['lastValidationReason'] = reason if reason is None or isinstance(reason,str) and reason in VALIDATION_REASONS else 'OTHER'
     saved = value.get('retainedPersistenceStatus')
     result['retainedPersistenceStatus'] = saved if saved in ('PENDING','PERSISTED','FAILED') else None
+    result['lastCapacityFailure']=capacity_failure(value.get('lastCapacityFailure'))
     return result
