@@ -141,6 +141,10 @@ def status(value):
                 ('legacyArchiveLimit',32*1024*1024)):
             count=storage.get(name)
             result['archiveStorage'][name]=count if type(count) is int and 0<=count<=limit else None
+        for name in ('reusedValidatedPartCount','newlyValidatedPartCount'):
+            if name in storage:
+                count=storage[name]
+                result['archiveStorage'][name]=count if type(count) is int and 0<=count<=1000 else None
     return result
 
 

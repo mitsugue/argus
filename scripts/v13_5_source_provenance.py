@@ -35,10 +35,11 @@ HISTORICAL_REPLACED_BLOBS = {
 # Reviewed model and operational fixes, limited to these exact file contents.
 # These paths are NOT added to the general allowlist; future edits fail closed.
 REVIEWED_EXTENSION_BLOBS = {
+    'test_argus_owner_archive_admission_reuse.py': '2b8de35e7c80d2385df71f26d9255f9a8d313888',
     'test_argus_owner_prior_view_packing.py': 'b035d463e7402ae433fa8c21915862332beecbc9',
-    'docs/operations/owner-dialogue-segmented-recovery.md': 'dcfd0c220c79397de163c328eb21944503ab2fbb',
+    'docs/operations/owner-dialogue-segmented-recovery.md': '03fbe418fc9aa76bf216bfe674def29138ce9c05',
     'test_argus_owner_dialogue_segments.py': '2068c4d18a6631df81ee84a0c7996f01caf28348',
-    'argus_owner_dialogue_segments.py': '5790b479a0c618bfd883090c0705cbb1ab678833',
+    'argus_owner_dialogue_segments.py': '734bb1c2889b9f67375c902d6c037fa36ccad17e',
     'docs/operations/owner-prior-context-packing.md': '3ce455f49fb79106558ff813f3952886ec0a1660',
     'test_argus_owner_context_storage_bytes.py': '96dc265ed2851e3042e951b8a7758419cf400514',
     'test_argus_owner_prior_context_packing.py': '7a84f179b3cdf800417cbb98b6faa377debc7008',
@@ -429,7 +430,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_owner_dialogue_api.py': 'e0495394f0e980168fa17e5bfae7c3dea80df041',
     'argus_owner_dialogue_backup.py': 'b8cd7af3cd09188889e82ed92b0978117f62fa35',
     'argus_owner_dialogue_recovery.py': 'f975e33adf0691f3e44c3982b3438da89a464a35',
-    'argus_owner_recovery_diagnostics.py': 'eeb18cc03689fe3a3c604628bdd4916609170e91',
+    'argus_owner_recovery_diagnostics.py': 'fb83fc91d016643d82db4919e3c766e292f3bbe4',
     'test_argus_owner_recovery_diagnostics.py': '8d827b16de376093c72c7c236595369244f484cb',
     'test_argus_owner_dialogue_historical_contract.py': '081d12269d80978873ace28f2aa2805deb8119b0',
     'test_argus_owner_context_bound.py': 'da10450385f085b5b47953606e315ee9f21c3e7b',
