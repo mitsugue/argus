@@ -372,6 +372,11 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             except ValueError as exc:
                 if str(exc)=='dialogue_busy': return {'status':'BUSY','started':0}
                 unavailable += 1
+                if isinstance(exc,dialogue.ContextCapacityError):
+                    from argus_owner_recovery_diagnostics import capacity_failure
+                    with overview_state_lock:
+                        overview_state['lastCapacityFailure']=capacity_failure({
+                            **exc.capacity,'observedAt':now()})
                 allowed = {'private_context_size_bound','market_context_unavailable','market_context_integrity',
                     'market_facts_invalid','subject_material_bound','previous_context_integrity',
                     'previous_context_from_future','dialogue_previous_fact_reference_invalid','retrieval_record_integrity'}

@@ -134,6 +134,26 @@ def status(value):
     return result
 
 
+def capacity_failure(value):
+    """Project byte counts only; never retain context, evidence or exception text."""
+    if not isinstance(value,dict):return None
+    raw=value.get('observedAt')
+    try:
+        at=datetime.fromisoformat(raw.replace('Z','+00:00')) if isinstance(raw,str) and len(raw)<=64 else None
+        stamp=raw if at is not None and at.tzinfo is not None else None
+    except ValueError:stamp=None
+    result={'schemaVersion':'argus-private-context-capacity-v1','observedAt':stamp,
+        'phase':value.get('phase') if value.get('phase') in ('BUILD_CONTEXT','FINAL_OVERVIEW') else 'UNKNOWN',
+        'codec':value.get('codec') if value.get('codec') in ('NONE','EXACT_CURRENT_FACT_REFERENCES_V1',
+            'BOUNDED_DEFLATE_PREVIOUS_FACTS_V1','BOUNDED_DICT_CHUNKS_PREVIOUS_FACTS_V1') else 'UNKNOWN',
+        'measurement':'STORE_CANONICAL_UTF8','storedByteLimit':65536}
+    for name in ('originalStoredBytes','finalStoredBytes','currentFactsBytes',
+            'priorFactsBytes','previousViewBytes','factCount'):
+        count=value.get(name)
+        result[name]=count if type(count) is int and 0<=count<=1000000 else None
+    return result
+
+
 def subject_overviews(value):
     """Closed counts of the normal registered-overview tick, without identifiers."""
     value = value if isinstance(value,dict) else {}
@@ -164,4 +184,5 @@ def subject_overviews(value):
     result['lastValidationReason'] = reason if reason is None or isinstance(reason,str) and reason in VALIDATION_REASONS else 'OTHER'
     saved = value.get('retainedPersistenceStatus')
     result['retainedPersistenceStatus'] = saved if saved in ('PENDING','PERSISTED','FAILED') else None
+    result['lastCapacityFailure']=capacity_failure(value.get('lastCapacityFailure'))
     return result
