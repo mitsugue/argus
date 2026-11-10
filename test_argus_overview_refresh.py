@@ -11,12 +11,16 @@ NEWS = {'source': 'subject_news_metadata', 'materialInput': {'url': 'https://exa
 MARKET = {'source': 'trusted_mail', 'text': '市場の材料'}
 
 
-def test_boundary_is_latest_weekday_1600_jst():
-    # Tue 2026-11-10 15:59 JST -> Mon 16:00 JST
-    assert refresh.refresh_boundary('2026-11-10T06:59:00Z').isoformat() == '2026-11-09T07:00:00+00:00'
-    assert refresh.refresh_boundary('2026-11-10T07:00:00Z').isoformat() == '2026-11-10T07:00:00+00:00'
-    # Sunday -> Friday 16:00 JST
+def test_boundary_is_latest_friday_1600_jst():
+    # Tue 2026-11-10 -> Fri 2026-11-06 16:00 JST, before and after the old daily time
+    assert refresh.refresh_boundary('2026-11-10T06:59:00Z').isoformat() == '2026-11-06T07:00:00+00:00'
+    assert refresh.refresh_boundary('2026-11-10T07:00:00Z').isoformat() == '2026-11-06T07:00:00+00:00'
+    # Friday 15:59 JST is still the previous week; 16:00 is the new one.
+    assert refresh.refresh_boundary('2026-11-13T06:59:00Z').isoformat() == '2026-11-06T07:00:00+00:00'
+    assert refresh.refresh_boundary('2026-11-13T07:00:00Z').isoformat() == '2026-11-13T07:00:00+00:00'
+    # Sunday and the following Monday -> Friday 16:00 JST
     assert refresh.refresh_boundary('2026-11-15T03:00:00Z').isoformat() == '2026-11-13T07:00:00+00:00'
+    assert refresh.refresh_boundary('2026-11-16T08:00:00Z').isoformat() == '2026-11-13T07:00:00+00:00'
 
 
 def test_market_change_alone_is_not_due_within_the_day():
@@ -27,11 +31,14 @@ def test_market_change_alone_is_not_due_within_the_day():
     assert (due, reason) == (False, 'REFRESH_NOT_DUE')
 
 
-def test_daily_refresh_after_close():
+def test_weekly_refresh_after_friday_close():
     policy = refresh.RefreshPolicy()
-    due, reason = policy.decide(subject=('JP', '7203', 5), previous_context=ctx(NEWS),
-        previous_completed_at='2026-11-09T08:00:00Z', context=ctx(NEWS), now='2026-11-10T07:05:00Z')
-    assert (due, reason) == (True, 'DAILY_REFRESH')
+    args = dict(subject=('JP', '7203', 5), previous_context=ctx(NEWS),
+                previous_completed_at='2026-11-09T08:00:00Z', context=ctx(NEWS))
+    # Weekdays after the written one do not rewrite it any more.
+    for moment in ('2026-11-10T07:05:00Z', '2026-11-12T07:05:00Z', '2026-11-13T06:59:00Z'):
+        assert policy.decide(**args, now=moment) == (False, 'REFRESH_NOT_DUE')
+    assert policy.decide(**args, now='2026-11-13T07:05:00Z') == (True, 'WEEKLY_REFRESH')
 
 
 def test_refetch_of_the_same_news_is_not_a_change():
@@ -61,11 +68,12 @@ def test_starts_per_subject_and_day_are_bounded():
         previous_completed_at='2026-11-01T00:00:00Z', context=ctx(NEWS), now='2026-11-11T08:00:00Z')[0]
 
 
-def test_next_refresh_skips_the_weekend():
-    assert refresh.RefreshPolicy().next_refresh_at('2026-11-13T08:00:00Z') == '2026-11-16T07:00:00+00:00'
+def test_next_refresh_is_the_next_friday():
+    assert refresh.RefreshPolicy().next_refresh_at('2026-11-13T08:00:00Z') == '2026-11-20T07:00:00+00:00'
+    assert refresh.RefreshPolicy().next_refresh_at('2026-11-10T01:00:00Z') == '2026-11-13T07:00:00+00:00'
 
 
-def test_registered_refresh_waits_for_the_daily_time_after_a_new_market_edition(tmp_path):
+def test_registered_refresh_waits_for_the_weekly_time_after_a_new_market_edition(tmp_path):
     import copy
     import time
     from flask import Flask
@@ -101,12 +109,14 @@ def test_registered_refresh_waits_for_the_daily_time_after_a_new_market_edition(
         'priority': 'P1', 'verification': 'UNCONFIRMED'}]
     edition['unifiedContext'] = brief_module.unified_context(edition)
     current[0] = edition
-    for moment in ('2026-11-10T03:00:00Z', '2026-11-10T06:59:00Z'):
+    for moment in ('2026-11-10T03:00:00Z', '2026-11-10T07:01:00Z', '2026-11-12T07:01:00Z',
+                   '2026-11-13T06:59:00Z'):
         clock[0] = moment
-        assert controls['refreshSubjectOverviews']()['status'] == 'CURRENT'
+        current_state = controls['refreshSubjectOverviews']()
+        assert current_state['status'] == 'CURRENT', (moment, current_state)
     assert len(calls) == 1
-    # After 16:00 JST the changed market facts are written once.
-    clock[0] = '2026-11-10T07:01:00Z'
+    # After Friday 16:00 JST the changed market facts are written once.
+    clock[0] = '2026-11-13T07:01:00Z'
     assert controls['refreshSubjectOverviews']()['status'] == 'STARTED'
     assert finish()['status'] == 'SUCCEEDED' and len(calls) == 2
     assert controls['refreshSubjectOverviews']()['status'] == 'CURRENT' and len(calls) == 2
