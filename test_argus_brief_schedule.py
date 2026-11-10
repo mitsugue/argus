@@ -1,4 +1,4 @@
-"""Owner-fixed update times of the integrated view (2026-10-17)."""
+"""Owner-fixed update times of the integrated view (2026-10-17, three a trading day from 2026-11-10)."""
 from datetime import date, datetime, timedelta, timezone
 
 import argus_brief_schedule as bs
@@ -14,34 +14,47 @@ def weekdays(day):
     return day.weekday() < 5
 
 
-def test_the_owner_times_on_trading_days_and_two_on_closed_days():
-    assert bs.TRADING_DAY_SLOTS == ("07:00", "08:00", "09:15", "10:00", "12:00", "13:00",
-                                    "15:45", "17:00", "20:00", "22:00", "24:00")
+def test_three_owner_times_on_trading_days_and_two_on_closed_days():
+    assert bs.TRADING_DAY_SLOTS == ("08:00", "12:00", "15:45")
     assert bs.CLOSED_DAY_SLOTS == ("08:00", "20:00") and bs.EVENT_EDITIONS_PER_DAY == 3
-    friday = bs.slots_for_day(date(2026, 10, 16), True)
-    assert friday[-1][0] == at("2026-10-17T00:00")          # 24:00 is the next midnight
+    assert bs.SCHEDULE_VERSION == "brief-schedule-v2"
+    assert [label for _, label in bs.slots_for_day(date(2026, 10, 16), True)] == ["08:00", "12:00", "15:45"]
     assert [label for _, label in bs.slots_for_day(date(2026, 10, 17), False)] == ["08:00", "20:00"]
 
 
-def test_latest_slot_reads_yesterdays_midnight_and_weekends():
-    assert bs.latest_slot(at("2026-10-17T00:30"), weekdays)[1] == "2026-10-16 24:00"
-    assert bs.latest_slot(at("2026-10-17T07:30"), weekdays)[1] == "2026-10-16 24:00"   # Saturday: no 07:00
+def test_latest_slot_reads_yesterday_and_weekends():
+    assert bs.latest_slot(at("2026-10-17T00:30"), weekdays)[1] == "2026-10-16 15:45"   # Friday close
+    assert bs.latest_slot(at("2026-10-17T07:30"), weekdays)[1] == "2026-10-16 15:45"   # Saturday before 08:00
     assert bs.latest_slot(at("2026-10-17T08:05"), weekdays)[1] == "2026-10-17 08:00"
-    assert bs.latest_slot(at("2026-10-19T00:30"), weekdays)[1] == "2026-10-18 20:00"   # Sunday has no 24:00
-    assert bs.latest_slot(at("2026-10-19T09:20"), weekdays)[1] == "2026-10-19 09:15"
+    assert bs.latest_slot(at("2026-10-19T00:30"), weekdays)[1] == "2026-10-18 20:00"   # Sunday evening
+    assert bs.latest_slot(at("2026-10-19T09:20"), weekdays)[1] == "2026-10-19 08:00"   # no 09:15 any more
+    assert bs.latest_slot(at("2026-10-19T23:59"), weekdays)[1] == "2026-10-19 15:45"   # no evening slot
+
+
+def test_three_editions_on_a_trading_day():
+    written, last = [], None
+    minute = at("2026-10-19T00:00")
+    while minute < at("2026-10-20T00:00"):
+        decision = bs.decide(now=minute, last_edition_at=last, covered_slot=None, is_trading_day=weekdays)
+        if decision["due"] and last is not None:
+            written.append(decision["slot"])
+        if decision["due"]:
+            last = minute
+        minute += timedelta(minutes=5)
+    assert written == ["2026-10-19 08:00", "2026-10-19 12:00", "2026-10-19 15:45"]
 
 
 def test_a_slot_is_due_once_after_it_passes():
     common = dict(is_trading_day=weekdays, covered_slot=None)
-    assert not bs.decide(now=at("2026-10-19T09:10"), last_edition_at=at("2026-10-19T08:01"), **common)["due"]
-    due = bs.decide(now=at("2026-10-19T09:16"), last_edition_at=at("2026-10-19T08:01"), **common)
-    assert due["due"] and due["kind"] == "SCHEDULED" and due["slot"] == "2026-10-19 09:15"
+    assert not bs.decide(now=at("2026-10-19T11:59"), last_edition_at=at("2026-10-19T08:01"), **common)["due"]
+    due = bs.decide(now=at("2026-10-19T12:01"), last_edition_at=at("2026-10-19T08:01"), **common)
+    assert due["due"] and due["kind"] == "SCHEDULED" and due["slot"] == "2026-10-19 12:00"
     # Written after the slot, or already checked with unchanged inputs: not due.
-    assert not bs.decide(now=at("2026-10-19T09:40"), last_edition_at=at("2026-10-19T09:17"), **common)["due"]
-    assert not bs.decide(now=at("2026-10-19T09:40"), last_edition_at=at("2026-10-19T08:01"),
-                         is_trading_day=weekdays, covered_slot="2026-10-19 09:15")["due"]
+    assert not bs.decide(now=at("2026-10-19T12:40"), last_edition_at=at("2026-10-19T12:02"), **common)["due"]
+    assert not bs.decide(now=at("2026-10-19T12:40"), last_edition_at=at("2026-10-19T08:01"),
+                         is_trading_day=weekdays, covered_slot="2026-10-19 12:00")["due"]
     # No saved edition at all: the latest slot is due.
-    assert bs.decide(now=at("2026-10-19T09:40"), last_edition_at=None, **common)["due"]
+    assert bs.decide(now=at("2026-10-19T12:40"), last_edition_at=None, **common)["due"]
 
 
 def test_a_release_after_the_edition_adds_one_edition_up_to_three_a_day():

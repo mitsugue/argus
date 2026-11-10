@@ -1,4 +1,4 @@
-"""When the integrated view is written again (owner decision 2026-10-17).
+"""When the integrated view is written again (owner decisions 2026-10-17, 2026-11-10).
 
 The measured cost (ai-usage-report, 2026-10-17) showed 80-99 saved editions a
 day while the wording rarely changed. The owner fixed the update times in
@@ -12,11 +12,13 @@ current time, the last edition's time and whether a JST day is a trading day.
 from datetime import datetime, timedelta, timezone
 
 JST = timezone(timedelta(hours=9))
-SCHEDULE_VERSION = "brief-schedule-v1"
-# Trading days (owner, 2026-10-17). "24:00" is midnight after that day.
-TRADING_DAY_SLOTS = ("07:00", "08:00", "09:15", "10:00", "12:00", "13:00",
-                     "15:45", "17:00", "20:00", "22:00", "24:00")
-# Weekends and Tokyo exchange holidays.
+SCHEDULE_VERSION = "brief-schedule-v2"
+# Trading days (owner, 2026-11-10 「1日3回にする」「10/17から3つ」): three of
+# the times fixed on 2026-10-17 (07:00, 08:00, 09:15, 10:00, 12:00, 13:00,
+# 15:45, 17:00, 20:00, 22:00, 24:00) -- before the open, the lunch break and
+# after the close. A "24:00" label would still mean midnight after that day.
+TRADING_DAY_SLOTS = ("08:00", "12:00", "15:45")
+# Weekends and Tokyo exchange holidays (unchanged since 2026-10-17).
 CLOSED_DAY_SLOTS = ("08:00", "20:00")
 EVENT_EDITIONS_PER_DAY = 3
 
