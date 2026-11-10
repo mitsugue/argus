@@ -133,27 +133,10 @@ def _admit_part(raw,remote,started):
     return counts
 
 
-def _spool(path,directory,remote,started,validated_segments=None):
-    """End the consistent DB read before doing any network write."""
+def _batches(path,remote,started):
+    """Yield (plain part, counts) exactly as the archive is cut; one consistent DB read."""
     cap=min(SEGMENT_BYTES,legacy.MAX_ARCHIVE_BYTES);target=min(SEGMENT_TARGET,cap)
-    accepted={row['plainSha256']:row for row in validated_segments or []}
-    parts=[];batch=[HEADER];size=len(HEADER);part_counts={'requests':0,'completions':0}
-    counts={'requests':0,'completions':0};logical=len(HEADER);digest=hashlib.sha256(HEADER)
-    def emit():
-        raw=b''.join(batch);identity=transport.digest(raw);known=accepted.get(identity)
-        reused=bool(known and known['plainBytes']==len(raw)
-            and all(known['counts'].get(k)==v for k,v in part_counts.items()))
-        # Reuse admission only for byte-identical, authenticated source parts
-        # already validated in this process or by the full cold restore above.
-        actual=dict(known['counts']) if reused else _admit_part(raw,remote,started)
-        if any(actual.get(k)!=v for k,v in part_counts.items()):
-            raise ValueError('dialogue_backup_segment_integrity')
-        _add(counts,actual);_space(directory,len(raw)*2)
-        file=Path(directory)/str(len(parts))
-        with os.fdopen(os.open(file,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600),'wb') as handle:handle.write(raw)
-        parts.append({'file':file,'plainSha256':identity,'plainBytes':len(raw),
-            'counts':actual,'admissionReused':reused})
-        if len(parts)>MAX_SEGMENTS:raise ValueError('dialogue_backup_segment_manifest_invalid')
+    batch=[HEADER];size=len(HEADER);part_counts={'requests':0,'completions':0};logical=len(HEADER)
     with closing(store.connect(path,True)) as db:
         db.execute('BEGIN')
         for identity,raw,result in db.execute('SELECT r.request_id,r.body,c.body FROM requests r LEFT JOIN completions c USING(request_id) ORDER BY r.sequence'):
@@ -173,14 +156,42 @@ def _spool(path,directory,remote,started,validated_segments=None):
             extra=sum(map(len,lines))
             if extra+len(HEADER)>cap:raise ValueError('dialogue_backup_archive_bound')
             if size>len(HEADER) and (size+extra>cap or size>=target):
-                emit();batch=[HEADER];size=len(HEADER);part_counts={'requests':0,'completions':0}
+                yield b''.join(batch),part_counts
+                batch=[HEADER];size=len(HEADER);part_counts={'requests':0,'completions':0}
             batch.extend(lines);size+=extra;_add(part_counts,unit)
-            for line in lines:digest.update(line)
             logical+=extra
             if logical>MAX_LOGICAL_BYTES:raise ValueError('dialogue_backup_archive_bound')
-        if size>len(HEADER):emit()
+        if size>len(HEADER):yield b''.join(batch),part_counts
         db.execute('COMMIT')
+
+
+def _spool(path,directory,remote,started,validated_segments=None):
+    """End the consistent DB read before doing any network write."""
+    accepted={row['plainSha256']:row for row in validated_segments or []}
+    parts=[];counts={'requests':0,'completions':0};logical=len(HEADER);digest=hashlib.sha256(HEADER)
+    for raw,part_counts in _batches(path,remote,started):
+        identity=transport.digest(raw);known=accepted.get(identity)
+        reused=bool(known and known['plainBytes']==len(raw)
+            and all(known['counts'].get(k)==v for k,v in part_counts.items()))
+        # Reuse admission only for byte-identical, authenticated source parts:
+        # their plain SHA-256 is inside the AES-GCM manifest, and a part is
+        # uploaded only after it passed admission (here or in an earlier boot).
+        actual=dict(known['counts']) if reused else _admit_part(raw,remote,started)
+        if any(actual.get(k)!=v for k,v in part_counts.items()):
+            raise ValueError('dialogue_backup_segment_integrity')
+        _add(counts,actual);_space(directory,len(raw)*2)
+        file=Path(directory)/str(len(parts))
+        with os.fdopen(os.open(file,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600),'wb') as handle:handle.write(raw)
+        parts.append({'file':file,'plainSha256':identity,'plainBytes':len(raw),
+            'counts':actual,'admissionReused':reused})
+        if len(parts)>MAX_SEGMENTS:raise ValueError('dialogue_backup_segment_manifest_invalid')
+        digest.update(raw[len(HEADER):]);logical+=len(raw)-len(HEADER)
     return parts,counts,logical,digest.hexdigest()
+
+
+def _local_parts(path,remote,started):
+    """Plain SHA-256 and size of each part the local DB forms now (no file, no network)."""
+    return {(transport.digest(raw),len(raw)) for raw,_ in _batches(path,remote,started)}
 
 
 def _read_part(row,remote,keys,started):
@@ -200,18 +211,29 @@ def _read_part(row,remote,keys,started):
     return raw
 
 
-def _restore(path,head,remote,keys,started):
-    _space(Path(path).parent,head['logicalBytes']*2)
+def _restore(path,head,remote,keys,started,present=frozenset()):
+    """Restore the remote parts that the local DB does not already hold byte for byte.
+
+    2026-11-10: the local DB is on the persistent disk and survives a deploy.
+    Re-reading every remote part on each boot no longer fit the existing
+    180-second limit once the history grew. A remote part whose authenticated
+    plain SHA-256 and size equal a part of the local DB adds no row, so only
+    the other parts are read, decrypted, admitted and merged. With no local
+    match every part is read and the full logical hash is checked as before.
+    """
+    missing=[row for row in head['segments'] if (row['plainSha256'],row['plainBytes']) not in present]
+    _space(Path(path).parent,sum(row['plainBytes'] for row in missing)*2)
     with tempfile.TemporaryDirectory(prefix='.owner-segment-restore-',dir=Path(path).parent) as directory:
         staging=Path(directory)/'validated.sqlite3';store.initialize(staging)
         digest=hashlib.sha256(HEADER);logical=len(HEADER);counts={'requests':0,'completions':0}
-        for row in head['segments']:
+        for row in missing:
             raw=_read_part(row,remote,keys,started)
             if not raw.startswith(HEADER):raise ValueError('dialogue_backup_archive_schema')
             actual=diagnostics.phase('remote_records',legacy.restore,staging,raw)
             if actual!=row['counts']:raise ValueError('dialogue_backup_segment_integrity')
             _add(counts,actual);digest.update(raw[len(HEADER):]);logical+=len(raw)-len(HEADER)
-        if logical!=head['logicalBytes'] or digest.hexdigest()!=head['logicalSha256'] or counts!=head['counts']:
+        if len(missing)==len(head['segments']) and (logical!=head['logicalBytes']
+                or digest.hexdigest()!=head['logicalSha256'] or counts!=head['counts']):
             raise ValueError('dialogue_backup_segment_integrity')
         with closing(store.connect(staging,True)) as db:
             if (db.execute('SELECT COUNT(*) FROM requests').fetchone()[0]!=counts['requests']
@@ -230,7 +252,9 @@ def synchronize(path,remote,keys,*,head,version,previous,restored=None):
         and _counts(previous.get('counts'))
         and previous.get('counts')==head['counts'])
     if segmented and (not Path(path).exists() or not known):
-        restored=_restore(path,head,remote,keys,started)
+        present=(diagnostics.phase('local_records',_local_parts,path,remote,started)
+            if Path(path).exists() else frozenset())
+        restored=_restore(path,head,remote,keys,started,present)
     store.initialize(path);_space(Path(path).parent,2*min(SEGMENT_BYTES,legacy.MAX_ARCHIVE_BYTES))
     with tempfile.TemporaryDirectory(prefix='.owner-segment-export-',dir=Path(path).parent) as directory:
         parts,counts,logical,logical_sha=diagnostics.phase('local_records',_spool,path,directory,remote,started,
