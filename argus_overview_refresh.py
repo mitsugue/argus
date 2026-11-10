@@ -95,6 +95,10 @@ class RefreshPolicy:
             return False, 'SUBJECT_MATERIAL_TOO_RECENT'
         return False, 'REFRESH_NOT_DUE'
 
+    def manual_allowed(self, *, subject, now):
+        """A button press starts a generation unless the per-day bound is reached."""
+        return self.starts.get((subject, self._day(now)), 0) < self.max_starts
+
     def started(self, *, subject, now):
         key = (subject, self._day(now))
         self.starts = {k: v for k, v in self.starts.items() if k[1] == key[1]}

@@ -23,11 +23,18 @@ const statusText:Record<string,string>={
 // 2026-10-25 (owner): the stock page leads with one sentence of the view and
 // the condition that would change it; the full answer folds under it.
 const firstSentence=(text:string)=>{const cut=text.indexOf('。');return cut>0?text.slice(0,cut+1):text;};
+// 2026-11-10 (owner): the AI explanation is written only when this button is
+// pressed. Reading the saved one never starts AI work.
+const generateMessages:Record<string,string>={dialogue_busy:'ほかの説明を作成中・少し待って押してください',
+  overview_daily_limit:'この銘柄は今日はもう作れません（1日3回まで）',dialogue_recovery_pending:'復旧中・少し待って押してください',
+  market_context_unavailable:'市場の見立ての準備待ち',subject_not_registered:'Watchlistの銘柄だけ作れます',unauthorized:'接続設定を確認してください'};
+const stampText=(value?:string)=>{const at=value?Date.parse(value):NaN;return Number.isFinite(at)?new Date(at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'時刻不明';};
 export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{symbol:string;market:'JP'|'US';horizon:number;asset?:AssetItem;onReference?:(job:Job|null)=>void;line?:{fallback:string;fallbackChange?:string}}) {
   const session = useSyncExternalStore(subscribeOwner, hasOwnerSession, () => false);
   const {brief,loading:marketLoading,error:marketError}=useMarketBrief();const [token,setToken]=useState(readToken);
   const [edition,setEdition]=useState<{key:string;job:Job}|null>(null);
   const [error,setError]=useState('');const [fetching,setFetching]=useState(false);const [revision,setRevision]=useState(0);
+  const [generating,setGenerating]=useState(false);const [notice,setNotice]=useState('');
   const base=(import.meta.env.VITE_ARGUS_BACKEND_URL as string|undefined)?.replace(/\/$/,'');
   const contextId=brief?.unifiedContext?.contextId;
   const owner=asset?{symbol,market,state:'WATCHING',
@@ -65,7 +72,8 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
         }
         const savedOnly=value.overviewRead?.mode==='SAVED_ONLY';
         if(savedOnly&&value.status==='WAITING'){
-          if(!stopped){pending=true;const message='AI説明なし';setError(message);savedReadCache.put(cacheKey,{error:message},30_000);timer=window.setTimeout(()=>void load(),30_000);}
+          // No saved explanation: nothing is written until the button is pressed.
+          if(!stopped){setEdition(null);setError('');savedReadCache.put(cacheKey,{},300_000);}
           return;
         }
         const evaluation=value.overviewEvaluation;
@@ -90,10 +98,31 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
     if(cached?.error){setError(cached.error);pending=true;}else if(!cached?.edition)void load();
     return()=>{stopped=true;active?.abort();stopVisible();stopPoll();if(timer!==undefined)window.clearTimeout(timer);};
   },[requestKey,token,session,cacheKey,base,contextId,revision]);
+  const generate=async()=>{
+    if(!base||generating||(!token&&!session))return;
+    setGenerating(true);setNotice('');
+    try{
+      const response=await fetch(base+'/api/argus/owner-dialogue',{method:'POST',cache:'no-store',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'overviewGenerate',symbol,market,horizon,ownerToken:token})});
+      const value=await response.json();
+      if(!response.ok){setNotice(generateMessages[value.error]||'作成できません');return;}
+      if(value.overviewGenerate?.reason==='DAILY_START_LIMIT')setNotice(generateMessages.overview_daily_limit);
+      else if(value.overviewGenerate?.started===false&&value.status==='SUCCEEDED')setNotice('材料に変化なし・前の説明のまま');
+      savedReadCache.clear();setRevision(v=>v+1);
+    }catch{setNotice('接続できません');}
+    finally{setGenerating(false);}
+  };
   const job=edition?.job;
   const current=edition?.key===requestKey&&job?.status==='SUCCEEDED';
   const saved=job?.status==='SUCCEEDED'?job:validJob(job?.previousOverview)&&job.previousOverview.status==='SUCCEEDED'?job.previousOverview:null;
   useEffect(()=>{onReference?.(token||session?saved??null:null);},[saved,token,session,onReference]);
+  const busy=generating||job?.status==='RUNNING';
+  const stamp=saved?.result?.provider?.completedAt;
+  const button=(withStamp:boolean)=>(token||session)&&base?<p className="ad-conclusion__status owner-overview__generate">
+    {withStamp&&saved&&<span>AIの見立て · {stampText(stamp)}</span>}
+    <button type="button" className="asset-mini" disabled={busy} onClick={()=>void generate()}>
+      {busy?'作成中':saved?'AIで作り直す':'AIの見立てを作る'}</button>
+    {notice&&<span role="status">{notice}</span>}</p>:null;
   if(line){
     const sections=saved?.result?.answer?.sections;
     const view=sections?.view?.textJa?withoutScreenNotes(sections.view.textJa):null;
@@ -103,6 +132,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
       <p className="ad-conclusion__view">{view?firstSentence(view):line.fallback}</p>
       {change&&<p className="ad-conclusion__change">変わる条件：{firstSentence(change)}</p>}
       {!view&&status&&<p className="ad-conclusion__status">{status}{error&&<button type="button" className="asset-mini" onClick={()=>setRevision(value=>value+1)}>再取得</button>}</p>}
+      {button(true)}
       {saved&&<details className="ad-fold"><summary>見立ての全文</summary><OwnerAnswerBody job={saved}/></details>}
     </div>;
   }
@@ -111,7 +141,8 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
     <header><p className="owner-overview__eyebrow">{asset?.displayNameJa||asset?.displayName||(symbol==='N225'?'日経平均':symbol)}</p><span>{horizon}営業日の見通し</span></header>
     {!contextId&&<p role="status">{marketLoading?<TriangleStepLoader label="読み込み中"/>:marketError?"取得できません":"データ待ち"}</p>}
     {error&&<p role="status">{error}</p>}
-    {!error&&contextId&&!current&&<p role="status">{fetching||job?.status==='RUNNING'?<TriangleStepLoader label={saved?'更新中':'確認中'}/>:job&&edition?.key===requestKey?statusText[job.status]||'確認中':'更新待ち'}</p>}
+    {!error&&contextId&&!current&&(fetching||job?.status==='RUNNING'||(job&&edition?.key===requestKey))&&<p role="status">{fetching||job?.status==='RUNNING'?<TriangleStepLoader label={saved?'更新中':'確認中'}/>:statusText[job?.status??'']||'確認中'}</p>}
+    {button(false)}
     {saved&&<>{!current&&<p className="owner-overview__retained">前回の説明 · {saved.result?.provider?.completedAt||'時刻不明'}</p>}
       {current&&job?.overviewReuse&&<p className="owner-overview__retained">{new Date(job.overviewReuse.originalCompletedAt).toLocaleString('ja-JP')}の説明（根拠に変更なし）</p>}
       <OwnerAnswerBody job={saved} compact/>

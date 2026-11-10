@@ -19408,7 +19408,9 @@ _OWNER_DIALOGUE_API = argus_owner_dialogue_api.register(app, authorize=_require_
     generation_policy=_owner_overview_generation_policy,
     registered_subjects=_owner_overview_registered_subjects,
     overview_events=_owner_overview_events,
-    refresh_policy=argus_overview_refresh.RefreshPolicy())
+    refresh_policy=argus_overview_refresh.RefreshPolicy(),
+    # 2026-11-10 owner: per-stock AI explanations only when the button is pressed.
+    manual_overviews=True)
 
 
 def _owner_overview_tick():
