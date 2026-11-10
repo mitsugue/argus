@@ -283,7 +283,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             if not due:
                 return {**decorate(previous), 'overviewRefresh':{
                     'checkedAt':context['receivedAt'], 'due':False, 'reason':reason,
-                    'nextDailyRefreshAt':refresh_policy.next_refresh_at(context['receivedAt']),
+                    'nextRefreshAt':refresh_policy.next_refresh_at(context['receivedAt']),
                     'originalCompletedAt':previous['result'].get('completedAt')}}, False
         store.initialize(path)
         created = store.submit(path,identity=identity,input_hash=dialogue.digest(stable),

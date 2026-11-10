@@ -1,4 +1,4 @@
-"""When a saved subject explanation may be written again (owner cost decision 2026-11-10).
+"""When a saved subject explanation may be written again (owner cost decisions 2026-11-10).
 
 Measured 2026-11-09: 1,475 owner_dialogue calls and 27.1M input tokens in one
 day. Every market-brief edition (14-25 a weekday) changed the shared market
@@ -7,8 +7,9 @@ again after each edition. The market facts stay in the explanation; they no
 longer decide by themselves when it is rewritten.
 
 A saved SUCCEEDED explanation with changed inputs is rewritten only when
-  * it was completed before the latest weekday refresh time (16:00 JST, after
-    the 15:45 close edition), or
+  * it was completed before the latest weekly refresh time (Friday 16:00 JST,
+    after the week's last close edition; owner chose weekly over once a
+    weekday the same day), or
   * the subject's own materials (saved earnings, related news, the selected
     official event) changed and the saved one is at least an hour old.
 At most a fixed number of generations start per subject and JST day, so a
@@ -20,7 +21,7 @@ import hashlib
 import json
 
 JST = timezone(timedelta(hours=9))
-DAILY_REFRESH_JST = (16, 0)
+WEEKLY_REFRESH_JST = (4, 16, 0)   # Friday (Mon=0), 16:00
 MATERIAL_MIN_AGE = timedelta(hours=1)
 MAX_STARTS_PER_SUBJECT_DAY = 3
 MATERIAL_SOURCES = ('subject_news_metadata', 'subject_saved_earnings', 'selected_event', 'event_focus')
@@ -35,13 +36,13 @@ def _instant(value):
 
 
 def refresh_boundary(now):
-    """Latest weekday 16:00 JST at or before now (UTC)."""
+    """Latest Friday 16:00 JST at or before now (UTC)."""
+    weekday, hour, minute = WEEKLY_REFRESH_JST
     local = _instant(now).astimezone(JST)
-    day = local.replace(hour=DAILY_REFRESH_JST[0], minute=DAILY_REFRESH_JST[1], second=0, microsecond=0)
+    day = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    day -= timedelta(days=(local.weekday() - weekday) % 7)
     if local < day:
-        day -= timedelta(days=1)
-    while day.weekday() >= 5:
-        day -= timedelta(days=1)
+        day -= timedelta(days=7)
     return day.astimezone(timezone.utc)
 
 
@@ -87,7 +88,7 @@ class RefreshPolicy:
             return False, 'DAILY_START_LIMIT'
         completed = _instant(previous_completed_at)
         if completed < refresh_boundary(now):
-            return True, 'DAILY_REFRESH'
+            return True, 'WEEKLY_REFRESH'
         if material_key(context) != material_key(previous_context):
             if _instant(now) - completed >= MATERIAL_MIN_AGE:
                 return True, 'SUBJECT_MATERIAL_CHANGED'
@@ -100,7 +101,4 @@ class RefreshPolicy:
         self.starts[key] = self.starts.get(key, 0) + 1
 
     def next_refresh_at(self, now):
-        candidate = refresh_boundary(now) + timedelta(days=1)
-        while candidate.astimezone(JST).weekday() >= 5:
-            candidate += timedelta(days=1)
-        return candidate.isoformat()
+        return (refresh_boundary(now) + timedelta(days=7)).isoformat()
