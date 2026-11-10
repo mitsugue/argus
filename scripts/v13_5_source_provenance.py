@@ -428,7 +428,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_analysis_history_backup.py': 'f011bf50f23c32554ffd2c55dd003086ac434bc4',
     'argus_explanation_contract.py': '5d91e091673c587dc68e5800dd445357e9095f20',
     'argus_owner_dialogue.py': '2b8b0c1465011037a5cec83026f215fe4c5b1b13',
-    'argus_owner_dialogue_api.py': 'e0495394f0e980168fa17e5bfae7c3dea80df041',
+    'argus_owner_dialogue_api.py': 'bf2f74092e3953e2519af43308022de24f8b48bd',
     'argus_owner_dialogue_backup.py': 'b8cd7af3cd09188889e82ed92b0978117f62fa35',
     'argus_owner_dialogue_recovery.py': 'f975e33adf0691f3e44c3982b3438da89a464a35',
     'argus_owner_recovery_diagnostics.py': 'fb83fc91d016643d82db4919e3c766e292f3bbe4',
@@ -769,6 +769,8 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_overview_refresh.py",
+    "argus_overview_refresh.py",
     "test_jp_market_feature_cold_replay.py",
     "docs/operations/feature-history-cold-replay.md",
     "test_argus_presentation_citation_guidance.py",
