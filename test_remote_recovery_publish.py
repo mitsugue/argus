@@ -2487,9 +2487,10 @@ def test_brief_reuse_returns_original_edition_without_chart_or_provider_calls(mo
 def test_between_update_times_nothing_calls_gpt_and_the_next_time_writes_once(monkeypatch):
     """Owner decision 2026-10-17: the view is written at fixed JST times and
     right after an important release; a headline or an objective shock between
-    those times no longer starts a full GPT rewrite (80-99 editions a day)."""
+    those times no longer starts a full GPT rewrite (80-99 editions a day).
+    From 2026-11-10 a trading day has three times: 08:00, 12:00, 15:45 JST."""
     from datetime import datetime, timezone
-    current = [datetime(2026, 1, 5, 10, 20, tzinfo=timezone.utc)]   # Monday 19:20 JST
+    current = [datetime(2026, 1, 5, 1, 20, tzinfo=timezone.utc)]    # Monday 10:20 JST
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None): return current[0]
@@ -2497,10 +2498,10 @@ def test_between_update_times_nothing_calls_gpt_and_the_next_time_writes_once(mo
     brief['facts'] = [{'text': 'same important state', 'priority': 'P1',
                        'source': 'market_view'}]
     previous = copy.deepcopy(brief)
-    previous.update(generatedAt='2026-01-05T08:01:00Z',
+    previous.update(generatedAt='2026-01-04T23:01:00Z',
         unifiedStatus='GENERATED', presentationStatus='GENERATED',
         unifiedSummary={'view': 'original'},
-        aiDiagnostics={'completedAt': '2026-01-05T08:01:00Z'})               # 17:01 JST
+        aiDiagnostics={'completedAt': '2026-01-04T23:01:00Z'})               # 08:01 JST
     brief['nonUrgentCacheRevision'] = 2
     state = {'lastSuccessful': copy.deepcopy(previous),
              'generationInputDigest': 'old-input'}
@@ -2526,7 +2527,7 @@ def test_between_update_times_nothing_calls_gpt_and_the_next_time_writes_once(mo
     monkeypatch.setattr(scanner, '_compose_market_brief', lambda: copy.deepcopy(changed))
     assert scanner._market_brief_refresh(allow_ai=True)['generationReuse']['reason'] == 'NOT_SCHEDULED'
 
-    current[0] = datetime(2026, 1, 5, 11, 1, tzinfo=timezone.utc)          # 20:01 JST
+    current[0] = datetime(2026, 1, 5, 3, 1, tzinfo=timezone.utc)           # 12:01 JST
     monkeypatch.setattr(scanner, '_jp_market_comparison_cached', lambda horizon: {})
     saved = []
     monkeypatch.setattr(scanner, '_market_brief_ai_polish', lambda result: {
@@ -2537,10 +2538,10 @@ def test_between_update_times_nothing_calls_gpt_and_the_next_time_writes_once(mo
     written = scanner._market_brief_refresh(allow_ai=True)
     assert written['unifiedSummary']['view'] == 'new'
     trigger = saved[0]['generationTrigger']
-    assert trigger['kind'] == 'SCHEDULED' and trigger['slot'] == '2026-01-05 20:00'
+    assert trigger['kind'] == 'SCHEDULED' and trigger['slot'] == '2026-01-05 12:00'
     assert set(trigger['changedFactGroups']) == {'official_sensor', 'trusted_mail'}
     assert trigger['wordingChange']['conclusion'] is True
-    assert scanner._MARKET_BRIEF_SCHEDULE['coveredSlot'] == '2026-01-05 20:00'
+    assert scanner._MARKET_BRIEF_SCHEDULE['coveredSlot'] == '2026-01-05 12:00'
 
 
 def test_saved_fiscal_report_keeps_verified_restore_truth_before_worker_runs(monkeypatch):
