@@ -90,7 +90,7 @@ def overview_focus(events, received_at):
     return deepcopy(best[1]), best[2].astimezone(timezone.utc).isoformat()
 
 
-def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None, generation_policy=None, event_history=None, prediction_result_source=None, registered_subjects=None, overview_events=None, refresh_policy=None):
+def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None, generation_policy=None, event_history=None, prediction_result_source=None, registered_subjects=None, overview_events=None, refresh_policy=None, manual_overviews=False):
     boot_id = str(uuid.uuid4())
     lock = threading.Lock()
     save_failures = {}
@@ -255,7 +255,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         context = dialogue.bounded_context(context)
         return context, key
 
-    def current_or_start_overview(path, current, subject, horizon, owner, previous):
+    def current_or_start_overview(path, current, subject, horizon, owner, previous, manual=False):
         context, key = prepare_overview(current, subject, horizon, owner, previous)
         if (previous and previous['status'] == 'SUCCEEDED'
                 and dialogue.instant(previous['result']['completedAt']) <= dialogue.instant(context['receivedAt'])
@@ -273,7 +273,14 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 'checkedAt':context['receivedAt'], 'baseMarketContextId':context['baseMarketContextId'],
                 'inputsDigest':key}}, False
         refresh_subject = (subject['market'], subject['symbol'], horizon)
-        if refresh_policy is not None and previous and previous['status'] == 'SUCCEEDED':
+        if manual and refresh_policy is not None and not refresh_policy.manual_allowed(
+                subject=refresh_subject, now=context['receivedAt']):
+            # The owner pressed the button again: the per-day bound still holds.
+            if previous:
+                return {**decorate(previous), 'overviewGenerate':{'started':False,
+                    'reason':'DAILY_START_LIMIT','checkedAt':context['receivedAt']}}, False
+            raise ValueError('overview_daily_limit')
+        if not manual and refresh_policy is not None and previous and previous['status'] == 'SUCCEEDED':
             # 2026-11-10 cost decision: a new market edition alone no longer
             # rewrites every saved subject explanation (argus_overview_refresh).
             due, reason = refresh_policy.decide(subject=refresh_subject,
@@ -399,6 +406,20 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         return {'status':'UNAVAILABLE' if unavailable else 'CURRENT','started':0,
                 'unavailableSubjects':unavailable,'lastErrorCode':last_error}
 
+    def generation_brief():
+        """The completed market edition a new subject explanation starts from."""
+        current=deepcopy(market_brief() or {})
+        if current.get('unifiedStatus') in ('AWAITING_AI', 'UNAVAILABLE', 'INVALID_RESPONSE'):
+            # Public reads may publish a still-changing composition. Start from
+            # the same completed edition shown to the owner; fresh company
+            # materials are still collected independently.
+            retained = current.get('retainedPresentation') or {}
+            if (retained.get('unifiedStatus') != 'GENERATED'
+                    or retained.get('presentationStatus') != 'GENERATED'):
+                return None
+            current = deepcopy(retained)
+        return current
+
     def _refresh_subject_overviews(limit=20):
         """Advance one saved subject overview without requiring an open browser."""
         path=storage_path()
@@ -415,19 +436,16 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                     return {'status':'UNAVAILABLE','started':0,
                         'lastErrorCode':'completion_persistence_failed'}
                 return {'status':'CURRENT' if outcome=='SUCCEEDED' else 'UNAVAILABLE','started':0}
+        if manual_overviews:
+            # 2026-11-10 owner: subject explanations are written only when the
+            # owner presses the button (action overviewGenerate); no clock.
+            return {'status':'MANUAL_ONLY','started':0}
         state=remote_status()
         if not state.get('generationReady'):
             return {'status':'WAITING','started':0}
-        current=deepcopy(market_brief() or {})
-        if current.get('unifiedStatus') in ('AWAITING_AI', 'UNAVAILABLE', 'INVALID_RESPONSE'):
-            # Public reads may publish a still-changing composition. Advance the
-            # background overview from the same completed edition shown to the
-            # owner; fresh company materials are still collected independently.
-            retained = current.get('retainedPresentation') or {}
-            if (retained.get('unifiedStatus') != 'GENERATED'
-                    or retained.get('presentationStatus') != 'GENERATED'):
-                return {'status':'WAITING','started':0,'reason':'market_edition_pending'}
-            current = deepcopy(retained)
+        current=generation_brief()
+        if current is None:
+            return {'status':'WAITING','started':0,'reason':'market_edition_pending'}
         context_id=(current.get('unifiedContext') or {}).get('contextId')
         if not context_id:return {'status':'WAITING','started':0}
         if registered_subjects is not None:
@@ -505,6 +523,49 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 lastErrorCode=result.get('lastErrorCode'))
         return result
 
+    def registered_subject(body):
+        symbol=body.get('symbol'); market=body.get('market'); horizon=body.get('horizon')
+        if (market not in ('JP','US') or not isinstance(symbol,str)
+                or not re.fullmatch(r'[A-Z0-9.^-]{1,16}',symbol)):
+            raise ValueError('subject_invalid')
+        if type(horizon) is not int or horizon not in dialogue.HORIZONS:
+            raise ValueError('horizon_invalid')
+        if (market, symbol) == ('JP', 'N225'):
+            return symbol, market, horizon, True
+        members = registered_subjects()
+        allowed = isinstance(members, list) and any(
+            isinstance(item, dict) and item.get('market') == market
+            and item.get('symbol') == symbol and item.get('enabled', True)
+            for item in members)
+        return symbol, market, horizon, allowed
+
+    def generate_on_request(path, body):
+        """2026-11-10 owner: one explanation, only when the button is pressed."""
+        if registered_subjects is None or generation_policy is None:
+            return response({'error':'unknown_action'},400)
+        if set(body) - {'action','ownerToken','symbol','market','horizon'}:
+            return response({'error':'unsupported_request_fields'},400)
+        symbol, market, horizon, allowed = registered_subject(body)
+        if not allowed:
+            return response({'error':'subject_not_registered'},403)
+        if not remote_status().get('generationReady'):
+            changed()
+            return response({'error':'dialogue_recovery_pending','remoteBackup':remote_status()},503)
+        current = generation_brief()
+        if current is None or not (current.get('unifiedContext') or {}).get('contextId'):
+            return response({'error':'market_context_unavailable'},503)
+        owner = None if (market, symbol) == ('JP', 'N225') else {
+            'symbol':symbol,'market':market,'state':'WATCHING'}
+        with lock:
+            previous = store.latest_subject_overview(path, boot_id, symbol=symbol,
+                market=market, horizon=horizon)
+            if previous and previous['status'] == 'RUNNING':
+                return response({**decorate(previous),'overviewGenerate':{'started':False,'reason':'RUNNING'}})
+            item, created = current_or_start_overview(path, current,
+                {'symbol':symbol,'market':market}, horizon, owner, previous, manual=True)
+        return response({**item, 'overviewGenerate':{**(item.get('overviewGenerate') or {}),
+            'started':created}}, 202 if created else 200)
+
     @app.route('/api/argus/owner-dialogue', methods=['POST'])
     def api_argus_owner_dialogue():
         raw = request.stream.read(32769)
@@ -514,7 +575,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
         if not isinstance(body,dict) or not isinstance(body.get('ownerToken',''),str):
             return response({'error':'invalid_request'},400)
         auth = current_app.extensions.get('argus_owner_auth')
-        session_read = (body.get('action') == 'overview' and registered_subjects is not None
+        session_read = (body.get('action') in ('overview', 'overviewGenerate') and registered_subjects is not None
             and auth is not None and auth.enabled and getattr(g, 'owner_session_verified', False))
         if not session_read:
             ok, error, code = authorize(body.get('ownerToken'))
@@ -556,6 +617,8 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 page=store.history(path,boot_id,before=body.get('before'))
                 state=remote_status()
                 return response({**page,'items':[{**item,'remoteBackup':state} for item in page['items']],'remoteBackup':state})
+            if action == 'overviewGenerate':
+                return generate_on_request(path, body)
             overview = action == 'overview'
             if overview:
                 fields = {'action', 'ownerToken', 'baseContextId', 'symbol', 'market', 'horizon', 'owner'}
@@ -665,7 +728,7 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                 return response(decorate(item),202)
         except ValueError as exc:
             reason=str(exc)
-            known={'dialogue_busy','dialogue_request_conflict'}
+            known={'dialogue_busy','dialogue_request_conflict','overview_daily_limit'}
             return response({'error':reason if reason in known else 'dialogue_input_invalid','previousOverview':previous if action=='overview' else None},409 if reason in known else 400)
         except Exception:
             return response({'error':'dialogue_storage_unavailable'},503)
