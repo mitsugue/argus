@@ -431,7 +431,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'argus_owner_dialogue_api.py': 'f8973ba391046b48fd561188ceafd7d966ea4fed',
     'argus_owner_dialogue_backup.py': 'b8cd7af3cd09188889e82ed92b0978117f62fa35',
     'argus_owner_dialogue_recovery.py': 'f975e33adf0691f3e44c3982b3438da89a464a35',
-    'argus_owner_recovery_diagnostics.py': 'fb83fc91d016643d82db4919e3c766e292f3bbe4',
+    'argus_owner_recovery_diagnostics.py': 'cf4e58afa904f2006135b966b396cb76105363c4',
     'test_argus_owner_recovery_diagnostics.py': '8d827b16de376093c72c7c236595369244f484cb',
     'test_argus_owner_dialogue_historical_contract.py': '081d12269d80978873ace28f2aa2805deb8119b0',
     'test_argus_owner_context_bound.py': 'da10450385f085b5b47953606e315ee9f21c3e7b',

@@ -172,7 +172,7 @@ def subject_overviews(value):
     """Closed counts of the normal registered-overview tick, without identifiers."""
     value = value if isinstance(value,dict) else {}
     result = {'status':value.get('status') if value.get('status') in
-        ('NOT_RUN','WAITING','STARTED','BUSY','CURRENT','UNAVAILABLE') else None}
+        ('NOT_RUN','WAITING','STARTED','BUSY','CURRENT','UNAVAILABLE','MANUAL_ONLY') else None}
     for key in ('lastCheckedAt','lastCompletedAt'):
         raw = value.get(key)
         try:

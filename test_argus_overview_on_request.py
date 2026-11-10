@@ -107,3 +107,9 @@ def test_signed_in_session_may_press(tmp_path):
     path, current, calls, client, controls = service(tmp_path, session=True)
     assert press(client, token=None).status_code == 202
     assert wait(path, controls)['status'] == 'SUCCEEDED' and len(calls) == 1
+
+
+def test_diagnostics_keep_the_manual_only_status():
+    from argus_owner_recovery_diagnostics import subject_overviews
+    assert subject_overviews({'status':'MANUAL_ONLY'})['status'] == 'MANUAL_ONLY'
+    assert subject_overviews({'status':'SOMETHING_ELSE'})['status'] is None
