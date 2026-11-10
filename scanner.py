@@ -140,6 +140,7 @@ import argus_ex_dividend
 import jp_equity_event_calendar
 import argus_corporate_earnings_calendar
 import argus_owner_dialogue_api
+import argus_overview_refresh
 import argus_web_push
 import argus_owner_vault
 import argus_owner_dialogue_recovery
@@ -19406,7 +19407,8 @@ _OWNER_DIALOGUE_API = argus_owner_dialogue_api.register(app, authorize=_require_
     market_reference=_owner_dialogue_market_reference,
     generation_policy=_owner_overview_generation_policy,
     registered_subjects=_owner_overview_registered_subjects,
-    overview_events=_owner_overview_events)
+    overview_events=_owner_overview_events,
+    refresh_policy=argus_overview_refresh.RefreshPolicy())
 
 
 def _owner_overview_tick():
