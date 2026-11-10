@@ -25,7 +25,13 @@ def strip_money(value):
 
 
 def _ratio(numerator, denominator):
-    return round(numerator / denominator, 3) if denominator else None
+    # Whole numbers only (2026-11-10): a 3-digit decimal ratio could equal a
+    # money decimal and stop the report through the leak check below.
+    return round(numerator / denominator) if denominator else None
+
+
+def _percent(numerator, denominator):
+    return f"{round(100 * numerator / denominator)}%" if denominator else None
 
 
 def report(document):
@@ -53,7 +59,7 @@ def report(document):
         with_ai = row.get("viewsWithAi") or 0
         reasons = ", ".join(f"{k}:{v}" for k, v in sorted((row.get("firstRejectionReasons") or {}).items(), key=lambda kv: -kv[1])[:3])
         lines.append(f"| {row.get('dayUtc')} | {row.get('views')} | {with_ai} | {row.get('viewsWithCorrection')} | "
-                     f"{row.get('aiCalls')} | {row.get('correctionCalls')} | {_ratio(row.get('viewsWithCorrection') or 0, with_ai)} | "
+                     f"{row.get('aiCalls')} | {row.get('correctionCalls')} | {_percent(row.get('viewsWithCorrection') or 0, with_ai)} | "
                      f"{_ratio(row.get('inputTokens') or 0, with_ai)} | {_ratio(row.get('outputTokens') or 0, with_ai)} | {reasons} |")
     labels = {"SCHEDULED": "定時", "EVENT": "発表直後", "NO_PREVIOUS": "保存版なし", "PRESENTATION_RETRY": "表示の再試行", "NOT_RECORDED": "記録前"}
     lines += ["", "### 作り直しの理由と結論の変化（保存された版のみ）", "",
@@ -66,8 +72,8 @@ def report(document):
                           ("13.8.91 以降", [r for r in days if r.get("dayUtc", "") >= REDUCTION_RELEASED_ON])):
         with_ai = sum(r.get("viewsWithAi") or 0 for r in chosen)
         lines += ["", f"- {label}：{len(chosen)}日・AI あり {with_ai} 版・修正ありの割合 "
-                  f"{_ratio(sum(r.get('viewsWithCorrection') or 0 for r in chosen), with_ai)}・"
-                  f"1版あたり呼び出し {_ratio(sum(r.get('aiCalls') or 0 for r in chosen), with_ai)}・"
+                  f"{_percent(sum(r.get('viewsWithCorrection') or 0 for r in chosen), with_ai)}・"
+                  f"100版あたり呼び出し {_ratio(100 * sum(r.get('aiCalls') or 0 for r in chosen), with_ai)}・"
                   f"1版あたり入力 {_ratio(sum(r.get('inputTokens') or 0 for r in chosen), with_ai)}・"
                   f"1版あたり出力 {_ratio(sum(r.get('outputTokens') or 0 for r in chosen), with_ai)}"]
     lines += ["", f"- 見立ての集計の読み取り：{brief.get('readStatus')}（保存されなかった失敗の生成は含まない）",
