@@ -90,7 +90,7 @@ def overview_focus(events, received_at):
     return deepcopy(best[1]), best[2].astimezone(timezone.utc).isoformat()
 
 
-def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None, generation_policy=None, event_history=None, prediction_result_source=None, registered_subjects=None, overview_events=None):
+def register(app, *, authorize, storage_path, market_brief, generate, now, recovery_status=None, recovery_trigger=None, subject_comparison=None, subject_materials=None, usage_snapshot=None, push_service=None, vault_service=None, event_snapshot=None, market_reference=None, generation_policy=None, event_history=None, prediction_result_source=None, registered_subjects=None, overview_events=None, refresh_policy=None):
     boot_id = str(uuid.uuid4())
     lock = threading.Lock()
     save_failures = {}
@@ -272,10 +272,25 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
             return {**decorate(old), 'overviewEvaluation':{
                 'checkedAt':context['receivedAt'], 'baseMarketContextId':context['baseMarketContextId'],
                 'inputsDigest':key}}, False
+        refresh_subject = (subject['market'], subject['symbol'], horizon)
+        if refresh_policy is not None and previous and previous['status'] == 'SUCCEEDED':
+            # 2026-11-10 cost decision: a new market edition alone no longer
+            # rewrites every saved subject explanation (argus_overview_refresh).
+            due, reason = refresh_policy.decide(subject=refresh_subject,
+                previous_context=previous['context'],
+                previous_completed_at=previous['result']['completedAt'],
+                context=context, now=context['receivedAt'])
+            if not due:
+                return {**decorate(previous), 'overviewRefresh':{
+                    'checkedAt':context['receivedAt'], 'due':False, 'reason':reason,
+                    'nextDailyRefreshAt':refresh_policy.next_refresh_at(context['receivedAt']),
+                    'originalCompletedAt':previous['result'].get('completedAt')}}, False
         store.initialize(path)
         created = store.submit(path,identity=identity,input_hash=dialogue.digest(stable),
             boot_id=boot_id,context=context)
         if created:
+            if refresh_policy is not None:
+                refresh_policy.started(subject=refresh_subject, now=context['receivedAt'])
             changed()
             try:
                 threading.Thread(target=worker,args=(path,identity,context),daemon=True,
