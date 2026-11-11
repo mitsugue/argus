@@ -13428,6 +13428,9 @@ _OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
 # it does not retry on a higher priced model.
 _ROUTINE_OPENAI_MODELS = frozenset(("gpt-5.6-terra", "gpt-5.6-luna"))
 _LUNA_REVIEW_APPROVED = os.environ.get("ARGUS_LUNA_REVIEW_APPROVED", "0") == "1"
+# 2026-11-11 (owner 「見比べを作る」): a model that only the confirmed, owner-
+# started comparison may call. It never writes an edition or becomes routine.
+_COMPARISON_OPENAI_MODELS = frozenset(("gpt-6.1-terra",))
 
 
 def _routine_openai_model(value, fallback="gpt-5.6-terra", *, allow_luna=False):
@@ -13598,6 +13601,9 @@ _AI_PRICING = {
     "gpt-5.6-sol": {"in": 4.0, "out": 20.0, "cachedIn": 0.40},
     "gpt-5.6-terra": {"in": 2.0, "out": 12.0, "cachedIn": 0.20},
     "gpt-5.6-luna": {"in": 0.20, "out": 1.20, "cachedIn": 0.02},
+    # 2026-11-11: the next generation of the same class, official pricing page
+    # (Standard). Used only by the owner's one-shot model comparison.
+    "gpt-6.1-terra": {"in": 1.0, "out": 5.0, "cachedIn": 0.05},
     # v13.5.63: GPT-6 Astra list price (official pricing page, read 2026-09-07).
     "gpt-6-astra": {"in": 10.0, "out": 50.0, "cachedIn": 1.00},
     "gemini-3.1-pro-preview": {"in": 2.0, "out": 12.0},
@@ -14842,7 +14848,7 @@ def _ai_record_prose_cost(model, input_tokens, output_tokens, est_usd, *,
 
 def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
                   event_id="", event_phase="", model=None, diagnostic=None,
-                  fallback_model=None, cache_prefix_chars=None):
+                  fallback_model=None, cache_prefix_chars=None, confirmed=False):
     """Generic GPT STRICT-JSON call. Returns a non-empty dict or None. Used by the C.A.O.S.
     event analyzer (default system) and the entity-profile generator (system= override).
 
@@ -14873,7 +14879,9 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
         return None
     sys_prompt = system or _CAOS_EVENT_SYSTEM
     mdl = model or _OPENAI_MODEL
-    if (mdl not in _ROUTINE_OPENAI_MODELS
+    comparison = (confirmed is True and purpose == "manual_api"
+                  and mdl in _COMPARISON_OPENAI_MODELS and cache_prefix_chars is None)
+    if ((mdl not in _ROUTINE_OPENAI_MODELS and not comparison)
             or (mdl == "gpt-5.6-luna" and not _LUNA_REVIEW_APPROVED)):
         # Never turn an unavailable cheap/standard model into a premium retry.
         publish(outcome="skipped", reason="production_model_not_allowed")
@@ -14890,7 +14898,8 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
     decision, reservation = _cost_policy_reserve(
         "openai", purpose, event_id=event_id,
         event_phase=event_phase, estimated_cost_usd=reserved_cost,
-        estimated_tokens=input_bound + output_bound)
+        estimated_tokens=input_bound + output_bound,
+        **({"automatic": False, "confirmation": True} if confirmed is True and purpose == "manual_api" else {}))
     if not decision["allowed"]:
         publish(outcome="skipped", reason=decision.get("reason"))
         return None
@@ -18778,13 +18787,15 @@ def _compose_market_brief():
     return brief
 
 
-def _market_brief_ai_polish(brief):
-    """The configured primary GPT explains the same bounded public facts.
-    Model output remains display evidence with no decision authority."""
+def _market_brief_prompt(brief):
+    """The request text of the integrated view and the helpers to read its reply.
+
+    Extracted 2026-11-11 so the owner's model comparison sends exactly the
+    production request; it reads `brief` and writes nothing.
+    """
     facts = brief.get("facts") or []
     context = brief["unifiedContext"]
     presentation_catalog = argus_presentation_intent.brief_inventory(context, brief.get("calculationSnapshots") or {})
-    brief["presentationCatalog"] = presentation_catalog
     prompt_context, prompt_catalog, restore_references, compact_references = \
         argus_market_brief.prompt_references(context, presentation_catalog)
     headline_comparison = argus_market_brief.headline_context(context, as_of=brief.get("generatedAt"))
@@ -18854,6 +18865,125 @@ def _market_brief_ai_polish(brief):
     required = argus_macro_material.required_citation_line(prompt_context.get("facts"))
     if required:
         user += "\n" + required
+    return {"facts": facts, "context": context, "presentation_catalog": presentation_catalog,
+            "prompt_context": prompt_context, "prompt_catalog": prompt_catalog,
+            "restore_references": restore_references, "compact_references": compact_references,
+            "headline_comparison": headline_comparison, "user": user,
+            "prompt_bytes_before": prompt_bytes_before, "prompt_bytes_after": prompt_bytes_after,
+            "reused_previous_facts": reused_previous_facts}
+
+
+def _market_brief_model_comparison_one(record, model):
+    """One saved edition written again by `model`, with nothing saved.
+
+    2026-11-11 (owner 「見比べを作る」): the exact production request of that
+    edition (its own facts, context and calculations) goes to the candidate
+    model once, and the reply passes the same checks as a production reply.
+    No correction call, no position memory, no history write.
+    """
+    brief = copy.deepcopy(record["brief"])
+    brief["calculationSnapshots"] = copy.deepcopy(record.get("calculations") or {})
+    prompt = _market_brief_prompt(brief)
+    context, catalog = prompt["context"], prompt["presentation_catalog"]
+    diag, validation = {}, {}
+    started = time.monotonic()
+    raw = _openai_prose(prompt["user"], max_out=5200, system=argus_presentation_intent.VOICE,
+                        purpose="manual_api", model=model, diagnostic=diag, confirmed=True)
+    elapsed = round(time.monotonic() - started, 1)
+    rendered = None
+    if isinstance(raw, dict):
+        try:
+            rendered = prompt["restore_references"](
+                argus_market_brief.render_event_references(raw, prompt["prompt_context"]))
+        except ValueError as exc:
+            validation.update(status="REJECTED", reason=str(exc), section="event")
+    unified = (argus_market_brief.validate_unified_ai(
+        {k: v for k, v in rendered.items() if k not in ("presentation", "position")},
+        context, diagnostic=validation) if isinstance(rendered, dict) else None)
+    unified = argus_macro_material.checked_coverage(unified, context, validation)
+    presentation = None
+    if unified and isinstance(rendered, dict):
+        try:
+            argus_presentation_intent.validate_plan(rendered.get("presentation"), catalog, context)
+            presentation = "ACCEPTED"
+        except ValueError as exc:
+            presentation = str(exc)
+            if str(exc) in argus_presentation_repair.REPAIRABLE:
+                repaired, _changes = argus_presentation_repair.repair(
+                    rendered.get("presentation"), catalog, context)
+                if repaired is not None:
+                    try:
+                        argus_presentation_intent.validate_plan(repaired, catalog, context)
+                        presentation = "REPAIRED_BY_RULE"
+                    except ValueError:
+                        pass
+
+    def texts(summary):
+        sections = (summary or {}).get("sections") or {}
+        return {k: v.get("textJa") for k, v in sections.items() if isinstance(v, dict)}
+
+    saved = record["brief"]
+    saved_ai = saved.get("aiDiagnostics") or {}
+    return {
+        "recordId": record["recordId"], "recordedAt": record["recordedAt"],
+        "original": {"model": saved_ai.get("returnedModel") or saved_ai.get("requestedModel"),
+                     "aiCalls": len(saved_ai.get("attempts") or []) or None,
+                     "inputTokens": saved_ai.get("inputTokens"), "outputTokens": saved_ai.get("outputTokens"),
+                     "sections": texts(saved.get("unifiedSummary"))},
+        "candidate": {"model": model, "returnedModel": diag.get("returnedModel"),
+                      "outcome": diag.get("outcome"), "reason": diag.get("reason"),
+                      "errorCode": diag.get("errorCode"),
+                      "validation": {"status": validation.get("status") or ("ACCEPTED" if unified else "NO_ANSWER"),
+                                     "reason": validation.get("reason"), "detail": validation.get("detail")},
+                      "presentation": presentation, "inputTokens": diag.get("inputTokens"),
+                      "outputTokens": diag.get("outputTokens"), "estimatedCostUsd": diag.get("estUsd"),
+                      "elapsedSeconds": elapsed, "sections": texts(unified)},
+    }
+
+
+_MODEL_COMPARISON = {"status": "NOT_RUN"}
+_MODEL_COMPARISON_LOCK = threading.Lock()
+_MODEL_COMPARISON_MAX_EDITIONS = 6
+
+
+def _market_brief_model_comparison_worker(job_id, model, editions):
+    path = _market_brief_history_path()
+    results = []
+    try:
+        index = argus_analysis_history.read_page_index(path, limit=40)["rows"]
+        for row in index:
+            if len(results) >= editions:
+                break
+            record = argus_analysis_history.read_record(path, row["recordId"])
+            brief = (record or {}).get("brief") or {}
+            if (brief.get("presentationStatus") != "GENERATED"
+                    or (brief.get("aiDiagnostics") or {}).get("requestedModel") != _OPENAI_MODEL):
+                continue
+            results.append(_market_brief_model_comparison_one(record, model))
+            with _MODEL_COMPARISON_LOCK:
+                _MODEL_COMPARISON["results"] = copy.deepcopy(results)
+        status = "COMPLETED"
+    except Exception as exc:
+        status = "FAILED"
+        with _MODEL_COMPARISON_LOCK:
+            _MODEL_COMPARISON["errorClass"] = type(exc).__name__
+    with _MODEL_COMPARISON_LOCK:
+        if _MODEL_COMPARISON.get("jobId") == job_id:
+            _MODEL_COMPARISON.update(status=status, results=results, completedAt=_ai_now_iso())
+
+
+def _market_brief_ai_polish(brief):
+    """The configured primary GPT explains the same bounded public facts.
+    Model output remains display evidence with no decision authority."""
+    prompt = _market_brief_prompt(brief)
+    facts, context = prompt["facts"], prompt["context"]
+    presentation_catalog = prompt["presentation_catalog"]
+    brief["presentationCatalog"] = presentation_catalog
+    prompt_context, restore_references = prompt["prompt_context"], prompt["restore_references"]
+    compact_references, headline_comparison = prompt["compact_references"], prompt["headline_comparison"]
+    user = prompt["user"]
+    prompt_bytes_before, prompt_bytes_after = prompt["prompt_bytes_before"], prompt["prompt_bytes_after"]
+    reused_previous_facts = prompt["reused_previous_facts"]
     diag = {}
     # 2026-10-18 (measured): a written cache lives 30 minutes and costs 1.25x;
     # scheduled editions are 45+ minutes apart, so caching only the
@@ -38136,6 +38266,43 @@ def _formal_benchmark_dry_run_value(gemini_model=None):
     dry["dryRunHash"] = argus_research_benchmark.digest(
         {k: v for k, v in dry.items() if k != "dryRunHash"})
     return dry
+
+
+@app.route("/api/argus/admin/model-comparison", methods=["GET", "POST"])
+def api_argus_admin_model_comparison():
+    """2026-11-11 (owner 「見比べを作る」): saved editions written again by a
+    candidate model, for the owner to compare. Admin only; one job at a time;
+    at most six editions; nothing is saved or shown on the product screens."""
+    ok, err, code = _require_admin()
+    if not ok:
+        return jsonify(err), code
+    if request.method == "GET":
+        with _MODEL_COMPARISON_LOCK:
+            return jsonify(copy.deepcopy(_MODEL_COMPARISON))
+    body = request.get_json(silent=True) or {}
+    model = body.get("model")
+    editions = body.get("editions", 5)
+    if body.get("confirm") is not True:
+        return jsonify({"ok": False, "status": "confirmation_required"}), 409
+    if model not in _COMPARISON_OPENAI_MODELS:
+        return jsonify({"ok": False, "status": "model_not_allowed"}), 400
+    if type(editions) is not int or not 1 <= editions <= _MODEL_COMPARISON_MAX_EDITIONS:
+        return jsonify({"ok": False, "status": "editions_out_of_range"}), 400
+    if not _market_brief_history_path():
+        return jsonify({"ok": False, "status": "history_not_configured"}), 503
+    with _MODEL_COMPARISON_LOCK:
+        if _MODEL_COMPARISON.get("status") == "RUNNING":
+            return jsonify({"ok": False, "status": "already_running",
+                            "jobId": _MODEL_COMPARISON.get("jobId")}), 409
+        job_id = "cmp-" + hashlib.sha256(f"{model}|{editions}|{time.time_ns()}".encode()).hexdigest()[:12]
+        _MODEL_COMPARISON.clear()
+        _MODEL_COMPARISON.update(status="RUNNING", jobId=job_id, model=model, editions=editions,
+                                 baselineModel=_OPENAI_MODEL, startedAt=_ai_now_iso(), results=[])
+    threading.Thread(target=_memory_operation_run,
+                     args=("background", "model_comparison_worker",
+                           _market_brief_model_comparison_worker, job_id, model, editions),
+                     daemon=True, name="model-comparison").start()
+    return jsonify({"ok": True, "status": "RUNNING", "jobId": job_id}), 202
 
 
 @app.route("/api/argus/admin/research-benchmark/execute", methods=["POST"])

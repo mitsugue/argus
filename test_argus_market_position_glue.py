@@ -60,7 +60,9 @@ def test_brief_puts_the_position_facts_into_the_shared_evidence(monkeypatch, tmp
     assert any(r["source"] == "market_position" and r["evidenceId"].startswith("brief-fact-") for r in context["facts"])
     # The integrated explanation is told to read the position first.
     import inspect
-    assert "source=market_position" in inspect.getsource(scanner._market_brief_ai_polish)
+    # 2026-11-11: the request text is assembled in _market_brief_prompt.
+    assert "source=market_position" in inspect.getsource(scanner._market_brief_prompt)
+    assert "_market_brief_prompt(brief)" in inspect.getsource(scanner._market_brief_ai_polish)
 
 
 def test_ai_theme_views_are_checked_stored_and_never_reject_the_six_sections(monkeypatch, tmp_path):

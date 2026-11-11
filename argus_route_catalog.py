@@ -197,6 +197,8 @@ ROUTE_CATALOG = (
     RouteCatalogEntry("/api/argus/admin/news-intake/quarantine-review", ("POST",), "api_argus_admin_news_quarantine_review", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/news-intake/audit", ("GET",), "api_argus_admin_news_audit", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/admin/margin-reconcile", ("GET",), "api_argus_admin_margin_reconcile", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
+    # 2026-11-11 (owner 「見比べを作る」): saved editions written again by a candidate model; admin only.
+    RouteCatalogEntry("/api/argus/admin/model-comparison", ("GET", "POST"), "api_argus_admin_model_comparison", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/market-regime", ("GET",), "api_argus_market_regime", "PUBLIC", "NONE", False, "PUBLIC_PRODUCT", "BROWSER_PUBLIC"),
     RouteCatalogEntry("/api/argus/market-scan", ("POST",), "api_argus_market_scan", "AUTH_OPERATIONAL", "ADMIN_TOKEN", True, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
     RouteCatalogEntry("/api/argus/moomoo-capability", ("GET",), "api_argus_moomoo_capability", "AUTH_OPERATIONAL", "ADMIN_TOKEN", False, "LEGACY_OPERATIONAL", "SERVER_OPERATOR"),
