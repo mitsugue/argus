@@ -22,6 +22,10 @@ import pytest
 # the existing tests exercise that legacy path, so they keep it on. The
 # retired behaviour has its own tests, which switch it off explicitly.
 os.environ.setdefault("ARGUS_ASSET_CHART_GENERATION", "1")
+# 2026-11-11: production asks OpenAI's Flex tier first for automatic lanes.
+# The existing tests replace the SDK with fixed-signature fakes, so they run
+# on the Standard path; test_argus_openai_tier.py switches Flex on itself.
+os.environ.setdefault("ARGUS_OPENAI_FLEX", "0")
 
 if os.environ.get("PYTEST_XDIST_WORKER") and not os.environ.get("ARGUS_PERSISTENT_ROOT"):
     os.environ["ARGUS_PERSISTENT_ROOT"] = tempfile.mkdtemp(
