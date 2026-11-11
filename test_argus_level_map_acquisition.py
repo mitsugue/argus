@@ -128,7 +128,9 @@ def _existing_endpoint(state):
              "_USDJPY_TOKYO_CLOSE": {},
              # 2026-10-21: the blank-member supply summary (in-memory counts only).
              "_level_map_supply_summary": lambda: {"requests": 0, "suppliedDays": 0},
-             "_DURABLE_STORAGE_STATUS": {}}
+             "_DURABLE_STORAGE_STATUS": {},
+             # 2026-11-11: the OpenAI service-tier counts (in-memory, no call).
+             "_OPENAI_TIER": SimpleNamespace(view=lambda: {})}
     exec(compile(ast.Module(body=[function], type_ignores=[]), "scanner.py", "exec"), scope)
     app.add_url_rule("/api/argus/admin/memory-attribution", view_func=scope[function.name])
     return app, calls

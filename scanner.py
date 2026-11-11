@@ -132,6 +132,7 @@ import argus_index_live
 import argus_macro_release_watch
 import argus_macro_material
 import argus_brief_schedule  # 2026-10-17: owner-fixed update times of the integrated view
+import argus_openai_tier  # 2026-11-11: Flex service tier (half price) for automatic lanes
 import argus_market_position_check  # 2026-10-24: N-19 public-source check of the market position
 import argus_presentation_repair  # 2026-10-24: fix rule-fixable layout faults before a second model call
 import argus_macro_release_reaction
@@ -14199,14 +14200,25 @@ def _ai_usage_record(row):
             _AI_USAGE_STATUS.update(status="SAVE_FAILED", lastErrorClass=type(exc).__name__)
 
 
+_OPENAI_TIER = argus_openai_tier.TierState(
+    enabled=os.environ.get("ARGUS_OPENAI_FLEX", "1").strip() != "0")
+
+
 def _ai_usage_provider_call(provider, feature, requested_model, invoke, *, attempt=None, source_ref=None):
+    served = {}
+    def call():
+        response = invoke()
+        served["response"] = response
+        return response
     def estimate(returned_model, inp, out):
         if returned_model not in _AI_PRICING: return None
-        return argus_ai_cost.estimate_cost(returned_model, inp, out, _AI_PRICING)
+        cost = argus_ai_cost.estimate_cost(returned_model, inp, out, _AI_PRICING)
+        # 2026-11-11: a Flex answer is billed at half; count what was served.
+        return argus_openai_tier.served_cost(cost, served.get("response")) if provider == "openai" else cost
     def report_error(error_class):
         with _AI_USAGE_LOCK:
             _AI_USAGE_STATUS.update(status="RECEIPT_FAILED", lastErrorClass=error_class)
-    return argus_ai_usage_runtime.observe(invoke, provider=provider, feature=feature,
+    return argus_ai_usage_runtime.observe(call, provider=provider, feature=feature,
         requested_model=requested_model, record=_ai_usage_record, estimate=estimate,
         attempt=attempt, source_ref=source_ref, on_record_error=report_error)
 
@@ -14292,10 +14304,12 @@ def _openai_judge(snapshot):
         # Responses is the only routine endpoint.  Falling back to a second
         # request made daily cost indeterminate and could silently alter output.
         request_started = True
-        resp = _ai_usage_provider_call('openai', 'ai_judgment', _OPENAI_MODEL, lambda: client.responses.create(
-            model=_OPENAI_MODEL, instructions=_OPENAI_SYSTEM, input=user,
-            max_output_tokens=output_bound, timeout=60, store=False),
-            attempt=1, source_ref='_openai_judge')
+        resp = argus_openai_tier.create(_OPENAI_TIER, purpose='ai_judgment', model=_OPENAI_MODEL,
+            kwargs={"model": _OPENAI_MODEL, "instructions": _OPENAI_SYSTEM, "input": user,
+                    "max_output_tokens": output_bound, "timeout": 60, "store": False},
+            call=lambda kw, tier: _ai_usage_provider_call('openai', 'ai_judgment', _OPENAI_MODEL,
+                lambda: (client if tier == 'standard' else client.with_options(max_retries=0)).responses.create(**kw),
+                attempt=1, source_ref='_openai_judge' if tier == 'standard' else '_openai_judge:flex'))
         text = getattr(resp, "output_text", None)
         _AI_LAST_RUN["oaiUsage"] = _usage_tokens(resp)
         _AI_LAST_RUN["oaiModel"] = str(getattr(resp, "model", None) or "")[:60] or None
@@ -14778,9 +14792,12 @@ def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose", cach
             model=model, instructions=sys_prompt, input=user, max_output_tokens=3000,
             timeout=60, store=False), attempt=1, source_ref='_openai_prose_call')
         return resp, getattr(resp, "output_text", None)
-    resp = _ai_usage_provider_call('openai', purpose, model, lambda: client.responses.create(
-        model=model, instructions=sys_prompt, input=user, timeout=60,
-        store=False, **cache_options), attempt=1, source_ref='_openai_prose_call')
+    resp = argus_openai_tier.create(_OPENAI_TIER, purpose=purpose, model=model,
+        kwargs={"model": model, "instructions": sys_prompt, "input": user, "timeout": 60,
+                "store": False, **cache_options},
+        call=lambda kw, tier: _ai_usage_provider_call('openai', purpose, model,
+            lambda: client.responses.create(**kw), attempt=1,
+            source_ref='_openai_prose_call' if tier == 'standard' else '_openai_prose_call:flex'))
     return resp, getattr(resp, "output_text", None)
 
 
@@ -23205,8 +23222,11 @@ def _openai_research_ex(user, role="standard", benchmark=False, purpose=None, ma
         if benchmark:
             kw["reasoning"] = {"effort": _BENCHMARK_REASONING_EFFORT}
         request_started = True
-        resp = _ai_usage_provider_call('openai', purpose, model,
-            lambda: client.responses.create(**kw), attempt=1, source_ref='_openai_research_ex')
+        resp = argus_openai_tier.create(_OPENAI_TIER, purpose=purpose, model=model,
+            kwargs=kw, tool_kind="web_search",
+            call=lambda kw, tier: _ai_usage_provider_call('openai', purpose, model,
+                lambda: (client if tier == 'standard' else client.with_options(max_retries=0)).responses.create(**kw),
+                attempt=1, source_ref='_openai_research_ex' if tier == 'standard' else '_openai_research_ex:flex'))
         txt = getattr(resp, "output_text", None)
         u = _usage_tokens(resp) or (0, 0)
         usage = {"inputTokens": u[0], "outputTokens": u[1]}
@@ -35840,6 +35860,7 @@ def api_argus_admin_memory_attribution():
     payload["missionPhaseSeconds"] = _diagnostic_counters_copy(_MISSION_PHASE_TIMING["phases"])
     payload["checkpointPersist"] = _diagnostic_counters_copy(_CHECKPOINT_PERSIST_STATS)
     payload["briefSchedule"] = copy.deepcopy(_MARKET_BRIEF_SCHEDULE)
+    payload["openaiServiceTier"] = _OPENAI_TIER.view()
     payload["financialVerify"] = dict(_JP_FINANCIAL_VERIFY)
     payload["marketInputPreparation"] = _MARKET_INPUT_PREPARATION_TIMING.view()
     payload["ownerDialogueRecovery"] = _OWNER_DIALOGUE_RECOVERY.status()
