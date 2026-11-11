@@ -1,0 +1,89 @@
+# ARGUS model comparison (owner 2026-11-11 「見比べを作る」).
+#
+# Recent saved editions of the integrated view are written again by a
+# candidate model on the production server, with nothing saved back. The
+# result (both texts, check results, tokens) goes to the owner's private
+# repository only; this public run page shows counts and states only.
+# The admin token travels only as a request header from the repository
+# secret and is never printed. Paid: about 0.1 USD per edition (estimate).
+name: model-comparison
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Candidate model
+        required: true
+        default: gpt-6.1-terra
+        type: choice
+        options: [gpt-6.1-terra]
+      editions:
+        description: Saved editions to write again (1-6)
+        required: true
+        default: '5'
+        type: choice
+        options: ['1', '2', '3', '4', '5', '6']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model-comparison
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Start on the production server and wait
+        env:
+          ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+          MODEL: ${{ inputs.model }}
+          EDITIONS: ${{ inputs.editions }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/model-comparison
+          python3 -B - <<'PY'
+          import json, os, time, urllib.request
+          base = "https://argus-backend-3j2m.onrender.com/api/argus/admin/model-comparison"
+          headers = {"X-ARGUS-ADMIN-TOKEN": os.environ["ARGUS_ADMIN_TOKEN"], "Content-Type": "application/json"}
+          def call(method, body=None):
+              data = json.dumps(body).encode() if body is not None else None
+              request = urllib.request.Request(base, data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(request, timeout=60) as response:
+                      return response.status, json.loads(response.read())
+              except urllib.error.HTTPError as error:
+                  return error.code, json.loads(error.read() or b"{}")
+          code, started = call("POST", {"model": os.environ["MODEL"], "editions": int(os.environ["EDITIONS"]),
+                                        "confirm": True})
+          print("start:", code, started.get("status"))
+          if code != 202:
+              raise SystemExit(1)
+          job = started["jobId"]
+          deadline = time.monotonic() + 40 * 60
+          while time.monotonic() < deadline:
+              time.sleep(30)
+              code, state = call("GET")
+              if state.get("jobId") != job:
+                  print("job replaced or server restarted"); raise SystemExit(1)
+              print("state:", state.get("status"), "done:", len(state.get("results") or []))
+              if state.get("status") != "RUNNING":
+                  break
+          with open("artifacts/model-comparison/result.json", "w") as out:
+              json.dump(state, out, ensure_ascii=False, indent=2)
+          rows = state.get("results") or []
+          print("editions:", len(rows), "accepted:",
+                sum(1 for r in rows if r["candidate"]["validation"]["status"] == "ACCEPTED"))
+          raise SystemExit(0 if state.get("status") == "COMPLETED" else 1)
+          PY
+      # The texts stay out of the public run page and its artifacts.
+      - name: Store the result privately
+        if: always()
+        env:
+          PRIVATE_DIAGNOSTICS_TOKEN: ${{ secrets.ARGUS_PRIVATE_LEDGER_TOKEN }}
+        run: python3 -B scripts/private_diagnostics_store.py --kind model-comparison --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" artifacts/model-comparison
