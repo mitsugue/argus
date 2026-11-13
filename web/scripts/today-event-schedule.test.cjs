@@ -79,3 +79,26 @@ assert.equal(electionPreview.next[0].remaining,null,'native midnight boundaries 
 assert.match(electionPreview.next[0].when,/11\/3.*米国.*時刻未公表/);
 assert.equal(require('../src/lib/japanEquityCalendar.ts').equityEventDistance(nativeElection,japanNextDay),'米国の今日');
 assert.equal(todayEventSchedule([],[],[nativeElection],Date.parse('2026-11-04T05:00:00Z')).length,0,'exact local-date end removes the upcoming event');
+// 2026-11-13 (audit): the dashboard feed names PPI by its family, the important-events feed by itself.
+{
+  const ppiNow=Date.parse('2026-11-13T22:50:00+09:00');
+  const dash={...macro('INFLATION','2026-11-13','US PPI (Producer Price Index)','released_pending_result'),eventTimeUtc:'2026-11-13T13:30:00Z'};
+  const old={...legacy('PPI','2026-11-13','US PPI (Producer Price Index)'),eventTimeUtc:'2026-11-13T13:30:00Z',lifecycle:'IMMINENT'};
+  const later={...legacy('PPI','2026-12-15','US PPI (Producer Price Index)'),eventTimeUtc:'2026-12-15T13:30:00Z'};
+  const joined=todayEventSchedule([dash],[old,later],[],ppiNow);
+  assert.equal(joined.filter(r=>r.day==='2026-11-13').length,1,'one PPI row on the release day');
+  assert.equal(joined.find(r=>r.day==='2026-11-13').kind,'dashboard','the released feed row is kept');
+  assert.equal(joined.filter(r=>r.day==='2026-12-15').length,1,'the next PPI stays');
+  const other={...legacy('CPI','2026-11-13','US CPI (Consumer Price Index)'),eventTimeUtc:'2026-11-13T13:30:00Z'};
+  assert.equal(todayEventSchedule([dash],[other],[],ppiNow).length,2,'a different indicator on the same day stays');
+  console.log('同じ日の同じ指標を、識別子が違っても1行にまとめる PASS');
+}
+// 2026-11-13 (audit): the live Today view (the editorial surface) never received the
+// schedule's next event, so 次の山場 showed the explanation's chip (SQ 今日 at 22:50).
+{
+  const surface=fs.readFileSync('src/components/today/ArgusEditorialSurface.tsx','utf8');
+  const card=fs.readFileSync('src/components/today/MarketBriefCard.tsx','utf8');
+  assert.equal((surface.match(/<TodayDecisionStrip [^>]*featuredEvent=\{featuredEvent\}/g)||[]).length,2,'both strips get the event');
+  assert.ok(/<ArgusEditorialSurface [^]*?featuredEvent=\{featuredEvent\} \/>/.test(card),'the card hands it to the surface');
+  console.log('見立ての面の「次の山場」に予定の一覧をつなぐ PASS');
+}

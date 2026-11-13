@@ -9,6 +9,7 @@ import { validJapanMarketComparison } from '../../lib/japanMarketComparison';
 import { JapanMarketComparisonChart } from '../chart/JapanMarketComparisonChart';
 import { MarketAnalysisHistory } from './MarketAnalysisHistory';
 import { TodayDecisionStrip, type CriticalTodayNews } from './TodayDecisionStrip';
+import type { TodayEventPreview } from '../../lib/todayEventSchedule';
 import { friendlyFactText } from '../../lib/todayDecision';
 import { withoutScreenNotes } from '../../lib/screenNotes';
 import { marketChanges, marketWording } from '../../lib/marketWording';
@@ -21,7 +22,7 @@ type Section = keyof typeof labels;
 const factDate = (p?: { observedAt?: string | null; publishedAt?: string | null; receivedAt?: string | null } | null) =>
   (p?.observedAt ?? p?.publishedAt ?? p?.receivedAt ?? '').slice(0, 10);
 
-export function ArgusEditorialSurface({ brief, updateState, retained = false, archived = false, generationStatus, retainedNote, criticalNews }: { brief: MarketBrief; updateState?: React.ReactNode; retained?: boolean; archived?: boolean; generationStatus?: string; retainedNote?: string | null; criticalNews?: CriticalTodayNews[] }) {
+export function ArgusEditorialSurface({ brief, updateState, retained = false, archived = false, generationStatus, retainedNote, criticalNews, featuredEvent }: { brief: MarketBrief; updateState?: React.ReactNode; retained?: boolean; archived?: boolean; generationStatus?: string; retainedNote?: string | null; criticalNews?: CriticalTodayNews[]; featuredEvent?: TodayEventPreview | null }) {
   if (!hasEditorialIntent(brief)) return null;
   const plan = brief.presentationPlan!; const summary = brief.unifiedSummary!;
   const chart = brief.calculationSnapshots?.['5']?.comparison;
@@ -52,7 +53,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
       <header className="argus-editorial__edition"><span>MARKET VIEW</span>
         <time dateTime={at}>{new Date(at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 更新</time>
         {updateState ?? (retained && <span role="status">{generationStatus === 'RUNNING' ? '作成中・保存版' : '保存版'}</span>)}</header>
-      <TodayDecisionStrip brief={brief} criticalNews={criticalNews} />
+      <TodayDecisionStrip brief={brief} criticalNews={criticalNews} featuredEvent={featuredEvent} />
       {/* 2026-10-04: saving failed for 15 hours with no sign on the screen. */}
       {brief.analysisHistory?.status === 'SAVE_FAILED' && <p role="status" className="argus-editorial__retained"
         data-argus-contract="analysis-history-save-failed-v1">
@@ -100,7 +101,7 @@ export function ArgusEditorialSurface({ brief, updateState, retained = false, ar
         : <span>{retainedNote ?? (['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(generationStatus ?? '')
           ? '更新失敗・前回の説明' : '更新待ち・前回の説明')}</span>}
     </div>}
-    {!archived && <TodayDecisionStrip brief={brief} />}
+    {!archived && <TodayDecisionStrip brief={brief} featuredEvent={featuredEvent} />}
     {plan.elements.map(choice => {
       // The strip above already leads with this sentence on the live page.
       if (!archived && choice.id === 'view') return null;

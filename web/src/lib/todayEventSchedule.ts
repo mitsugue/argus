@@ -56,8 +56,12 @@ export function todayEventSchedule(dashboard:DashboardEvent[],legacy:ImportantEv
       if (!Number.isFinite(endAt)||endAt<now||row.at>now+45*86400000) return;
     } else if (row.day && !row.released && (row.day<today || row.day>end)) return;
     if (row.released && row.day && row.at<now-7*86400000) return;
-    if(seen.has(row.key)) return;
-    seen.add(row.key);rows.push(row);
+    // 2026-11-13 (audit): the dashboard feed names an indicator by its family
+    // (INFLATION) and the important-events feed by itself (PPI), so the same
+    // release was listed twice. The Japanese title on the same day also joins them.
+    const title=row.day?`title:${row.day}:${row.kind==='equity'?row.event.titleJa:eventTitleJa(row.event.eventCode,row.event.title)}`:'';
+    if(seen.has(row.key)||(title&&seen.has(title))) return;
+    seen.add(row.key);if(title)seen.add(title);rows.push(row);
   };
   for(const event of dashboard) {
     const day=jpDay(event.eventTimeUtc)||dayOnly(event.eventDate);

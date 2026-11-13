@@ -65,6 +65,21 @@ def test_lifecycle_states():
     assert IE.lifecycle_state(-1) == "RELEASED"
 
 
+def test_a_timed_event_is_released_after_its_exact_time_on_the_day():
+    from datetime import datetime, timezone
+    before = datetime(2026, 11, 13, 13, 29, tzinfo=timezone.utc)
+    after = datetime(2026, 11, 13, 13, 30, tzinfo=timezone.utc)
+    at = "2026-11-13T13:30:00Z"
+    assert IE.lifecycle_state(0, at, before) == "IMMINENT"
+    assert IE.lifecycle_state(0, at, after) == "RELEASED"
+    for unknown in (None, "", "2026-11-13", "not-a-time"):
+        assert IE.lifecycle_state(0, unknown, after) == "IMMINENT"   # date-only keeps the day
+    assert IE.lifecycle_state(1, at, after) == "UPCOMING"
+    e = IE.build_important_events([{**_ev("ppi", "high", 0, ["USDJPY"]), "eventTimeUtc": at}],
+                                  ctx={"now": after})[0]
+    assert e["lifecycle"] == "RELEASED"
+
+
 def test_action_until_blocks_on_high_critical():
     e = IE.build_important_events([_ev("pce", "critical", 1, ["USDJPY"])])[0]
     assert "BLOCKED" in e["actionUntilEn"] and "禁止" in e["actionUntilJa"]
