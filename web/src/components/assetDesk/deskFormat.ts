@@ -2,7 +2,7 @@
 import type { AssetStrategy } from '../../lib/assetStrategy';
 import type { QuoteLite } from '../../lib/assetStrategy';
 import type { DeskEventTag } from './types';
-import { extendedSessionJa } from '../../domain/liveQuote';
+import { extendedSessionJa, quoteClockJa } from '../../domain/liveQuote';
 
 // LINKED EVENT tag — Japanese (event code + proximity + impact, 読める日本語).
 const EVENT_CODE_JA: Record<string, string> = {
@@ -57,7 +57,8 @@ export function freshnessOf(strat: AssetStrategy, quote?: QuoteLite): { text: st
     const base = delay === 'LIVE' ? 'リアルタイム'
       : delay === '15m' || delay === '20m' ? `${delay.replace('m', '分')}遅延`
         : delay === 'EOD' ? '終値'
-          : delay === 'OFFLINE' ? 'オフライン' : '取得時刻不明';
+          : delay === 'OFFLINE' ? 'オフライン'
+            : quoteClockJa(quote.quoteTruth) ? `${quoteClockJa(quote.quoteTruth)}時点` : '取得時刻不明';
     const extended = extendedSessionJa(quote.quoteTruth);
     const text = extended ? `${extended} ${base}` : base;
     return { text, color };

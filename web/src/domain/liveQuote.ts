@@ -350,7 +350,16 @@ function quoteFreshnessBaseJa(quote: LiveQuote): string {
   if (quote.delayClass === 'LIVE') return `リアルタイム ${clock ?? '取得時刻不明'}${provider}`;
   if (quote.delayClass === '15m' || quote.delayClass === '20m') return `${quote.delayClass.replace('m', '分')}遅延 ${clock ?? '取得時刻不明'}${provider}`;
   if (quote.delayClass === 'EOD') return `終値 ${day ?? clock ?? '基準日不明'}${provider}`;
-  return `取得時刻不明${provider}`;
+  // 2026-11-13 (audit): a quote whose exact time is known but too old for its
+  // class (a pre-market trade more than 60 s ago) read 取得時刻不明.
+  return clock ? `${clock} 時点${provider}` : `取得時刻不明${provider}`;
+}
+
+/** HH:MM (Japan time) of an exact source time, or null for a date or no time. */
+export function quoteClockJa(quote: Pick<LiveQuote, 'sourceTimestamp'>): string | null {
+  const stamp = quote.sourceTimestamp;
+  if (typeof stamp !== 'string' || /^\d{4}-\d{2}-\d{2}$/.test(stamp) || !Number.isFinite(Date.parse(stamp))) return null;
+  return new Date(stamp).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
 }
 
 export function quoteAge(quote: LiveQuote): string {

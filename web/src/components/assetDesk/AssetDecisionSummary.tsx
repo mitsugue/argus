@@ -3,7 +3,7 @@ import { useTachibanaLiveDocument } from '../../hooks/useDecisionEvidence';
 import { tachibanaCurrentRows, tachibanaPriceReferenceRows, tachibanaPriceTime, formatJpy } from '../../domain/tachibanaLive';
 import type { DeskCardData } from './types';
 import { SignedValue } from '../common/SignedValue';
-import { quoteAsOf, quoteFreshnessJa } from '../../domain/liveQuote';
+import { quoteAsOf, quoteClockJa, quoteFreshnessJa } from '../../domain/liveQuote';
 import { useAnalystTargetState } from '../../hooks/useAnalystTargets';
 import { AssetEarningsDate } from './AssetEarnings';
 import { AssetOutlookSummary } from './AssetOutlookSummary';
@@ -80,7 +80,8 @@ export const AssetDecisionSummary: React.FC<{
       </span>}
       {!live && !delayedShown && !reference && !crypto && view.quoteTruth && <span className="ad-quote-meta" data-instrument-type={view.quoteTruth.instrumentType}>
 
-        <mark data-delay={view.quoteTruth.delayClass}>{{ LIVE: 'リアルタイム', '15m': '15分遅延', '20m': '20分遅延', EOD: '終値', 'T-1': '前日', UNKNOWN: '時刻未確認', OFFLINE: '未取得' }[view.quoteTruth.delayClass]}</mark>
+        <mark data-delay={view.quoteTruth.delayClass}>{{ LIVE: 'リアルタイム', '15m': '15分遅延', '20m': '20分遅延', EOD: '終値', 'T-1': '前日',
+          UNKNOWN: quoteClockJa(view.quoteTruth) ? `${quoteClockJa(view.quoteTruth)}時点` : '時刻未確認', OFFLINE: '未取得' }[view.quoteTruth.delayClass]}</mark>
         {/* v13.5.62: one plain freshness line (kind · provider · as of); the exact
             source stamp stays reachable on long-press. */}
         <span title={quoteAsOf(view.quoteTruth)}>{quoteFreshnessJa(view.quoteTruth)}</span>
