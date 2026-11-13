@@ -171,9 +171,11 @@ def test_post_prompt_reads_the_measured_reaction_and_is_replaced_once_at_sixty(m
 
 
 def test_next_fomc_continues_into_2027_with_the_published_dates():
-    """Federal Reserve calendar (checked 2026-10-03): 2027 decision days, tentative until confirmed."""
+    """Federal Reserve calendar (checked 2026-11-13): 2027 decision days, tentative until confirmed.
+
+    The page read on 2026-10-03 ended with Dec 7-8; the Fed replaced it with Nov 16-17."""
     assert scanner._FOMC_2027 == ["2027-01-27", "2027-03-17", "2027-04-28", "2027-06-09", "2027-07-28",
-                                   "2027-09-15", "2027-10-27", "2027-12-08"]
+                                   "2027-09-15", "2027-10-27", "2027-11-17"]
     assert scanner._next_fomc_after("2026-12-10") == "2027-01-27"
     assert scanner._next_fomc_after("2026-10-03") == "2026-10-28"
     assert scanner._next_fomc_after("2027-12-09") is None

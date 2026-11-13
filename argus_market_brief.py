@@ -351,8 +351,13 @@ def compose_brief(*, now_iso: str,
         facts.append(_fact(str(result.get('whyJa') or '') + ' 市場予想差・下落寄与は未確認。',
                            'P2', 'official_macro_result', 'UNCONFIRMED', result))
     for event in material_news[:2]:
-        path = ((event.get("impactDirection") or {}).get("transmissionJa")
-                or (event.get("impactDirection") or {}).get("transmission"))
+        direction = event.get("impactDirection") or {}
+        # The news engine writes the path as "transmissionChain" (a list of
+        # steps). Reading only the two older names left this fact always empty.
+        chain = direction.get("transmissionChain")
+        path = (direction.get("transmissionJa") or direction.get("transmission")
+                or (" → ".join(str(step) for step in chain if str(step).strip())
+                    if isinstance(chain, (list, tuple)) else ""))
         if path:
             facts.append(_fact(f"波及経路: {str(path)[:90]}", "P2",
                                "trusted_mail", "UNCONFIRMED", event))

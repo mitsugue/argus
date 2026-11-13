@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 from urllib.parse import urlparse
 
@@ -87,6 +88,17 @@ def _instant(value: Any) -> Optional[datetime]:
     except (TypeError, ValueError):
         return None
     return parsed if parsed.tzinfo else None
+
+
+def _rfc822_instant(value: Any) -> Optional[datetime]:
+    """An RSS pubDate ("Thu, 12 Nov 2026 10:00:00 GMT"); None when it is not one."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = parsedate_to_datetime(value.strip())
+    except (TypeError, ValueError, IndexError):
+        return None
+    return parsed if parsed is not None and parsed.tzinfo else None
 
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -331,7 +343,11 @@ def ingest_public_headlines(memory: Dict[str, Any], items: Iterable[Mapping[str,
         if considered >= PUBLIC_HEADLINE_LIMIT:
             break
         title = str(item.get("title") or "").strip()
-        at = _instant(item.get("publishedAt") or item.get("firstDetectedAt"))
+        # RSS feeds stamp items as "Thu, 12 Nov 2026 10:00:00 GMT" (RFC 822), Atom
+        # as ISO 8601. Reading only ISO dropped almost every RSS headline. A date
+        # in neither form falls back to when ARGUS first saw the headline.
+        at = (_instant(item.get("publishedAt")) or _rfc822_instant(item.get("publishedAt"))
+              or _instant(item.get("firstDetectedAt")))
         if not title or at is None or (now and now - at > timedelta(days=PUBLIC_HEADLINE_DAYS)):
             continue
         try:
@@ -363,7 +379,11 @@ def ingest_radar(memory: Dict[str, Any], radar: Optional[Mapping[str, Any]]) -> 
     for theme in radar.get("themes") or []:
         theme_id = RADAR_THEMES.get(str(theme.get("key") or ""))
         count = theme.get("count")
-        if theme_id is None or not isinstance(count, int) or count <= 0 or str(theme.get("level") or "") in ("", "none", "low"):
+        # The radar's bands are high / elevated / calm (scanner._news_theme_level).
+        # "calm" is the ordinary count: remembering it put a count row at the
+        # head of the theme every hour, in front of the reports themselves.
+        if (theme_id is None or not isinstance(count, int) or count <= 0
+                or str(theme.get("level") or "") in ("", "none", "low", "calm")):
             continue
         entry = _entry(theme_id, "RADAR", bucket,
                        f"公開ニュースの件数: {theme.get('labelJa') or theme.get('key')} {count}件(6時間・{theme.get('level')})",

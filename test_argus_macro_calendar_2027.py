@@ -29,11 +29,11 @@ def test_published_bls_and_bea_types_keep_all_twelve_dated_releases():
 def test_published_schedule_provenance_does_not_become_actual_result_or_receipt():
     events = collect_2027()
     for row in events.values():
-        if row['kind'] not in ('cpi', 'ppi', 'nfp', 'pce', 'gdp'):
+        if row['kind'] not in ('cpi', 'ppi', 'nfp', 'jolts', 'pce', 'gdp'):
             continue
         assert row['sourceScheduleCheckedAt'].endswith(('+00:00', 'Z'))
         assert not any(key in row for key in ('releasedAt', 'publishedAt', 'actual', 'officialResult'))
-        if row['kind'] in ('cpi', 'ppi', 'nfp'):
+        if row['kind'] in ('cpi', 'ppi', 'nfp', 'jolts'):
             assert row['sourceScheduleRef'] == 'https://www.bls.gov/schedule/2027/home.htm'
             assert row['sourceScheduleEvidence'] == 'OFFICIAL_PAGE_WEB_READ'
             assert 'sourceScheduleResponseSha256' not in row
@@ -41,7 +41,14 @@ def test_published_schedule_provenance_does_not_become_actual_result_or_receipt(
             assert row['sourceScheduleRef'] == 'https://www.bea.gov/news/schedule/next-year'
             assert row['sourceScheduleEvidence'] == 'OFFICIAL_HTTP_RETAINED'
             assert len(row['sourceScheduleResponseSha256']) == 64
-    assert not [row for row in events.values() if row['kind'] == 'jolts']
+    # 2026-11-13: JOLTS was left out while its dates were unverified. The 2027
+    # dates are now read from the same official BLS page, with their own check time.
+    jolts = sorted((row for row in events.values() if row['kind'] == 'jolts'), key=lambda row: row['eventDate'])
+    assert len(jolts) == 12
+    assert jolts[0]['eventTimeUtc'] == '2027-01-05T15:00:00Z'      # 10:00 ET, winter
+    assert jolts[5]['eventTimeUtc'] == '2027-06-02T14:00:00Z'      # 10:00 ET, summer
+    assert jolts[-1]['eventDate'] == '2027-12-01'
+    assert all(row['sourceScheduleCheckedAt'].startswith('2026-11-13') for row in jolts)
 
 
 def test_summer_winter_boundary_and_existing_horizon_are_retained():
