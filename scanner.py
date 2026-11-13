@@ -6549,7 +6549,7 @@ _US_MOVER_UNIVERSE = (os.environ.get("US_MOVER_UNIVERSE") or
     "PG,JNJ,WMT,ABBV,NFLX,CRM,BAC,ORCL,KO,MRK,CVX,AMD,PEP,ADBE,TMO,LIN,ACN,MCD,CSCO,"
     "WFC,ABT,GE,DHR,IBM,NOW,TXN,QCOM,INTU,AMAT,ISRG,CAT,VZ,PFE,DIS,CMCSA,GS,SPGI,RTX,"
     "AMGN,UBER,PM,T,LOW,UNP,HON,ELV,BKNG,NKE,COP,MU,LRCX,ADI,PLD,SYK,VRTX,REGN,PANW,"
-    "KLAC,SNPS,CDNS,MDLZ,GILD,C,SBUX,BSX,ADP,MMC,CB,TJX,SCHW,MO,DE,BMY,SO,FI,DUK,"
+    "KLAC,SNPS,CDNS,MDLZ,GILD,C,SBUX,BSX,ADP,MRSH,CB,TJX,SCHW,MO,DE,BMY,SO,FISV,DUK,"
     "INTC,PYPL,SHOP,SMCI,COIN,PLTR,MRVL,CRWD,ARM,DELL,WDAY,SNOW,ABNB,MSTR").split(",")
 
 _MOOMOO_US_MOVERS  = {"rows": [], "ts": 0.0, "asOf": None}
@@ -7099,13 +7099,16 @@ _EVENT_RELEASED_KEEP_DAYS = 3
 _FOMC_2026 = ["2026-06-17", "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09"]
 # Decision days (second day) of the 2027 meetings as published by the Federal
 # Reserve (federalreserve.gov/monetarypolicy/fomccalendars.htm, checked
-# 2026-10-03): Jan 26-27, Mar 16-17, Apr 27-28, Jun 8-9, Jul 27-28, Sep 14-15,
-# Oct 26-27, Dec 7-8. The Fed marks each date tentative until confirmed at the
-# meeting before it. Only the separately verified 2027 BLS CPI/PPI/NFP
-# schedule and separately retained BEA PCE/GDP schedule are included below.
-# Unverified JOLTS dates remain absent.
+# 2026-11-13, page "Last Update: November 12, 2026"): Jan 26-27, Mar 16-17,
+# Apr 27-28, Jun 8-9, Jul 27-28, Sep 14-15, Oct 26-27, Nov 16-17. The page
+# checked on 2026-10-03 listed Dec 7-8 as the last meeting; the Fed has since
+# replaced it with Nov 16-17 (the next meeting after that is Jan 25-26, 2028).
+# The Fed marks each date tentative until confirmed at the meeting before it,
+# so this list is re-read whenever the official page changes. The separately
+# verified 2027 BLS CPI/PPI/NFP/JOLTS schedule and the separately retained BEA
+# PCE/GDP schedule are included below.
 _FOMC_2027 = ["2027-01-27", "2027-03-17", "2027-04-28", "2027-06-09", "2027-07-28",
-              "2027-09-15", "2027-10-27", "2027-12-08"]
+              "2027-09-15", "2027-10-27", "2027-11-17"]
 _BOJ_2026  = ["2026-06-16", "2026-07-31", "2026-09-18", "2026-10-30", "2026-12-18"]
 # Second (decision) days of the 2027 meetings, from the Bank of Japan notice
 # "2027年の金融政策決定会合等の日程" dated 2026-07-31
@@ -7129,6 +7132,11 @@ _PPI_2027 = ['2027-01-14', '2027-02-12', '2027-03-12', '2027-04-14', '2027-05-13
 _NFP_2027 = ['2027-01-08', '2027-02-05', '2027-03-05', '2027-04-02', '2027-05-07', '2027-06-04', '2027-07-02', '2027-08-06', '2027-09-03', '2027-10-08', '2027-11-05', '2027-12-03']
 _BLS_2027_SCHEDULE_SOURCE = {'sourceScheduleRef': 'https://www.bls.gov/schedule/2027/home.htm',
     'sourceScheduleCheckedAt': '2026-10-31T04:36:36.770869+00:00', 'sourceScheduleEvidence': 'OFFICIAL_PAGE_WEB_READ'}
+# BLS公式年次日程(同じページ・2026-11-09更新)のJOLTSの行を2026-11-13に照合。10:00 ET。予定であり実公表ではない。
+_JOLTS_2027 = ['2027-01-05', '2027-02-02', '2027-03-09', '2027-03-30', '2027-05-04', '2027-06-02',
+               '2027-06-29', '2027-08-03', '2027-08-31', '2027-10-05', '2027-11-02', '2027-12-01']
+_BLS_2027_JOLTS_SCHEDULE_SOURCE = {'sourceScheduleRef': 'https://www.bls.gov/schedule/2027/home.htm',
+    'sourceScheduleCheckedAt': '2026-11-13T05:10:00+00:00', 'sourceScheduleEvidence': 'OFFICIAL_PAGE_WEB_READ'}
 
 _PCE_2027 = ['2027-01-28', '2027-02-25', '2027-03-31', '2027-04-29', '2027-05-27', '2027-06-25', '2027-07-29', '2027-08-25', '2027-09-30', '2027-10-28', '2027-11-24', '2027-12-22']
 _GDP_2027 = ['2027-01-28', '2027-02-25', '2027-03-31', '2027-04-29', '2027-05-27', '2027-06-25', '2027-07-29', '2027-08-25', '2027-09-30', '2027-10-28', '2027-11-24', '2027-12-22']
@@ -7153,7 +7161,7 @@ _EVENT_SPECS = [
     (_FOMC_2026 + _FOMC_2027, "14:00", "fomc", "FOMC Rate Decision",                "central_bank", "US", "Federal Reserve",             "high",   ["USDJPY", "US10Y", "US2Y", "QQQ", "NVDA"]),
     (_CPI_2026 + _CPI_2027,  "08:30", "cpi",  "US CPI (Consumer Price Index)",     "inflation",    "US", "Bureau of Labor Statistics",  "high",   ["US10Y", "USDJPY", "QQQ", "SPY"]),
     (_NFP_2026 + _NFP_2027,  "08:30", "nfp",  "US Employment Situation",           "jobs",         "US", "Bureau of Labor Statistics",  "high",   ["US10Y", "USDJPY", "SPY", "QQQ"]),
-    (_JOLTS_2026, "10:00", "jolts", "US JOLTS Job Openings",           "jobs",         "US", "Bureau of Labor Statistics",  "medium", ["US10Y", "USDJPY", "SPY", "QQQ"]),
+    (_JOLTS_2026 + _JOLTS_2027, "10:00", "jolts", "US JOLTS Job Openings", "jobs",    "US", "Bureau of Labor Statistics",  "medium", ["US10Y", "USDJPY", "SPY", "QQQ"]),
     (_PPI_2026 + _PPI_2027,  "08:30", "ppi",  "US PPI (Producer Price Index)",     "inflation",    "US", "Bureau of Labor Statistics",  "medium", ["US10Y", "QQQ"]),
     (_PCE_2026 + _PCE_2027,  "08:30", "pce",  "US PCE / Personal Income & Outlays", "inflation",   "US", "Bureau of Economic Analysis", "high",   ["US10Y", "USDJPY", "QQQ"]),
     (_GDP_2026 + _GDP_2027,  "08:30", "gdp",  "US GDP",                            "growth",       "US", "Bureau of Economic Analysis", "high",   ["US10Y", "SPY", "USDJPY"]),
@@ -7209,6 +7217,7 @@ def _build_curated_events(today_jst):
                 "escalation": _escalation(days), "rationaleJa": _EVENT_RATIONALE[kind],
                 "linkedAssets": assets, "status": "live",
                 **(_BLS_2027_SCHEDULE_SOURCE if d.startswith("2027-") and kind in ("cpi", "ppi", "nfp") else {}),
+                **(_BLS_2027_JOLTS_SCHEDULE_SOURCE if d.startswith("2027-") and kind == "jolts" else {}),
                 **(_BEA_2027_SCHEDULE_SOURCE if d.startswith("2027-") and kind in ("pce", "gdp") else {}),
             })
     return out
@@ -44709,8 +44718,21 @@ def _cftc_jpy_next_report_due(now=None):
     except Exception:
         return False
     current = datetime.now(timezone.utc) if now is None else now
-    # 次の週の建玉(建玉日+7日)の公表は、その3日後の 19:30Z。少し余裕を見て 19:45Z から。
-    due = position.replace(tzinfo=timezone.utc) + timedelta(days=10, hours=19, minutes=45)
+    # 次の週の建玉(建玉日+7日)の公表の予定は、公表の予定の表から読む。表は、祝日で金曜から
+    # 後ろへずれる週と、米国東部の夏時間・冬時間(15:30 ET = 19:30Z / 20:30Z)を知っている。
+    # 2026-11-13: 以前は「建玉日+10日 19:45Z」に固定で、祝日の週は公表まで1時間ごとに空振りし、
+    # 冬時間は毎週1回空振りしていた。少し余裕を見て、予定の15分後から。
+    due = None
+    try:
+        schedule = jp_market_positioning.release_calendar.release_schedule(
+            (position.date() + timedelta(days=7)).isoformat())
+        if schedule.get("status") == "OFFICIAL_SCHEDULE":
+            due = datetime.fromisoformat(schedule["scheduledReleaseAt"]) + timedelta(minutes=15)
+    except Exception:
+        due = None
+    if due is None:
+        # 表に無い年や、火曜でない建玉日は、従来の目安(金曜 19:45Z)のまま。
+        due = position.replace(tzinfo=timezone.utc) + timedelta(days=10, hours=19, minutes=45)
     return current >= due
 
 
