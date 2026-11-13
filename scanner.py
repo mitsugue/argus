@@ -40975,8 +40975,10 @@ _INDEX_CHART_SOURCES = {
               "displayNameJa": "TOPIX(指数)"},
     "SPX": {"yahoo": ("^GSPC",), "market": "US", "instrumentId": "SP500_INDEX",
             "displayNameJa": "S&P 500(指数)"},
-    "NDX": {"yahoo": ("^IXIC",), "market": "US", "instrumentId": "NASDAQ_COMPOSITE_INDEX",
-            "displayNameJa": "ナスダック総合(指数)"},
+    # 2026-11-13 (owner: 中身を NASDAQ-100 に替える): the screen names this
+    # chart NASDAQ-100 (the QQQ index) but it read ^IXIC, the Nasdaq Composite.
+    "NDX": {"yahoo": ("^NDX",), "market": "US", "instrumentId": "NASDAQ_100_INDEX",
+            "displayNameJa": "NASDAQ-100(指数)"},
 }
 _INDEX_CHART_DISCLOSURE_JA = ("指数そのもの(Yahoo Finance 日足・参考表示)。検証済みスナップショットは"
                               "日経平均・1306・SPY・QQQです。")

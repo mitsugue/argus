@@ -420,7 +420,7 @@ def test_index_chart_warm_tries_candidates_and_records_the_working_symbol():
                         sleeper=lambda s: None, clock=lambda: 0.0)
     boot._STATE["thread"].join(timeout=5)
     warm = boot.warm_status()
-    assert warm["indexCharts"] == {"N225": "^N225:40", "TOPIX": "998405.T:40", "SPX": "^GSPC:40", "NDX": "^IXIC:40"}
+    assert warm["indexCharts"] == {"N225": "^N225:40", "TOPIX": "998405.T:40", "SPX": "^GSPC:40", "NDX": "^NDX:40"}
     assert ("^N225", "NIKKEI_225_INDEX", True, ("available_hour_utc",)) in calls
     assert ("^GSPC", "SP500_INDEX", True, ("next_day_available",)) in calls
     assert boot.warm_status_safe()["indexCharts"]["TOPIX"] == "998405.T:40"

@@ -40,7 +40,7 @@ INDEX_SOURCES = (
     ("N225", ("^N225",), "NIKKEI_225_INDEX", {"available_hour_utc": 7}),
     ("TOPIX", ("^TPX", "998405.T"), "TOPIX_INDEX", {"available_hour_utc": 7}),
     ("SPX", ("^GSPC",), "SP500_INDEX", {"next_day_available": True}),
-    ("NDX", ("^IXIC",), "NASDAQ_COMPOSITE_INDEX", {"next_day_available": True}),
+    ("NDX", ("^NDX",), "NASDAQ_100_INDEX", {"next_day_available": True}),
 )             # hourly visible-first headline translation drain
 TRANSLATE_CAP = 20
 VALUATION_STATEMENT_PAGES = 8        # the issuer's statements history is paginated
