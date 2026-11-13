@@ -142,3 +142,48 @@ def test_renamed_us_tickers_are_followed_under_their_current_symbols():
     assert "MRSH" in universe and "MMC" not in universe      # Marsh McLennan, 2026-01-14
     assert "FISV" in universe and "FI" not in universe       # Fiserv, 2025-11-11
     assert len(universe) == len(set(universe))
+
+
+# ── 日本株の直近の決算開示(J-Quants) ───────────────────────────────────
+
+class _JqResponse:
+    def __init__(self, body, status=200):
+        self._body, self.status_code = body, status
+
+    def json(self):
+        return self._body
+
+
+def test_recent_disclosures_are_read_from_the_v2_list_with_its_field_names(monkeypatch):
+    # 2026-11-13 12:00 JST, a trading day. V2 rows carry DiscDate / DocType.
+    fixed = datetime(2026, 11, 13, 3, 0, tzinfo=timezone.utc).timestamp()
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append((url, dict(kwargs.get("params") or {})))
+        if url.endswith("/equities/earnings-calendar"):
+            return _JqResponse({"data": [{"Code": "80580", "Date": "2026-11-16"}]})
+        assert url.endswith("/fins/summary"), url          # the retired /fins/details is not read
+        code = kwargs["params"]["code"]
+        if code == "8058":
+            return _JqResponse({"data": [
+                {"Code": "80580", "DiscDate": "2026-08-04", "DocType": "1QFinancialStatements_Consolidated_IFRS"},
+                {"Code": "80580", "DiscDate": "2026-11-11", "DocType": "2QFinancialStatements_Consolidated_IFRS"},
+                {"Code": "80580", "DiscDate": "", "DocType": "ignored"}]})
+        if code == "9984":
+            return _JqResponse({"data": [{"Code": "99840", "DiscDate": "2026-05-13", "DocType": "FYFinancialStatements"}]})
+        return _JqResponse({"data": []})
+
+    monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "test-key")
+    monkeypatch.setattr(scanner, "_JQ_CAT_CACHE", {"data": None, "expires": 0.0})
+    monkeypatch.setattr(scanner.requests, "get", get)
+    monkeypatch.setattr(scanner.time, "time", lambda: fixed)
+    data, status = scanner._jquants_catalysts()
+    assert status == "delayed"
+    assert data["nextEarn"] == {"8058": "2026-11-16"}
+    # The newest disclosure within the bounded window is kept, with the V2 document type.
+    assert data["details"]["8058"]["date"] == "2026-11-11"
+    assert data["details"]["8058"]["type"] == "2QFinancialStatements_Consolidated_IFRS"
+    assert "9984" not in data["details"]                   # a disclosure from May is outside the window
+    assert {params.get("code") for url, params in calls if url.endswith("/fins/summary")} == {
+        symbol for symbol, _ in scanner._JP_CAT_SYMBOLS}
