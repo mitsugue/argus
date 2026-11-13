@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      BE: https://argus-backend-3j2m.onrender.com
+      BE: ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}
     steps:
       - uses: actions/checkout@v5
       - name: Wait for Render to report this merge (or a later main descendant)

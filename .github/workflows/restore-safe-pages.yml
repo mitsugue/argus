@@ -53,7 +53,7 @@ jobs:
         env:
           DEPLOY_BASE: /argus/
           VITE_ARGUS_BUILD_SHA: ${{ inputs.release_sha }}
-          VITE_ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
+          VITE_ARGUS_BACKEND_URL: ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}
         run: npm run build
 
       - uses: actions/configure-pages@v5

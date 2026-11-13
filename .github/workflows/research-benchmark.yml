@@ -155,7 +155,7 @@ jobs:
             exit 1
           fi
 
-          backend="https://argus-backend-3j2m.onrender.com"
+          backend="${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}"
           csv_path="ops/imports/jpx_two_market_credit_20020802_20260710.csv"
           dry_payload="$RUNNER_TEMP/jpx-credit-dry.json"
           commit_payload="$RUNNER_TEMP/jpx-credit-commit.json"
@@ -217,7 +217,7 @@ jobs:
             exit 1
           fi
 
-          backend="https://argus-backend-3j2m.onrender.com"
+          backend="${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}"
           response="$RUNNER_TEMP/openai-model-probe.json"
           restore_response="$RUNNER_TEMP/cost-policy-restore.json"
 

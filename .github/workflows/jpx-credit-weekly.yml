@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      BE: https://argus-backend-3j2m.onrender.com
+      BE: ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v5

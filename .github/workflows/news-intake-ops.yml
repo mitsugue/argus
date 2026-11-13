@@ -31,7 +31,7 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}"
           mkdir -p "$RUNNER_TEMP/private-notes"
           if [ "${{ inputs.action }}" = "health" ]; then
             curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/news-intake/health" \

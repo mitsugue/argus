@@ -540,7 +540,7 @@ REVIEWED_EXTENSION_BLOBS = {
     "argus_osint_engine.py": "f49f3c8cb2c4fd88bdffa499d9d8902ca711155a",
     "test_argus_v12_1_1.py": "8aa9fa50d531311f75cbb4642aae721e9af8ff56",
     "test_argus_v12_1_3.py": "8478bce3f5811d5331cc24c800412fee8b37e1de",
-    ".github/workflows/ai-rejudge.yml": "3fff3c5530adf4ca322e93d72dffb38d52ad7520",
+    ".github/workflows/ai-rejudge.yml": "12049a1a21cef6ae9a382a19ff55a39e4e9b037a",
     "test_argus_official_lifecycle.py": "94895d787c27281d6699182cce75a415c7ad896b",
     "test_workflow_http.py": "6b0382ee83f4a458fe14072b4e4cdfe5e1948159",
     # v13.7.18 owner-required Today consolidation: these exact acceptance
@@ -550,9 +550,9 @@ REVIEWED_EXTENSION_BLOBS = {
     "test_argus_v13_1_1.py": "45f9a9adca9336098d1ee5bd856a0a5900106c15",
     # Owner-authorized v13.7 operating-cost reduction: retire redundant
     # scheduled workflows while retaining manual recovery and product tests.
-    ".github/workflows/ai-rejudge.yml": "9674c680ad54973f71bbc03a2dc335eb299c373b",
-    ".github/workflows/crypto-watch.yml": "a31e93b8c0e82e57a37d707fd9835318e1286283",
-    ".github/workflows/mover-causes.yml": "c12e4830658a2a21ad9e557ecb5c817276f5ee09",
+    ".github/workflows/ai-rejudge.yml": "12049a1a21cef6ae9a382a19ff55a39e4e9b037a",
+    ".github/workflows/crypto-watch.yml": "9e85d095f18eb9312fab4ae9a562758a20309559",
+    ".github/workflows/mover-causes.yml": "bf454c6efb282a024a4129ff8de4516ea8b05e2a",
     "test_retired_background_workflows.py": "bbfe02c081353b142cde8e106ac619f67cec6dd0",
     # Owner-authorized Gemini retirement regression coverage. This fixes only
     # the exact Terra-only operational workflow test; later edits fail closed.
@@ -769,6 +769,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    ".github/workflows/osint-check.yml",
     "test_argus_model_comparison.py",
     ".github/workflows/model-comparison.yml",
     "test_argus_openai_tier.py",

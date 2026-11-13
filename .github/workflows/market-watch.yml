@@ -15,7 +15,7 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}"
           [ -z "$ARGUS_ADMIN_TOKEN" ] && { echo "no admin token — skip"; exit 0; }
           curl -s --max-time 60 "$BE/api/argus/rates" > /dev/null || true   # warm dyno
           RESP=$(python3 scripts/workflow_http.py --name market-scan --method POST --timeout 90 \

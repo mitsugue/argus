@@ -61,7 +61,7 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}"
           # 2026-09-28: owner authentication gates every read of this host.
           # The existing operational token passes the gate; it is never logged.
           for i in 1 2 3 4 5 6; do
@@ -131,7 +131,7 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}"
           # 2026-09-28: owner authentication gates every read of this host.
           # The existing operational token passes the gate; it is never logged.
           for i in 1 2 3 4 5 6; do
