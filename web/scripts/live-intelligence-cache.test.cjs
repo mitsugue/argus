@@ -18,6 +18,18 @@ for (const hook of ['useNewsIntelligence.ts', 'useMarketShock.ts']) {
   assert.ok(text.includes("addEventListener('online'"), `${hook}: refresh on online transition`);
   assert.ok(text.includes('scheduleVisibleInterval'), `${hook}: periodic refresh`);
 }
+// 2026-11-13: the server answers HTTP 200 with status "unavailable" and no events when the
+// shock detector itself failed. The page used to read only the schema version and showed
+// "no sudden market shock". Both sides are checked so neither word can drift alone.
+const shockHook = fs.readFileSync(path.join(src, 'hooks', 'useMarketShock.ts'), 'utf8');
+assert.ok(/body\.status === 'unavailable'\)\s*\{\s*throw new Error\('shock_detector_unavailable'\)/.test(shockHook),
+  'an unavailable shock detector is a failed read, not an empty list');
+const backend = fs.readFileSync(path.join(__dirname, '..', '..', 'scanner.py'), 'utf8');
+assert.ok(/"status": "unavailable", "eventCount": 0, "events": \[\]/.test(backend),
+  'the server still reports a failed shock detector as status "unavailable"');
+const today = fs.readFileSync(path.join(src, 'components', 'today', 'ArgusTodayPanel.tsx'), 'utf8');
+assert.ok(today.includes("shock.status === 'error'") && today.includes('市場ショック: 取得できません'),
+  'a failed shock read is shown as unavailable on Today');
 const panel = fs.readFileSync(path.join(src, 'components', 'chart', 'ChartIntelligencePanel.tsx'), 'utf8');
 assert.ok(panel.includes('data-argus-contract="index-chart-selector-v1"'), 'index selector rendered on the market chart');
 // 2026-10-23: the default verified view is the Nikkei 225 itself, not the 1321 ETF.

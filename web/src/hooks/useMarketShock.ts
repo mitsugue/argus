@@ -58,6 +58,12 @@ async function fetchShock(): Promise<MarketShockView | null> {
     if (body.schemaVersion !== 'argus-market-shock-v1') {
       throw new Error('schema_incompatible');
     }
+    // The server answers HTTP 200 with status "unavailable" and no events when
+    // the detector itself failed. An empty list from a failed detector is not
+    // "no shock": treat it as a failed read so the page says so (2026-11-13).
+    if (body.status === 'unavailable') {
+      throw new Error('shock_detector_unavailable');
+    }
     return body;
   } finally {
     window.clearTimeout(timer);
