@@ -1,6 +1,6 @@
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import { withoutScreenNotes } from '../../lib/screenNotes';
-import React, {useEffect, useState, useSyncExternalStore} from 'react';
+import React, {useEffect, useRef, useState, useSyncExternalStore} from 'react';
 import {useMarketBrief} from '../../hooks/useMarketBrief';
 import type {AssetItem} from '../../types/assetItem';
 import {OwnerAnswerBody, validJob, type Job} from './OwnerDialogue';
@@ -35,6 +35,10 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
   const [edition,setEdition]=useState<{key:string;job:Job}|null>(null);
   const [error,setError]=useState('');const [fetching,setFetching]=useState(false);const [revision,setRevision]=useState(0);
   const [generating,setGenerating]=useState(false);const [notice,setNotice]=useState('');
+  // 2026-11-13: after the button starts a new explanation, the saved-only read keeps returning the
+  // previous one (or nothing) until the new one is complete. Remember that a new one is on its way so
+  // the read is repeated instead of being cached for five minutes, and the button stays busy.
+  const [waiting,setWaiting]=useState(false);const awaiting=useRef<{since:number;previous:string|null}|null>(null);
   const base=(import.meta.env.VITE_ARGUS_BACKEND_URL as string|undefined)?.replace(/\/$/,'');
   const contextId=brief?.unifiedContext?.contextId;
   const owner=asset?{symbol,market,state:'WATCHING',
@@ -43,6 +47,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
   const requestKey=JSON.stringify({action:'overview',baseContextId:contextId,symbol,market,horizon,owner});
   const cacheKey = JSON.stringify([token || (session ? 'owner-session' : 'none'), requestKey]);
   useEffect(()=>{setEdition(null);},[token,session]);
+  useEffect(()=>{awaiting.current=null;setWaiting(false);},[symbol,market,horizon,token,session]);
   useEffect(()=>{
     const changed=()=>setToken(readToken());
     window.addEventListener('storage',changed);window.addEventListener('argus-owner-connection',changed);
@@ -71,9 +76,13 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
           return;
         }
         const savedOnly=value.overviewRead?.mode==='SAVED_ONLY';
+        const wait=awaiting.current;const stillWaiting=!!wait&&Date.now()-wait.since<600_000;
+        if(wait&&!stillWaiting){awaiting.current=null;if(!stopped){setWaiting(false);setNotice('作成に時間がかかっています・少しあとで開き直してください');}}
         if(savedOnly&&value.status==='WAITING'){
           // No saved explanation: nothing is written until the button is pressed.
-          if(!stopped){setEdition(null);setError('');savedReadCache.put(cacheKey,{},300_000);}
+          if(!stopped){setEdition(null);setError('');
+            if(stillWaiting){pending=true;timer=window.setTimeout(()=>void load(),10_000);}
+            else savedReadCache.put(cacheKey,{},300_000);}
           return;
         }
         const evaluation=value.overviewEvaluation;
@@ -86,8 +95,11 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
           &&Number.isFinite(Date.parse(reused.checkedAt))&&Number.isFinite(Date.parse(reused.originalCompletedAt));
         if(!validJob(value)||value.context.intent!=='SUBJECT_OVERVIEW'||value.context.subject.symbol!==symbol||value.context.subject.market!==market||value.context.horizonSessions!==horizon||(value.context.baseMarketContextId!==contextId&&!checkedReuse&&!checkedEvaluation&&!savedOnly&&value.requestId!==requestId))throw new Error('invalid_overview');
         if(!stopped){const next={key:savedOnly&&value.context.baseMarketContextId!==contextId?'retained:'+requestKey:requestKey,job:value};setEdition(next);setError('');requestId=value.requestId;
-          if(value.status==='SUCCEEDED')savedReadCache.put(cacheKey,{edition:next},300_000);
-          if(value.status==='RUNNING'){pending=true;timer=window.setTimeout(()=>void load(),3000);}}
+          const arrived=!stillWaiting||(value.status==='SUCCEEDED'&&value.requestId!==wait?.previous);
+          if(stillWaiting&&arrived){awaiting.current=null;setWaiting(false);}
+          if(value.status==='SUCCEEDED'&&arrived)savedReadCache.put(cacheKey,{edition:next},300_000);
+          if(value.status==='RUNNING'){pending=true;timer=window.setTimeout(()=>void load(),3000);}
+          else if(!arrived){pending=true;timer=window.setTimeout(()=>void load(),10_000);}}
       }catch{if(!stopped)setError('接続できません');}
       finally{window.clearTimeout(timeout);active=undefined;if(!stopped)setFetching(false);}
     };
@@ -108,6 +120,8 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
       if(!response.ok){setNotice(generateMessages[value.error]||'作成できません');return;}
       if(value.overviewGenerate?.reason==='DAILY_START_LIMIT')setNotice(generateMessages.overview_daily_limit);
       else if(value.overviewGenerate?.started===false&&value.status==='SUCCEEDED')setNotice('材料に変化なし・前の説明のまま');
+      else if(value.overviewGenerate?.started===true||value.overviewGenerate?.reason==='RUNNING'){
+        awaiting.current={since:Date.now(),previous:saved?.requestId??null};setWaiting(true);}
       savedReadCache.clear();setRevision(v=>v+1);
     }catch{setNotice('接続できません');}
     finally{setGenerating(false);}
@@ -116,7 +130,7 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
   const current=edition?.key===requestKey&&job?.status==='SUCCEEDED';
   const saved=job?.status==='SUCCEEDED'?job:validJob(job?.previousOverview)&&job.previousOverview.status==='SUCCEEDED'?job.previousOverview:null;
   useEffect(()=>{onReference?.(token||session?saved??null:null);},[saved,token,session,onReference]);
-  const busy=generating||job?.status==='RUNNING';
+  const busy=generating||waiting||job?.status==='RUNNING';
   const stamp=saved?.result?.provider?.completedAt;
   const button=(withStamp:boolean)=>(token||session)&&base?<p className="ad-conclusion__status owner-overview__generate">
     {withStamp&&saved&&<span>AIの見立て · {stampText(stamp)}</span>}
