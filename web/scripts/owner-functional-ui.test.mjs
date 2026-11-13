@@ -29,12 +29,13 @@ assert.doesNotMatch(summary, /ad-prio|Calibration pending|\/7/);
 assert.doesNotMatch(summary, /ownerActionJa|entryActionJa|currentActionJa|ad-cmd/);
 assert.match(summary, /d\.decisionFirst/);
 assert.match(summary, /view\.priceText/);
-// 2026-10-26 (owner): the first card keeps results, target and supply; the
-// stock page leads with the conclusion and the condition that would change it.
+// 2026-10-26 (owner): the first card keeps results, target and supply.
+// 2026-11-13 (owner: 「結論AIの見立ては要りません」・Today と重複): the stock page
+// no longer leads with a conclusion or the condition that would change it.
 assert.match(summary, /AssetEarningsDate/);
 assert.match(summary, /AssetOutlookSummary/);
-assert.match(details, /view\.whyJa/);
-assert.match(details, /view\.whatChangesJa/);
+assert.doesNotMatch(details, /view\.whyJa/);
+assert.doesNotMatch(details, /view\.whatChangesJa/);
 assert.doesNotMatch(details, /検証済み目標なし|検証済み無効化条件なし/);
 assert.match(today, /NEXT_REVIEW_REASON_JA/);
 assert.match(today, /'resolve.freshness_unknown': 'データの更新時刻'/);

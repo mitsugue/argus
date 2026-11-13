@@ -9,7 +9,6 @@ import { AssetEventsPanel } from './AssetEventsPanel';
 import { AssetScenarioPanel } from './AssetScenarioPanel';
 import { AssetResearchPanel } from './AssetResearchPanel';
 import { AssetNikkeiGap } from './AssetNumbers';
-import { OwnerOverview } from '../dialogue/OwnerOverview';
 import { OsintDeepDive } from '../dashboard/OsintDeepDive';
 import '../dashboard/UnifiedAssetCard.css';
 import '../dashboard/Dashboard.css';
@@ -66,12 +65,11 @@ export const AssetDecisionCard: React.FC<Props> = ({
       <AssetDecisionSummary d={d} open={open} onToggle={onToggle} interactive={collapsible} />
       {open && (
         <div className="uac-body ad-expanded">
+          {/* 2026-11-13 (owner): 「結論AIの見立ては要りません／これは情報の重複に当たります
+              ／トップと同じものがあります」. The conclusion and the stock's AI view are
+              gone; the stock's own gap to the Nikkei and its sector stays, and the
+              'decision' anchor remains for links into the page. */}
           <section className="ad-block" id={sectionAnchorId(sym, 'decision')}>
-            <h4 className="ad-block__label">結論</h4>
-            {stock
-              ? <OwnerOverview key={`${market}:${sym}`} symbol={sym} market={market} horizon={5} asset={d.asset}
-                  line={{ fallback: first(view.whyJa) || '見立てなし', fallbackChange: first(view.whatChangesJa) || undefined }} />
-              : <div className="ad-conclusion"><p className="ad-conclusion__view">{first(view.whyJa) || '見立てなし'}</p></div>}
             <AssetNikkeiGap d={d} />
           </section>
           {stock && <section className="ad-block" id={sectionAnchorId(sym, 'why-downside')}>
