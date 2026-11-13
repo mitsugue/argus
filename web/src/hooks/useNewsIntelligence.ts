@@ -142,6 +142,9 @@ async function fetchNewsIntel(): Promise<NewsIntelView | null> {
   }
 }
 
+/** Retries after a failed read: 1, 2 and 5 minutes, then the ordinary 10-minute read. */
+export const NEWS_RETRY_MS = [60_000, 120_000, 300_000] as const;
+
 export function useNewsIntelligence(): NewsIntelState {
   const savedHealth = sessionViewCheckpoint.restoredValue('news-intake-health') as NewsIntakeHealth | null | undefined;
   const [intakeHealth, setIntakeHealth] = useState<NewsIntakeHealth | null>(savedHealth ?? null);
@@ -155,6 +158,20 @@ export function useNewsIntelligence(): NewsIntelState {
     : { status: 'loading', view: null }));
   useEffect(() => {
     let cancelled = false;
+    // 2026-11-13 (audit): one failed read (the server restarting after a
+    // deploy, a 20 s stall) left 取得できません until the next 10-minute read,
+    // and a restored error state was not read again at all. A failure is
+    // retried a few times, sooner; a success clears the retries.
+    let retryTimer: number | null = null;
+    let retries = 0;
+    const clearRetry = () => { if (retryTimer !== null) window.clearTimeout(retryTimer); retryTimer = null; };
+    const retryLater = () => {
+      if (cancelled || retryTimer !== null || retries >= NEWS_RETRY_MS.length) return;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        if (!cancelled && isPageVisible()) void load();
+      }, NEWS_RETRY_MS[retries++]);
+    };
     const publish = (next: NewsIntelState) => {
       if (cancelled) return;
       setState(next);
@@ -171,25 +188,30 @@ export function useNewsIntelligence(): NewsIntelState {
         const view = await inflight;
         if (!cancelled && view) {
           memory = view;
+          retries = 0; clearRetry();
           publish({ status: 'data', view });
         } else if (!cancelled && !view) {
           publish({ status: 'error', view: memory });
+          retryLater();
         }
       } catch {
         // v13.5.50: a failed refresh never relabels retained data as current.
         if (!cancelled) {
           publish({ status: 'error', view: memory });
+          retryLater();
         }
       }
     };
     if (!restored) void load();
     const timer = scheduleVisibleInterval(() => { if (isPageVisible()) void load(); }, FEED_VISIBLE_MS);
+    // A restored failed view reads again soon (no immediate read on resume, as before).
+    if (restored && saved?.status === 'error') retryLater();
     const onVisible = () => { if (!document.hidden) void load(); };
     const onOnline = () => void load();
     const stopInitialOnVisible = subscribeInitialVisibleRead(onVisible, restored);
     window.addEventListener('online', onOnline);
     return () => {
-      cancelled = true; timer();
+      cancelled = true; timer(); clearRetry();
       stopInitialOnVisible();
       window.removeEventListener('online', onOnline);
     };
