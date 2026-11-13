@@ -187,3 +187,51 @@ def test_recent_disclosures_are_read_from_the_v2_list_with_its_field_names(monke
     assert "9984" not in data["details"]                   # a disclosure from May is outside the window
     assert {params.get("code") for url, params in calls if url.endswith("/fins/summary")} == {
         symbol for symbol, _ in scanner._JP_CAT_SYMBOLS}
+
+
+# ── 定期の AI 判定: 処理を外す(オーナーの判断 2026-11-13) ────────────────
+
+def test_the_resident_tick_no_longer_runs_an_ai_judgment(monkeypatch):
+    # The call it removes never ran: its gate reads the HTTP request, which the
+    # scheduler thread does not have. The tick now only refreshes free feeds.
+    import inspect
+    source = inspect.getsource(scanner._residency_ai_tick)
+    for removed in ("_execute_ai_judgment(", "_ai_run_gate("):
+        assert removed not in source, removed
+    collected, forbidden = [], []
+    monkeypatch.setattr(scanner, "_jp_market_open", lambda: True)
+    monkeypatch.setattr(scanner, "_us_market_open", lambda: False)
+    monkeypatch.setattr(scanner, "_LAST_INTEL_REFRESH", [0.0])
+    monkeypatch.setattr(scanner, "collect_institutional_intel", lambda: collected.append(1))
+    monkeypatch.setattr(scanner, "_ai_run_gate", lambda **kw: forbidden.append("gate") or (True, {}, 200))
+    monkeypatch.setattr(scanner, "_execute_ai_judgment", lambda **kw: forbidden.append("run"))
+    scanner._residency_ai_tick()
+    assert collected == [1] and forbidden == []
+    # The weekday judgment through the route is untouched.
+    assert any(rule.rule == "/api/argus/ai-judgment/run" for rule in scanner.app.url_map.iter_rules())
+
+
+# ── 見立ての作り直しの失敗の印 ──────────────────────────────────────────
+
+def test_a_failure_after_the_saved_edition_stays_visible_until_a_newer_edition(monkeypatch):
+    edition = {"unifiedStatus": "GENERATED", "presentationStatus": "GENERATED",
+               "unifiedSummary": {"view": "fixture"}, "generatedAt": "2026-11-13T00:00:00Z",
+               "aiDiagnostics": {"completedAt": "2026-11-13T00:00:00Z"}}
+    monkeypatch.setattr(scanner, "_market_brief_history_restore", lambda: None)
+    monkeypatch.setattr(scanner, "_market_brief_generation_gate", lambda: None)
+    monkeypatch.setattr(scanner, "_MARKET_BRIEF", {"data": dict(edition), "lastSuccessful": dict(edition)})
+    monkeypatch.setattr(scanner, "_MARKET_BRIEF_WORKER", {"status": "GENERATED", "lastAttemptMonotonic": 1.0})
+    schedule = {}
+    monkeypatch.setattr(scanner, "_MARKET_BRIEF_SCHEDULE", schedule)
+    assert "lastFailedAt" not in scanner._market_brief_cached_response()["generationWorker"]
+    # Two failed attempts for the 10:00 update time; the worker reports GENERATED again.
+    schedule["failedAttempts"] = {"key": "SCHEDULED|10:00|", "count": 2, "at": "2026-11-13T01:05:00Z"}
+    worker = scanner._market_brief_cached_response()["generationWorker"]
+    assert worker["status"] == "GENERATED" and worker["lastFailedAt"] == "2026-11-13T01:05:00Z"
+    assert "lastAttemptMonotonic" not in worker
+    # A newer edition clears it; an unreadable time never shows one.
+    newer = {**edition, "aiDiagnostics": {"completedAt": "2026-11-13T02:00:00Z"}}
+    scanner._MARKET_BRIEF["lastSuccessful"] = newer
+    assert "lastFailedAt" not in scanner._market_brief_cached_response()["generationWorker"]
+    schedule["failedAttempts"] = {"key": "x", "count": 1, "at": "not-a-time"}
+    assert scanner._market_brief_failed_since_edition() is None

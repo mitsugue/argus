@@ -99,6 +99,20 @@ for (const [status, expected] of [['AWAITING_AI','保存版'],['RUNNING','作成
  assert.ok(!html.includes('最新の見立てを取得できません'));
  assert.ok(html.includes('見立ての作成日時'), 'full timestamp remains in the evidence drawer');
 }
+// 2026-11-13: after the second failed attempt the saved edition is served as
+// GENERATED again; the failure the server keeps apart still shows.
+recovered=null;
+assert.equal(valid({...doc,generationWorker:{status:'GENERATED',lastFailedAt:'2026-09-12T11:00:00Z'}}),true);
+assert.equal(valid({...doc,generationWorker:{status:'GENERATED',lastFailedAt:{}}}),false);
+for (const [worker, failedShown] of [[{status:'GENERATED',lastFailedAt:'2026-09-12T11:00:00Z'},true],
+  [{status:'GENERATED'},false],[{status:'GENERATED',lastFailedAt:null},false]]) {
+ shown={...doc,generationWorker:worker};
+ const html=renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:true}));
+ assert.equal(html.includes('更新失敗・保存版'),failedShown);
+ assert.ok(html.includes('data-four-cards="visible"'),'the saved edition itself stays');
+}
+assert.equal(cardContext.exports.retainedBriefNote({...doc,generationWorker:{status:'RUNNING',lastFailedAt:'2026-09-12T11:00:00Z'}},false),'作成中・保存版');
+recovered=doc;
 requestFailed=true;
 assert.ok(renderToStaticMarkup(React.createElement(cardContext.exports.MarketBriefCard,{editorial:true}))
  .includes('更新確認待ち・保存版'));
