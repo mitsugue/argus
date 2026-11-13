@@ -1,4 +1,4 @@
-import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';import ts from 'typescript';
 const handlers={};const notices=[];const opened=[];
 const self={registration:{scope:'https://example.org/argus/',showNotification:async(title,options)=>notices.push({title,options})},
   addEventListener:(name,fn)=>handlers[name]=fn,clients:{matchAll:async()=>[],openWindow:async url=>opened.push(url)}};
@@ -71,3 +71,28 @@ const appWindow = (log, navigate) => [{url:'https://example.org/argus/#today',
   assert.deepEqual(w.log, [['open','https://example.org/argus/#asset/SOXL']]);
 }
 console.log('Web Push: symbol screen links and navigate fallback to openWindow PASS');
+
+// 2026-11-13: each delivery record in Settings says which notice it was and when it was sent.
+{
+  const label={exports:{}};
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/lib/pushRecordLabel.ts','utf8'),
+    {compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,{exports:label.exports,Date,Number});
+  const kind=label.exports.pushRecordKindJa;
+  assert.equal(kind('jp-monthly-sq-2026-11:DAY'),'11月のSQ・当日');
+  assert.equal(kind('jp-monthly-sq-2026-11:PREVIOUS_SESSION'),'11月のSQ・最終取引日');
+  assert.equal(kind('jp-monthly-sq-2026-12:WEEK'),'12月のSQ・週の案内');
+  assert.equal(kind('news:fiscal:abc'),'財政・金利の警戒変化');
+  assert.equal(kind('news:nie-1:HIGH'),'重大ニュース');
+  assert.equal(kind('owner-change:pair:NIKKEI_2X:up:2026-11-13:4'),'監視銘柄の急騰・急落');
+  assert.equal(kind('test:1234'),'確認通知');
+  for (const unknown of [undefined,null,'',{},'jp-monthly-sq-2026-11:LATER']) assert.equal(kind(unknown),'通知');
+  assert.equal(label.exports.pushRecordSentJa(null),'未送信');
+  assert.match(label.exports.pushRecordSentJa(Date.parse('2026-11-12T23:00:30Z')/1000),/2026\/11\/13 8:00:30/);
+  // The server keys these exact shapes (argus_web_push / jp_market_events / argus_jp_fiscal_runtime).
+  const py=['../argus_web_push.py','../jp_market_events.py','../argus_jp_fiscal_runtime.py'].map(f=>fs.readFileSync(f,'utf8')).join('\n');
+  for (const shape of ['"jp-monthly-sq-" + contract.strftime("%Y-%m")','"DAY" if today == sq_day else "PREVIOUS_SESSION"',"'news:'+event_id","'owner-change:'+event_id","'test:'+str(uuid.uuid4())","'news:fiscal:'+packet['id']"])
+    assert.ok(py.includes(shape),shape);
+  const panel=fs.readFileSync('src/components/settings/WebPushPanel.tsx','utf8');
+  assert.ok(panel.includes('pushRecordKindJa(d.event_key)')&&panel.includes('pushRecordSentJa(d.attempted)'));
+  console.log('通知の送った記録: 知らせの種類と送信の時刻 PASS');
+}
