@@ -77,6 +77,7 @@ export function validEquityCalendar(value: unknown): value is EquityCalendar {
 }
 
 const WEEKDAY = ['日', '月', '火', '水', '木', '金', '土'];
+const SQ_KINDS = new Set(['SQ', 'MAJOR_SQ']);
 /** "10/23(金) 8:30" or "12/29(火)" in Japan time. */
 export function equityEventWhen(event: EquityCalendarEvent): string {
   if (event.kind==='CORPORATE_EARNINGS' && event.sourceFromDate && event.sourceToDate) {
@@ -95,6 +96,13 @@ export function equityEventDistance(event: EquityCalendarEvent, now = Date.now()
     const days=Math.round((Date.parse(event.date)-Date.parse(today))/86400000);
     return days===0?'米国の今日':days===1?'米国の明日':days>1?`${days}日後`: '米国日付の終了';
   }
-  if (!event.dateOnly && Number.isFinite(Date.parse(event.at)) && Date.parse(event.at) <= now) return '発表済み';
+  if (SQ_KINDS.has(event.kind) && !event.dateOnly) {
+    // 2026-11-13 (owner: 「算出済み」にする): an SQ is calculated, not
+    // announced. Its value comes from the constituents' opening prices, so the
+    // row reads 算出済み from the 9:00 cash open, not from the 8:45 shown
+    // (the derivatives day session); before that it is still 今日.
+    const opening = Date.parse(`${event.date}T09:00:00+09:00`);
+    if (Number.isFinite(opening) && opening <= now) return '算出済み';
+  } else if (!event.dateOnly && Number.isFinite(Date.parse(event.at)) && Date.parse(event.at) <= now) return '発表済み';
   return event.daysUntil <= 0 ? '今日' : event.daysUntil === 1 ? '明日' : `${event.daysUntil}日後`;
 }
