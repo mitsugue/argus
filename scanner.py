@@ -53394,18 +53394,26 @@ def _jquants_catalysts():
             any_ok = True
     except Exception:
         pass
-    for sym, _ in _JP_CAT_SYMBOLS:  # latest disclosed financials (DisclosedDate)
+    for sym, _ in _JP_CAT_SYMBOLS:  # latest disclosed financials
         try:
-            r = requests.get(f"{_JQUANTS_BASE}/fins/details", headers=headers, params={"code": sym}, timeout=10)
-            if r.status_code == 200:
-                body = r.json()
-                rows = body.get("data") or body.get("details") or body.get("fins_details") or []
-                rows = [x for x in rows if isinstance(x, dict) and x.get("DisclosedDate")]
-                if rows:
-                    latest = sorted(rows, key=lambda x: x["DisclosedDate"])[-1]
-                    details[sym] = {"date": latest.get("DisclosedDate"),
-                                    "type": latest.get("TypeOfDocument", "") or "financial_summary"}
-                    any_ok = True
+            # 2026-11-13: this used to read /fins/details with the V1 field
+            # names (DisclosedDate / TypeOfDocument). V1 ended on 2026-06-01,
+            # so every row was filtered out and the result was always empty,
+            # with no error. /fins/summary is the V2 disclosure list the
+            # earnings history already reads; its rows carry DiscDate / DocType.
+            rows = _jquants_paginated(
+                "/fins/summary", {"code": sym}, max_pages=5, request_timeout=10)
+            dated = [(str(x.get("DiscDate") or x.get("DisclosedDate") or "")[:10], x)
+                     for x in rows]
+            dated = [(day, x) for day, x in dated
+                     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day)]
+            if dated:
+                day, latest = max(dated, key=lambda item: item[0])
+                details[sym] = {"date": day,
+                                "type": str(latest.get("DocType")
+                                            or latest.get("TypeOfDocument") or "")
+                                or "financial_summary"}
+                any_ok = True
         except Exception:
             pass
     data = _jquants_catalysts_reaged(
