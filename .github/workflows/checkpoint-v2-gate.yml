@@ -57,6 +57,9 @@ jobs:
       - name: Fetch one exact public production-shaped state (read-only GET)
         shell: bash
         env:
+          # 本番のサーバーの住所を設定の値で差し替える時の読む先。値が無い時は、
+          # 下の curl の既定の住所を使う。
+          ARGUS_SNAPSHOT_URL: ${{ vars.ARGUS_BACKEND_URL && format('{0}/api/argus/osint/memory-snapshot', vars.ARGUS_BACKEND_URL) || '' }}
           # Owner authentication is live in production (2026-09-28): every
           # non-exempt route answers 401 to anonymous callers.  The existing
           # operational credential admits this read-only GET exactly as the
@@ -70,7 +73,7 @@ jobs:
             --retry 8 --retry-all-errors --retry-delay 10 \
             --retry-max-time 900 --max-time 300 \
             --header "X-ARGUS-ADMIN-TOKEN: ${ARGUS_ADMIN_TOKEN}" \
-            https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot \
+            "${ARGUS_SNAPSHOT_URL:-https://argus-backend-3j2m.onrender.com/api/argus/osint/memory-snapshot}" \
             --output artifacts/checkpoint-v2-exact-source.json
           python3 -B -c 'import json,pathlib; p=pathlib.Path("artifacts/checkpoint-v2-exact-source.json"); v=json.loads(p.read_text()); assert isinstance(v,dict) and v'
       # 2026-10-19: this repository is public and its artifacts can be

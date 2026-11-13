@@ -54,6 +54,10 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  # 本番のサーバーの住所。設定の値が無い時は、いまの住所を使う。
+  ARGUS_BACKEND_URL: ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}
+
 jobs:
   patrol:
     if: github.event_name != 'workflow_dispatch' || inputs.remoteJournalRearm != true
@@ -100,7 +104,7 @@ jobs:
       - name: Capture exact backend runtime identity before mutation
         run: |
           set -euo pipefail
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           curl --fail --silent --show-error --max-time 30 \
             --max-filesize 65536 "$BE/healthz" \
             -o "$RUNNER_TEMP/runtime-health-prepare.json"
@@ -117,7 +121,7 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
             echo "::warning::ARGUS_ADMIN_TOKEN missing — skipping refresh (status snapshot only)"
           else
@@ -138,7 +142,7 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           READBACK_MAX_BYTES=$(python3 -c \
             'import argus_remote_journal as j; print(j.MAX_COMPACT_READBACK_BYTES)')
           case "$READBACK_MAX_BYTES" in
@@ -264,7 +268,7 @@ jobs:
           WATCHTOWER_EVENT_SHA: ${{ github.sha }}
           WATCHTOWER_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           # Copy exact control-plane helpers before switching to the
           # payload-only ledger branch.
           ARTIFACT_MODE=$(cat "$RUNNER_TEMP/remote-artifact-mode")
@@ -678,7 +682,7 @@ jobs:
             echo "Remote Journal receipt auth is unavailable"
             exit 1
           }
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           READBACK_MAX_BYTES=$(python3 -c \
             'import argus_remote_journal as j; print(j.MAX_COMPACT_READBACK_BYTES)')
           case "$READBACK_MAX_BYTES" in
@@ -788,7 +792,7 @@ jobs:
           WATCHTOWER_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           cp scripts/prepare_remote_journal_publish.py \
             "$RUNNER_TEMP/prepare_remote_journal_publish.py"
           cp scripts/remote_journal_publish_policy.py \
