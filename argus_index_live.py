@@ -21,12 +21,18 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Callable, Dict, Optional
 
+from argus_market_clock import JP_EQUITY, market_session
+
 SCHEMA = "argus-index-live-v1"
 SYMBOL = "^N225"
 POLL_SECONDS = 60
 FUTURES_SYMBOL = "NKD=F"          # CME Nikkei 225 (USD), quoted in index points
 POLICY_RATE_SYMBOL = "ZQ=F"       # 30-day fed funds future: 100 - price = expected policy rate
 FUTURES_POLL_SECONDS = 900
+# The delayed feed runs about 15 minutes behind (measured 2026-11-13). The one
+# read right after the 15:45 window can still be a pre-close value, so the
+# index is read once more after 16:05, when the feed has caught up with the close.
+SETTLED_CLOSE_MINUTE = 16 * 60 + 5
 _JST = timezone(timedelta(hours=9))
 
 _registered_tick = None
@@ -73,12 +79,27 @@ def parse_quote(payload: Any, *, received_epoch: float, symbol: str = SYMBOL,
 
 
 def session_window(now: datetime) -> bool:
-    """Tokyo weekday 08:55-15:45 JST, when a fresh intraday value can exist."""
+    """Tokyo trading day 08:55-15:45 JST, when a fresh intraday value can exist.
+
+    A weekday exchange holiday is not a trading day: the index does not move,
+    and treating it as a session kept the overnight future from being read for
+    about seven hours (2026-11-13)."""
     local = now.astimezone(_JST)
     if local.weekday() >= 5:
         return False
+    try:
+        if market_session(JP_EQUITY, now).get("isTradingDay") is False:
+            return False
+    except Exception:
+        pass  # an unreadable calendar keeps the weekday rule
     minutes = local.hour * 60 + local.minute
     return 8 * 60 + 55 <= minutes <= 15 * 60 + 45
+
+
+def settled_close_due(now: datetime) -> bool:
+    """After 16:05 JST: the delayed feed has caught up with the 15:30 close."""
+    local = now.astimezone(_JST)
+    return local.hour * 60 + local.minute >= SETTLED_CLOSE_MINUTE
 
 
 def refresh_once(get: Callable[..., Any], now_epoch: Optional[float] = None) -> Optional[Dict[str, Any]]:
@@ -163,6 +184,7 @@ def refresh_policy_rate_once(get: Callable[..., Any], now_epoch: Optional[float]
 def _loop(get: Callable[..., Any], sleep: Callable[[float], None],
           clock: Callable[[], float] = time.monotonic) -> None:
     after_close_done = None
+    settled_close_done = None
     futures_read_at = None
     while True:
         now = datetime.now(timezone.utc)
@@ -174,6 +196,9 @@ def _loop(get: Callable[..., Any], sleep: Callable[[float], None],
             if after_close_done != local_day:
                 refresh_once(get)          # one read outside the window (boot, after the close)
                 after_close_done = local_day
+            elif settled_close_done != local_day and settled_close_due(now):
+                refresh_once(get)          # the close itself, once the delayed feed has caught up
+                settled_close_done = local_day
             if futures_read_at is None or clock() - futures_read_at >= FUTURES_POLL_SECONDS:
                 refresh_futures_once(get)
                 refresh_policy_rate_once(get)
