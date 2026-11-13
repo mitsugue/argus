@@ -17,6 +17,15 @@ const cpi = real.events.find(e => e.kind === 'JP_CPI');
 assert.equal(c.equityEventWhen(cpi), '10/23(金) 8:30');
 assert.equal(c.equityEventDistance({ ...cpi, daysUntil: 0 }, Date.parse('2026-10-23T08:00:00+09:00')), '今日');
 assert.equal(c.equityEventDistance({ ...cpi, daysUntil: 0 }, Date.parse('2026-10-23T09:00:00+09:00')), '発表済み');
+// 2026-11-13 (owner): an SQ is calculated from the 9:00 opening prices, never "announced".
+for (const kind of ['SQ', 'MAJOR_SQ']) {
+  const sq = { ...cpi, kind, eventId: 'jp-monthly-sq-2026-11', date: '2026-11-13',
+    at: '2026-11-13T08:45:00+09:00', dateOnly: false, daysUntil: 0 };
+  assert.equal(c.equityEventDistance(sq, Date.parse('2026-11-13T08:50:00+09:00')), '今日');
+  assert.equal(c.equityEventDistance(sq, Date.parse('2026-11-13T09:00:00+09:00')), '算出済み');
+  assert.equal(c.equityEventDistance(sq, Date.parse('2026-11-13T15:49:00+09:00')), '算出済み');
+  assert.equal(c.equityEventDistance({ ...sq, daysUntil: 1, date: '2026-11-14' }, Date.parse('2026-11-13T15:49:00+09:00')), '明日');
+}
 
 // Malformed or authority-carrying data is rejected.
 for (const mutate of [
