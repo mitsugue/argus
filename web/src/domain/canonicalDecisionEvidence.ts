@@ -43,7 +43,11 @@ const PREDICTION_POLICY = Object.freeze({
 
 // Evidence older than this cannot set the decision cutoff — the backend TTL is
 // 120s, so a stale payload means the pipe itself is stale.
-const MAX_EVIDENCE_AGE_MS = 10 * 60 * 1000;
+// 2026-11-13 (owner: 期限を間隔に合わせて伸ばす): the evidence is read every
+// 600 s (useDecisionEvidence.ts), so 10 minutes left every symbol in
+// 見送り・データ待ち for up to two minutes of each read. Now the read interval
+// + the 120 s server cache + one response (60 s).
+export const MAX_EVIDENCE_AGE_MS = 13 * 60 * 1000;
 
 const REFERENCE_STATUSES: ReadonlySet<string> =
   new Set(['AVAILABLE', 'MISSING', 'CONFLICT', 'STALE']);
