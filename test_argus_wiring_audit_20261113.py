@@ -209,3 +209,29 @@ def test_the_resident_tick_no_longer_runs_an_ai_judgment(monkeypatch):
     assert collected == [1] and forbidden == []
     # The weekday judgment through the route is untouched.
     assert any(rule.rule == "/api/argus/ai-judgment/run" for rule in scanner.app.url_map.iter_rules())
+
+
+# ── 見立ての作り直しの失敗の印 ──────────────────────────────────────────
+
+def test_a_failure_after_the_saved_edition_stays_visible_until_a_newer_edition(monkeypatch):
+    edition = {"unifiedStatus": "GENERATED", "presentationStatus": "GENERATED",
+               "unifiedSummary": {"view": "fixture"}, "generatedAt": "2026-11-13T00:00:00Z",
+               "aiDiagnostics": {"completedAt": "2026-11-13T00:00:00Z"}}
+    monkeypatch.setattr(scanner, "_market_brief_history_restore", lambda: None)
+    monkeypatch.setattr(scanner, "_market_brief_generation_gate", lambda: None)
+    monkeypatch.setattr(scanner, "_MARKET_BRIEF", {"data": dict(edition), "lastSuccessful": dict(edition)})
+    monkeypatch.setattr(scanner, "_MARKET_BRIEF_WORKER", {"status": "GENERATED", "lastAttemptMonotonic": 1.0})
+    schedule = {}
+    monkeypatch.setattr(scanner, "_MARKET_BRIEF_SCHEDULE", schedule)
+    assert "lastFailedAt" not in scanner._market_brief_cached_response()["generationWorker"]
+    # Two failed attempts for the 10:00 update time; the worker reports GENERATED again.
+    schedule["failedAttempts"] = {"key": "SCHEDULED|10:00|", "count": 2, "at": "2026-11-13T01:05:00Z"}
+    worker = scanner._market_brief_cached_response()["generationWorker"]
+    assert worker["status"] == "GENERATED" and worker["lastFailedAt"] == "2026-11-13T01:05:00Z"
+    assert "lastAttemptMonotonic" not in worker
+    # A newer edition clears it; an unreadable time never shows one.
+    newer = {**edition, "aiDiagnostics": {"completedAt": "2026-11-13T02:00:00Z"}}
+    scanner._MARKET_BRIEF["lastSuccessful"] = newer
+    assert "lastFailedAt" not in scanner._market_brief_cached_response()["generationWorker"]
+    schedule["failedAttempts"] = {"key": "x", "count": 1, "at": "not-a-time"}
+    assert scanner._market_brief_failed_since_edition() is None

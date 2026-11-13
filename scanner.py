@@ -19613,10 +19613,33 @@ def _market_brief_cached_response():
         # Its prose and calculations stay together, never on the pending inputs.
         cached = {**cached, 'retainedPresentation': cached.get('retainedPresentation') or retained,
             'lastSuccessfulAiAt': (retained.get('aiDiagnostics') or {}).get('completedAt')}
-    return {**cached, "generationWorker": {
-        key: value for key, value in _MARKET_BRIEF_WORKER.items()
-        if key != "lastAttemptMonotonic"},
+    worker = {key: value for key, value in _MARKET_BRIEF_WORKER.items()
+              if key != "lastAttemptMonotonic"}
+    failed_at = _market_brief_failed_since_edition()
+    if failed_at:
+        worker["lastFailedAt"] = failed_at
+    return {**cached, "generationWorker": worker,
         "generationGate": _market_brief_generation_gate()}
+
+
+def _market_brief_failed_since_edition():
+    """When a rewrite failed after the saved edition, its time; otherwise None.
+
+    2026-11-13 (audit): after the second failed attempt for one update time
+    the worker serves the saved edition again and reports GENERATED, so the
+    screen lost its 更新失敗 mark until the next update time. The failure is
+    kept apart from the worker status, which still decides the pacing."""
+    failed = _MARKET_BRIEF_SCHEDULE.get("failedAttempts") or {}
+    try:
+        failed_at = datetime.fromisoformat(str(failed.get("at")).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if failed_at.tzinfo is None:
+        return None
+    edition_at = _market_brief_edition_at(_MARKET_BRIEF.get("lastSuccessful") or {})
+    if edition_at is not None and failed_at <= edition_at:
+        return None
+    return failed.get("at")
 
 
 @app.route("/api/argus/market-brief")

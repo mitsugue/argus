@@ -34,6 +34,9 @@ _ALLOWED_SCANNER_SCOPES = {
     "_market_brief_model_comparison_worker", "api_argus_admin_model_comparison",
     "_market_brief_refresh", "api_argus_market_brief",
     "_market_brief_cached_response", "get_daily_digest",
+    # 2026-11-13: when a rewrite failed after the saved edition (its time only),
+    # for the same cached response.
+    "_market_brief_failed_since_edition",
     "_market_brief_worker_tick", "_market_brief_history_restore", "_market_brief_history_save", "_market_brief_history_outcomes", "_market_brief_history_sync",
     "_market_brief_history_head_load", "_market_brief_history_head_save", "_market_brief_history_head_path",
     "_market_brief_track_record_response",

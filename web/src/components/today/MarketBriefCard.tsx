@@ -41,9 +41,17 @@ export function briefWaitingTitle(brief: MarketBrief): string {
   return '見立て待ち';
 }
 
+/** A rewrite failed after the edition shown, even when the worker reports GENERATED
+ * again (after the second attempt for one update time the saved edition stands). */
+export function failedSinceEdition(brief: MarketBrief | null): boolean {
+  const failed = brief?.generationWorker?.lastFailedAt;
+  return typeof failed === 'string' && Number.isFinite(Date.parse(failed));
+}
+
 export function retainedBriefNote(brief: MarketBrief | null, requestFailed: boolean): string {
   if (requestFailed) return '更新確認待ち・保存版';
   if (brief?.generationWorker?.status === 'RUNNING') return '作成中・保存版';
+  if (failedSinceEdition(brief)) return '更新失敗・保存版';
   if (['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief?.generationWorker?.status ?? '')
     || ['FAILED', 'INVALID_RESPONSE', 'UNAVAILABLE'].includes(brief?.unifiedStatus ?? '')) return '更新失敗・保存版';
   return '保存版';
@@ -61,7 +69,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   const cutoffJa = cutoff ? new Date(cutoff).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : null;
   const chartChip = signals ? `6サイン 成立 ${signals.activeCount} / ${signals.total}${cutoffJa ? `（${cutoffJa}）` : ''}`
     : market === 'US' ? '米国: 6サインは適用外' : brief?.chips.chart;
-  const updateState = brief ? (loading || error || retained ? <span role="status" className="at-brief__update">
+  const updateState = brief ? (loading || error || retained || failedSinceEdition(responseBrief) ? <span role="status" className="at-brief__update">
     {loading ? (retained ? retainedBriefNote(responseBrief, false) : '確認中') : retainedBriefNote(responseBrief, Boolean(error))}
     {error && <button type="button" onClick={retry} disabled={loading} aria-label="見立てを再確認">↻</button>}
   </span> : null) : loading ? <p className="at-brief__update"><TriangleStepLoader label="読み込み中" /></p>
