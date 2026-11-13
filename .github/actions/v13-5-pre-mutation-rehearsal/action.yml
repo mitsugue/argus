@@ -4,6 +4,9 @@ inputs:
   owner-auth:
     required: false
     default: '0'
+  backend-url:
+    required: false
+    default: 'https://argus-backend-3j2m.onrender.com'
   candidate-sha:
     required: true
   candidate-tree:
@@ -80,12 +83,13 @@ runs:
       working-directory: web
       env:
         DEPLOY_BASE: /argus/
-        VITE_ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
+        VITE_ARGUS_BACKEND_URL: ${{ inputs.backend-url }}
         VITE_ARGUS_BUILD_SHA: ${{ inputs.build-sha }}
         VITE_ARGUS_OWNER_AUTH_REQUIRED: ${{ inputs.owner-auth }}
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
       run: |
         case "$VITE_ARGUS_OWNER_AUTH_REQUIRED" in 0|1) ;; *) exit 1 ;; esac
+        case "$VITE_ARGUS_BACKEND_URL" in https://?*) ;; *) exit 1 ;; esac
         npm run build
     - id: receipts
       name: Seal the mutation-free production rehearsal

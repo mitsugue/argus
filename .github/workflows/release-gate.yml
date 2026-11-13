@@ -233,6 +233,7 @@ jobs:
         uses: ./.github/actions/v13-5-pre-mutation-rehearsal
         with:
           owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          backend-url: ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}
           candidate-sha: ${{ github.event.pull_request.head.sha }}
           candidate-tree: ${{ steps.candidate.outputs.tree }}
           build-sha: ${{ github.event.pull_request.head.sha }}

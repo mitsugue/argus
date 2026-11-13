@@ -49,7 +49,7 @@ jobs:
           mkdir -p artifacts/model-comparison
           python3 -B - <<'PY'
           import json, os, time, urllib.request
-          base = "https://argus-backend-3j2m.onrender.com/api/argus/admin/model-comparison"
+          base = "${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}/api/argus/admin/model-comparison"
           headers = {"X-ARGUS-ADMIN-TOKEN": os.environ["ARGUS_ADMIN_TOKEN"], "Content-Type": "application/json"}
           def call(method, body=None):
               data = json.dumps(body).encode() if body is not None else None

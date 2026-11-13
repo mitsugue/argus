@@ -44,7 +44,7 @@ jobs:
           if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
             echo "::warning::ARGUS_ADMIN_TOKEN missing — skipping generation (snapshot only)"
           else
-            BE="https://argus-backend-3j2m.onrender.com"
+            BE="${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}"
             # Wait only on a read-only readiness contract during a deploy.
             # Do not retry provider calls after an ambiguous POST response.
             python3 scripts/macro_readiness.py --url "$BE/readyz"
@@ -119,7 +119,7 @@ jobs:
           # operational credential; nothing is written and no owner session is used.
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}"
           for i in 1 2 3 4; do
             curl -sf --max-time 60 -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" "$BE/api/argus/macro-event-analysis?limit=50" \
               -o "$RUNNER_TEMP/macro.json" && break

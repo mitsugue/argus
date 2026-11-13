@@ -29,7 +29,7 @@ jobs:
           DOC="$RUNNER_TEMP/ai-cost.json"
           code=$(curl -sS -o "$DOC" -w "%{http_code}" --max-time 150 \
             -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
-            "https://argus-backend-3j2m.onrender.com/api/argus/ai-cost?calls=1")
+            "${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}/api/argus/ai-cost?calls=1")
           echo "http=$code"
           test "$code" = "200"
           mkdir -p "$RUNNER_TEMP/ai-usage"

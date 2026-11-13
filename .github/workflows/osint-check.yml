@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Fetch investigation (public GET, cached-only)
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}"
           curl -s --max-time 30 "$BE/api/argus/osint/investigation?symbol=${{ github.event.inputs.symbol }}" -o inv.json
           python3 - <<'PY'
           import json

@@ -188,6 +188,7 @@ jobs:
         uses: ./.github/actions/v13-5-pre-mutation-rehearsal
         with:
           owner-auth: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
+          backend-url: ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}
           candidate-sha: ${{ steps.candidate.outputs.sha }}
           candidate-tree: ${{ steps.candidate.outputs.tree }}
           release-merge-sha: ${{ github.sha }}
@@ -280,7 +281,7 @@ jobs:
         run: |
           node web/scripts/release-state-machine.mjs infrastructure \
             --contract release/v13-snapshot-readiness-contract.json \
-            --base-url https://argus-backend-3j2m.onrender.com \
+            --base-url ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }} \
             --expected-sha '${{ needs.scope.outputs.backend_sha }}' \
             --accept-successors-on main \
             --timeout-seconds 900 \
@@ -338,7 +339,7 @@ jobs:
         run: |
           python3 -B scripts/verify_public_candidate_release.py \
             --public-url https://mitsugue.github.io/argus/ \
-            --backend-url https://argus-backend-3j2m.onrender.com \
+            --backend-url ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }} \
             --expected-product-version '${{ steps.release.outputs.product_version }}' \
             --expected-frontend-version '${{ steps.release.outputs.frontend_version }}' \
             --expected-frontend-sha '${{ github.sha }}' \
@@ -380,7 +381,7 @@ jobs:
       - name: Require matching frontend reader and server authentication modes
         env:
           ARGUS_PUBLIC_URL: https://mitsugue.github.io/argus/
-          ARGUS_BACKEND_URL: https://argus-backend-3j2m.onrender.com
+          ARGUS_BACKEND_URL: ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}
           ARGUS_EXPECTED_SHA: ${{ github.sha }}
           ARGUS_ACCEPTANCE_OWNER_AUTH: ${{ vars.ARGUS_ACCEPTANCE_OWNER_AUTH || '0' }}
         run: node web/scripts/owner-mode-consistency.mjs
@@ -402,7 +403,7 @@ jobs:
         run: |
           node web/scripts/release-state-machine.mjs trigger-business \
             --contract release/v13-snapshot-readiness-contract.json \
-            --base-url https://argus-backend-3j2m.onrender.com \
+            --base-url ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }} \
             --expected-sha '${{ needs.candidate-identity.outputs.backend_sha }}' \
             --trigger-id 'v13-production-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}' \
             --out artifacts/business-snapshot-trigger/trigger.json
@@ -415,8 +416,9 @@ jobs:
         # steady-state warmer).
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
+          ARGUS_BACKEND_URL: ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}
         run: |
-          if python3 scripts/run_intel_collect.py --base "https://argus-backend-3j2m.onrender.com" --timeout 300 > /dev/null 2>&1; then
+          if python3 scripts/run_intel_collect.py --base "$ARGUS_BACKEND_URL" --timeout 300 > /dev/null 2>&1; then
             echo "収集処理の完了を確認しました。応答本文は表示しません。"
           else
             echo "::warning title=collect-warm::収集処理の完了を確認できませんでした。次の定期実行で再確認します。"
@@ -489,7 +491,7 @@ jobs:
         run: |
           node web/scripts/release-state-machine.mjs verify-business \
             --contract release/v13-snapshot-readiness-contract.json \
-            --base-url https://argus-backend-3j2m.onrender.com \
+            --base-url ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }} \
             --expected-sha '${{ needs.candidate-identity.outputs.backend_sha }}' \
             --trigger-artifact artifacts/business-snapshot-trigger/trigger.json \
             --out artifacts/business-snapshot-acceptance/gate.json

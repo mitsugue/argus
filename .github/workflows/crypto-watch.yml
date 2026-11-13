@@ -18,7 +18,7 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}"
           if [ -z "$ARGUS_ADMIN_TOKEN" ]; then
             echo "::warning::ARGUS_ADMIN_TOKEN absent — crypto scan skipped"; exit 0
           fi
