@@ -1,6 +1,7 @@
 import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React,{useState} from 'react';
 import {appPushRegistration,applicationKey,pushReceipts,pushRequest,type PushStatus} from '../../lib/webPush';
+import {pushRecordKindJa,pushRecordSentJa} from '../../lib/pushRecordLabel';
 import './AiUsagePanel.css';
 import './WebPushPanel.css';
 const initialToken=()=>{try{return localStorage.getItem('argus.ownerSyncToken.v1')||'';}catch{return '';}};
@@ -57,8 +58,8 @@ export function WebPushPanel(){
       {status?.enabled&&<><button disabled={busy} onClick={()=>void test()}>1分後に確認通知</button><button disabled={busy} onClick={()=>void disable()}>この端末への通知を停止</button></>}</div>
     {busy&&<p><TriangleStepLoader label="確認中" /></p>}{message&&<p role="status">{message}</p>}
     {status&&<><p>サーバー設定：{status.enabled?'有効':'停止中'}</p>
-      {status.deliveries.map(d=><article key={d.id} className="ai-usage__group"><strong>{labels[d.status]||'状態を確認中'}</strong>
-        <p>表示 {stamp(d.display_at)} · 開封 {stamp(d.opened_at)}</p></article>)}
+      {status.deliveries.map(d=><article key={d.id} className="ai-usage__group"><strong>{pushRecordKindJa(d.event_key)}：{labels[d.status]||'状態を確認中'}</strong>
+        <p>送信 {pushRecordSentJa(d.attempted)} · 表示 {stamp(d.display_at)} · 開封 {stamp(d.opened_at)}</p></article>)}
       {!status.deliveries.length&&<p>配信記録なし</p>}</>}
 
   </section>;
