@@ -2419,6 +2419,39 @@ def test_bounded_segments_reject_missing_or_ambiguous_prefix(damage):
         scanner._bounded_ledger_compare('mitsugue','argus-l2b-private',BASE_SHA,PINNED_SHA)
 
 
+def test_a_long_path_is_bounded_per_response_not_by_one_budget_shared_by_all_segments():
+    """2026-11-13 production incident: four ordinary responses were refused as oversized.
+
+    The earlier fixtures were tiny, so the 2,000-commit case above passed while a
+    real path of about 1,000 commits (four 2 MiB responses) could not start.
+    """
+    sizes = []
+    inner = _segmented_compare_get(1000)
+
+    def measured(url, **kwargs):
+        response = inner(url, **kwargs)
+        sizes.append(len(response._encoded))
+        return response
+
+    with mock.patch.object(scanner.requests, 'get', side_effect=measured):
+        scanner._bounded_ledger_compare('mitsugue','argus-l2b-private',BASE_SHA,PINNED_SHA)
+    assert len(sizes) == 4
+    bound = max(sizes) + 1
+    assert sum(sizes) > bound          # one shared response-sized budget would refuse this path
+    with mock.patch.object(scanner.requests, 'get', side_effect=_segmented_compare_get(1000)), \
+            mock.patch.object(scanner, '_LEDGER_COMPARE_RESPONSE_MAX_BYTES', bound):
+        result = scanner._bounded_ledger_compare('mitsugue','argus-l2b-private',BASE_SHA,PINNED_SHA)
+    assert result == {'status':'verified','ledgerBaseCommitSha':BASE_SHA,
+                      'exactCommitSha':PINNED_SHA,'distance':1000}
+    # A single response larger than its own bound is still refused.
+    with mock.patch.object(scanner.requests, 'get', side_effect=_segmented_compare_get(1000)), \
+            mock.patch.object(scanner, '_LEDGER_COMPARE_RESPONSE_MAX_BYTES', max(sizes) - 1), \
+            pytest.raises(recovery.RecoveryBundleError, match='oversized'):
+        scanner._bounded_ledger_compare('mitsugue','argus-l2b-private',BASE_SHA,PINNED_SHA)
+    # The whole path is still bounded: the segment limit caps it at eight responses.
+    assert scanner._LEDGER_COMPARE_MAX_SEGMENTS == 8
+
+
 def test_bounded_segments_keep_total_call_byte_and_time_limits():
     with mock.patch.object(scanner.requests, 'get', side_effect=_segmented_compare_get(2001)) as get, \
             pytest.raises(recovery.RecoveryBundleError, match='incomplete'):
