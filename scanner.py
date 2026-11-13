@@ -24327,6 +24327,12 @@ _LEDGER_COMPARE_MAX_SEGMENTS = 8
 _LEDGER_COMPARE_DEADLINE_SECONDS = 90
 _LEDGER_COMPARE_RESPONSE_MAX_BYTES = \
     argus_remote_recovery.MAX_SIDECAR_BYTES
+# 2026-11-13 production incident (startup failed safe with
+# recovery_ledger_compare_oversized): the byte budget used to be this one
+# response bound shared by every segment. A real 250-commit comparison is about
+# 2 MiB, so a path of roughly 1,000 commits was refused long before the
+# 8 x 250 commit path the segments exist to admit. Each response keeps this
+# bound; the whole path may use it once per segment.
 _OSINT_LOOP_BUDGET = {"fast": 0, "balanced": 1, "deep": 2, "war_room": 3}
 _OSINT_PARSER_HEALTH = {"lastWarnings": [], "at": None}
 _OSINT_CAP_REACHED = {"count": 0}      # 検証上限到達の累計(DQ表示用)
@@ -28912,7 +28918,8 @@ def _bounded_ledger_compare(owner, repository, base_commit_sha,
         f"{base}...{exact}")
     if _budget is None:
         _budget = {"calls": _LEDGER_COMPARE_MAX_SEGMENTS,
-                   "bytes": _LEDGER_COMPARE_RESPONSE_MAX_BYTES,
+                   "bytes": (_LEDGER_COMPARE_RESPONSE_MAX_BYTES
+                             * _LEDGER_COMPARE_MAX_SEGMENTS),
                    "deadline": time.monotonic() + _LEDGER_COMPARE_DEADLINE_SECONDS}
     if _budget["calls"] <= 0 or time.monotonic() >= _budget["deadline"]:
         raise argus_remote_recovery.RecoveryBundleError(
@@ -28931,15 +28938,17 @@ def _bounded_ledger_compare(owner, repository, base_commit_sha,
             raise argus_remote_recovery.RecoveryBundleError(
                 f"recovery_ledger_compare_http_error_{response.status_code}")
         encoded = bytearray()
+        response_bytes = _LEDGER_COMPARE_RESPONSE_MAX_BYTES
         for chunk in response.iter_content(chunk_size=16 * 1024):
             if not chunk:
                 continue
             if time.monotonic() >= _budget["deadline"]:
                 raise argus_remote_recovery.RecoveryBundleError(
                     "recovery_ledger_compare_incomplete")
-            if len(chunk) > _budget["bytes"]:
+            if len(chunk) > response_bytes or len(chunk) > _budget["bytes"]:
                 raise argus_remote_recovery.RecoveryBundleError(
                     "recovery_ledger_compare_oversized")
+            response_bytes -= len(chunk)
             _budget["bytes"] -= len(chunk)
             encoded.extend(chunk)
         try:
