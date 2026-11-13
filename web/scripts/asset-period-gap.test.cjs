@@ -17,3 +17,12 @@ assert.equal(f(null, 5), null);
 const panel = fs.readFileSync('src/components/assetDesk/AssetNumbers.tsx', 'utf8');
 assert.ok(panel.includes('assetPeriodGapJa(row, 5)'), 'the stock page uses the period line');
 console.log('個別銘柄: 日経と業種との差を、期間つきで1行に PASS');
+// 2026-11-13 (owner): the stock page has no 結論 and no AI view (the same as Today).
+{
+  const card = fs.readFileSync('src/components/assetDesk/AssetDecisionCard.tsx', 'utf8');
+  assert.ok(!card.includes('OwnerOverview'), 'no stock AI view on the stock page');
+  assert.ok(!card.includes('>結論<'), 'no 結論 block');
+  assert.ok(card.includes("sectionAnchorId(sym, 'decision')") && card.includes('<AssetNikkeiGap d={d} />'),
+    'the gap line and the decision anchor stay');
+  console.log('個別銘柄: 結論とAIの見立てを外し、差の行と行き先は残す PASS');
+}
