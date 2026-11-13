@@ -224,9 +224,10 @@ def test_fe_registered_asset_facts_preserve_internal_stance_authority():
     # 内部のSDA正本と制限は維持し、別の判断経路を作らない。
     details = _read("components", "assetDesk", "AssetDecisionCard.tsx")
     summary = _read("components", "assetDesk", "AssetDecisionSummary.tsx")
-    # 2026-10-25 (owner): the stock page reads the same canonical view for its
-    # conclusion when there is no AI answer; the row shows facts only.
-    assert "d.decisionFirst" in details and "view.whyJa" in details and "view.whatChangesJa" in details
+    # 2026-10-25 (owner): the row shows facts only.
+    # 2026-11-13 (owner: 「結論AIの見立ては要りません」・Today と重複): the stock page
+    # no longer shows a conclusion; it still reads the same canonical view.
+    assert "d.decisionFirst" in details and "view.whyJa" not in details and "view.whatChangesJa" not in details
     assert "d.decisionFirst" in summary and "view.priceText" in summary
     assert "AssetEarningsDate" in summary and "AssetOutlookSummary" in summary
     assert "view.currentActionJa" not in summary and "ad-cmd" not in summary
