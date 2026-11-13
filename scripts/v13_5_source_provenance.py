@@ -769,6 +769,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_wiring_audit_20261113.py",
     ".github/workflows/osint-check.yml",
     "test_argus_model_comparison.py",
     ".github/workflows/model-comparison.yml",
