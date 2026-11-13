@@ -292,7 +292,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_jp_sector_heatmap_api.py': '4b93b1bd5fa1eed37baff43912b3a86cbd9f00e9',
     'test_jp_sector_heatmap_runtime.py': '3bb33a56d1305e1f5daac3e804f62ddb93099de7',
     'test_jp_sector_heatmap.py': 'f8a0773084f02f1629f89a2d5b97284c3eb8e674',
-    'jp_sector_heatmap_runtime.py': 'f31cb749d4bc365db5b235fdb3bf8350b9e37686',
+    'jp_sector_heatmap_runtime.py': '8989bbfaf6a0c186c9f31ba761d2e2a4f72a1d9e',
     'jp_sector_heatmap.py': '5a149728db22320a40a0e2d00d7ce3f95dc32035',
     'test_argus_material_translation.py': '80f68a5abad282c920926dbb8b9541d97da016ae',
     'test_argus_queue_v1152_backend.py': 'ec3d8c65c5b48755539e0dfdc0f93ccf6362cfb1',
@@ -769,6 +769,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_argus_close_capture_20261113.py",
     "test_argus_wiring_audit_20261113.py",
     ".github/workflows/osint-check.yml",
     "test_argus_model_comparison.py",
