@@ -583,7 +583,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/ops/wal-cursor-lifetime.md': '3837bb40b4ee79690e46252515ed8b0efffa5cd5',
     'test_argus_completed_runtime_history.py': 'b037bf4ab0aa8c7a32bd6c53dd39c675f79c9fa5',
     'test_argus_wal_cursor_runtime.py': '4b359d35f2c5e7c4b53fb090dd83bc6de368a3fc',
-    'test_caos_explicit_ordinary_dispatch.py': 'a4f831ad42d06eea78ad590dd10cca5f8573a40f',
+    'test_caos_explicit_ordinary_dispatch.py': '818e7a6331a0e0f0f461c90eb2ca5acc9bf76c22',
 }
 
 AUTHORIZED_EXTENSION_PATHS = frozenset({

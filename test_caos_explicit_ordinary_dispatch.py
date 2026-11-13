@@ -15,14 +15,16 @@ from test_caos_workflow_recovery import _workflow_step_run
 ROOT = Path(__file__).resolve().parent
 PATH = '.github/workflows/caos-scan.yml'
 TEXT = (ROOT / PATH).read_text()
-# Original operational steps at 44df055. Fixed source oracles also work when
-# the CI checkout contains only the candidate commit and no parent objects.
+# Original operational steps at 44df055, re-pinned on 2026-11-13 when the
+# backend address became ${ARGUS_BACKEND_URL:-<current address>} in every step
+# (no other change). Fixed source oracles also work when the CI checkout
+# contains only the candidate commit and no parent objects.
 BASE_STEP_SHA256 = {
-    'backend-identity': 'ccf0122c77261717512b7e75aa244cb2c06b7de5d65d30dc42f734038d284e66',
-    'caos-collection': 'c6254e75dcd1df5746a3b7ab66505fe1270d76ac6f9975e9bd2a5807839d92db',
-    'durability-flush': '56a8b0c5003f4606b9a59eb6fd3058f6c4cf1abbcf8dcb85d784c0362200ee64',
-    'future-map': '395c578df02eb69efd91c798ea78f11f854f44b57af93b2221d530eb51c6480f',
-    'mission-backup': '935361b02ab3976f6d2e7fca725cff20390e5457faae492c9de7981a0deb4eda',
+    'backend-identity': 'c74786e138774b177227c79b3846d937df40c257c25b2edb9d20ae72ebcedbe8',
+    'caos-collection': '874cc3dad03c2b756340428fdc590fafe623d68553c24c30a76751030e23c7d2',
+    'durability-flush': '29bbfbeb89e6573a32ecad640d3b9a742cd4da3c920ead5d026950a5cd4954ea',
+    'future-map': '03d13fcc2f47a1f9ac3338827bcc3d5f91e36c7cfe9815d4538620960d150390',
+    'mission-backup': 'ab8dc2e417b211bd076ddc9f8c8381804a809e669ed2dc5734d1d8b2df462e3f',
 }
 
 

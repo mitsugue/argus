@@ -28,6 +28,10 @@ concurrency:
   group: ${{ github.event_name == 'workflow_dispatch' && inputs.only == 'future_map' && 'caos-scan-future-map' || 'caos-scan-scheduled-missions' }}
   cancel-in-progress: false
 
+env:
+  # 本番のサーバーの住所。設定の値が無い時は、いまの住所を使う。
+  ARGUS_BACKEND_URL: ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}
+
 jobs:
   backend-identity:
     runs-on: ubuntu-latest
@@ -45,7 +49,7 @@ jobs:
       - name: Read live backend identity
         id: live
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           HEALTH=$(python3 scripts/workflow_http.py --name backend-health \
             --timeout 60 --url "$BE/healthz")
           READY=$(python3 scripts/workflow_http.py --name backend-ready \
@@ -105,7 +109,7 @@ jobs:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
           EXPECTED_BACKEND_SHA: ${{ needs.backend-identity.outputs.expectedBackendSha }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           [ -z "$ARGUS_ADMIN_TOKEN" ] && {
             echo "missionResult=expected_skip" >> "$GITHUB_OUTPUT"
             echo "remaining=" >> "$GITHUB_OUTPUT"
@@ -190,7 +194,7 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           [ -z "$ARGUS_ADMIN_TOKEN" ] && {
             echo "no admin token — expected_skip"
             exit 0
@@ -229,7 +233,7 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           [ -z "$ARGUS_ADMIN_TOKEN" ] && {
             echo "no admin token — expected_skip"
             exit 0
@@ -283,7 +287,7 @@ jobs:
       - name: Independently recheck health, ready, and backend identity
         id: recheck
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           HEALTH=$(python3 scripts/workflow_http.py --name durability-health \
             --timeout 60 --url "$BE/healthz")
           READY=$(python3 scripts/workflow_http.py --name durability-ready \
@@ -320,7 +324,7 @@ jobs:
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           cp scripts/workflow_http.py "$RUNNER_TEMP/workflow_http.py"
           cp scripts/remote_receipt_drain.py \
             "$RUNNER_TEMP/remote_receipt_drain.py"
@@ -403,7 +407,7 @@ jobs:
             echo "Remote Journal artifact mode was not explicitly established"
             exit 1
           }
-          BE="https://argus-backend-3j2m.onrender.com"
+          BE="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}"
           recheck_remote_artifact_mode() {
             local status
             status=$(curl --silent --show-error --max-time 60 \
@@ -529,7 +533,7 @@ jobs:
             --header-env X-ARGUS-ADMIN-TOKEN=ARGUS_ADMIN_TOKEN \
             --header-env Idempotency-Key=RECEIPT_IDEMPOTENCY_KEY \
             --header 'Content-Type: application/json' --data "$RECEIPT_PAYLOAD" \
-            --url "https://argus-backend-3j2m.onrender.com/api/argus/admin/remote-journal/commit-receipt")
+            --url "${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}/api/argus/admin/remote-journal/commit-receipt")
           echo "remote-journal-accept-receipt: $RECEIPT"
           RECEIPT_VALUES=$(printf '%s' "$RECEIPT" | python3 -c \
             'import json,sys; d=json.load(sys.stdin); assert d.get("accepted") is True; assert d.get("durabilityState") in ("pending","verified"); assert d.get("operationId"); print(d["operationId"]); print(d["durabilityState"])')
@@ -537,7 +541,7 @@ jobs:
           RECEIPT_STATE=$(printf '%s\n' "$RECEIPT_VALUES" | sed -n '2p')
           STATUS=$(python3 "$RUNNER_TEMP/remote_receipt_drain.py" \
             --name caos-scan-remote-journal-drain \
-            --base-url "https://argus-backend-3j2m.onrender.com" \
+            --base-url "${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}" \
             --operation-id "$OPERATION_ID" \
             --backend-build-sha "$BACKEND_BUILD_SHA" \
             --remote-commit-sha "$REMOTE_COMMIT_SHA" \
@@ -577,7 +581,7 @@ jobs:
         run: |
           set -u
           [ -n "$ARGUS_ADMIN_TOKEN" ] || { echo "管理者キーが未設定" >&2; exit 1; }
-          url="https://argus-backend-3j2m.onrender.com/api/argus/institutional-intelligence/collect"
+          url="${ARGUS_BACKEND_URL:-https://argus-backend-3j2m.onrender.com}/api/argus/institutional-intelligence/collect"
           for attempt in 1 2 3 4 5; do
             body=$(curl -sS --max-time 90 -X POST -H "X-ARGUS-ADMIN-TOKEN: ${ARGUS_ADMIN_TOKEN}" \
               -H 'Content-Type: application/json' --data '{"only":"future_map"}' "$url" || true)
