@@ -43,5 +43,27 @@ const fresh = { ...original.view, generatedAt: '2026-10-14T01:00:00Z' };
   const s = isolated('src/hooks/useMarketShock.ts', { 'market-shock': shock });
   assert.equal(s.exports.useMarketShock().previousObservation, true,
     'empty restored shock view is not evidence that there is currently no shock');
+  // 2026-11-13 (audit): a failed read is retried soon (1, 2, 5 minutes), a restored
+  // failed view too (still no immediate read on resume), and a success clears it.
+  {
+    const recording = harness.replace("window:{setTimeout:()=>1,clearTimeout(){}",
+      "window:{setTimeout:(fn,ms)=>{const t={fn,ms,stopped:false,once:true};timers.push(t);return timers.length;},clearTimeout:(id)=>{if(timers[id-1])timers[id-1].stopped=true;}");
+    assert.notEqual(recording, harness, 'the harness timer seam exists');
+    const spied = new Function('require', recording + '\nreturn isolated;')(require);
+    const failed = { status: 'error', view: { ...original.view, events: [] } };
+    const r = spied('src/hooks/useNewsIntelligence.ts', { 'news-intelligence': failed }, { schemaVersion: 'wrong' });
+    r.exports.useNewsIntelligence(); r.effects.forEach(fn => fn()); await tick();
+    assert.equal(r.calls, 0, 'resume still performs no immediate read');
+    const first = r.timers.find(t => t.once && t.ms === 60000);
+    assert(first, 'a restored failed view arms the one-minute retry');
+    first.fn(); await tick();
+    assert(r.calls >= 1, 'the retry reads');
+    assert(r.timers.find(t => t.once && t.ms === 120000 && !t.stopped), 'a second failure waits two minutes');
+    const ok = spied('src/hooks/useNewsIntelligence.ts', { 'news-intelligence': failed }, fresh);
+    ok.exports.useNewsIntelligence(); ok.effects.forEach(fn => fn()); await tick();
+    ok.timers.find(t => t.once && t.ms === 60000).fn(); await tick();
+    assert.equal(ok.slots.at(-1).status, 'data', 'the retry recovers');
+    assert(!ok.timers.some(t => t.once && t.ms === 120000), 'a success arms no further retry');
+  }
   console.log('PASS retained rich news/shock observations: original receipt/freshness unchanged, explicit prior basis, no current news gate from restoration, zero startup reads, normal refreshed gate preserved.');
 })().catch(e => { console.error(e); process.exitCode = 1; });

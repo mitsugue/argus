@@ -224,14 +224,26 @@ def canonical_rank_key(*, tier: str, importance: str, owner_relevance: Optional[
     )
 
 
-def lifecycle_state(days: Optional[int]) -> str:
+def lifecycle_state(days: Optional[int], event_time_utc: Optional[str] = None,
+                    now: Optional[datetime] = None) -> str:
     """UPCOMING → IMMINENT (today) → RELEASED (already passed). Result/reaction
-    states are set elsewhere once verified data exists (none fabricated here)."""
+    states are set elsewhere once verified data exists (none fabricated here).
+
+    2026-11-13 (audit): an event with an exact release time stayed IMMINENT for
+    the rest of its day, so Today listed the released PPI twice (released in one
+    feed, 本日 in this one). Past its exact time it is RELEASED; a date-only
+    event keeps the whole day."""
     if days is None:
         return "UPCOMING"
     if days < 0:
         return "RELEASED"
     if days == 0:
+        try:
+            at = datetime.fromisoformat(str(event_time_utc).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            at = None
+        if at is not None and at.tzinfo is not None and (now or datetime.now(timezone.utc)) >= at:
+            return "RELEASED"
         return "IMMINENT"
     return "UPCOMING"
 
@@ -311,7 +323,7 @@ def prioritize_event(event: Dict[str, Any], owner_symbols: set, held_symbols: se
         "proximity": event.get("escalation") or "normal",
         "priorityScore": int(round(min(100.0, score))),
         "priorityReasons": reasons[:4],
-        "lifecycle": lifecycle_state(days),
+        "lifecycle": lifecycle_state(days, event.get("eventTimeUtc"), ctx.get("now")),
     }
 
 

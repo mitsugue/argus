@@ -79,7 +79,8 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
   const edition = editorial ? editorialEdition(brief) : null;
   const gateNote = gateNoteJa(responseBrief ?? brief);
   if (edition) return <ArgusEditorialSurface brief={edition} updateState={updateState} retained={edition !== brief}
-    generationStatus={responseBrief?.generationWorker?.status} retainedNote={gateNote} criticalNews={criticalNews} />;
+    generationStatus={responseBrief?.generationWorker?.status} retainedNote={gateNote} criticalNews={criticalNews}
+    featuredEvent={featuredEvent} />;
   const unified = brief.unifiedSummary;
   const hasSixSections = unified && ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'].every(key => {
     const row = unified.sections?.[key as keyof typeof unified.sections];

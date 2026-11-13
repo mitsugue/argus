@@ -575,6 +575,15 @@ console.log('argus-engine.test: all checks passed');
     overnight.session === 'OVERNIGHT' && overnight.extendedHours === true
     && quoteFreshnessJa(overnight).startsWith('時間外(夜間) ')
     && !quoteFreshnessJa(regularAfter).includes('時間外'));
+  // 2026-11-13 (audit): a known but older exact time reads as that time, not 取得時刻不明.
+  const { quoteClockJa } = require(path.join(root, 'src/domain/liveQuote.ts'));
+  const known = { delayClass: 'UNKNOWN', provider: 'moomoo-rt', sourceTimestamp: '2026-11-13T13:56:07Z' };
+  check('an older exact time is shown as the time it is from',
+    quoteFreshnessJa(known) === '11/13 22:56 JST 時点（moomoo-rt）'
+    && quoteClockJa(known) === '22:56'
+    && quoteClockJa({ sourceTimestamp: '2026-11-13' }) === null
+    && quoteClockJa({ sourceTimestamp: null }) === null
+    && quoteClockJa({ sourceTimestamp: 'not-a-time' }) === null);
 }
 
 if (failed) process.exit(1);
