@@ -53831,13 +53831,15 @@ def _dispatch_research_missions(nowt):
 
 def _residency_ai_tick():
     """Resident replacement for the flaky GitHub */15 cron (v10.191). Keeps the
-    public-feed intel mesh warm and, during market hours, re-runs the AI judgment +
-    RECOMMEND — self-gated by the SAME budget / 14-min interval / daily cap as the
-    /ai-judgment/run route, so it's idempotent with any cron still firing (double
-    fire → the gate blocks the second). Never raises (that would kill the scheduler
-    thread). The legacy buy-candidates call below produces non-persistent
-    EVIDENCE_ONLY research leads; no order, notification, prediction, or final
-    decision path is created here."""
+    public-feed intel mesh warm during market hours. Never raises (that would
+    kill the scheduler thread). No model call, order, notification, prediction,
+    or final decision path is created here.
+
+    2026-11-13 (owner: 止めたままにして、処理を外す): the in-session AI
+    judgment re-run is removed. It never ran: the gate it called reads the HTTP
+    request (`_client_meta`), which is absent on the scheduler thread, and the
+    error was swallowed every time. The weekday judgment through the
+    /ai-judgment/run route (prediction-ledger.yml) is unchanged."""
     try:
         nowt = time.time()
         # 2026-10-25 (owner: 無駄な動きの総点検): the same public feeds are also
@@ -53853,12 +53855,6 @@ def _residency_ai_tick():
                 collect_institutional_intel()
             except Exception:
                 pass
-        if not in_session:
-            return                                    # only spend AI budget in-session
-        allowed, _info, _code = _ai_run_gate(force=False)   # budget + interval + daily cap
-        if not allowed:
-            return
-        _execute_ai_judgment(run_mode="scheduled", checker="flash")
     except Exception as e:
         add_log(f"[residency] AI tick failed: {type(e).__name__}")
 

@@ -187,3 +187,25 @@ def test_recent_disclosures_are_read_from_the_v2_list_with_its_field_names(monke
     assert "9984" not in data["details"]                   # a disclosure from May is outside the window
     assert {params.get("code") for url, params in calls if url.endswith("/fins/summary")} == {
         symbol for symbol, _ in scanner._JP_CAT_SYMBOLS}
+
+
+# ── 定期の AI 判定: 処理を外す(オーナーの判断 2026-11-13) ────────────────
+
+def test_the_resident_tick_no_longer_runs_an_ai_judgment(monkeypatch):
+    # The call it removes never ran: its gate reads the HTTP request, which the
+    # scheduler thread does not have. The tick now only refreshes free feeds.
+    import inspect
+    source = inspect.getsource(scanner._residency_ai_tick)
+    for removed in ("_execute_ai_judgment(", "_ai_run_gate("):
+        assert removed not in source, removed
+    collected, forbidden = [], []
+    monkeypatch.setattr(scanner, "_jp_market_open", lambda: True)
+    monkeypatch.setattr(scanner, "_us_market_open", lambda: False)
+    monkeypatch.setattr(scanner, "_LAST_INTEL_REFRESH", [0.0])
+    monkeypatch.setattr(scanner, "collect_institutional_intel", lambda: collected.append(1))
+    monkeypatch.setattr(scanner, "_ai_run_gate", lambda **kw: forbidden.append("gate") or (True, {}, 200))
+    monkeypatch.setattr(scanner, "_execute_ai_judgment", lambda **kw: forbidden.append("run"))
+    scanner._residency_ai_tick()
+    assert collected == [1] and forbidden == []
+    # The weekday judgment through the route is untouched.
+    assert any(rule.rule == "/api/argus/ai-judgment/run" for rule in scanner.app.url_map.iter_rules())
