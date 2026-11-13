@@ -13,16 +13,23 @@ export type LiveAuthorityKind = 'marketRegime' | 'actionLabels'
   | 'importantEvents' | 'eventRadar' | 'actionAlerts' | 'dashboardEvents';
 export type LiveAuthorityState = 'fresh' | 'expired' | 'invalid';
 
+// 2026-11-13 (owner: 期限を間隔に合わせて伸ばす). The 2026-10-06 polling
+// policy lengthened the read intervals (lib/pollingPolicy.ts) but not these
+// bounds, so an open screen fell to WAIT / 未確認 before its next read: the
+// guard and downside incidents for 3-4 of every 5 minutes, the event feeds
+// for 5 of every 10. A bound polled on a timer is now at least
+//   read interval + the server's own cache age + one response (60 s),
+// checked against the intervals by live-authority.test.cjs.
 export const LIVE_AUTHORITY_MAX_AGE_MS: Readonly<Record<LiveAuthorityKind, number>> = Object.freeze({
   marketRegime: 60 * 60_000,
-  actionLabels: 2 * 60_000,
+  actionLabels: 3 * 60_000,         // 120 s read, response time asOf
   flowAttribution: 15 * 60_000,
   supplyDemand: 15 * 60_000,
   // The server runs this layer once per weekday.  A fixed 72h bound preserves
   // weekend display without inventing a browser-side exchange calendar.
   aiJudgment: 72 * 60 * 60_000,
-  visibilityGuard: 2 * 60_000,
-  downsideIncidents: 3 * 60_000,
+  visibilityGuard: 7 * 60_000,      // 300 s read, 60 s server cache
+  downsideIncidents: 7 * 60_000,    // 300 s read, 60 s server cache
   // v13.5.53 (owner 2026-09-04: 「仮想通貨も何も表示できていない」). This budget
   // must cover the whole delivery chain, not just the network hop:
   // CoinGecko's own `last_updated_at` is already ~30-60 s behind when the
@@ -34,11 +41,12 @@ export const LIVE_AUTHORITY_MAX_AGE_MS: Readonly<Record<LiveAuthorityKind, numbe
   // price at all. 5 minutes clears 90 s cache + 60 s source lag with margin
   // and is still far inside "live" for a 24h market. Guarded by
   // live-authority.test.cjs so a cache-TTL change cannot silently re-break it.
-  cryptoQuote: 5 * 60_000,
-  importantEvents: 5 * 60_000,
-  eventRadar: 5 * 60_000,
-  actionAlerts: 2 * 60_000,
-  dashboardEvents: 5 * 60_000,
+  // 2026-11-13: plus the 300 s read interval (the quote is source-timed).
+  cryptoQuote: 9 * 60_000,
+  importantEvents: 11 * 60_000,     // 600 s read, response time asOf
+  eventRadar: 11 * 60_000,          // 600 s read, response time asOf
+  actionAlerts: 2 * 60_000,         // no reader in web/src
+  dashboardEvents: 11 * 60_000,     // 600 s read, response time asOf
 });
 
 const EXACT_ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/;

@@ -33,7 +33,7 @@ for (const patch of [{ priceUsd: 0 }, { priceUsd: -1 }, { priceUsd: NaN },
   assert.deepEqual(select({ ...fresh, ...patch }), {});
 }
 assert.deepEqual(display.acceptCryptoDisplay({}, snapshot(fresh, 'coinbase'), ['bitcoin']), {});
-const expired = { ...fresh, sourceTimestamp: new Date(now - 300001).toISOString() };
+const expired = { ...fresh, sourceTimestamp: new Date(now - authority.LIVE_AUTHORITY_MAX_AGE_MS.cryptoQuote - 1).toISOString() };
 assert.equal(display.cryptoPriceDisplay(select(expired).bitcoin, now).label, '保存価格');
 assert.equal(authority.cryptoQuoteDecisionUsable(expired, now), false);
 for (const stamp of [null, 'bad', new Date(now + 1000).toISOString()]) {
@@ -126,7 +126,7 @@ assert.equal(JSON.stringify(d), before, 'render cannot renew decision evidence')
     state = read();
     assert.equal(calls, 2); assert.equal(state.byId.bitcoin.decisionUsable, true);
     assert.equal(state.displayById.bitcoin.quote.decisionUsable, false);
-    now += 300001;
+    now += authority.LIVE_AUTHORITY_MAX_AGE_MS.cryptoQuote + 1;
     for (const task of [...expiryTasks.values()]) if (task.at <= now) task.callback();
     state = read();
     assert.deepEqual(state.byId, {}); assert.equal(state.authority, 'expired');

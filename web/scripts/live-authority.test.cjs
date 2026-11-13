@@ -42,8 +42,8 @@ for (const value of [null, 0, false, '', '2026-08-16',
 check('future +1s fails without negative-age clamp',
   authority.liveAuthorityState(new Date(NOW + 1000).toISOString(), 'cryptoQuote', NOW) === 'invalid');
 check('age boundary is inclusive and next millisecond expires',
-  authority.liveAuthorityState(isoAgo(120_000), 'actionLabels', NOW) === 'fresh'
-  && authority.liveAuthorityState(isoAgo(120_001), 'actionLabels', NOW) === 'expired');
+  authority.liveAuthorityState(isoAgo(authority.LIVE_AUTHORITY_MAX_AGE_MS.actionLabels), 'actionLabels', NOW) === 'fresh'
+  && authority.liveAuthorityState(isoAgo(authority.LIVE_AUTHORITY_MAX_AGE_MS.actionLabels + 1), 'actionLabels', NOW) === 'expired');
 
 const ratePoint = (overrides = {}) => ({
   latestValue: 150, previousValue: 149.5, change: .5, changeBp: 50,
@@ -88,7 +88,7 @@ check('rate values and provider fields require exact runtime types',
   check('fresh retained authority arms a deadline', tasks.size === 1 && expired === 0);
   cancel();
   check('zero-subscriber cleanup cancels deadline', tasks.size === 0);
-  now = NOW + 61_000;
+  now = NOW + authority.LIVE_AUTHORITY_MAX_AGE_MS.actionLabels - 60_000 + 1_000;
   authority.scheduleLiveAuthorityExpiry(asOf, 'actionLabels', () => { expired += 1; }, timers);
   check('remount after expiry deauthorizes synchronously', expired === 1 && tasks.size === 0);
 }
@@ -149,7 +149,7 @@ check('Coinbase quote stays diagnostic-only',
 check('missing/future/stale crypto source time fails closed',
   !authority.cryptoQuoteDecisionUsable({ ...quote, source: 'coingecko', sourceTimestamp: null }, NOW)
   && !authority.cryptoQuoteDecisionUsable({ ...quote, source: 'coingecko', sourceTimestamp: new Date(NOW + 1).toISOString() }, NOW)
-  && !authority.cryptoQuoteDecisionUsable({ ...quote, source: 'coingecko', sourceTimestamp: isoAgo(300_001) }, NOW));
+  && !authority.cryptoQuoteDecisionUsable({ ...quote, source: 'coingecko', sourceTimestamp: isoAgo(authority.LIVE_AUTHORITY_MAX_AGE_MS.cryptoQuote + 1) }, NOW));
 // The backend serves CoinGecko from a 90 s cache and CoinGecko's own
 // last_updated_at is already ~30-60 s old when it is fetched, so a quote is
 // routinely ~150 s old by the time the browser evaluates it (production
@@ -268,6 +268,34 @@ check('rates use shared polling, source expiry, and immediate failure deauthorit
   ratesHook.includes('createSharedPollingStore')
   && ratesHook.includes('ratePointDecisionExpiresAt')
   && ratesHook.includes('failRefresh'));
+
+// 2026-11-13 (owner: 期限を間隔に合わせて伸ばす): a bound polled on a timer
+// outlasts one read interval, the server's own cache age and one response, so
+// an open screen never falls to WAIT / 未確認 between two reads.
+{
+  const polling = require(path.join(__dirname, '..', 'src', 'lib', 'pollingPolicy.ts'));
+  const RESPONSE_MS = 60_000;
+  const hook = (name) => fs.readFileSync(path.join(__dirname, '..', 'src', 'hooks', `${name}.ts`), 'utf8');
+  const cases = [
+    // kind, reader, interval constant, server cache age (scanner.py)
+    ['actionLabels', 'useActionLabels', 'WATCHLIST_VISIBLE_MS', 0],
+    ['visibilityGuard', 'useVisibilityGuard', 'GUARD_VISIBLE_MS', 60_000],      // _VISIBILITY_CACHE now+60
+    ['downsideIncidents', 'useDownsideIncidents', 'CALENDAR_VISIBLE_MS', 60_000], // _DOWNSIDE_TTL 60
+    ['cryptoQuote', 'useCryptoWatchlist', 'GUARD_VISIBLE_MS', 90_000 + 60_000],  // _CRYPTO_CACHE_TTL + source lag
+    ['importantEvents', 'useImportantEvents', 'FEED_VISIBLE_MS', 0],
+    ['eventRadar', 'useEventRadar', 'FEED_VISIBLE_MS', 0],
+    ['dashboardEvents', 'useDashboardEvents', 'FEED_VISIBLE_MS', 0],
+  ];
+  for (const [kind, reader, constant, serverAge] of cases) {
+    check(`${reader} reads on ${constant}`, hook(reader).includes(constant));
+    check(`${kind} outlasts one read (${constant})`,
+      authority.LIVE_AUTHORITY_MAX_AGE_MS[kind] >= polling[constant] + serverAge + RESPONSE_MS);
+  }
+  const evidence = require(path.join(__dirname, '..', 'src', 'domain', 'canonicalDecisionEvidence.ts'));
+  check('useDecisionEvidence reads on FEED_VISIBLE_MS', hook('useDecisionEvidence').includes('FEED_VISIBLE_MS'));
+  check('decision evidence outlasts one read + the 120 s server cache',
+    evidence.MAX_EVIDENCE_AGE_MS >= polling.FEED_VISIBLE_MS + 120_000 + RESPONSE_MS);
+}
 
 if (failed) {
   console.error(`\n${failed} live-authority checks failed`);

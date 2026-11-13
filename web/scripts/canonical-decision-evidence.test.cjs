@@ -145,7 +145,7 @@ assert.equal(resolver.resolveCanonicalArtifactReferences(drifted, NOW_MS), null)
 
 // 4) stale evidence (cutoff older than the age bound) fails closed
 assert.equal(resolver.resolveCanonicalArtifactReferences(
-  evidenceEntry(), NOW_MS + 11 * 60 * 1000), null);
+  evidenceEntry(), NOW_MS + 14 * 60 * 1000), null);
 
 // 5) all-AVAILABLE with degraded quality is incoherent → fail closed
 const incoherent = evidenceEntry();
