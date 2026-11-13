@@ -235,3 +235,20 @@ def test_a_failure_after_the_saved_edition_stays_visible_until_a_newer_edition(m
     assert "lastFailedAt" not in scanner._market_brief_cached_response()["generationWorker"]
     schedule["failedAttempts"] = {"key": "x", "count": 1, "at": "not-a-time"}
     assert scanner._market_brief_failed_since_edition() is None
+
+
+# ── 日本株の銘柄数の上限: 登録の23銘柄が全部入る ─────────────────────────
+
+def test_the_owners_twenty_three_jp_names_are_neither_dropped_nor_left_unwarmed(monkeypatch):
+    codes = ["1360", "1579", "2326", "285A", "314A", "3692", "4107", "4392", "4417", "4475",
+             "4493", "4498", "5801", "5803", "6330", "6503", "6584", "6965", "7011", "7794",
+             "8058", "9501", "9984"]
+    assert len(codes) == 23
+    assert scanner._symbols_over_cap(list(codes), scanner._JP_SYM_RE, scanner._JP_DYN_MAX) == []
+    monkeypatch.setattr(scanner, "_layer2b_read_latest",
+                        lambda: {"members": [{"market": "JP", "symbol": c} for c in codes]})
+    monkeypatch.setattr(scanner, "_JP_SEEN_SYMBOLS", set())
+    monkeypatch.setattr(scanner, "_JP_WARM_HINTS", set())
+    monkeypatch.setattr(scanner, "_JP_WATCHLIST", [])
+    warmed = scanner._owner_jp_symbols_for_warm()
+    assert {"8058", "9501", "9984"} <= set(warmed) and len(warmed) == 23
