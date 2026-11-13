@@ -377,7 +377,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_prediction_ledger_workflow.py': '70f4d9cd0f9324658fdd883428468dc6ae1e132e',
     'web/src/lib/assetMerge.ts': '486d7ecb06b35fef782a83be46121a856d82eb94',
     'web/src/hooks/useAssets.ts': '0a82da6958f58aaba4c3bd7659c2af2032b4e93f',
-    'web/src/components/dialogue/OwnerOverview.tsx': '6806c54ff5bdc57222c498a976eb3016b44858dd',
+    'web/src/components/dialogue/OwnerOverview.tsx': '7104e009aca01e8c5a711c2cbb9375963f4c21eb',
     'web/src/components/dialogue/OwnerOverview.css': 'abbeb648911495be4ef4a62248d40c925ebffa8a',
     'web/scripts/product-integrity.test.cjs': '12ab62a39972e106fc7dde2e1c9c5709c5940c69',
     'web/src/lib/presentationIntent.ts': '8a8a77623c68d52e3767791a412aeb69d55b9253',
