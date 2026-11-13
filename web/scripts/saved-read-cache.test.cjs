@@ -11,6 +11,20 @@ assert.equal(cache.get('a',1001),undefined,'銘柄数が増えても上限を守
 assert.equal(cache.get('b',1001),'b');cache.clear();assert.equal(cache.get('c',1001),undefined,'認証変更時に全消去できる');
 console.log('銘柄説明: 認証・市場・銘柄・期間・根拠の分離、5分期限、件数上限、消去 PASS');
 
+// 2026-11-13: after the button starts a new explanation, the saved-only read keeps answering with the
+// previous one until the new one is complete. The component must keep reading instead of caching that
+// answer for five minutes, and must keep the button busy while it waits.
+{
+const source=fs.readFileSync('src/components/dialogue/OwnerOverview.tsx','utf8');
+assert.ok(source.includes("awaiting.current={since:Date.now(),previous:saved?.requestId??null};setWaiting(true);"),'押して作り始めたら待ちの印を立てる');
+assert.ok(source.includes("value.status==='SUCCEEDED'&&value.requestId!==wait?.previous"),'前と違う説明が届いた時だけ待ちを終える');
+assert.ok(source.includes("if(value.status==='SUCCEEDED'&&arrived)savedReadCache.put(cacheKey,{edition:next},300_000);"),'待っている間は前の説明を5分の控えに入れない');
+assert.ok(source.includes("else if(!arrived){pending=true;timer=window.setTimeout(()=>void load(),10_000);}"),'待っている間は10秒おきに読み直す');
+assert.ok(source.includes("Date.now()-wait.since<600_000"),'待つのは10分まで');
+assert.ok(source.includes("const busy=generating||waiting||job?.status==='RUNNING';"),'待っている間はボタンを作成中にする');
+console.log('銘柄説明: 作成を始めたあとは出来上がるまで読み直す PASS');
+}
+
 // Execute the actual saved-reader effect with synthetic time and no network.
 {
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
@@ -23,7 +37,7 @@ const date=class extends Date{static now(){return now}};
 const compile=s=>ts.transpileModule(s,{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
 function lib(file){const e={};vm.runInNewContext(compile(fs.readFileSync(root+'/src/lib/'+file,'utf8')),{exports:e,Date:date,Map,document:d,window:w});return e;}
 const cache=lib('savedOverviewCache.ts'),poll=lib('pollingPolicy.ts');
-const react={useState:v=>[typeof v==='function'?v():v,x=>states.push(x)],useEffect:f=>effects.push(f),useSyncExternalStore:()=>true};
+const react={useState:v=>[typeof v==='function'?v():v,x=>states.push(x)],useEffect:f=>effects.push(f),useSyncExternalStore:()=>true,useRef:v=>({current:v})};
 const modules={'react':react,'react/jsx-runtime':{jsx:()=>null,jsxs:()=>null},'../../hooks/useMarketBrief':{useMarketBrief:()=>({brief:{unifiedContext:{contextId:'fixed'}}})},'../../lib/ownerSession':{hasOwnerSession:()=>true,subscribeOwner:()=>()=>{}},'../../lib/savedOverviewCache':cache,'../../lib/pollingPolicy':poll,'../../lib/screenNotes':{withoutScreenNotes:x=>x},'./OwnerDialogue':{validJob:v=>v?.status==='SUCCEEDED',OwnerAnswerBody:()=>null},'../common/TriangleStepLoader':{TriangleStepLoader:()=>null},'./OwnerOverview.css':{}};
 const e={};vm.runInNewContext(compile(fs.readFileSync(root+'/src/components/dialogue/OwnerOverview.tsx','utf8').replace('import.meta.env.VITE_ARGUS_BACKEND_URL',JSON.stringify('https://saved.test'))),{exports:e,require:n=>{assert.ok(n in modules,n);return modules[n]},Date:date,Number,JSON,RegExp,window:w,document:d,localStorage:{getItem:()=>''},AbortController,fetch:async(u,o)=>{calls++;requests.push(JSON.parse(o.body));return{ok:true,json:async()=>({status:'SUCCEEDED',requestId:'synthetic',overviewRead:{mode:'SAVED_ONLY'},context:{intent:'SUBJECT_OVERVIEW',subject:{symbol:'SYNTHETIC',market:'JP'},horizonSessions:5,baseMarketContextId:'fixed',facts:[]},result:{answer:{sections:{view:{textJa:'説明。'}}}}})}}});
 const flush=async()=>{for(let n=0;n<10;n++)await Promise.resolve()};
