@@ -22,6 +22,14 @@ ROUND_SECONDS = 20
 MAX_BODY = 512 * 1024
 JST = timezone(timedelta(hours=9))
 SCHEMA = 'argus-jp-delayed-display-v1'
+# The delayed feed runs about 15 minutes behind (measured 2026-11-13: 902 s).
+# A collector that stops at the 15:30 close therefore never saw the closing
+# auction, and the page showed the 15:14 trade until midnight. For 45 minutes
+# after the close, symbols that do not yet hold the 15:30 trade are read every
+# five minutes; a symbol that holds it is left alone.
+CLOSE_MINUTE = 15 * 60 + 30
+CLOSE_GRACE_SECONDS = 45 * 60
+CLOSE_GRACE_INTERVAL = 300
 
 
 def symbols_from_members(rows):
@@ -125,6 +133,26 @@ def _read(get, symbol, epoch, clock, deadline):
             response.close()
 
 
+def in_close_grace(session, now):
+    """The 45 minutes after the 15:30 close of a Tokyo trading day."""
+    if not isinstance(session, dict) or session.get('session') != 'POST_MARKET' \
+            or session.get('isTradingDay') is not True:
+        return False
+    local = datetime.fromtimestamp(now, JST)
+    elapsed = (local.hour * 60 + local.minute - CLOSE_MINUTE) * 60 + local.second
+    return 0 <= elapsed < CLOSE_GRACE_SECONDS
+
+
+def holds_close(row, now):
+    """Whether the retained trade is today's 15:30 closing auction."""
+    try:
+        traded = datetime.fromisoformat(row['sourceTimestamp']).astimezone(JST)
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (traded.date() == datetime.fromtimestamp(now, JST).date()
+            and traded.hour * 60 + traded.minute >= CLOSE_MINUTE)
+
+
 class Collector:
     def __init__(self):
         self.lock = threading.Lock()
@@ -143,8 +171,10 @@ class Collector:
         try:
             now = epoch()
             session = market_session(JP_EQUITY, datetime.fromtimestamp(now, timezone.utc))
-            if session['session'] not in ('MORNING_SESSION', 'AFTERNOON_SESSION'):
+            after_close = in_close_grace(session, now)
+            if session['session'] not in ('MORNING_SESSION', 'AFTERNOON_SESSION') and not after_close:
                 return
+            interval = CLOSE_GRACE_INTERVAL if after_close else INTERVAL
             try:
                 registered = symbols_from_members(members())
             except Exception:
@@ -161,7 +191,8 @@ class Collector:
                         if key not in registered:
                             del cache[key]
                 candidates = [s for s in registered if s not in fresh_symbols
-                    and now - self.attempts.get(s, float('-inf')) >= (FAILURE_INTERVAL if self.errors.get(s) else INTERVAL)]
+                    and now - self.attempts.get(s, float('-inf')) >= (FAILURE_INTERVAL if self.errors.get(s) else interval)
+                    and not (after_close and holds_close(self.rows.get(s), now))]
                 candidates.sort(key=lambda s: self.attempts.get(s, float('-inf')))
                 if now < self.pause_until:
                     return

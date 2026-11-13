@@ -6,6 +6,8 @@ from copy import deepcopy
 import jp_sector_heatmap as heatmap
 import argus_market_clock as clock
 
+CLOSE_SETTLE_SECONDS = 20 * 60
+
 SECTORS = [dict(symbol=s, nameJa=n) for s,n in (
     ('1622','自動車・輸送機'),('1625','電機・精密'),('1631','銀行'),
     ('1629','商社・卸売'),('1626','情報通信・サービス'),('1621','医薬品'),
@@ -36,8 +38,11 @@ class Runtime:
         regular = session['session'] in ('MORNING_SESSION','AFTERNOON_SESSION')
         # One bounded cold-start fill; subsequent fetching only while the market is open.
         close = heatmap.timestamp(session.get('regularCloseJst'))
+        # The feed is about 15 minutes delayed (measured 2026-11-13), so a read
+        # taken before close+20min is still a pre-close value. One more read is
+        # allowed until the retained attempt is later than that.
         closing_fill = (session['session'] == 'POST_MARKET' and close is not None
-                        and self.last_attempt < close.timestamp())
+                        and self.last_attempt < close.timestamp() + CLOSE_SETTLE_SECONDS)
         if self.boot_collected and not regular and not closing_fill:
             return False
         if now.timestamp()-self.last_attempt < 1200 or not self.lock.acquire(False):
