@@ -3019,7 +3019,11 @@ def _jp_mock_snapshot():
 # sanitize hard, cap the count, and bound the per-set cache.
 _JP_SYM_RE      = re.compile(r"^[0-9A-Z]{4}$")   # TSE 4-char codes incl. 285A
 _US_SYM_RE      = re.compile(r"^[A-Z][A-Z.\-]{0,9}$")
-_JP_DYN_MAX     = 20
+# 2026-11-13 (audit): the owner's synced watchlist holds 23 JP names. At 20
+# the last three in code order (8058, 9501, 9984) were dropped from the route
+# and never warmed, so they never had a price. The route stays cache-only and
+# the warm keeps its four-codes-per-five-minutes pace; 40 leaves room to grow.
+_JP_DYN_MAX     = 40
 # Twelve Data plan-aware caps (v11.1). Basic = free-tier conservatism; Grow raises the
 # quota so coverage can widen — but a quota bump NEVER proves L2/tape/options/borrow or
 # extended-hours live (those need real feeds + proof). Unknown plan → keep the old caps.
