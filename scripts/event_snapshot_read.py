@@ -150,7 +150,7 @@ def main():
             return 1
         print(json.dumps(result))
         return 0
-    result = read_snapshot(url='https://argus-backend-3j2m.onrender.com/api/argus/event-snapshot',
+    result = read_snapshot(url=(os.environ.get('ARGUS_BACKEND_URL') or 'https://argus-backend-3j2m.onrender.com').rstrip('/') + '/api/argus/event-snapshot',
                            token=os.environ.get('ARGUS_ADMIN_TOKEN', ''),
                            output=Path(os.environ['RUNNER_TEMP']) / 'snap.json')
     print(json.dumps(result, ensure_ascii=False))

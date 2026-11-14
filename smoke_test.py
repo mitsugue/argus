@@ -18,7 +18,7 @@ import signal
 import urllib.request
 import urllib.error
 
-BASE = (sys.argv[1] if __name__ == "__main__" and len(sys.argv) > 1 else "https://argus-backend-3j2m.onrender.com").rstrip("/")
+BASE = (sys.argv[1] if __name__ == "__main__" and len(sys.argv) > 1 else (os.environ.get("ARGUS_BACKEND_URL") or "https://argus-backend-3j2m.onrender.com")).rstrip("/")
 # Owner authentication is live in production (2026-09-28): every non-exempt
 # route answers 401 to anonymous callers.  The smoke carries the existing
 # operational credential when the workflow provides it; the value is never

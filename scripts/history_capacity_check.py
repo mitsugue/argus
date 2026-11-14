@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argus_analysis_history_parts as v3  # noqa: E402
 
 REPOSITORY = 'mitsugue/argus-l2b-private'
-BACKEND = 'https://argus-backend-3j2m.onrender.com'
+BACKEND = (os.environ.get('ARGUS_BACKEND_URL') or 'https://argus-backend-3j2m.onrender.com').rstrip('/')
 V2_STORED_LIMIT = 128 * 1024 * 1024
 
 

@@ -127,7 +127,7 @@ def run(base_url: str, *, token: str, ceiling_jpy: float,
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="https://argus-backend-3j2m.onrender.com")
+    parser.add_argument("--base-url", default=os.environ.get("ARGUS_BACKEND_URL") or "https://argus-backend-3j2m.onrender.com")
     parser.add_argument("--ceiling-jpy", type=float, default=800.0)
     parser.add_argument("--poll-seconds", type=int, default=20)
     parser.add_argument("--max-wait-seconds", type=int, default=3000)
