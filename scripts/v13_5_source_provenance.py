@@ -391,7 +391,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/components/today/ReadingHierarchy.css': 'de8728db9522569115d5d1219e1907445bba7161',
     'web/src/components/AppShell.tsx': '039fee81ed187008fae6d51d09bafe7cd165fac5',
     'web/src/routes/BackupPage.tsx': '4a11002eeaaa8d70fc441c0a469ef0672df1ea72',
-    'web/src/navigation.ts': '7bbea49bee28dd07ead0273ea84f1092255a3ca3',
+    'web/src/navigation.ts': '7a7750890d01570b25b174629f709cf0775df33a',
     'web/src/lib/webPush.ts': '5b7a764f23253019a882a1658de28ff2981c0501',
     'web/src/lib/ownerVaultReceipt.ts': 'bdfeb6b79dd52052ae051638869609d6cf74bf4a',
     'web/src/lib/ownerVaultAutoSave.ts': 'd5c382797e024265beb70baba4a9f1aa0df7d97c',
@@ -566,7 +566,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # files are pinned; any later surface change requires separate review.
     "web/scripts/lean-surface.test.mjs": "a9b81236bc8b2828ac47c66309c28d9bb523d1fe",
     "web/src/components/NavRail.tsx": "535487582e373291d132cdfa6a550a26aa11e8a4",
-    "web/src/navigation.ts": "eabaaf57a0b13607a2fcca1cf3cba5d5c4cfb249",
+    "web/src/navigation.ts": "7a7750890d01570b25b174629f709cf0775df33a",
     # v13.7.44 regression assertions synchronized with the approved Alerts-to-13M surface.
     "test_argus_v12_2_12.py": "9aef4250a8a68e76dcda4ff8a079d04fed17cf9a",
     "test_argus_v12_rc.py": "d6d462465f7556f748ee0900e3f88820410e284f",
