@@ -14,6 +14,9 @@ def test_workflow_is_valid_yaml_and_uses_verified_get_only_publication():
     assert "--method POST" not in text
     assert "render_deployment_identity.py" in text
     assert "RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}" in text
+    # 2026-11-14: 本番が Mac mini の時は、版から決まる配信の番号を使う(Render の記録に頼らない)。
+    assert "DEPLOY_TARGET: ${{ vars.ARGUS_DEPLOY_TARGET || 'render' }}" in text
+    assert 'echo "deployment_id=dep-mac${TARGET_SHA:0:20}" >> "$GITHUB_OUTPUT"' in text
     assert "deploys" in text
 
 
