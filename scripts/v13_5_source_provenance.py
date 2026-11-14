@@ -161,7 +161,7 @@ REVIEWED_EXTENSION_BLOBS = {
     # the owner-mode machine readers and the post-merge 4 GiB gate
     'docs/ARGUS_CHECKPOINT_V2_RSS_RETENTION_REPORT.md': 'de1dcfe52957ef040bc7a12e22a076e6819843ff',
     # the owner-mode machine readers and the post-merge 4 GiB gate
-    '.github/workflows/smoke-test.yml': '027a542bab6a1154c1d6c807d7b8de1de9264560',
+    '.github/workflows/smoke-test.yml': 'de22b6d30407933d861aff092c78e096bc8b39b2',
     # the market store residency (v13.7.59 candidate)
     'test_argus_market_store_residency.py': '0461ce83cd33c82ea5e6cfd2fdfa49c55e3bbe3d',
     # the market store residency (v13.7.59 candidate)
@@ -250,7 +250,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/scripts/owner-auth-reader-fixture.py': '087a683178544247455292c4e1bc7895272a2db4',
     'test_warm_protected_reads.py': 'a98c373cc722b91de8aa129e4abb827d2c4d1deb',
     'test_owner_auth_reader_contract.py': '1d1912635a35ce91e05f720f69b15f861ae5e29f',
-    'scripts/warm_protected_reads.py': '21a94a5a677589ea306e0581134031e0910d8297',
+    'scripts/warm_protected_reads.py': 'a355f5a3187fc0ea1eea2e44245a566647771073',
     'docs/OWNER_TODAY_HTTPS_ACCEPTANCE.md': 'b84ae41e534fb84314e8e4f9279ae300803e0fe9',
     'docs/OWNER_BROWSER_CONTINUITY.md': '3c729f6024df2d90c21601cb59b989e51dcc5364',
     'docs/OWNER_AUTH_READER_MIGRATION.md': 'fb99b3d02f98e06a0f0aeb6919f19ca8e764d48f',
@@ -314,7 +314,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'docs/V13_7_SHAPEUP_ACCEPTANCE.md': '685f1e1d700acc4cc3547efc6c94d8aa5eb10225',
     'test_rules.py': 'abd12bdef22d6aca378aa56cb3320cd905dfe6a8',
     'bridge/trigger_closepin.sh': '83ee01384660bb8799a863e080021a7fa35c1e3d',
-    'scripts/run_breadth_freshness.py': '6655818fd1c4d32c2db7407b37010735ceb0da91',
+    'scripts/run_breadth_freshness.py': '8ee3ad78a625619202f8c3576201fa4f52eb9a8e',
     'test_breadth_freshness_workflow.py': 'e8ed1942175b75416caec8711363cfc771b90e3d',
     'argus_tick_durability.py': '591508252711cdef416c821ab157d163cc2a1741',
     'argus_jp_fiscal_monitor.py': '3584e845b3c66c2ebdbb41aae6e8b3bfd9866117',
@@ -769,6 +769,10 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_production_release_manifest_workflow.py",
+    "scripts/run_foundation_job.py",
+    "scripts/run_formal_research_benchmark.py",
+    ".github/workflows/publish-production-release-manifest.yml",
     "web/src/lib/assetPeriodGap.ts",
     "web/scripts/asset-period-gap.test.cjs",
     "web/src/lib/pushRecordLabel.ts",
