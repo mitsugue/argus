@@ -52478,7 +52478,62 @@ def _canonical_quote_observations(rows, decision_at, *,
             if observation["observationId"] not in seen:
                 observations.append(observation)
                 seen.add(observation["observationId"])
-    return argus_market_data_truth.coalesce_quote_observation_subsets(observations)
+    return argus_market_data_truth.coalesce_quote_observation_subsets(
+        _canonical_drop_quality_label_duplicates(observations))
+
+
+# 2026-11-14: the same provider quote (same provider, revision, source time,
+# receipt and price) can reach the projection twice within one snapshot — once
+# through a watchlist row labelled "delayed" and once through a provider
+# candidate labelled "live".  The two observations then differ only in the
+# freshness label (and the richer one also carries changePct/volume), so the
+# truth validator rejected the whole projection as `conflicting_revision`
+# (2026-11-10 and 2026-11-13 16:05 JST Prediction Ledger runs).  Keep exactly
+# one of such twins: the most conservative freshness, then the richest values.
+# Any other difference — a disagreeing value, provenance, completeness — is a
+# genuine conflict and is left for the validator to reject.
+_CANONICAL_FRESHNESS_RANK = {
+    argus_market_data_truth.STALE: 0,
+    argus_market_data_truth.DELAYED: 1,
+    argus_market_data_truth.FRESH: 2,
+}
+_CANONICAL_QUALITY_LABEL_FIELDS = frozenset({
+    "observationId", "values", "freshness", "freshUntil"})
+
+
+def _canonical_drop_quality_label_duplicates(observations):
+    groups = {}
+    for index, row in enumerate(observations):
+        if not isinstance(row, dict) or row.get("factType") != "QUOTE":
+            continue
+        values = row.get("values")
+        if not isinstance(values, dict) or "price" not in values or \
+                row.get("freshness") not in _CANONICAL_FRESHNESS_RANK:
+            continue
+        key = json.dumps({k: v for k, v in row.items()
+                          if k not in _CANONICAL_QUALITY_LABEL_FIELDS},
+                         sort_keys=True, ensure_ascii=False, default=str)
+        groups.setdefault(key, []).append(index)
+    drop = set()
+    for indexes in groups.values():
+        if len(indexes) < 2:
+            continue
+        rows = [observations[i] for i in indexes]
+        merged = {}
+        consistent = True
+        for row in rows:
+            for field, value in row["values"].items():
+                if field in merged and merged[field] != value:
+                    consistent = False
+                merged.setdefault(field, value)
+        if not consistent:
+            continue
+        keep = min(indexes, key=lambda i: (
+            _CANONICAL_FRESHNESS_RANK[observations[i]["freshness"]],
+            -len(observations[i]["values"]),
+            str(observations[i].get("observationId"))))
+        drop.update(i for i in indexes if i != keep)
+    return [row for i, row in enumerate(observations) if i not in drop]
 
 
 def _canonical_current_outcome_observations(rows, decision_at):
