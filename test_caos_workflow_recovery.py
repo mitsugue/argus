@@ -556,3 +556,18 @@ def test_scheduled_scan_publish_precheck_runs_with_checkout_imports():
         capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     assert 'validate-sidecar' in result.stdout
+
+
+def test_every_remote_readback_read_carries_the_admin_header():
+    # 2026-11-14: the re-arm read the compact readback without the admin header
+    # and owner authentication refused it (401), so the recovery anchor never
+    # advanced. Every read of the route in the workflow carries the header.
+    text = WATCHTOWER_WORKFLOW.read_text(encoding="utf-8")
+    reads = [m.start() for m in re.finditer(r'"\$BE/api/argus/osint/remote-readback"', text)]
+    assert len(reads) == 2
+    for start in reads:
+        begin = text.rfind("curl ", 0, start)
+        end = text.find("\n", text.find("osint-readback.json", start))
+        command = text[begin:end + 200]
+        command = command[:command.find("curl ", start - begin + 1)] if command.find("curl ", start - begin + 1) > 0 else command
+        assert 'X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN' in command, command[:300]
