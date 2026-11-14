@@ -580,6 +580,9 @@ jobs:
       # ledger range (#300). This step hands the publication back to that one
       # writer at most every six hours, in durability-only mode: no feed
       # refresh, no translation. It writes nothing itself.
+      # The scheduled collection fires only a few times a day at irregular
+      # minutes, so the interval is measured from the last Watchtower run, not
+      # from fixed clock slots (corrected the same day).
       - name: Hand the keyed publication to the Watchtower writer
         id: keyed
         if: >-
@@ -588,11 +591,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          HOUR=$(date -u +%-H)
-          MINUTE=$(date -u +%-M)
-          if [ $((HOUR % 6)) -ne 0 ] || [ "$MINUTE" -ge 30 ]; then
+          LAST=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow caos-watchtower.yml \
+            --limit 1 --json createdAt --jq '.[0].createdAt // ""')
+          NOW=$(date -u +%s)
+          LAST_EPOCH=0
+          if [ -n "$LAST" ]; then
+            LAST_EPOCH=$(date -u -d "$LAST" +%s)
+          fi
+          if [ $((NOW - LAST_EPOCH)) -lt 21600 ]; then
             echo "keyedWriter=not_due" >> "$GITHUB_OUTPUT"
-            echo "keyed writer not due (hour=$HOUR minute=$MINUTE)"
+            echo "keyed writer not due (last Watchtower run $LAST)"
             exit 0
           fi
           gh workflow run caos-watchtower.yml --repo "$GITHUB_REPOSITORY" --ref main \
