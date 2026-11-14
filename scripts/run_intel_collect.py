@@ -410,7 +410,7 @@ def run(*, base: str, token: str, timeout: float = 900, request=request_json,
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default="https://argus-backend-3j2m.onrender.com")
+    parser.add_argument("--base", default=os.environ.get("ARGUS_BACKEND_URL") or "https://argus-backend-3j2m.onrender.com")
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument('--private-timing-output', type=Path)
     args = parser.parse_args(argv)

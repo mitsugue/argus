@@ -30,6 +30,10 @@ concurrency:
   group: formal-research-benchmark-one-shot
   cancel-in-progress: false
 
+# 2026-11-14 Mac mini への引っ越し: 台本が Render を既定にしないよう、手順の全体に住所を渡す。
+env:
+  ARGUS_BACKEND_URL: ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}
+
 jobs:
   foundation-diagnostics:
     if: inputs.operation == 'jquants_matrix' || inputs.operation == 'pipeline_preflight'

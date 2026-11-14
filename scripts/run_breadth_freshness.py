@@ -504,7 +504,7 @@ def run(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-url", default="https://argus-backend-3j2m.onrender.com")
+    parser.add_argument("--base-url", default=os.environ.get("ARGUS_BACKEND_URL") or "https://argus-backend-3j2m.onrender.com")
     parser.add_argument("--artifact-path", default="artifacts/breadth-freshness.json")
     parser.add_argument("--attempts", type=int, default=3)
     parser.add_argument("--retry-seconds", type=int, default=600)

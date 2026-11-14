@@ -119,7 +119,7 @@ jobs:
       - name: Verify exact production health and readiness using GET only
         run: |
           python3 -B scripts/verify_production_backend_release.py \
-            --base-url https://argus-backend-3j2m.onrender.com \
+            --base-url ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }} \
             --expected-sha "${{ needs.classify.outputs.target_sha }}" \
             --expected-version "${{ needs.classify.outputs.version }}" \
             --timeout-seconds 1200 \
@@ -165,10 +165,10 @@ jobs:
             )
           fi
           curl --fail --silent --show-error --max-time 30 \
-            https://argus-backend-3j2m.onrender.com/healthz \
+            ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}/healthz \
             --output "$RUNNER_TEMP/health.json"
           curl --fail --silent --show-error --max-time 30 \
-            https://argus-backend-3j2m.onrender.com/readyz \
+            ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}/readyz \
             --output "$RUNNER_TEMP/ready.json"
           python3 -B scripts/production_release_manifest.py create \
             --build-sha "$TARGET_SHA" \

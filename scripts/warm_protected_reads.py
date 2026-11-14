@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.request
 
-BACKEND = 'https://argus-backend-3j2m.onrender.com'
+BACKEND = (os.environ.get('ARGUS_BACKEND_URL') or 'https://argus-backend-3j2m.onrender.com').rstrip('/')
 RUNTIME_PATHS = (
     '/api/argus/decision-evidence?symbols=1321,1306,SPY,QQQ',
     '/api/argus/important-events', '/api/argus/events',

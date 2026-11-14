@@ -65,8 +65,11 @@ def test_authoritative_then_bounded_raw_verification():
 def test_manifest_publication_failure_does_not_mutate_backend():
     text = WORKFLOW.read_text()
     assert "git push origin HEAD:production-release" in text
-    assert "argus-backend-3j2m.onrender.com/healthz" in text
-    assert "argus-backend-3j2m.onrender.com/readyz" in text
+    # 2026-11-14 Mac mini への引っ越し: 住所は GitHub の変数から(無い時だけ Render)。
+    backend = "${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}"
+    assert backend + "/healthz" in text
+    assert backend + "/readyz" in text
+    assert "--base-url " + backend in text
     assert 'cp scripts/production_release_manifest.py \\' in text
     assert '"$RUNNER_TEMP/production_release_manifest.py"' in text
     assert (

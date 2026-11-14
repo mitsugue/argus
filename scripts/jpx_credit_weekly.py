@@ -505,7 +505,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--since", default="2026-07-10", help="last period already held (exclusive)")
     parser.add_argument("--out", default=None, help="write the CSV rows here")
     parser.add_argument("--import", dest="do_import", action="store_true")
-    parser.add_argument("--backend", default="https://argus-backend-3j2m.onrender.com")
+    parser.add_argument("--backend", default=os.environ.get("ARGUS_BACKEND_URL") or "https://argus-backend-3j2m.onrender.com")
     parser.add_argument("--token-env", default="ARGUS_ADMIN_TOKEN")
     parser.add_argument("--summary", default=None, help="write a JSON summary here")
     parser.add_argument("--valuation-since", default=None, help="last audited valuation period held (exclusive); independent from credit balances")

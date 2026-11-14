@@ -22,6 +22,10 @@ concurrency:
   group: ledger-branch-writer
   cancel-in-progress: false
 
+# 2026-11-14 Mac mini への引っ越し: 台本が Render を既定にしないよう、手順の全体に住所を渡す。
+env:
+  ARGUS_BACKEND_URL: ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}
+
 jobs:
   snapshot:
     runs-on: ubuntu-latest
