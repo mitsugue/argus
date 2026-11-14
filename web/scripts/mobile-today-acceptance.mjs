@@ -481,7 +481,7 @@ async function navigationAudit(page, evidence) {
   // fixture serves UI navigation only; it is not authenticated live acceptance.
   const origin = new URL(page.url()).origin;
   const frameUrl = origin.includes('127.0.0.1')
-    ? 'http://127.0.0.1:8130/embedded/' : 'https://argus-13m-shadow.onrender.com/embedded/';
+    ? 'http://127.0.0.1:8130/embedded/' : 'https://mac-mini.tail4e6125.ts.net:8443/embedded/';
   await page.route(frameUrl, async route => route.fulfill({
     status: 200, contentType: 'text/html; charset=utf-8', body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"></head><body>
     <button id="return">研究から戻る</button><script>

@@ -36,8 +36,8 @@ export const NAVIGATION: readonly NavigationDefinition[] = [
 // Stay inside the installed ARGUS scope; 13M keeps its own authenticated runtime.
 export const THIRTEEN_M_NAVIGATION = {
   desktopLabel: '13M', mobileLabel: '13M', href: '#13m',
-  origin: 'https://argus-13m-shadow.onrender.com',
-  embeddedUrl: 'https://argus-13m-shadow.onrender.com/embedded/',
+  origin: 'https://mac-mini.tail4e6125.ts.net:8443',
+  embeddedUrl: 'https://mac-mini.tail4e6125.ts.net:8443/embedded/',
 } as const;
 
 export const PRIMARY_NAVIGATION = [...NAVIGATION]
