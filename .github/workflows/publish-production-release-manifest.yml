@@ -99,7 +99,16 @@ jobs:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           EXPECTED_DEPLOYMENT_ID: >-
             ${{ needs.classify.outputs.expected_deployment_id }}
+          # 2026-11-14 Mac mini への引っ越し: 本番は Mac の箱。Render の配信の記録は無いので、
+          # 版(sha)から決まる配信の番号を使う。本物かどうかは次の段で本番の healthz/readyz の
+          # buildSha を照合して確かめる(Render のときと同じ)。
+          DEPLOY_TARGET: ${{ vars.ARGUS_DEPLOY_TARGET || 'render' }}
+          TARGET_SHA: ${{ needs.classify.outputs.target_sha }}
         run: |
+          if [ "$DEPLOY_TARGET" = "mac-mini" ]; then
+            echo "deployment_id=dep-mac${TARGET_SHA:0:20}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           python3 -B scripts/render_deployment_identity.py \
             --service-id srv-d8j2hts8aovs738s1in0 \
             --target-sha "${{ needs.classify.outputs.target_sha }}" \
