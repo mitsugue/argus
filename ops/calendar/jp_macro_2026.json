@@ -6,6 +6,16 @@
   "sourceNoteJa": "労働政策研究・研修機構「労働統計公表日一覧」(各府省・日本銀行の公表予定を集約)",
   "sourceSha256": "c073ed44494ed720c035325fa58cc833c7479018ab24ec6a95a733e9ac391781",
   "knownAt": "2026-10-02T13:08:43Z",
+  "coverageExtensions": [
+    {
+      "coverageEnd": "2027-01-31",
+      "knownAt": "2026-11-14T15:47:00Z",
+      "sourceRef": "https://www.jil.go.jp/kokunai/statistics/kohyobi/index.html",
+      "sourceUpdatedJa": "更新日:2026年11月11日",
+      "sourceSha256": "6821a9077ff25de8d6b189229fbd3443d4fb8e2062014cdc6c4e0a895f7ace27",
+      "checkedJa": "2027年1月の毎月勤労統計(1/7)・全国CPI(1/22)・東京都区部CPI(1/29)が表の行と一致。1月は短観・GDPの公表なし。"
+    }
+  ],
   "rows": [
     {"code": "JP_TANKAN", "date": "2026-10-01", "time": "08:50", "referenceJa": "2026年9月調査"},
     {"code": "JP_TOKYO_CPI", "date": "2026-10-02", "time": "08:30", "referenceJa": "2026年9月分(中旬速報値)"},

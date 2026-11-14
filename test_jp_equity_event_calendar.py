@@ -39,7 +39,7 @@ def test_major_sq_and_holidays_are_named_in_japanese():
 
 def test_unpublished_macro_dates_are_a_gap_not_an_empty_calendar():
     result = cal.equity_event_calendar(now=datetime(2026, 12, 20, 0, 0, tzinfo=timezone.utc), horizon_days=45)
-    assert "jp_macro_schedule_not_published_beyond_2026-12-31" in result["gaps"]
+    assert "jp_macro_schedule_not_published_beyond_2027-01-31" in result["gaps"]
     assert result["status"] == "PARTIAL"
     broken = cal.equity_event_calendar(now=NOW, macro_schedule={"schemaVersion": "x"})
     assert "jp_macro_schedule_unavailable" in broken["gaps"]
@@ -172,7 +172,8 @@ def test_2027_published_rows_keep_original_sources_and_unknown_coverage():
     assert found[('JP_WAGES', '2027-01-07')]['source'] == 'https://www.e-stat.go.jp/release-calendar/statistics/00450071'
     assert found[('JP_CPI', '2027-01-22')]['source'] == 'https://www.e-stat.go.jp/release-calendar/statistics/00200573'
     assert found[('JP_TOKYO_CPI', '2027-01-29')]['source'] == 'https://www.e-stat.go.jp/release-calendar/statistics/00200573'
-    assert gaps == ['jp_macro_schedule_not_published_beyond_2026-12-31']
+    # 2026-11-14 に公式の一覧(11/11 更新)で 2027年1月まで確かめたので、1月は範囲の中。
+    assert gaps == []
     old, _ = cal.macro_events(date(2026, 12, 18), date(2026, 12, 18), schedule)
     assert old[0]['source'] == schedule['sourceRef']
 
@@ -184,7 +185,7 @@ def test_2027_known_rows_do_not_expand_the_certified_coverage():
     rows, gaps = cal.macro_events(date(2027, 1, 1), date(2027, 3, 31), schedule)
     assert len(rows) == 10
     assert len({row['eventId'] for row in rows}) == 10
-    assert gaps == ['jp_macro_schedule_not_published_beyond_2026-12-31']
+    assert gaps == ['jp_macro_schedule_not_published_beyond_2027-01-31']
     gdp = [row for row in rows if row['kind'] == 'JP_GDP']
     assert {row['date'] for row in gdp} == {'2027-02-15', '2027-03-09'}
     assert all(row['source'] == 'https://www.esri.cao.go.jp/jp/sna/kouhyou/kouhyou_top.html' for row in gdp)
@@ -198,3 +199,35 @@ def test_future_received_schedule_rows_are_not_used_at_an_earlier_cutoff():
                                   knowledge_at=datetime(2026, 10, 29, 5, 0, tzinfo=timezone.utc))
     assert rows == []
     assert gaps == ['jp_macro_schedule_not_published_beyond_2026-12-31']
+
+
+def test_coverage_extension_applies_only_after_it_was_checked():
+    """2026-11-15: 範囲が 2026-12-31 のままで、45日先を見る画面に 11/17 から誤った注意が出るところだった。"""
+    import json
+    from datetime import date, datetime, timezone
+    schedule = json.loads(cal.MACRO_SCHEDULE.read_text())
+    on_17th = cal.equity_event_calendar(now=datetime.fromisoformat("2026-11-17T09:00:00+09:00"))
+    assert not [gap for gap in on_17th["gaps"] if gap.startswith("jp_macro_schedule")]
+    # 延長を確かめる前の時点の再現では、前の範囲のまま。
+    _, before = cal.macro_events(date(2027, 1, 1), date(2027, 1, 31), schedule,
+                                 knowledge_at=datetime(2026, 11, 14, 15, 46, tzinfo=timezone.utc))
+    assert before == ['jp_macro_schedule_not_published_beyond_2026-12-31']
+    _, after = cal.macro_events(date(2027, 1, 1), date(2027, 1, 31), schedule,
+                                knowledge_at=datetime(2026, 11, 14, 15, 47, tzinfo=timezone.utc))
+    assert after == []
+    # 確かめていない2月に入る日からは、注意が正しく戻る。
+    on_18th_dec = cal.equity_event_calendar(now=datetime.fromisoformat("2026-12-18T09:00:00+09:00"))
+    assert "jp_macro_schedule_not_published_beyond_2027-01-31" in on_18th_dec["gaps"]
+
+
+def test_broken_coverage_extension_never_widens_the_range():
+    import json
+    from datetime import date
+    schedule = json.loads(cal.MACRO_SCHEDULE.read_text())
+    for broken in ({"coverageEnd": "2027-06-30"},
+                   {"coverageEnd": "2027-06-30", "knownAt": "2026-11-14T15:47:00"},
+                   {"coverageEnd": "2027-06-30", "knownAt": "2026-11-14T15:47:00Z"},
+                   {"coverageEnd": "not-a-date", "knownAt": "2026-11-14T15:47:00Z", "sourceRef": "x"}):
+        _, gaps = cal.macro_events(date(2027, 1, 1), date(2027, 1, 31),
+                                   dict(schedule, coverageExtensions=[broken]))
+        assert gaps == ['jp_macro_schedule_not_published_beyond_2026-12-31'], broken

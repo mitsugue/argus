@@ -206,12 +206,37 @@ def holiday_events(today: date, end: date) -> list[dict[str, Any]]:
     return out
 
 
+def _macro_coverage_end(schedule: Mapping[str, Any], knowledge_at: datetime | None) -> str:
+    """公式の一覧で全部の行を確かめた範囲の終わり。
+
+    2026-11-15: 範囲は最初の確かめ(2026-10-02)の 2026-12-31 のまま据え置かれ、45日先を見る
+    画面に 11/17 から「一部の予定は公式日程未確認」が出るところだった。公式の一覧を確かめ直して
+    範囲を延ばした時は coverageExtensions に、その時刻(knownAt)と出どころを1件ずつ足す。
+    過去の時点を再現する時(knowledge_at あり)は、その時点で確かめ済みだった延長だけを使う。
+    形の崩れた延長は使わない(範囲を広げる側には倒さない)。"""
+    end = str(schedule.get("coverageEnd"))
+    for ext in schedule.get("coverageExtensions") or []:
+        try:
+            ext_end = date.fromisoformat(str(ext["coverageEnd"])).isoformat()
+            known = datetime.fromisoformat(str(ext["knownAt"]).replace("Z", "+00:00"))
+            if known.tzinfo is None or not ext.get("sourceRef"):
+                continue
+            if knowledge_at is not None and (knowledge_at.tzinfo is None or known > knowledge_at):
+                continue
+        except (KeyError, ValueError, TypeError):
+            continue
+        if ext_end > end:
+            end = ext_end
+    return end
+
+
 def macro_events(today: date, end: date, schedule: Mapping[str, Any], *, knowledge_at: datetime | None = None) -> tuple[list[dict[str, Any]], list[str]]:
     gaps = []
     if schedule.get("schemaVersion") != "jp-official-macro-release-schedule-v1" or not schedule.get("sourceRef"):
         raise ValueError("macro_schedule_invalid")
-    if end.isoformat() > str(schedule.get("coverageEnd")):
-        gaps.append("jp_macro_schedule_not_published_beyond_" + str(schedule.get("coverageEnd")))
+    coverage_end = _macro_coverage_end(schedule, knowledge_at)
+    if end.isoformat() > coverage_end:
+        gaps.append("jp_macro_schedule_not_published_beyond_" + coverage_end)
     out = []
     for row in schedule.get("rows", []):
         if row.get("knownAt") and knowledge_at is not None:
