@@ -268,6 +268,10 @@ jobs:
 
   durability-flush:
     needs: [backend-identity, mission-backup, caos-collection]
+    # 2026-11-14: actions:write only to start the keyed writer below.
+    permissions:
+      contents: write
+      actions: write
     if: >-
       always() && !cancelled() &&
       (github.event_name == 'schedule' ||
@@ -569,6 +573,32 @@ jobs:
           echo "remoteCommitSha=$REMOTE_COMMIT_SHA" >> "$GITHUB_OUTPUT"
           echo "receiptSequence=$VERIFIED_SEQUENCE" >> "$GITHUB_OUTPUT"
           echo "readBackVerified=$READBACK_VERIFIED" >> "$GITHUB_OUTPUT"
+      # 2026-11-14 (owner: 保存の流れで進める). The keyed (encrypted) recovery
+      # publication has one writer, the Watchtower patrol. Its only scheduler
+      # (the EC2 timers) was retired on 2026-10-25 with the news patrol, so the
+      # recovery anchor stopped on 2026-09-14 and every boot compares a longer
+      # ledger range (#300). This step hands the publication back to that one
+      # writer at most every six hours, in durability-only mode: no feed
+      # refresh, no translation. It writes nothing itself.
+      - name: Hand the keyed publication to the Watchtower writer
+        id: keyed
+        if: >-
+          github.event_name == 'schedule' &&
+          steps.fetch.outputs.remoteArtifactMode == 'encrypted_recovery_v1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          HOUR=$(date -u +%-H)
+          MINUTE=$(date -u +%-M)
+          if [ $((HOUR % 6)) -ne 0 ] || [ "$MINUTE" -ge 30 ]; then
+            echo "keyedWriter=not_due" >> "$GITHUB_OUTPUT"
+            echo "keyed writer not due (hour=$HOUR minute=$MINUTE)"
+            exit 0
+          fi
+          gh workflow run caos-watchtower.yml --repo "$GITHUB_REPOSITORY" --ref main \
+            -f dispatchMode=owner_manual -f durabilityOnly=true
+          echo "keyedWriter=dispatched" >> "$GITHUB_OUTPUT"
+          echo "keyed writer dispatched (durability only)"
 
   future-map:
     if: github.event_name == 'workflow_dispatch' && inputs.only == 'future_map'

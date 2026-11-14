@@ -571,3 +571,34 @@ def test_every_remote_readback_read_carries_the_admin_header():
         command = text[begin:end + 200]
         command = command[:command.find("curl ", start - begin + 1)] if command.find("curl ", start - begin + 1) > 0 else command
         assert 'X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN' in command, command[:300]
+
+
+def test_caos_scan_hands_the_keyed_publication_to_the_watchtower_writer():
+    # 2026-11-14 (owner: 保存の流れで進める): the keyed writer's only scheduler
+    # (EC2) was retired with the news patrol on 2026-10-25, and the recovery
+    # anchor stopped on 2026-09-14. caos-scan starts that one writer again,
+    # durability only, at most every six hours; it writes nothing itself.
+    text = WORKFLOW.read_text(encoding="utf-8")
+    job = text.split("\n  durability-flush:\n", 1)[1].split("\n  future-map:\n", 1)[0]
+    header = job.split("    steps:\n", 1)[0]
+    assert "permissions:\n      contents: write\n      actions: write" in header
+    step = job.split("- name: Hand the keyed publication to the Watchtower writer", 1)[1]
+    assert "github.event_name == 'schedule'" in step
+    assert "steps.fetch.outputs.remoteArtifactMode == 'encrypted_recovery_v1'" in step
+    assert "$((HOUR % 6)) -ne 0" in step
+    assert "gh workflow run caos-watchtower.yml" in step
+    assert "-f dispatchMode=owner_manual -f durabilityOnly=true" in step
+    assert "git push" not in step and "ledger" not in step.split("run: |", 1)[1]
+    # The existing result mapping (owned by Watchtower) is unchanged.
+    assert "expected_skip_encrypted_recovery_owned_by_watchtower)" in text
+
+
+def test_a_durability_only_watchtower_run_skips_the_retired_news_patrol():
+    text = WATCHTOWER_WORKFLOW.read_text(encoding="utf-8")
+    dispatch = text.split("  workflow_dispatch:", 1)[1].split("\n\n# GitHub concurrency", 1)[0]
+    assert "durabilityOnly:" in dispatch and "type: boolean" in dispatch and "default: false" in dispatch
+    refresh = text.split("- name: Watchtower refresh + visible translation", 1)[1].split("\n      - name:", 1)[0]
+    assert "if: inputs.durabilityOnly != true" in refresh
+    # The publication steps themselves do not depend on the new input.
+    commit = text.split("- name: Commit snapshot and enqueue bounded Remote Journal receipt", 1)[1].split("\n  remote-journal-rearm:", 1)[0]
+    assert "durabilityOnly" not in commit
