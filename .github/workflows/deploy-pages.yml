@@ -45,6 +45,11 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+# 2026-11-14 Mac mini への引っ越し: 配信のあとの確かめ(warm-profile-seed など)の
+# 台本は ARGUS_BACKEND_URL が無いと Render の住所を見に行く。手順の全体に住所を渡す。
+env:
+  ARGUS_BACKEND_URL: ${{ vars.ARGUS_BACKEND_URL || 'https://argus-backend-3j2m.onrender.com' }}
+
 jobs:
   scope:
     runs-on: ubuntu-latest
