@@ -585,7 +585,8 @@ def test_caos_scan_hands_the_keyed_publication_to_the_watchtower_writer():
     step = job.split("- name: Hand the keyed publication to the Watchtower writer", 1)[1]
     assert "github.event_name == 'schedule'" in step
     assert "steps.fetch.outputs.remoteArtifactMode == 'encrypted_recovery_v1'" in step
-    assert "$((HOUR % 6)) -ne 0" in step
+    assert "--workflow caos-watchtower.yml" in step and "-lt 21600" in step   # six hours since the last run
+    assert "HOUR % 6" not in step
     assert "gh workflow run caos-watchtower.yml" in step
     assert "-f dispatchMode=owner_manual -f durabilityOnly=true" in step
     assert "git push" not in step and "ledger" not in step.split("run: |", 1)[1]
