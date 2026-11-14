@@ -201,6 +201,44 @@ def test_snapshot_live_rows_age_and_real_price_conflicts_remain_rejected(monkeyp
         raise AssertionError("A real price conflict must still be rejected")
 
 
+def test_same_quote_with_only_a_different_freshness_label_is_kept_once(monkeypatch):
+    # 2026-11-10 / 2026-11-13 16:05 JST: one moomoo quote arrived as a
+    # "delayed" watchlist row (with changePct/volume) and as a "live" price-only
+    # row.  Same provider, revision, source time, receipt and price; only the
+    # freshness label differed, and the whole projection was rejected.
+    now = 1_800_000_000.0
+    monkeypatch.setattr(scanner.time, "time", lambda: now)
+    rich = {"symbol": "NVDA", "price": 165.01, "changePct": -0.71,
+            "volume": 2609814, "status": "delayed", "source": "moomoo-rt",
+            "sourceTimestamp": _epoch_iso(now - 26),
+            "receivedAt": _epoch_iso(now - 1)}
+    bare = {"symbol": "NVDA", "price": 165.01, "status": "live",
+            "source": "moomoo-rt", "sourceTimestamp": _epoch_iso(now - 26),
+            "receivedAt": _epoch_iso(now - 1)}
+    for rows in ([rich, bare], [bare, rich]):
+        observations = scanner._canonical_quote_observations(
+            [("US", "moomoo", row) for row in rows], _epoch_iso(now))
+        assert len(observations) == 1
+        kept = observations[0]
+        # The conservative label and the richer values survive, in any order.
+        assert kept["freshness"] == argus_market_data_truth.DELAYED
+        assert kept["values"] == {"price": 165.01, "changePct": -0.71,
+                                  "volume": 2609814}
+        assert len(argus_market_data_truth.observations_as_of(
+            observations, _epoch_iso(now))) == 1
+
+    # A disagreeing value under the same revision is still a real conflict.
+    other = dict(rich, changePct=-0.5, status="live")
+    observations = scanner._canonical_quote_observations(
+        [("US", "moomoo", rich), ("US", "moomoo", other)], _epoch_iso(now))
+    try:
+        argus_market_data_truth.observations_as_of(observations, _epoch_iso(now))
+    except ValueError as exc:
+        assert str(exc) == "conflicting_revision"
+    else:
+        raise AssertionError("A disagreeing value must still be rejected")
+
+
 def test_moomoo_push_invalid_source_time_cannot_enter_history_or_events(
         monkeypatch):
     now = 1_800_000_000.0
