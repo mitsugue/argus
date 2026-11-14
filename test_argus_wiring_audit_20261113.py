@@ -252,3 +252,54 @@ def test_the_owners_twenty_three_jp_names_are_neither_dropped_nor_left_unwarmed(
     monkeypatch.setattr(scanner, "_JP_WATCHLIST", [])
     warmed = scanner._owner_jp_symbols_for_warm()
     assert {"8058", "9501", "9984"} <= set(warmed) and len(warmed) == 23
+
+
+# ── 日本株の最後の終値を、起動し直しのあとも出す(2026-11-14) ───────────────
+
+def _last_quotes_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(scanner, "_cost_policy_durable_enabled", lambda: True)
+    monkeypatch.setitem(scanner._DURABILITY_PATHS, "root", str(tmp_path))
+    monkeypatch.setattr(scanner, "_JP_LAST_QUOTES", {"loaded": False, "rows": {}})
+    monkeypatch.setattr(scanner, "_JP_DYN_CACHE", {})
+    monkeypatch.setattr(scanner, "_PUSHED_QUOTES", {})
+    monkeypatch.setitem(scanner._JP_CACHE, "data", None)
+    monkeypatch.setitem(scanner._JP_CACHE, "expires", 0.0)
+
+
+def test_the_last_close_of_each_name_survives_a_restart_as_a_display_only_row(monkeypatch, tmp_path):
+    import json as _json
+    _last_quotes_env(monkeypatch, tmp_path)
+    today = datetime.now(timezone.utc).date().isoformat()
+    row = {"symbol": "8058", "name": "三菱商事", "price": 5405.0, "changePct": 1.56, "date": today,
+           "status": "delayed", "sourceTimestamp": today, "source": "jquants"}
+    scanner._jp_last_quotes_remember([row, {"symbol": "9999", "price": None, "date": today},
+                                      {"symbol": "7203", "price": 100.0, "date": today, "status": "mock"}])
+    saved = _json.loads((tmp_path / "jp_last_quotes.json").read_text(encoding="utf-8"))
+    assert list(saved["rows"]) == ["8058"]                       # only real closes are kept
+    # A new process: nothing in memory, the file is read back once.
+    monkeypatch.setattr(scanner, "_JP_LAST_QUOTES", {"loaded": False, "rows": {}})
+    got = scanner._quote_cached_only("8058", "JP")
+    assert got["price"] == 5405.0 and got["date"] == today
+    assert got["cacheState"] == "restored_last_close"
+    assert got["decisionUsable"] is False and got["status"] == "delayed"
+    assert scanner._quote_cached_only("7203", "JP") is None
+    # A fresh cached row still wins over the kept close.
+    scanner._JP_DYN_CACHE[("8058",)] = {"data": {"stocks": [{**row, "price": 5500.0}]},
+                                        "expires": scanner.time.time() + 600}
+    assert scanner._quote_cached_only("8058", "JP")["price"] == 5500.0
+
+
+def test_an_old_or_oversized_kept_file_is_not_used(monkeypatch, tmp_path):
+    _last_quotes_env(monkeypatch, tmp_path)
+    old = {"symbol": "8058", "price": 5000.0, "date": "2020-01-06", "status": "delayed",
+           "sourceTimestamp": "2020-01-06", "source": "jquants"}
+    scanner._jp_last_quotes_remember([old])
+    monkeypatch.setattr(scanner, "_JP_LAST_QUOTES", {"loaded": False, "rows": {}})
+    assert scanner._quote_cached_only("8058", "JP") is None       # older than a week
+    (tmp_path / "jp_last_quotes.json").write_text("x" * ((1 << 20) + 1), encoding="utf-8")
+    monkeypatch.setattr(scanner, "_JP_LAST_QUOTES", {"loaded": False, "rows": {}})
+    assert scanner._jp_last_quotes_load() == {}
+    monkeypatch.setattr(scanner, "_cost_policy_durable_enabled", lambda: False)
+    monkeypatch.setattr(scanner, "_JP_LAST_QUOTES", {"loaded": False, "rows": {}})
+    scanner._jp_last_quotes_remember([old])                       # outside production: nothing written
+    assert scanner._jp_last_quotes_load() == {}

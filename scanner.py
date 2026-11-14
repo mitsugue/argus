@@ -3059,6 +3059,89 @@ _TD_DAILY_RESERVE = _td_int_env(
     int(argus_td_warm.plan_limits(_TWELVEDATA_PLAN)["creditsPerDay"] * 0.1))
 _DYN_CACHE_MAX  = 16
 _JP_DYN_CACHE   = {}    # symbols-tuple -> {"data":..., "expires":...}
+# 2026-11-14 (13.9 の準備・Mac mini への切り替えの前): the owner's JP closes
+# lived only in memory, so after every restart the Watchlist showed 価格未取得
+# for most names until the four-codes-per-five-minutes warm caught up (about
+# half an hour for 23 names; measured 2026-11-13 22:46→). The last J-Quants
+# close of each name is kept in one small file beside the other durable state
+# and read back only when no cached row exists. It is display-only: the row
+# keeps its own date, is marked delayed and never becomes decision evidence.
+_JP_LAST_QUOTES = {"loaded": False, "rows": {}}
+_JP_LAST_QUOTES_LOCK = threading.Lock()
+_JP_LAST_QUOTES_MAX = 80
+_JP_LAST_QUOTES_MAX_BYTES = 1 << 20
+_JP_LAST_QUOTE_KEYS = ("symbol", "name", "nameJa", "price", "change", "changePct", "volume",
+                       "date", "status", "sourceTimestamp", "source")
+
+
+def _jp_last_quotes_path():
+    if not _cost_policy_durable_enabled():
+        return None
+    return os.path.join(_DURABILITY_PATHS["root"], "jp_last_quotes.json")
+
+
+def _jp_last_quote_valid(code, row):
+    price = row.get("price") if isinstance(row, dict) else None
+    return (isinstance(code, str) and bool(_JP_SYM_RE.match(code))
+            and isinstance(price, (int, float)) and not isinstance(price, bool) and math.isfinite(price) and price > 0
+            and isinstance(row.get("date"), str) and bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", row["date"]))
+            and str(row.get("status") or "").lower() not in ("mock", "unavailable", "offline", "error"))
+
+
+def _jp_last_quotes_load():
+    """The kept closes, read once per process; {} when absent or unreadable."""
+    with _JP_LAST_QUOTES_LOCK:
+        if _JP_LAST_QUOTES["loaded"]:
+            return _JP_LAST_QUOTES["rows"]
+        _JP_LAST_QUOTES["loaded"] = True
+        try:
+            path = _jp_last_quotes_path()
+            if path and os.path.isfile(path) and os.path.getsize(path) <= _JP_LAST_QUOTES_MAX_BYTES:
+                with open(path, encoding="utf-8") as handle:
+                    data = json.load(handle)
+                rows = data.get("rows") if isinstance(data, dict) else None
+                if isinstance(rows, dict):
+                    _JP_LAST_QUOTES["rows"] = {
+                        code: {k: row.get(k) for k in _JP_LAST_QUOTE_KEYS}
+                        for code, row in list(rows.items())[:_JP_LAST_QUOTES_MAX]
+                        if _jp_last_quote_valid(code, row)}
+        except Exception:
+            _JP_LAST_QUOTES["rows"] = {}
+        return _JP_LAST_QUOTES["rows"]
+
+
+def _jp_last_quotes_remember(stocks):
+    """Keep each name's newest real close; never raises, never blocks a read."""
+    try:
+        path = _jp_last_quotes_path()
+        if not path:
+            return
+        current = dict(_jp_last_quotes_load())
+        changed = False
+        for row in stocks or []:
+            code = str((row or {}).get("symbol") or "").upper()
+            if not _jp_last_quote_valid(code, row):
+                continue
+            kept = current.get(code)
+            if kept and str(kept.get("date")) > str(row.get("date")):
+                continue
+            slim = {k: row.get(k) for k in _JP_LAST_QUOTE_KEYS}
+            if kept != slim:
+                current[code] = slim
+                changed = True
+        if not changed:
+            return
+        newest = sorted(current.items(), key=lambda item: str(item[1].get("date")), reverse=True)
+        current = dict(newest[:_JP_LAST_QUOTES_MAX])
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump({"schemaVersion": "argus-jp-last-quotes-v1", "rows": current}, handle,
+                      ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, path)
+        with _JP_LAST_QUOTES_LOCK:
+            _JP_LAST_QUOTES["rows"] = current
+    except Exception as exc:
+        add_log(f"[jp-last-quotes] save failed errorClass={type(exc).__name__}")
 _US_DYN_CACHE   = {}
 
 def _sanitize_symbols(raw, pattern, cap):
@@ -3262,6 +3345,7 @@ def _get_japan_watchlist_core(symbols=None, allow_provider_fetch=True):
                 _oldest = min(_JP_DYN_CACHE, key=lambda k: float((_JP_DYN_CACHE[k] or {}).get('expires') or 0))
                 _JP_DYN_CACHE.pop(_oldest, None)
             _JP_DYN_CACHE[syms] = {"data": snapshot, "expires": now + _JP_CACHE_TTL}
+            _jp_last_quotes_remember(stocks)
             if "_JP_FALLBACK_LAST" in globals():
                 _JP_FALLBACK_LAST["ts"] = now
         return snapshot
@@ -5700,6 +5784,14 @@ def _quote_cached_only(sym, market):
                 return {**retained, "status": "delayed", "delayClass": "UNKNOWN",
                         "realtimeEvidence": False, "decisionUsable": False,
                         "cacheState": "last_observation", "symbol": sym}
+    if market == "JP":
+        last = _jp_last_quotes_load().get(sym)
+        if isinstance(last, dict):
+            stamp = last.get("sourceTimestamp") or last.get("date")
+            if _source_time_within(stamp, 7 * 86400, now_epoch=now, allow_date_only=True):
+                retained = _canonical_cached_quote_row_age({**last, "sourceTimestamp": stamp}, now_epoch=now)
+                return {**retained, "status": "delayed", "realtimeEvidence": False,
+                        "decisionUsable": False, "cacheState": "restored_last_close", "symbol": sym}
     return None
 
 def _visibility_guard_cached_only():
