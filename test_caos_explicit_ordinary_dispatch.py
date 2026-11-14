@@ -22,7 +22,7 @@ TEXT = (ROOT / PATH).read_text()
 BASE_STEP_SHA256 = {
     'backend-identity': 'c74786e138774b177227c79b3846d937df40c257c25b2edb9d20ae72ebcedbe8',
     'caos-collection': '874cc3dad03c2b756340428fdc590fafe623d68553c24c30a76751030e23c7d2',
-    'durability-flush': '29bbfbeb89e6573a32ecad640d3b9a742cd4da3c920ead5d026950a5cd4954ea',
+    'durability-flush': '344e56046fc9d450dd7938b7fa7741b09f274cdce98b6df062622b1944177b46',
     'future-map': '03d13fcc2f47a1f9ac3338827bcc3d5f91e36c7cfe9815d4538620960d150390',
     'mission-backup': 'ab8dc2e417b211bd076ddc9f8c8381804a809e669ed2dc5734d1d8b2df462e3f',
 }

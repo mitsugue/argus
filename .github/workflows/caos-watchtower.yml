@@ -41,6 +41,11 @@ on:
         required: false
         default: ''
         type: string
+      durabilityOnly:
+        description: Publish the keyed recovery pair only; no feed refresh or translation (caos-scan, 2026-11-14)
+        required: false
+        default: false
+        type: boolean
 
 # GitHub concurrency keeps at most one running and one pending run for this
 # event-class group; a newer pending run replaces the older pending run. The
@@ -118,6 +123,9 @@ jobs:
             --ready "$RUNNER_TEMP/runtime-ready-prepare.json" \
             > "$RUNNER_TEMP/runtime-identity.json"
       - name: Watchtower refresh + visible translation (admin; token never logged)
+        # 2026-11-14: the news patrol was retired on 2026-10-25; a
+        # durability-only run (started by caos-scan) skips it.
+        if: inputs.durabilityOnly != true
         env:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
         run: |
