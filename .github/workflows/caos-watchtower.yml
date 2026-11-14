@@ -712,10 +712,14 @@ jobs:
             -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
             "$BE/api/argus/admin/diagnostics/operational" \
             -o "$RUNNER_TEMP/data-quality-before.json"
+          # 2026-11-14: since owner authentication (2026-09-28) this read is
+          # refused without the admin header (401 owner_auth_required), so the
+          # re-arm stopped before writing. The patrol read above carries it.
           curl --fail --silent --show-error --max-time 60 \
             --max-filesize "$READBACK_MAX_BYTES" \
             "$BE/api/argus/osint/remote-readback" \
-            -o "$RUNNER_TEMP/osint-readback.json"
+            -o "$RUNNER_TEMP/osint-readback.json" \
+            -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN"
           curl --fail --silent --show-error --max-time 60 \
             --max-filesize 8388608 \
             -H "X-ARGUS-ADMIN-TOKEN: $ARGUS_ADMIN_TOKEN" \
