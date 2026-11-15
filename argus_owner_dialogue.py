@@ -568,6 +568,11 @@ def bounded_context(context):
     return packed
 
 
+US_GLOBAL_CONTEXT_SOURCES = ('trusted_mail', 'calendar', 'official_sensor', 'policy',
+                             'official_macro_result', 'macro_release_reaction',
+                             'macro_release_news', 'market_position')
+
+
 def build_context(*, brief, symbol, market, horizon, question, received_at, owner=None,
                   previous=None, hypothesis=None, index_quote=None, eps_input=None, subject_comparison=None, material_facts=None, focus_event_id=None, event_snapshot=None, watchlist_only=False,
                   event_cutoff=None, previous_across_event_focus=False):
@@ -594,7 +599,11 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
     facts = [f for f in facts if f.get('source') != 'jp_market_research'
         or str((f.get('provenance') or {}).get('eventId', '')).endswith('-horizon-' + str(horizon))]
     if market=='US':
-        facts=[{**f,'applicability':'GLOBAL_CONTEXT_ONLY'} for f in facts if f.get('source') in ('trusted_mail','calendar','official_sensor','policy')]
+        # 2026-11-15 (owner: 「入れる」): US macro results, the measured market
+        # reaction (S&P/Nasdaq futures, Treasuries, FF futures), their reporting
+        # and the market-position memory reach a US subject too, as background
+        # only. Japan price-path / research calculations still never do.
+        facts=[{**f,'applicability':'GLOBAL_CONTEXT_ONLY'} for f in facts if f.get('source') in US_GLOBAL_CONTEXT_SOURCES]
         facts.append(fact('米国銘柄固有の計算・検証データはこの文脈には未接続です。一般ニュースを日本株の予測ルールへ変換しません。','subject_coverage',kind='UNKNOWN'))
     if market=='JP' and symbol!='N225':facts.append(subject_fact(brief,symbol,horizon,subject_comparison))
     if material_facts:

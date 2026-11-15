@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { OWNER_SYNC_TOKEN_KEY } from '../lib/watchlistAutoSync';
+import { OWNER_AUTH_REQUIRED, hasOwnerSession } from '../lib/ownerSession';
 
 // 2026-10-25 (owner): the stock page researches one name when the owner
 // presses 「調べる」. The read is the cached public GET; the only write is the
@@ -66,15 +67,21 @@ export function useOsintInvestigation(symbol: string, market: string, name?: str
   }, [running, load]);
 
   const research = useCallback(async () => {
-    const key = ownerKey();
-    if (!key) { setState((s) => ({ ...s, requestError: 'no_key' })); return; }
+    // 2026-11-15 (owner: 「顔認証で動くようにする」): a Face ID session is the
+    // owner's credential; the server accepts it for this request. The owner
+    // key stays the way in only where Face ID is not in use.
+    const sessionOwner = OWNER_AUTH_REQUIRED && hasOwnerSession();
+    const key = sessionOwner ? '' : ownerKey();
+    if (!sessionOwner && !key) { setState((s) => ({ ...s, requestError: 'no_key' })); return; }
     if (!backend) { setState((s) => ({ ...s, requestError: 'failed' })); return; }
     setState((s) => ({ ...s, requestError: null }));
     try {
       const r = await fetch(`${backend}/api/argus/osint/research-request`, {
         method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol, market, name, ownerToken: key }), signal: AbortSignal.timeout(12000) });
-      if (r.status === 401 || r.status === 403) { setState((s) => ({ ...s, requestError: 'bad_key' })); return; }
+        body: JSON.stringify(sessionOwner ? { symbol, market, name } : { symbol, market, name, ownerToken: key }),
+        signal: AbortSignal.timeout(12000) });
+      if (r.status === 401 || r.status === 403) {
+        setState((s) => ({ ...s, requestError: sessionOwner ? 'failed' : 'bad_key' })); return; }
       const d = await r.json() as { status?: string } & Partial<OsintOwnerRequest>;
       const owner: OsintOwnerRequest = { running: !!d.running, requestedToday: !!d.requestedToday,
         remainingToday: d.remainingToday ?? 0, completedAt: d.completedAt ?? null, complete: d.complete ?? null,

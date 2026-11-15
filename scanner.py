@@ -33765,11 +33765,17 @@ def _osint_owner_start_runner():
 
 @app.route("/api/argus/osint/research-request", methods=["POST"])
 def api_argus_osint_research_request():
-    """Owner: research one registered symbol now (owner-sync token)."""
+    """Owner: research one registered symbol now (owner-sync token, or the
+    verified Face ID owner session — 2026-11-15 owner: 「顔認証で動くようにする」).
+    The daily cap and the scheduled-AI cost gate below are unchanged."""
     body = request.get_json(silent=True) or {}
-    ok, err, code = _require_owner_sync(body_token=body.get("ownerToken"))
-    if not ok:
-        return jsonify(err), code
+    auth = app.extensions.get('argus_owner_auth')
+    session_ok = bool(auth is not None and auth.enabled
+                      and getattr(g, 'owner_session_verified', False))
+    if not session_ok:
+        ok, err, code = _require_owner_sync(body_token=body.get("ownerToken"))
+        if not ok:
+            return jsonify(err), code
     sym = str(body.get("symbol") or "").strip().upper()[:12]
     market = str(body.get("market") or "").strip().upper()
     if market not in ("JP", "US") or not _OSINT_OWNER_SYMBOL_RE.match(sym) \

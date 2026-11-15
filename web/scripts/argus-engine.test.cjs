@@ -586,6 +586,14 @@ console.log('argus-engine.test: all checks passed');
     overnight.session === 'OVERNIGHT' && overnight.extendedHours === true
     && quoteFreshnessJa(overnight).startsWith('時間外(夜間) ')
     && !quoteFreshnessJa(regularAfter).includes('時間外'));
+  // 2026-11-15: MEDIUM-only shocks are not shown, so the card still says 「なし」.
+  const { orderMaterialNews } = require(path.join(root, 'src/domain/newsPresentation.ts'));
+  const todayPanelSource = fs.readFileSync(path.join(root, 'src/components/today/ArgusTodayPanel.tsx'), 'utf8');
+  check('a MEDIUM-only market shock leaves 突発の市場ショック: なし',
+    orderMaterialNews([{ eventId: 'm', severity: 'MEDIUM' }]).length === 0
+    && orderMaterialNews([{ eventId: 'h', severity: 'HIGH' }]).length === 1
+    && todayPanelSource.includes("!newsRows.some(row => row.kind === '市場データ') && materialMailEvents.length === 0")
+    && !todayPanelSource.includes('shock.events.length === 0 && materialMailEvents.length === 0'));
   // 2026-11-13 (audit): a known but older exact time reads as that time, not 取得時刻不明.
   const { quoteClockJa } = require(path.join(root, 'src/domain/liveQuote.ts'));
   const known = { delayClass: 'UNKNOWN', provider: 'moomoo-rt', sourceTimestamp: '2026-11-13T13:56:07Z' };

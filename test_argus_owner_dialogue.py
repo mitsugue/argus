@@ -252,6 +252,22 @@ def test_unreferenced_numbers_and_trade_authority_are_rejected():
     assert dialogue.validate_answer(value,c) is None
 
 
+def test_us_context_receives_us_macro_results_and_market_position():
+    snapshot=market_brief()
+    rows=[{'text':'米CPI 前月比+0.3%','source':'official_macro_result','priority':'P0','verification':'VERIFIED','provenance':{'eventId':'cpi-1'}},
+          {'text':'米CPI +5m: S&P500先物 -0.4%','source':'macro_release_reaction','priority':'P0','verification':'VERIFIED','provenance':{'eventId':'cpi-1'}},
+          {'text':'米CPIの関連報道','source':'macro_release_news','priority':'P0','verification':'CORROBORATED','provenance':{'eventId':'cpi-1'}},
+          {'text':'米国の利上げ・利下げ観測: 織り込み後退','source':'market_position','priority':'P1','verification':'UNCONFIRMED','provenance':{'eventId':'mp-1'}}]
+    snapshot['facts']=snapshot['facts']+rows
+    snapshot['unifiedContext']=brief.unified_context(snapshot)
+    c=dialogue.build_context(brief=snapshot,symbol='AAPL',market='US',horizon=5,question='どう見る？',received_at=AT)
+    sources={f['source'] for f in c['facts']}
+    assert {'official_macro_result','macro_release_reaction','macro_release_news','market_position'} <= sources
+    assert all(f.get('applicability')=='GLOBAL_CONTEXT_ONLY' for f in c['facts']
+               if f['source'] in dialogue.US_GLOBAL_CONTEXT_SOURCES)
+    assert not any(f['source']=='price_path_calculation' for f in c['facts'])
+
+
 def test_us_context_does_not_inherit_japan_price_forecasts():
     c=dialogue.build_context(brief=market_brief(),symbol='AAPL',market='US',horizon=5,question='どう見る？',received_at=AT)
     assert not any(f['source']=='price_path_calculation' for f in c['facts'])

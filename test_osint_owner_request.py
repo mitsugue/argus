@@ -34,6 +34,31 @@ def test_requires_the_owner_key(owner):
     assert owner == []
 
 
+class _EnabledAuth:
+    enabled = True
+
+
+def test_face_id_owner_session_needs_no_key(owner, monkeypatch):
+    # 2026-11-15 (owner: 「顔認証で動くようにする」)
+    from types import SimpleNamespace
+    monkeypatch.setitem(scanner.app.extensions, "argus_owner_auth", _EnabledAuth())
+    monkeypatch.setattr(scanner, "g", SimpleNamespace(owner_session_verified=True))
+    with scanner.app.test_client() as c:
+        r = c.post("/api/argus/osint/research-request", json={"symbol": "5803", "market": "JP"})
+        assert r.status_code == 202 and r.get_json()["status"] == "started"
+    assert owner == ["osint_owner_request"]
+
+
+def test_unverified_session_still_needs_the_key(owner, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setitem(scanner.app.extensions, "argus_owner_auth", _EnabledAuth())
+    monkeypatch.setattr(scanner, "g", SimpleNamespace())
+    with scanner.app.test_client() as c:
+        r = c.post("/api/argus/osint/research-request", json={"symbol": "5803", "market": "JP"})
+        assert r.status_code == 401
+    assert owner == []
+
+
 def test_rejects_a_mismatched_symbol_and_market(owner):
     with scanner.app.test_client() as c:
         assert _post(c, "5803", market="US").status_code == 400
