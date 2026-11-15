@@ -430,7 +430,18 @@ console.log('argus-engine.test: all checks passed');
   const de = fs.readFileSync(path.join(root, 'src/hooks/useDecisionEvidence.ts'), 'utf8');
   check('the last good decision evidence is kept on the device',
     de.includes("LAST_GOOD_KEY = 'argus.decisionEvidence.lastGood.v1'")
-    && de.includes('writeLastGoodDecisionEvidence(next)') && de.includes('readLastGoodDecisionEvidence()'));
+    && de.includes('writeLastGoodDecisionEvidence({ ...next, marketView: marketViewToKeep(') && de.includes('readLastGoodDecisionEvidence()'));
+  // 2026-11-15: a failed market view never replaces the device's last computed one.
+  const { marketViewToKeep } = require(path.join(root, 'src/domain/lastGoodMarketView.ts'));
+  const computed = { projection: { families: {} } };
+  const failedView = { projection: null, sourceStatus: { error: 'market_view_failed:KeyError' } };
+  check('a failed market view keeps the saved computed one',
+    marketViewToKeep(failedView, computed) === computed
+    && marketViewToKeep(null, computed) === computed
+    && marketViewToKeep(computed, failedView) === computed
+    && marketViewToKeep({ projection: { families: { D01: {} } } }, computed).projection.families.D01 !== undefined
+    && marketViewToKeep(failedView, null) === failedView
+    && marketViewToKeep(failedView, { projection: null }).projection === null);
   const { displayNewsHeadline, isDigestHeadline } = require(path.join(root, 'src/lib/newsHeadline.ts'));
   check('a digest mail headline is shown by its first item',
     displayNewsHeadline('日経ニュースメール 9/7 夕版 ━ 注目ニュース ━━━━━━━ ◆円半年ぶりに154円台に上昇 円安抑止へ思惑（有料会員限定） ◆次の記事') === '円半年ぶりに154円台に上昇 円安抑止へ思惑'

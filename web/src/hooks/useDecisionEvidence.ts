@@ -7,6 +7,7 @@ import {
   getTachibanaLiveDocument, setTachibanaLiveDocument, subscribeTachibanaLive,
 } from '../domain/tachibanaLive';
 import type { TachibanaLiveDocument } from '../domain/tachibanaLive';
+import { marketViewToKeep } from '../domain/lastGoodMarketView';
 
 // Decision Evidence (v13.5.13) — canonical artifact references for the device
 // SDA, served by /api/argus/decision-evidence. The payload carries verified
@@ -193,7 +194,8 @@ const decisionEvidenceStore = createSharedPollingStore<DecisionEvidenceState>(
           const next = { subjects: mergedSubjects,
             marketView: marketView ? { ...marketView, japaneseLive } : null,
             generatedAt: typeof data.generatedAt === 'string' ? data.generatedAt : null };
-          writeLastGoodDecisionEvidence(next);
+          writeLastGoodDecisionEvidence({ ...next, marketView: marketViewToKeep(
+            next.marketView, readLastGoodDecisionEvidence()?.marketView ?? null) });
           setState({ ...next, requested: [...desiredSymbols], loading: false, error: null });
         }
       } catch (err: unknown) {

@@ -46021,8 +46021,15 @@ def _jp_market_engine_market_view():
     if memo["view"] is not None and now - memo["ts"] < 120:
         return memo["view"]
     cutoff = _ai_now_iso()
+    # 2026-11-15: the projection (6 signs, reversal) and the three context
+    # documents (margin 1570, JPY positions, internals) fail separately. One
+    # failing step used to blank all of them for 120 s with no reason shown.
+    failures = {}
+    projection = None
+    source_status = {}
     try:
         inputs = _decision_evidence_stage("view.pit_inputs", _jp_market_engine_pit_inputs)
+        source_status = dict(inputs["sourceStatus"])
         evidence = _decision_evidence_stage("view.d01_d07", lambda: jp_market_engine.evaluate_d01_d07(
             cutoff=cutoff, two_market_rows=inputs["creditRows"],
             nikkei_current_estimate=_level_map_current_valuation(cutoff, nikkei_rows=inputs["nikkeiRows"]),
@@ -46045,30 +46052,35 @@ def _jp_market_engine_market_view():
             cutoff=cutoff, evidence=evidence, reversal=reversal,
             warning_performance=warning_performance,
             adopted_warning_rules=adopted_rules)
-        context = _decision_evidence_stage("view.context", lambda: {
-            "margin1570Dynamics": _jp_market_margin_1570_dynamics(cutoff=cutoff),
-            "jpyPosition": _cftc_jpy_document(cutoff=cutoff),
-            "internals": _jp_market_internals_cached()})
-        view = {
-            "schemaVersion": "argus-jp-market-engine-market-view-v1",
-            "informationCutoff": cutoff,
-            "projection": projection,
-            "sourceStatus": dict(inputs["sourceStatus"]),
-            **context,
-            "marketFeatures": _JP_MARKET_FEATURE_HISTORY.get("latest"),
-            "marketFeatureStatus": _JP_MARKET_FEATURE_HISTORY.get("status"),
-            "earningsInputStatus": dict(_JP_EARNINGS_HISTORY_STATUS),
-            "actionAuthority": False,
-            "automaticAiCalls": 0,
-        }
     except Exception as exc:
-        view = {
-            "schemaVersion": "argus-jp-market-engine-market-view-v1",
-            "informationCutoff": cutoff, "projection": None,
-            "sourceStatus": {
-                "error": f"market_view_failed:{type(exc).__name__}"},
-            "actionAuthority": False, "automaticAiCalls": 0,
-        }
+        projection = None
+        failures["error"] = f"market_view_failed:{type(exc).__name__}"
+    context = {}
+    for key, build in (
+            ("margin1570Dynamics", lambda: _jp_market_margin_1570_dynamics(cutoff=cutoff)),
+            ("jpyPosition", lambda: _cftc_jpy_document(cutoff=cutoff)),
+            ("internals", _jp_market_internals_cached)):
+        try:
+            # One recorder name for the three parts (the named operations are bounded).
+            context[key] = _decision_evidence_stage("view.context", build)
+        except Exception as exc:
+            failures[key + "Error"] = f"context_failed:{type(exc).__name__}"
+    view = {
+        "schemaVersion": "argus-jp-market-engine-market-view-v1",
+        "informationCutoff": cutoff,
+        "projection": projection,
+        "sourceStatus": {**source_status, **failures},
+        **context,
+        "marketFeatures": _JP_MARKET_FEATURE_HISTORY.get("latest"),
+        "marketFeatureStatus": _JP_MARKET_FEATURE_HISTORY.get("status"),
+        "earningsInputStatus": dict(_JP_EARNINGS_HISTORY_STATUS),
+        "actionAuthority": False,
+        "automaticAiCalls": 0,
+    }
+    # A failed part is retried after 30 s instead of being served for 120 s.
+    if failures:
+        memo["ts"], memo["view"] = now - 90, view
+        return view
     memo["ts"], memo["view"] = now, view
     return view
 

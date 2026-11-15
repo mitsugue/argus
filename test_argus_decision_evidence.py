@@ -436,3 +436,46 @@ def test_decision_evidence_names_each_stage_for_the_existing_recorder(monkeypatc
         assert ("internal", "decision_evidence.view.adopted_rules") in seen
     finally:
         _reset_jp_market_engine_memos()
+
+
+def test_market_view_parts_fail_separately(monkeypatch):
+    """2026-11-15: one failing step used to blank 6 SIGNS, MARGIN, YEN POSITIONS
+    and the internals together for 120 s. Each part now fails on its own and
+    names itself in sourceStatus; a failed view is retried after 30 s."""
+    _reset_jp_market_engine_memos()
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
+    _seed_jp_market_engine_inputs()
+
+    def boom(**kwargs):
+        raise RuntimeError("cftc down")
+    monkeypatch.setattr(scanner, "_cftc_jpy_document", boom)
+    monkeypatch.setattr(scanner, "_jp_market_margin_1570_dynamics",
+                        lambda cutoff: {"kind": "margin"})
+    monkeypatch.setattr(scanner, "_jp_market_internals_cached", lambda: {"kind": "internals"})
+    try:
+        view = scanner._jp_market_engine_market_view()
+        assert view["projection"]["families"]["D01"]["status"] == "AVAILABLE"
+        assert "jpyPosition" not in view
+        assert view["margin1570Dynamics"] == {"kind": "margin"}
+        assert view["internals"] == {"kind": "internals"}
+        assert view["sourceStatus"]["jpyPositionError"] == "context_failed:RuntimeError"
+        assert "error" not in view["sourceStatus"]
+        assert all(isinstance(v, str) for v in view["sourceStatus"].values())
+        # the failed part is retried after 30 s, not served for 120 s
+        memo = scanner._JP_MARKET_ENGINE_MARKET_VIEW_MEMO
+        assert scanner.time.time() - memo["ts"] >= 89
+
+        # the projection failing keeps the three context documents
+        _reset_jp_market_engine_memos()
+        monkeypatch.setattr(scanner, "_cftc_jpy_document", lambda cutoff: {"kind": "jpy"})
+        def broken_inputs():
+            raise KeyError("creditRows")
+        monkeypatch.setattr(scanner, "_jp_market_engine_pit_inputs", broken_inputs)
+        view = scanner._jp_market_engine_market_view()
+        assert view["projection"] is None
+        assert view["sourceStatus"]["error"] == "market_view_failed:KeyError"
+        assert view["jpyPosition"] == {"kind": "jpy"}
+        assert view["margin1570Dynamics"] == {"kind": "margin"}
+        assert view["actionAuthority"] is False
+    finally:
+        _reset_jp_market_engine_memos()
