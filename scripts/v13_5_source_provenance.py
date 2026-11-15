@@ -257,10 +257,10 @@ REVIEWED_EXTENSION_BLOBS = {
     '.github/actions/warm-profile-seed/action.yml': 'eda05275ed6f5f0eb86d866c15022535194cd5bb',
     '.github/actions/warm-profile-consumer/action.yml': '12934bafbf41522ba487c3b26328f74276dfc732',
     # Exact opt-in owner authentication, UI, backup and regression candidate.
-    'argus_owner_auth.py': 'b3beff3fe54bd66209c860df755aec7b33c7dff3',
-    'docs/ops/owner-server-auth.md': 'c1c9661a76392785523d34572227bcb98911d4a3',
+    'argus_owner_auth.py': '3a2ee06e994b00899f8a12e25205e5dc8db3de94',
+    'docs/ops/owner-server-auth.md': '42e7837b0cf4e978ed1f13260e08ed1ebad8027b',
     'scripts/owner_auth_backup.py': 'ce700f026cecfddc611cb0a310782856c0aeeb37',
-    'test_argus_owner_auth.py': 'e40b6d73bcb283e836e7d5812bd7f7b16e721ace',
+    'test_argus_owner_auth.py': '1339ade9be4609837f3be59dd3f27aa34563d685',
     'web/scripts/owner-session.test.cjs': 'b7f6d5ca51592c31e52de1ce47cd1c788fe016dd',
     'web/src/components/OwnerAccess.css': '711268ba1b8478611e939f7cfecfd822c012ff44',
     'web/src/components/OwnerAccess.tsx': 'af45043f960df5c2bf30d6fe697e3d54ce864ae9',
@@ -769,6 +769,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_intel_store_order.py",
     "test_production_release_manifest_workflow.py",
     "scripts/run_foundation_job.py",
     "scripts/run_formal_research_benchmark.py",
