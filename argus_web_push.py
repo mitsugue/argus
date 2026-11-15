@@ -66,6 +66,35 @@ def configuration(env):
     except Exception: return {'configured': False}
 
 
+# 2026-11-15 owner 「警報を通知で」: security alerts reach every enabled device,
+# whatever the news/SQ/watchlist switches say, at most once per type an hour.
+SECURITY_INTERVAL_SECONDS = 3600
+SECURITY_ALERT_LABELS = {
+    'admin_token_mismatch': '違う鍵で管理の操作が試されました',
+    'bridge_signature_rejected': '橋(AWS)からの署名が合わない送信を拒みました',
+}
+
+
+def security_proposals(alerts, now):
+    """Notices for recorded security alerts (no address or key in the text)."""
+    out = []
+    for alert in alerts or ():
+        kind, at = alert.get('type'), alert.get('at')
+        if (kind not in SECURITY_ALERT_LABELS or isinstance(at, bool)
+                or not isinstance(at, (int, float)) or not 0 <= now - at < SECURITY_INTERVAL_SECONDS):
+            continue
+        local = datetime.fromtimestamp(at, _JST)
+        when = f'{local.month}/{local.day} {local:%H:%M}'
+        country = str(alert.get('country') or '')
+        body = (f'{when}(日本時間)に拒みました。'
+                + (f'接続元の国: {country}。' if re.fullmatch(r'[A-Z]{2}', country) else '')
+                + '同じ種類は1時間に1回まで知らせます。')
+        out.append({'key': f'security:{kind}:{int(at)}', 'kind': 'security',
+                    'title': 'ARGUS 警報｜' + SECURITY_ALERT_LABELS[kind], 'body': body,
+                    'hash': '#settings', 'due': at, 'expires': at + SECURITY_INTERVAL_SECONDS})
+    return out
+
+
 def _per_kind(events, limit=20):
     """Up to `limit` events of each kind, so a burst of news never pushes a stock move out (2026-10-23)."""
     seen = {}
@@ -259,7 +288,8 @@ class PushService:
                 for sub in db.execute('SELECT * FROM subscriptions WHERE enabled=1').fetchall():
                     for event in _per_kind(events):
                         column = {'sq':'sq','news':'news','owner_changes':'owner_changes'}.get(event['kind'])
-                        if not column or not sub[column]: continue
+                        # A security alert has no switch: every enabled device receives it.
+                        if event['kind'] != 'security' and (not column or not sub[column]): continue
                         if event['kind']=='news' and event['due']<sub['created']: continue
                         self.enqueue(db,sub['id'],event,now)
                 db.execute("UPDATE deliveries SET status='EXPIRED' WHERE status='QUEUED' AND expires<=?", (now,))

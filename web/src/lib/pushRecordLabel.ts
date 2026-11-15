@@ -12,6 +12,8 @@ export function pushRecordKindJa(key: unknown): string {
   if (key.startsWith('news:')) return '重大ニュース';
   if (key.startsWith('owner-change:')) return '監視銘柄の急騰・急落';
   if (key.startsWith('test:')) return '確認通知';
+  // 2026-11-15 (owner 「警報を通知で」): a wrong admin key or a rejected bridge signature.
+  if (key.startsWith('security:')) return '警報';
   return '通知';
 }
 

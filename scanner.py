@@ -16400,11 +16400,31 @@ def _client_meta():
 def _is_locked():
     return _AI_JUDGE_LOCKED_ENV or _AI_GATE_STATE["softLocked"]
 
+# 2026-11-15 owner 「警報を通知で」: the first alert of each type in an hour
+# becomes an app notification (Web Push) on the next push tick.  A token-less
+# request (the scheduled smoke test checks that admin routes refuse one) is
+# not an alert; a request that sent a wrong admin token is.
+_SECURITY_PUSH = {}
+_SECURITY_PUSH_LOCK = threading.Lock()
+
+
+def _security_push_note(alert_type, meta, now=None):
+    if alert_type not in argus_web_push.SECURITY_ALERT_LABELS:
+        return
+    now = time.time() if now is None else now
+    with _SECURITY_PUSH_LOCK:
+        row = _SECURITY_PUSH.get(alert_type)
+        if row and now - row["at"] < argus_web_push.SECURITY_INTERVAL_SECONDS:
+            row["count"] += 1
+            return
+        _SECURITY_PUSH[alert_type] = {"type": alert_type, "at": now, "count": 1,
+                                      "country": str((meta or {}).get("country") or "")[:2]}
+
+
 def send_security_alert(event):
-    """Phase-1 security alert: structured log only (never fails the app, never
-    logs the admin token). Phase-2 (documented, not built): wire Resend/SendGrid
-    using SECURITY_ALERT_* with subject/timestamp/IP/country/user-agent and
-    signed "It was me / It was not me" action links."""
+    """Security alert: structured log (never fails the app, never logs the
+    admin token) and, for the alert types in argus_web_push.SECURITY_ALERT_LABELS,
+    an app notification at most once per type an hour."""
     try:
         meta = event.get("meta", {})
         add_log(f"[SECURITY] {event.get('type', 'event')} ip={meta.get('ip', '')} "
@@ -16412,6 +16432,10 @@ def send_security_alert(event):
                 f"failed={_AI_GATE_STATE['failedAttempts']} locked={_is_locked()}")
         if _SECURITY_ALERT_EMAIL and not _SECURITY_ALERT_PROVIDER:
             add_log("[SECURITY] SECURITY_ALERT_EMAIL set but no SECURITY_ALERT_PROVIDER (no-op in v1)")
+        push_type = event.get("type")
+        if push_type == "admin_auth_failed":
+            push_type = "admin_token_mismatch" if event.get("tokenPresent") is True else None
+        _security_push_note(push_type, meta)
     except Exception:
         pass
 
@@ -16429,7 +16453,8 @@ def _require_admin():
         # Token-less smoke checks and hostile requests have no authority to
         # stop authenticated jobs. A global failure-triggered lock let any
         # caller disable scheduled analysis with five rejected requests.
-        send_security_alert({"type": "admin_auth_failed", "meta": _client_meta()})
+        send_security_alert({"type": "admin_auth_failed", "tokenPresent": bool(token),
+                             "meta": _client_meta()})
         return False, {"error": "unauthorized"}, 401
     return True, None, 200
 
@@ -19609,6 +19634,9 @@ def _web_push_tick():
         if not _JP_FISCAL_REFRESH_STATE.get("pendingPersistence"):
             proposals.extend(argus_jp_fiscal_runtime.notification_proposals(
                 _MARKET_LEDGER, now=time.time()))
+        with _SECURITY_PUSH_LOCK:
+            alerts = [dict(row) for row in _SECURITY_PUSH.values()]
+        proposals.extend(argus_web_push.security_proposals(alerts, time.time()))
         _WEB_PUSH.tick(proposals)
     except Exception as exc:
         add_log(f"web-push tick unavailable: {type(exc).__name__}")
