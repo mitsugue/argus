@@ -208,6 +208,23 @@ def test_bad_configuration_refuses_start(setup, update):
     with pytest.raises(RuntimeError): module.OwnerAuth({**env, **update})
 
 
+@pytest.mark.parametrize('runtime', ['production', ' Production '])
+@pytest.mark.parametrize('extra', [{}, {'ARGUS_OWNER_AUTH_REQUIRED': '0'}])
+def test_production_without_owner_auth_refuses_start(runtime, extra):
+    with pytest.raises(RuntimeError, match='owner_auth_required_in_production'):
+        module.OwnerAuth({'ARGUS_RUNTIME_ENV': runtime, **extra})
+
+
+def test_production_with_owner_auth_starts(setup):
+    _, _, env = setup
+    assert module.OwnerAuth({**env, 'ARGUS_RUNTIME_ENV': 'production'}).enabled
+
+
+@pytest.mark.parametrize('runtime', ['', 'development', 'test'])
+def test_non_production_may_run_without_owner_auth(runtime):
+    assert not module.OwnerAuth({'ARGUS_RUNTIME_ENV': runtime}).enabled
+
+
 def test_disabled_does_not_create_storage(tmp_path):
     app = Flask(__name__)
     module.install(app, {})

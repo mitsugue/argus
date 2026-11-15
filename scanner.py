@@ -7977,10 +7977,11 @@ def _jp_stock_news_intel(pairs):
             r = dict(r); r["symbolHint"] = sym; r["lang"] = "ja"; r["corroboration"] = "single"
             r.setdefault("intelligenceId", hashlib.md5(
                 f"google_news_jp|{r.get('canonicalUrl')}|{t}".encode()).hexdigest()[:16])
-            _INTEL_STORE.append(r)
+            _INTEL_STORE.insert(0, r)
             pushed += 1
-    if len(_INTEL_STORE) > _INTEL_STORE_MAX:
-        del _INTEL_STORE[:len(_INTEL_STORE) - _INTEL_STORE_MAX]
+    # Newest-first like the RSS collector: trimming the tail drops the oldest,
+    # never the freshest general headline (2026-11-15).
+    del _INTEL_STORE[_INTEL_STORE_MAX:]
     return pushed
 
 
@@ -10256,6 +10257,11 @@ def _jp_canonical_calendar_autoregister():
 
 
 _INVESTOR_TYPES_REFRESH = {"lastAt": 0.0}
+# 2026-11-15: only an import waits the full day. A failure, a refused import or
+# "no new week yet" (the weekly table lands on a weekday afternoon) retries
+# soon instead of leaving flow.foreign a day behind.
+_INVESTOR_TYPES_SETTLED_SECONDS = 20 * 3600
+_INVESTOR_TYPES_RETRY_SECONDS = 2 * 3600
 
 
 def _recovery_phase_a_begin_market_ledger_observation():
@@ -10301,9 +10307,11 @@ def _investor_types_autorefresh():
     if not _JQUANTS_API_KEY:
         return
     now = time.time()
-    if now - _INVESTOR_TYPES_REFRESH["lastAt"] < 20 * 3600:
+    wait = _INVESTOR_TYPES_REFRESH.get("waitSeconds", _INVESTOR_TYPES_SETTLED_SECONDS)
+    if now - _INVESTOR_TYPES_REFRESH["lastAt"] < wait:
         return
     _INVESTOR_TYPES_REFRESH["lastAt"] = now
+    _INVESTOR_TYPES_REFRESH["waitSeconds"] = _INVESTOR_TYPES_RETRY_SECONDS
     now_iso = _ai_now_iso()
     # 2026-09-30: a one-time ten-year window (inside the entitlement) until
     # the ledger reaches nine years back, so foreign_flow.net4w exists on the
@@ -10349,6 +10357,7 @@ def _investor_types_autorefresh():
             add_log(f"[d05] investor-types autorefresh "
                     f"+{len(result.get('preview') or [])} rows")
             _INVESTOR_TYPES_REFRESH["outcome"] = f"IMPORTED:{len(result.get('preview') or [])}:window{window_days}"
+            _INVESTOR_TYPES_REFRESH["waitSeconds"] = _INVESTOR_TYPES_SETTLED_SECONDS
         else:
             _INVESTOR_TYPES_REFRESH["outcome"] = f"IMPORT_REFUSED:window{window_days}"
     except Exception as exc:
@@ -10676,10 +10685,11 @@ def _us_stock_news_intel(pairs):
             r["corroboration"] = "single"
             r.setdefault("intelligenceId", hashlib.md5(
                 f"google_news_us|{r.get('canonicalUrl')}|{t}".encode()).hexdigest()[:16])
-            _INTEL_STORE.append(r)
+            _INTEL_STORE.insert(0, r)
             pushed += 1
-    if len(_INTEL_STORE) > _INTEL_STORE_MAX:
-        del _INTEL_STORE[:len(_INTEL_STORE) - _INTEL_STORE_MAX]
+    # Newest-first like the RSS collector: trimming the tail drops the oldest,
+    # never the freshest general headline (2026-11-15).
+    del _INTEL_STORE[_INTEL_STORE_MAX:]
     return pushed
 
 
@@ -11191,7 +11201,7 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
                 if force_discovery:
                     _US_STOCK_NEWS_CACHE.pop(symu, None)
                 _us_stock_news_intel([(symu, nm)])
-            # per-symbol items land anywhere in the store (append vs insert(0)) —
+            # per-symbol items can sit anywhere in the newest-first store —
             # scan the WHOLE bounded store, not just the head
             for it in list(_INTEL_STORE):
                 if str(it.get("symbolHint") or "").upper() == symu:
@@ -11221,7 +11231,7 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
                         rr["corroboration"] = "single"
                         rr.setdefault("intelligenceId", hashlib.md5(
                             f"gnews_recent|{rr.get('canonicalUrl')}|{t}".encode()).hexdigest()[:16])
-                        _INTEL_STORE.append(rr)
+                        _INTEL_STORE.insert(0, rr)
             if mkt == "US":
                 searched.append("finnhub_company_news")
                 try:
@@ -11304,8 +11314,7 @@ def _caos_run_sweep(symbol, market, name=None, budget_sec=12, probe_articles=3,
             pass
         alternatives.append("tdnet/公式開示を再確認" if mkt == "JP" else "SEC EDGARを再確認")
 
-    if len(_INTEL_STORE) > _INTEL_STORE_MAX:
-        del _INTEL_STORE[:len(_INTEL_STORE) - _INTEL_STORE_MAX]
+    del _INTEL_STORE[_INTEL_STORE_MAX:]
 
     result = argus_caos_source_sweep.build_sweep_result(
         symbol=symu, market=mkt, asset_class=ac, now_iso=now_iso,
@@ -17770,7 +17779,7 @@ def get_market_news():
             _JP_NEWS_SRC = {"reuters_jp", "boj_official", "meti_official", "nikkei_web", "bloomberg_jp", "google_news_jp"}
             _seen_h = {i["headline"] for i in items}
             jp_items = []
-            for it in reversed(list(_INTEL_STORE)):
+            for it in list(_INTEL_STORE):
                 sid = it.get("sourceId")
                 if it.get("lang") != "ja" and sid not in _JP_NEWS_SRC:
                     continue
@@ -18654,7 +18663,7 @@ def _market_position_update(news_events, scheduled_events, released_events=(), r
         # mail (13.8 §4-6); both are already-cached documents, read only.
         try:
             added += argus_market_position_memory.ingest_public_headlines(
-                memory, list(reversed(list(_INTEL_STORE)))[:120],
+                memory, list(_INTEL_STORE)[:120],
                 argus_news_intelligence.classify_event, now_iso=_ai_now_iso())
         except Exception:
             pass

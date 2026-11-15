@@ -260,10 +260,37 @@ def test_investor_types_autorefresh_feeds_ledger_idempotently(monkeypatch):
         before = len(scanner._MARKET_LEDGER.get("observations") or [])
         scanner._investor_types_autorefresh()
         assert len(scanner._MARKET_LEDGER.get("observations") or []) == before
+        # no new week yet → retry after two hours, not twenty
+        assert scanner._INVESTOR_TYPES_REFRESH["outcome"].startswith("NO_NEW_ROWS")
+        assert scanner._INVESTOR_TYPES_REFRESH["waitSeconds"] == 2 * 3600
     finally:
         scanner._MARKET_LEDGER.clear()
         scanner._MARKET_LEDGER.update(old_state)
         scanner._INVESTOR_TYPES_REFRESH["lastAt"] = 0.0
+        scanner._INVESTOR_TYPES_REFRESH.pop("waitSeconds", None)
+
+
+def test_investor_types_failure_retries_in_two_hours(monkeypatch):
+    clock = [1_800_000_000.0]
+    monkeypatch.setattr(scanner.time, "time", lambda: clock[0])
+    monkeypatch.setattr(scanner, "_JQUANTS_API_KEY", "test-key")
+    monkeypatch.setitem(scanner._INVESTOR_TYPES_REFRESH, "lastAt", 0.0)
+    calls = []
+    def fail(path, params, **kwargs):
+        calls.append(path)
+        raise TimeoutError("provider down")
+    monkeypatch.setattr(scanner, "_jquants_paginated", fail)
+    try:
+        scanner._investor_types_autorefresh()
+        assert scanner._INVESTOR_TYPES_REFRESH["outcome"] == "FAILED:TimeoutError"
+        clock[0] += 2 * 3600 - 1
+        scanner._investor_types_autorefresh()
+        assert len(calls) == 1
+        clock[0] += 1
+        scanner._investor_types_autorefresh()
+        assert len(calls) == 2
+    finally:
+        scanner._INVESTOR_TYPES_REFRESH.pop("waitSeconds", None)
 
 
 def test_brief_market_view_chip_counts_real_family_enum(monkeypatch):
