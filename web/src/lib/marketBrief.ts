@@ -20,7 +20,7 @@ export interface MarketPositionTheme {
   emergingBasis?: 'RUNNING' | 'BREAKING';
   lastUpdatedAt: string | null;
   recent: Array<{ entryId: string; kind: string; at: string; textJa: string; severity: string; ref?: Record<string, unknown> }>;
-  pricing: { ffImpliedRatePct?: number | null } | null;
+  pricing: { ffImpliedRatePct?: number | null; at?: string | null } | null;
   lastReaction: { at: string; textJa: string; readingCode?: string | null; ffImpliedRateMoveBp?: number | null } | null;
   nextEvent: { title: string; eventTimeUtc: string; eventCode?: string | null } | null;
   /** The integrated AI's reading of the theme (inference, checked against the evidence). */

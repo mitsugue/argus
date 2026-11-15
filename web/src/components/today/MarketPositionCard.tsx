@@ -16,6 +16,9 @@ const breakingDescription = '重大な速報の話題';
 const kindLabel: Record<string, string> = { NEWS: 'ニュース', RELEASE_REACTION: '発表の反応', PRICING: '織り込み', AI_VIEW: '見立て', RELEASE_RESULT: '公式結果', NEWS_CONTEXT: '関連報道', PUBLIC_HEADLINE: '公開ニュース', RADAR: 'ニュース件数', NEWS_WITHDRAWN: '取り下げ' };
 const jst = (iso?: string | null) => iso && Number.isFinite(Date.parse(iso))
   ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+// A futures reading is stored per trading day, so only its day is shown.
+const jstDay = (iso?: string | null) => iso && Number.isFinite(Date.parse(iso))
+  ? new Date(iso).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric' }) : '';
 
 function ThemeRow({ theme }: { theme: MarketPositionTheme }) {
   const lead = theme.recent.find(row => row.kind !== 'AI_VIEW')?.textJa || theme.lastReaction?.textJa || '';
@@ -32,7 +35,7 @@ function ThemeRow({ theme }: { theme: MarketPositionTheme }) {
         <span className={`mp-chip is-${theme.status.toLowerCase()}`} title={description}>
           <i aria-hidden="true" />{chip}</span></span>
         {(expectation || lead) && <small>{marketWording(expectation || lead)}</small>}
-        {theme.pricing?.ffImpliedRatePct != null && <small>政策金利の予想(FF先物) {theme.pricing.ffImpliedRatePct.toFixed(3)}%</small>}
+        {theme.pricing?.ffImpliedRatePct != null && <small>政策金利の予想(FF先物) {theme.pricing.ffImpliedRatePct.toFixed(3)}%{jstDay(theme.pricing.at) ? `(${jstDay(theme.pricing.at)}時点)` : ''}</small>}
         {fear && <small className="mp-fear">警戒: {marketWording(fear)}</small>}
         {theme.view && !expectation && !fear && <small className="mp-pending">期待・警戒の判断材料が不足しています</small>}
         {theme.nextEvent && <small>次: {friendlyEventText(theme.nextEvent.title)} {jst(theme.nextEvent.eventTimeUtc)}</small>}

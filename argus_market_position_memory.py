@@ -540,7 +540,9 @@ def snapshot(memory: Mapping[str, Any], *, now_iso: str,
             "entryCount": len(original_rows), "excludedUnverifiedReleaseEntries": len(original_rows) - len(rows),
             "lastUpdatedAt": last["at"] if last else None,
             "recent": [_with_mark(r, marks) for r in rows[-RECENT_ENTRIES:]][::-1],
-            "pricing": pricing["measured"] if pricing else None,
+            # 2026-11-15: the reading carries its time, so an old rate is not
+            # read as today's pricing (screen and integrated view show the day).
+            "pricing": {**(pricing["measured"] or {}), "at": pricing["at"]} if pricing else None,
             "lastReaction": {"at": reaction["at"], "textJa": reaction["textJa"],
                              "hasComparableMoves": (reaction.get("ref") or {}).get("hasComparableMoves") is True,
                              **(reaction.get("measured") or {})}
@@ -704,7 +706,11 @@ def explanation_facts(view: Mapping[str, Any]) -> List[Dict[str, Any]]:
         elif theme.get("lastReaction"):
             bits.append(theme["lastReaction"]["textJa"])
         if theme.get("pricing") and theme["pricing"].get("ffImpliedRatePct") is not None:
-            bits.append(f"政策金利の予想{theme['pricing']['ffImpliedRatePct']:.3f}%")
+            priced_at = _instant(theme["pricing"].get("at"))
+            local = priced_at.astimezone(timezone.utc) + timedelta(hours=9) if priced_at else None
+            day = f"{local.month}/{local.day}" if local else None
+            bits.append(f"政策金利の予想{theme['pricing']['ffImpliedRatePct']:.3f}%"
+                        + (f"({day}時点)" if day else ""))
         if theme.get("nextEvent"):
             bits.append(f"次: {theme['nextEvent']['title']}（{theme['nextEvent']['eventTimeUtc'][:16].replace('T', ' ')}Z）")
         if theme["status"] == "QUIET":

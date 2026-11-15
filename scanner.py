@@ -6277,7 +6277,9 @@ _COINGECKO_KEY = os.environ.get("COINGECKO_API_KEY") or os.environ.get("COINGECK
 _CG_TO_COINBASE = {
     "bitcoin": "BTC", "ethereum": "ETH", "solana": "SOL", "ripple": "XRP",
     "cardano": "ADA", "dogecoin": "DOGE", "litecoin": "LTC", "polkadot": "DOT",
-    "avalanche-2": "AVAX", "chainlink": "LINK", "polygon": "MATIC", "matic-network": "MATIC",
+    # 2026-11-15: MATIC became POL (1:1); Coinbase answers 400 for MATIC-USD.
+    "avalanche-2": "AVAX", "chainlink": "LINK", "polygon": "POL", "matic-network": "POL",
+    "polygon-ecosystem-token": "POL",
     "tron": "TRX", "stellar": "XLM", "bitcoin-cash": "BCH", "uniswap": "UNI",
     "cosmos": "ATOM", "aptos": "APT", "arbitrum": "ARB", "optimism": "OP",
     "shiba-inu": "SHIB", "near": "NEAR",

@@ -223,3 +223,25 @@ def test_pre_and_post_record_requested_and_returned_model_without_prompts():
     # the store keeps the ai block (it is not a forbidden key)
     rec = MS.merge_record(None, {"eventId": "e", "pre": pre}, now_iso=NOW)
     assert rec["pre"]["ai"]["returnedModel"] == "gpt-6-astra-2026-08-01"
+
+
+def test_raw_schedule_row_keeps_its_own_code_not_the_family():
+    """2026-11-15: the release watcher passes the raw schedule row (kind only);
+    PPI must stay PPI, never the family name "inflation"."""
+    import argus_macro_event_analysis as ma
+    row = {"id": "us-ppi-2026-12-15", "kind": "ppi", "category": "inflation",
+           "title": "US PPI (Producer Price Index)", "eventDate": "2026-12-15",
+           "eventTimeUtc": "2026-12-15T13:30:00Z", "impact": "medium"}
+    rec = ma.new_record(row, now_iso="2026-12-14T00:00:00Z")
+    assert rec["eventCode"] == "PPI" and rec["eventFamily"] == "inflation"
+
+
+def test_saved_family_code_is_healed_from_the_event_id():
+    import argus_macro_event_analysis as ma
+    saved = {"eventId": "us-cpi-2026-11-10", "eventCode": "inflation",
+             "eventDate": "2026-11-10"}
+    assert ma.rehydrate_schedule_metadata(saved)["eventCode"] == "CPI"
+    other = {"eventId": "custom-row", "eventCode": "inflation"}
+    assert ma.rehydrate_schedule_metadata(other)["eventCode"] == "inflation"   # nothing to read it from
+    kept = {"eventId": "us-nfp-2026-12-04", "eventCode": "NFP", "eventDate": "2026-12-04"}
+    assert ma.rehydrate_schedule_metadata(kept)["eventCode"] == "NFP"

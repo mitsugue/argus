@@ -10,14 +10,18 @@ import type { AssetItem } from '../types/assetItem';
 export const SYMBOL_TO_COINGECKO: Record<string, string> = {
   BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', XRP: 'ripple',
   ADA: 'cardano', DOGE: 'dogecoin', LTC: 'litecoin', DOT: 'polkadot',
-  AVAX: 'avalanche-2', LINK: 'chainlink', MATIC: 'matic-network', TRX: 'tron',
+  AVAX: 'avalanche-2', LINK: 'chainlink', MATIC: 'polygon-ecosystem-token', POL: 'polygon-ecosystem-token', TRX: 'tron',
   XLM: 'stellar', BCH: 'bitcoin-cash', UNI: 'uniswap', ATOM: 'cosmos',
   APT: 'aptos', ARB: 'arbitrum', OP: 'optimism', SHIB: 'shiba-inu', NEAR: 'near',
 };
 
+// 2026-11-15: CoinGecko stopped updating matic-network in February 2026; the
+// token migrated 1:1 to POL, whose id is polygon-ecosystem-token.
+const RETIRED_COINGECKO_IDS: Record<string, string> = { 'matic-network': 'polygon-ecosystem-token' };
+
 /** memo (`coingecko:<id>`) → fallback map → ''. Never throws. */
 export function coingeckoIdOf(a: Pick<AssetItem, 'symbol' | 'memo'>): string {
   const m = (a.memo ?? '').match(/coingecko:(\S+)/)?.[1];
-  if (m) return m;
+  if (m) return RETIRED_COINGECKO_IDS[m] ?? m;
   return SYMBOL_TO_COINGECKO[a.symbol.toUpperCase()] ?? '';
 }

@@ -453,6 +453,13 @@ console.log('argus-engine.test: all checks passed');
   const ai = fs.readFileSync(path.join(root, 'src/hooks/useAssetIntel.ts'), 'utf8');
   check('crypto quotes try the memo id and the symbol default id',
     ai.includes('SYMBOL_TO_COINGECKO[a.symbol.toUpperCase()]') && ai.includes('candidates.map((id) => cw.byId?.[id]).find((row) => row)'));
+  // 2026-11-15: matic-network stopped updating in February 2026; MATIC and a
+  // saved memo id read the POL id (1:1 migration) instead of a frozen price.
+  const cryptoIds = fs.readFileSync(path.join(root, 'src/lib/cryptoIds.ts'), 'utf8');
+  check('retired MATIC id reads the POL quote',
+    cryptoIds.includes("MATIC: 'polygon-ecosystem-token', POL: 'polygon-ecosystem-token'")
+    && cryptoIds.includes("{ 'matic-network': 'polygon-ecosystem-token' }")
+    && cryptoIds.includes('if (m) return RETIRED_COINGECKO_IDS[m] ?? m;'));
 }
 
 // v13.5.62 (GPT review 2026-09-07). Every registered symbol gets decision

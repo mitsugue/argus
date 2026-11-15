@@ -119,6 +119,20 @@ def pre_before_release(pre, event_time_utc):
     return dict(pre)
 
 
+# 2026-11-15: the family names of the catalog. A record created from a raw
+# schedule row (which carries only "kind") once took the family ("inflation")
+# as its code, so a PPI or CPI release showed as INFLATION.
+_FAMILY_NAMES = frozenset(spec[1] for spec in _CANONICAL_EVENT_TYPES.values())
+_CANONICAL_ID_CODE = re.compile(r"^(?:us|jp)-([a-z_]+)-\d{4}-\d{2}-\d{2}$")
+
+
+def _code_from_event_id(event_id: Any) -> Optional[str]:
+    """The event kind already written in a canonical ID such as us-ppi-2026-11-13."""
+    match = _CANONICAL_ID_CODE.match(str(event_id or ""))
+    code = match.group(1).upper() if match else None
+    return code if code in _CANONICAL_EVENT_TYPES else None
+
+
 def canonical_date_from_event_id(event_id: Any) -> Optional[str]:
     """Recover only an ISO date that is already part of a canonical event ID.
 
@@ -192,6 +206,8 @@ def rehydrate_schedule_metadata(record: Dict[str, Any],
                   or canonical_date_from_event_id(event_id))
     event_code = (supplied_event.get("eventCode") or supplied_event.get("kind")
                   or out.get("eventCode"))
+    if str(event_code or "").lower() in _FAMILY_NAMES:
+        event_code = _code_from_event_id(event_id) or event_code
     event = _catalog_metadata(event_id, event_code, event_date)
     event.update({key: value for key, value in supplied_event.items()
                   if value is not None})
@@ -214,6 +230,11 @@ def rehydrate_schedule_metadata(record: Dict[str, Any],
     for key, value in scalar_sources.items():
         if out.get(key) is None and value is not None:
             out[key] = value
+    # A family name saved as the code is replaced by the catalog's own code.
+    catalog_code = str(scalar_sources["eventCode"] or "").upper()
+    if (str(out.get("eventCode") or "").lower() in _FAMILY_NAMES
+            and catalog_code in _CANONICAL_EVENT_TYPES):
+        out["eventCode"] = catalog_code
     if not out.get("linkedAssets") and event.get("linkedAssets"):
         out["linkedAssets"] = list(event.get("linkedAssets") or [])[:8]
 
@@ -233,7 +254,8 @@ def new_record(event: Dict[str, Any], *, now_iso: str) -> Dict[str, Any]:
         "schemaVersion": SCHEMA_VERSION,
         "analysisId": f"ma-{eid}",
         "eventId": eid,
-        "eventCode": event.get("eventCode") or event.get("category") or "",
+        "eventCode": (event.get("eventCode") or str(event.get("kind") or "").upper()
+                      or event.get("category") or ""),
         "title": (event.get("title") or "")[:120],
         "eventTimeUtc": event.get("eventTimeUtc"),
         "eventDate": event.get("eventDate"),
