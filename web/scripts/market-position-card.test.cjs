@@ -45,6 +45,13 @@ assert.ok(viewHtml.includes('市場の期待')&&viewHtml.includes('市場の警�
 assert.ok(viewHtml.includes('警戒: 次の物価指標が強ければ')&&!viewHtml.includes('ARGUSの整理(推論)'));
 assert.ok(viewHtml.indexOf('mp-view')<viewHtml.indexOf('mp-entries'),'the view comes before the records');
 assert.ok(!html.includes('市場の期待'),'no view block without a view');
+// 2026-11-15: every kind the server memory writes has a Japanese name (no raw codes).
+const kinds=theme({recent:[{entryId:'p',kind:'PUBLIC_HEADLINE',at:'2026-10-02T12:00:00Z',textJa:'reuters_jp: 見出し',severity:'WATCH'},
+ {entryId:'r',kind:'RADAR',at:'2026-10-02T11:00:00Z',textJa:'公開ニュースの件数: 金利 12件(6時間・high)',severity:'WATCH'},
+ {entryId:'w',kind:'NEWS_WITHDRAWN',at:'2026-10-02T10:00:00Z',textJa:'取り下げられた報道',severity:'INFO'}]});
+const kindHtml=render({...base,marketPosition:{...position,themes:[kinds]}});
+assert.ok(kindHtml.includes('公開ニュース')&&kindHtml.includes('ニュース件数')&&kindHtml.includes('取り下げ'));
+for(const raw of ['PUBLIC_HEADLINE','RADAR','NEWS_WITHDRAWN']) assert.ok(!kindHtml.includes('<em>'+raw+'</em>'),raw);
 console.log('Market position card PASS');
 // AIの連結した記録を閉じたカードの要約に再利用しない。
 const duplicated=theme({lastReaction:null,recent:[{entryId:'ai',kind:'AI_VIEW',at:'2026-10-04T12:00:00Z',textJa:'期待: 重複する要約 / 警戒: 重複する要約',severity:'INFO'}],
