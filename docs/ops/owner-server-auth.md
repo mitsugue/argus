@@ -13,6 +13,10 @@ mutations, execution, orders, or overriding existing vault proofs.
   a new private database on the existing persistent volume. Password entry and
   secret configuration belong to the owner. Do not put a password in source,
   shell history, build variables, artifacts, or a URL.
+- A process started with `ARGUS_RUNTIME_ENV=production` (the Mac box launcher
+  sets it) refuses to start unless `ARGUS_OWNER_AUTH_REQUIRED=1`
+  (`owner_auth_required_in_production`), so a lost line fails closed instead
+  of opening every owner read.
 - Frontend: `VITE_ARGUS_OWNER_AUTH_REQUIRED=1` and the existing exact HTTPS
   `VITE_ARGUS_BACKEND_URL`. Existing CORS must admit the selected origin.
 - Cookies are not used. The server verifies a one-use WebAuthn challenge,
