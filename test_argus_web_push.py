@@ -426,3 +426,25 @@ def test_a_bull_and_bear_pair_sends_one_notice_per_index_move(service):
     assert [r['hash'] for r in rows]==['#asset/1570'] and ':down:' in rows[0]['key']
     other=_move(clock,eventId='JP:7203:PRICE_SPIKE:x',symbol='7203',market='JP',nameJa='トヨタ自動車')
     assert len(push.proposals({},[],clock[0],owner_events=[other,jp_bull]))==2   # unrelated symbols stay separate
+
+
+# 2026-11-15 owner 「警報を通知で」
+def test_security_alert_reaches_a_device_with_every_switch_off(service):
+    value,clock,sent=service;identity=subscribe(value,sq=False,news=False,ownerChanges=False)
+    notices=push.security_proposals([{'type':'admin_token_mismatch','at':clock[0]-30,'count':3,'country':'US'}],clock[0])
+    assert len(notices)==1 and notices[0]['hash']=='#settings' and notices[0]['kind']=='security'
+    assert notices[0]['title']=='ARGUS 警報｜違う鍵で管理の操作が試されました'
+    assert '接続元の国: US' in notices[0]['body'] and '日本時間' in notices[0]['body']
+    value.tick(notices);value.tick(notices);assert len(sent)==1          # one notice per alert
+    payload=sent[0][1];assert payload['title'].startswith('ARGUS 警報') and payload['hash']=='#settings'
+    assert value.status(identity)['deliveries'][0]['event_key'].startswith('security:admin_token_mismatch:')
+
+
+def test_security_proposals_ignore_old_unknown_and_malformed_alerts():
+    now=1800000000.0
+    assert push.security_proposals([{'type':'admin_token_mismatch','at':now-3600}],now)==[]
+    assert push.security_proposals([{'type':'run_blocked_budget','at':now}],now)==[]
+    assert push.security_proposals([{'type':'admin_token_mismatch','at':True}],now)==[]
+    assert push.security_proposals([{'type':'bridge_signature_rejected','at':now+5}],now)==[]
+    body=push.security_proposals([{'type':'bridge_signature_rejected','at':now,'country':'x1'}],now)[0]['body']
+    assert '接続元の国' not in body
