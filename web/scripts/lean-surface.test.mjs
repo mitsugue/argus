@@ -122,6 +122,9 @@ assert.doesNotMatch(osintHook, /runDeepDive|verifyGaps|verifyUrl|postTerms|ADMIN
 // 2026-10-25 (owner): the single write is the owner-key 「調べる」 request.
 assert.equal(osintHook.match(/method:\s*['"]POST/g)?.length, 1);
 assert.match(osintHook, /\/api\/argus\/osint\/research-request/);
+// 2026-11-15 (owner: 「顔認証で動くようにする」): a Face ID session asks without the owner key.
+assert.match(osintHook, /const sessionOwner = OWNER_AUTH_REQUIRED && hasOwnerSession\(\);/);
+assert.match(osintHook, /sessionOwner \? \{ symbol, market, name \} : \{ symbol, market, name, ownerToken: key \}/);
 assert.doesNotMatch(osintPanel, /深掘りOSINTを実行|未回収を再探索|追加して再調査/);
 
 // Existing encrypted recovery stays readable, while unavailable push and the

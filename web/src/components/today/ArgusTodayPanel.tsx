@@ -884,7 +884,9 @@ export const ArgusTodayPanel: React.FC<Props> = ({
         onOpen={(id) => openNewsDetails(`news-${id}`)} />}
       {!shock.previousObservation && !newsIntel.previousObservation
         && shock.status === 'data' && newsIntel.status === 'data'
-        && shock.events.length === 0 && materialMailEvents.length === 0
+        // 2026-11-15 (owner: 「なし」を出す): count the shock rows actually shown
+        // (HIGH/CRITICAL). MEDIUM-only moves used to leave the card empty with no 「なし」.
+        && !newsRows.some(row => row.kind === '市場データ') && materialMailEvents.length === 0
         && <p className="at-shock-clear">突発の市場ショック: なし</p>}
       {shock.status === 'error' && <p className="at-shock-clear">市場ショック: 取得できません</p>}
       <button type="button" className="at-news-more" onClick={() => openNewsDetails()}>すべてのニュース →</button>
