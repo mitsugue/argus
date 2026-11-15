@@ -29,6 +29,13 @@ function check(name, condition) {
 const NOW = Date.parse('2026-08-16T03:00:00.000Z');
 const isoAgo = (ms) => new Date(NOW - ms).toISOString();
 
+// 2026-11-15: a complete regime reading lives up to 6 h on the server; the
+// screen bound covers it plus one 5 min read and one response.
+check('market regime bound covers the server 6 h reading',
+  authority.LIVE_AUTHORITY_MAX_AGE_MS.marketRegime >= 6 * 60 * 60_000 + 5 * 60_000 + 60_000
+  && authority.liveAuthorityState(isoAgo(5 * 60 * 60_000), 'marketRegime', NOW) === 'fresh'
+  && authority.liveAuthorityState(isoAgo(7 * 60 * 60_000), 'marketRegime', NOW) === 'expired');
+
 check('canonical Z timestamp accepted',
   authority.exactAuthorityEpoch('2026-08-16T03:00:00Z') === NOW);
 check('canonical explicit offset accepted',

@@ -21,7 +21,11 @@ export type LiveAuthorityState = 'fresh' | 'expired' | 'invalid';
 //   read interval + the server's own cache age + one response (60 s),
 // checked against the intervals by live-authority.test.cjs.
 export const LIVE_AUTHORITY_MAX_AGE_MS: Readonly<Record<LiveAuthorityKind, number>> = Object.freeze({
-  marketRegime: 60 * 60_000,
+  // 2026-11-15: the server keeps a complete regime reading for up to 6 h
+  // (scanner.py _REGIME_CACHE_TTL, cut earlier by its own evidence expiry) and
+  // stamps asOf when it computed it. A 60 min bound showed a valid reading as
+  // 期限切れ for 5 of every 6 hours. 6 h + the 5 min read + one response.
+  marketRegime: 6 * 60 * 60_000 + 5 * 60_000 + 60_000,
   actionLabels: 3 * 60_000,         // 120 s read, response time asOf
   flowAttribution: 15 * 60_000,
   supplyDemand: 15 * 60_000,

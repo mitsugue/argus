@@ -13,7 +13,7 @@ const statusDescription: Record<string, string> = { ACTIVE: '14日以内に記�
 // A theme the server added because related news kept arriving (not one of the fixed seven).
 const emergingDescription = '7日間で重要なニュースが続いた話題';
 const breakingDescription = '重大な速報の話題';
-const kindLabel: Record<string, string> = { NEWS: 'ニュース', RELEASE_REACTION: '発表の反応', PRICING: '織り込み', AI_VIEW: '見立て', RELEASE_RESULT: '公式結果', NEWS_CONTEXT: '関連報道' };
+const kindLabel: Record<string, string> = { NEWS: 'ニュース', RELEASE_REACTION: '発表の反応', PRICING: '織り込み', AI_VIEW: '見立て', RELEASE_RESULT: '公式結果', NEWS_CONTEXT: '関連報道', PUBLIC_HEADLINE: '公開ニュース', RADAR: 'ニュース件数', NEWS_WITHDRAWN: '取り下げ' };
 const jst = (iso?: string | null) => iso && Number.isFinite(Date.parse(iso))
   ? new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
