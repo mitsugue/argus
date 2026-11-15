@@ -1,5 +1,6 @@
 """v13.5.3 news pipeline e2e (§32 PRODUCT): mocked Gmail → live endpoints."""
 import base64
+import json
 import time
 
 import pytest
@@ -957,12 +958,90 @@ def test_public_news_projection_excludes_internal_mailbox_reference():
 
 
 
-def test_headline_translation_is_disabled_without_a_gemini_key(monkeypatch):
-    """GPT-only production never starts a Gemini translation request."""
+def test_headline_translation_uses_gpt_in_batches_never_gemini(monkeypatch):
+    """Owner 2026-11-15 「GPTで訳す」: important headlines go to GPT in batches
+    of 20; GPT-only production never starts a Gemini request."""
     import scanner
-    monkeypatch.setattr(scanner, "google_genai", object())
+    monkeypatch.setattr(scanner, "google_genai", None)
     assert scanner.GEMINI_API_KEY == ""
-    assert scanner._translate_headlines_ja(["First headline"]) == {}
+    calls = []
+
+    def fake_prose(user, max_out=600, system=None, *, purpose="prose", diagnostic=None, **kw):
+        rows = json.loads(user.rsplit("\n", 1)[1])
+        calls.append((purpose, len(rows)))
+        diagnostic.update(outcome="ok")
+        return {"translations": [f"訳{i}" for i in range(len(rows))]}
+
+    monkeypatch.setattr(scanner, "_openai_prose", fake_prose)
+    headlines = [f"Headline number {i}" for i in range(25)]
+    out = scanner._translate_headlines_ja(headlines)
+    assert calls == [("headline_translation", 20), ("headline_translation", 5)]
+    assert out[0] == "訳0" and out[24] == "訳4" and len(out) == 25
+    assert scanner._NEWS_JA_STATE["lastSentCount"] == 25
+
+
+def test_refused_gpt_translation_sends_nothing(monkeypatch):
+    import scanner
+
+    def refused(user, max_out=600, system=None, *, purpose="prose", diagnostic=None, **kw):
+        diagnostic.update(outcome="skipped", reason="scheduled_daily_budget_exhausted")
+        return None
+
+    monkeypatch.setattr(scanner, "_openai_prose", refused)
+    assert scanner._translate_headlines_ja(["First headline", "Second headline"]) == {}
+    assert scanner._NEWS_JA_STATE["lastSentCount"] == 0
+
+
+def test_count_mismatch_batch_is_discarded_but_counted_as_sent(monkeypatch):
+    import scanner
+
+    def short(user, max_out=600, system=None, *, purpose="prose", diagnostic=None, **kw):
+        diagnostic.update(outcome="ok")
+        return {"translations": ["一つだけ"]}
+
+    monkeypatch.setattr(scanner, "_openai_prose", short)
+    assert scanner._translate_headlines_ja(["First headline", "Second headline"]) == {}
+    assert scanner._NEWS_JA_STATE["lastSentCount"] == 2
+
+
+@pytest.mark.parametrize("lane,kept", [(None, {"tf-b": 99}),
+                                       ("openai", {"tf-a": 3, "tf-b": 99})])
+def test_gemini_era_attempts_are_forgotten_on_restore(tmp_path, monkeypatch, lane, kept):
+    """Attempts the retired Gemini lane accrued without any provider call must
+    not keep important headlines away from GPT; terminal marks stay."""
+    import scanner
+    path = tmp_path / "news_ja.json"
+    blob = {"cache": {}, "failed": {"tf-a": 3, "tf-b": 99},
+            "state": {"sentToday": 7, "sentDay": "2026-11-15"}}
+    if lane:
+        blob["failedLane"] = lane
+    path.write_text(json.dumps(blob))
+    monkeypatch.setattr(scanner, "_NEWS_JA_FILE", str(path))
+    monkeypatch.setattr(scanner, "_NEWS_JA_FAILED", {})
+    monkeypatch.setattr(scanner, "_NEWS_JA_STATE", {"restored": False})
+    def no_ledger(*a, **k):
+        raise RuntimeError("offline")
+    monkeypatch.setattr(scanner, "_ledger_get", no_ledger)
+    scanner._news_ja_restore_once()
+    assert scanner._NEWS_JA_FAILED == kept
+    assert scanner._NEWS_JA_STATE["sentToday"] == 7
+    scanner._news_ja_persist()
+    saved = json.loads(path.read_text())
+    assert saved["failedLane"] == "openai" and saved["state"]["sentDay"] == "2026-11-15"
+
+
+def test_translation_tick_is_authorized_for_the_provider_it_calls(monkeypatch):
+    import scanner
+    state = {"lastRunAt": None, "lastSuccessAt": None, "lastError": None,
+             "consecutiveFailures": 0, "translatedTotal": 0}
+    monkeypatch.setattr(scanner, "_NEWS_TRANSLATION_WORKER", state)
+    seen = []
+    def gate(provider, purpose, **kw):
+        seen.append((provider, purpose))
+        return {"allowed": False, "reason": "deterministic_mode"}
+    monkeypatch.setattr(scanner, "_cost_policy_authorize", gate)
+    scanner._news_translation_tick()
+    assert seen == [("openai", "headline_translation")]
 
 def test_saved_rate_plan_review_preserves_evidence_and_never_calls_ai(tmp_path, monkeypatch):
     import copy

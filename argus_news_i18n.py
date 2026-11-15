@@ -92,6 +92,43 @@ def is_translated(text: Optional[str], cache: Dict[str, Dict[str, Any]]) -> bool
 
 TRANSLATE_MAX_ATTEMPTS = 3
 _FAILED_MAP_CAP = 200
+# Owner 2026-11-15 「GPTで訳す」: important English headlines go to GPT in
+# batches.  The day's headline count is the cost bound because the scheduled
+# USD ceiling is not enforced in production.  Estimated need is 50-200 a day
+# at about $0.0007 each, so 200 keeps translation near $0.14 a day at most.
+TRANSLATE_BATCH_SIZE = 20
+TRANSLATE_DAILY_HEADLINE_LIMIT = 200
+
+
+def jst_day(now_iso: Optional[str]) -> str:
+    """Japan calendar day (YYYY-MM-DD) of a UTC ISO timestamp; '' if unreadable."""
+    from datetime import datetime, timedelta, timezone
+    try:
+        at = datetime.fromisoformat(str(now_iso or "").replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return (at.astimezone(timezone.utc) + timedelta(hours=9)).strftime("%Y-%m-%d")
+
+
+def daily_send_remaining(state: Dict[str, Any], now_iso: Optional[str],
+                         limit: int = TRANSLATE_DAILY_HEADLINE_LIMIT) -> int:
+    """Headlines that may still be sent to the provider on this Japan day."""
+    day = jst_day(now_iso)
+    sent = int((state or {}).get("sentToday") or 0) if (
+        (state or {}).get("sentDay") == day and day) else 0
+    return max(0, int(limit) - sent)
+
+
+def note_daily_send(state: Dict[str, Any], now_iso: Optional[str], count: int) -> None:
+    """Add headlines sent to the provider to the Japan-day counter (mutates)."""
+    day = jst_day(now_iso)
+    if not day or int(count or 0) <= 0:
+        return
+    if state.get("sentDay") != day:
+        state["sentDay"], state["sentToday"] = day, 0
+    state["sentToday"] = int(state.get("sentToday") or 0) + int(count)
 
 
 def collect_pending(texts: List[str], cache: Dict[str, Dict[str, Any]],

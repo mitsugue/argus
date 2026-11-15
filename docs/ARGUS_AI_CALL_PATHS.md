@@ -11,7 +11,7 @@ Baseline: HEAD 9acf1c4 / v12.1.7 / 1579 tests green.
 | 3 | scanner.py:_gemini_check | Gemini | _GEMINI_JUDGE_MODEL | 判定の検算 | なし | 同上 | n/a | 同一応答 | あり | flash fallback | 不可 | cron/admin |
 | 4 | scanner.py:_openai_prose | OpenAI | _OPENAI_MODEL | 解説文(状態管理済み) | なし | redacted | **store=False必須** | 同一応答 | あり | chat(degraded) | 不可 | cron/admin |
 | 5 | scanner.py:12706/12727 | OpenAI/Gemini | _OPENAI_MODEL/_GEMINI_JUDGE_MODEL | 再判定/レフェリー | なし | owner文脈 | **store=False必須** | 同一応答 | あり | chat(degraded) | 不可 | cron/admin |
-| 6 | scanner.py:12861 | Gemini | _GEMINI_FALLBACK_MODEL | 翻訳/軽処理 | なし | 公開見出しのみ | n/a | あり | あり | なし | 不可 | cron |
+| 6 | scanner.py:_translate_headlines_ja | OpenAI(2026-11-15 Gemini から切替) | _OPENAI_MODEL(_openai_prose 経由) | 重要な英語見出しの翻訳(20件ずつ・日本の1日200件まで) | なし | 公開見出しのみ | **store=False必須** | 同一応答 | あり | なし | 不可 | cron |
 | 7 | scanner.py:_openai_research | OpenAI | role router(v12.2.0) | LIVE web調査(なぜ動いた/GPTスカウト) | web_search | redacted | **store=False必須** | 同一応答 | あり | **no-tool=model_only(明示ラベル・検証済み調査に偽装不可)** | web_search時のみ | cron/admin |
 | 8 | scanner.py:_gemini_osint | Gemini | _GEMINI_JUDGE_MODEL | OSINTスカウト(grounding) | google_search | redacted既定 | n/a | 同一応答 | grounding/call | なし | 可 | cron/admin |
 | 9 | scanner.py:_gpt_osint | OpenAI | role router(v12.2.0) | OSINTスカウト(web_search) | web_search | redacted既定 | **store=False必須** | 同一応答 | あり | model_onlyは`aiEvidenceLevel=model_only` | web_search時のみ | cron/admin |

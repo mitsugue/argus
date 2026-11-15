@@ -83,3 +83,44 @@ def test_market_refill_never_calls_translation_provider():
         result=ns['get_market_news']()
         assert result['items'][0]['headlineJa']=='中央銀行が利上げ'
     assert not calls
+
+
+def test_daily_headline_limit_bounds_what_is_sent():
+    """Owner 2026-11-15: GPT translation stops at 200 headlines a Japan day."""
+    ns, calls = host()
+    ns['_MARKET_NEWS_CACHE']['data'] = {'items': [
+        {'headline': 'Rate decision moves bonds', 'major': True, 'relevant': True},
+        {'headline': 'Oil jumps after supply cut', 'major': True, 'relevant': True}]}
+    day = i18n.jst_day('2026-09-19T05:00:00Z')
+    ns['_NEWS_JA_STATE'].update(sentDay=day, sentToday=i18n.TRANSLATE_DAILY_HEADLINE_LIMIT)
+    out = ns['_translate_pending_headlines']()
+    assert calls == [] and out['dailyLimitReached'] is True
+    ns['_NEWS_JA_STATE']['sentToday'] = i18n.TRANSLATE_DAILY_HEADLINE_LIMIT - 1
+    out = ns['_translate_pending_headlines']()
+    assert calls == [['Rate decision moves bonds']] and out['dailyLimitReached'] is True
+    assert ns['_NEWS_JA_STATE']['sentToday'] == i18n.TRANSLATE_DAILY_HEADLINE_LIMIT
+
+
+def test_refused_call_keeps_attempts_and_daily_count():
+    ns, calls = host()
+    ns['_MARKET_NEWS_CACHE']['data'] = {'items': [
+        {'headline': 'Rate decision moves bonds', 'major': True, 'relevant': True}]}
+    def refused(rows):
+        calls.append(rows)
+        ns['_NEWS_JA_STATE']['lastSentCount'] = 0
+        return {}
+    ns['_translate_headlines_ja'] = refused
+    out = ns['_translate_pending_headlines']()
+    assert out['sent'] == 0 and calls == [['Rate decision moves bonds']]
+    assert ns['_NEWS_JA_FAILED'] == {}
+    assert 'sentToday' not in ns['_NEWS_JA_STATE']
+
+
+def test_daily_counter_follows_the_japan_calendar_day():
+    state = {}
+    i18n.note_daily_send(state, '2026-11-15T14:59:00Z', 150)   # 23:59 JST
+    assert i18n.daily_send_remaining(state, '2026-11-15T14:59:30Z') == 50
+    assert i18n.daily_send_remaining(state, '2026-11-15T15:00:00Z') == 200  # 0:00 JST
+    i18n.note_daily_send(state, '2026-11-15T15:00:00Z', 5)
+    assert state == {'sentDay': '2026-11-16', 'sentToday': 5}
+    assert i18n.jst_day('not a time') == ''
