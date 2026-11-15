@@ -92,6 +92,20 @@ def test_prose_rejects_unreviewed_source_before_reserving_or_calling(prose):
     assert not reservations and not settlements and not calls
 
 
+def test_gpt_translation_rejects_new_content_before_cache_and_counts_spend(prose):
+    """2026-11-15: headline translation runs on GPT; a rejected batch is billed
+    once, nothing is cached, and an unreviewed source is never sent."""
+    scanner, reservations, settlements, calls, respond = prose
+    respond({"translations": ["retired_person"]})
+    assert scanner._translate_headlines_ja(["observations"]) == {}
+    assert scanner._NEWS_JA_STATE["lastSentCount"] == 1
+    assert scanner._translate_headlines_ja(["retired_person"]) == {}
+    assert scanner._NEWS_JA_STATE["lastSentCount"] == 0
+    assert calls == [True] and len(settlements) == 1
+    assert settlements[0]["ok"] is True and settlements[0]["actual_cost_usd"] > 0
+    assert reservations and reservations[0]["estimated_cost_usd"] > 0
+
+
 def test_prose_preserves_accepted_content_and_budget_accounting(prose):
     scanner, _, settlements, calls, respond = prose
     content = {"summaryJa": "観測値から条件を説明する", "value": 12.3, "validated": False}
@@ -136,7 +150,7 @@ def test_research_rejects_response_without_fallback_and_keeps_usage(monkeypatch)
     assert output is None and len(calls) == 1
 
 
-@pytest.mark.parametrize("lane", ["research", "translation"])
+@pytest.mark.parametrize("lane", ["research"])
 def test_gemini_rejects_new_content_before_cache_admission_and_counts_spend(monkeypatch, lane):
     import scanner
     monkeypatch.setenv("PRODUCT_NAMING_POLICY", json.dumps(POLICY))
@@ -163,9 +177,6 @@ def test_gemini_rejects_new_content_before_cache_admission_and_counts_spend(monk
         assert diagnostic["errorClass"] == "naming_content_rejected:N001"
         assert "retired_person" not in json.dumps(diagnostic).lower()
         assert scanner._gemini_osint("retired_person")[0] is None
-    else:
-        assert scanner._translate_headlines_ja(["observations"]) == {}
-        assert scanner._translate_headlines_ja(["retired_person"]) == {}
     assert len(calls) == 1 and len(settlements) == 1
     assert settlements[0][1]["actual_cost_usd"] > 0
 
