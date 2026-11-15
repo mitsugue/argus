@@ -76,7 +76,8 @@ def test_snapshot_and_facts_put_the_position_first_with_next_check():
     view = mpm.snapshot(memory, now_iso="2026-10-03T02:00:00Z", scheduled_events=CALENDAR)
     by_id = {t["themeId"]: t for t in view["themes"]}
     us = by_id["US_POLICY_RATE"]
-    assert us["status"] == "ACTIVE" and us["entryCount"] == 4 and us["pricing"] == {"ffImpliedRatePct": 3.95}
+    assert us["status"] == "ACTIVE" and us["entryCount"] == 4 and us["pricing"]["ffImpliedRatePct"] == 3.95
+    assert us["pricing"]["at"] == next(r["at"] for r in memory["entries"] if r["kind"] == "PRICING")
     assert us["lastReaction"]["readingCode"] == "RATE_RELIEF_RISK_ON"
     assert us["nextEvent"]["title"] == "米CPI" and us["recent"][0]["kind"] in ("RELEASE_REACTION", "PRICING")
     assert by_id["BOJ"]["status"] == "EMPTY" and by_id["BOJ"]["nextEvent"]["title"] == "日銀会合"
@@ -138,7 +139,9 @@ def test_policy_rate_quote_becomes_one_pricing_entry_per_day():
     assert mpm.ingest_policy_rate_quote(memory, None) == 0 and mpm.ingest_policy_rate_quote(memory, {"impliedRatePct": "x", "tradedAt": "2026-10-05T12:00:00Z"}) == 0
     view = mpm.snapshot(memory, now_iso="2026-10-05T13:00:00Z")
     us = next(t for t in view["themes"] if t["themeId"] == "US_POLICY_RATE")
-    assert us["pricing"] == {"ffImpliedRatePct": 3.93} and us["status"] == "ACTIVE"
+    assert us["pricing"] == {"ffImpliedRatePct": 3.93, "at": "2026-10-05T00:00:00Z"} and us["status"] == "ACTIVE"
+    # 2026-11-15: the integrated view's line carries the day of the reading (Japan date).
+    assert any("政策金利の予想3.930%(10/5時点)" in fact["text"] for fact in mpm.explanation_facts(view))
 
 
 def test_ai_views_are_validated_like_sections_and_appended_once():

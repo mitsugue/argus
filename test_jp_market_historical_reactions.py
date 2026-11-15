@@ -249,3 +249,16 @@ def test_an_in_session_decision_reacts_on_its_own_day_and_an_evening_one_on_the_
                                              research_availability=True) if r['reactionWindowSessions'] == 1)
     assert (one(boj)['baselineDate'], one(boj)['endpointDate']) == ('2026-09-03', '2026-09-04')
     assert (one(fomc)['baselineDate'], one(fomc)['endpointDate']) == ('2026-09-03', '2026-09-04')
+
+
+def test_past_decision_days_follow_the_checked_2027_schedules():
+    """2026-11-15: the past-decision table must not stop at 2026-12; it keeps
+    the same 2027 days as the forward calendar checked against the banks."""
+    import scanner
+    assert set(scanner._FOMC_2027) <= set(releases.FOMC_DECISION_DAYS)
+    assert set(scanner._BOJ_2027) <= set(releases.BOJ_DECISION_DAYS)
+    late = releases.scheduled_events('fomc', received_at='2027-02-01T00:00:00+00:00')
+    assert late[-1]['releaseDate'] == '2027-01-27'
+    assert late[-1]['eventTime'] == '2027-01-27T19:00:00+00:00'                     # 14:00 EST
+    boj = releases.scheduled_events('boj', received_at='2027-02-01T00:00:00+00:00')
+    assert boj[-1]['releaseDate'] == '2027-01-22'

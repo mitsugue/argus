@@ -20,7 +20,7 @@ const render=brief=>renderToStaticMarkup(React.createElement(MarketPositionCard,
 const theme=(over)=>({themeId:'US_POLICY_RATE',labelJa:'米国の利上げ・利下げ観測',status:'ACTIVE',entryCount:3,lastUpdatedAt:'2026-10-02T12:35:00Z',
  recent:[{entryId:'e1',kind:'RELEASE_REACTION',at:'2026-10-02T12:35:00Z',textJa:'米雇用統計の発表+5m: 利上げ観測の後退を安心材料に株高',severity:'HIGH'},
          {entryId:'e2',kind:'NEWS',at:'2026-09-28T13:00:00Z',textJa:'FRB: 年内の追加利上げを示唆',severity:'HIGH'}],
- pricing:{ffImpliedRatePct:3.93},lastReaction:{at:'2026-10-02T12:35:00Z',textJa:'米雇用統計の発表+5m: 利上げ観測の後退を安心材料に株高',readingCode:'RATE_RELIEF_RISK_ON'},
+ pricing:{ffImpliedRatePct:3.93,at:'2026-10-02T00:00:00Z'},lastReaction:{at:'2026-10-02T12:35:00Z',textJa:'米雇用統計の発表+5m: 利上げ観測の後退を安心材料に株高',readingCode:'RATE_RELIEF_RISK_ON'},
  nextEvent:{title:'米CPI',eventTimeUtc:'2026-10-14T12:30:00Z',eventCode:'CPI'},...over});
 const base={schemaVersion:'x',generatedAt:'2026-10-03T02:00:00Z',now:'',why:'',next:'',aiText:null,aiModel:null,chips:{chart:'',news:'',nextEvent:'',mainRisk:''},facts:[],noteJa:'',sdaAuthority:false};
 // No server memory: nothing is rendered (the brief predates the server release or failed).
@@ -31,6 +31,9 @@ const position={schemaVersion:'argus-market-position-memory-v1',asOf:'2026-10-03
 const html=render({...base,marketPosition:position});
 assert.ok(html.includes('<b>MARKET POSITION</b>')&&html.includes('2テーマ中 1件に更新'));
 assert.ok(html.includes('政策金利の予想(FF先物) 3.930%'));
+// 2026-11-15: the futures reading shows its day, so an old rate is not read as today's.
+assert.ok(html.includes('政策金利の予想(FF先物) 3.930%(10/2時点)'));
+assert.ok(!render({...base,marketPosition:{...position,themes:[theme({pricing:{ffImpliedRatePct:3.93}})]}}).includes('時点)'));
 assert.ok(html.includes('次: 米消費者物価')&&html.includes('10/14'));
 assert.ok(html.includes('利上げ観測の後退を安心材料に株高')&&html.includes('発表の反応'));
 assert.ok(html.indexOf('米国の利上げ・利下げ観測')<html.indexOf('円相場'),'themes with entries come first');
