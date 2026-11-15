@@ -769,6 +769,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/domain/lastGoodMarketView.ts",
     "test_intel_store_order.py",
     "test_production_release_manifest_workflow.py",
     "scripts/run_foundation_job.py",
