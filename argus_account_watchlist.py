@@ -245,9 +245,18 @@ def membership_snapshot(auth, legacy=None):
     for asset in value['assets']:
         if not asset['enabled'] or asset['market'] not in ('JP', 'US', 'CRYPTO'):
             continue
-        old = previous.get((asset['market'], asset['symbol'].upper()), {})
+        # 2026-11-15: one registration in a shape the reader refuses (a JP code
+        # typed as 285a) used to fail the whole projection, so every subject's
+        # explanation returned 503. JP/US codes are compared in upper case;
+        # anything still outside the reader's shape is left out on its own.
+        symbol = asset['symbol'].strip()
+        if asset['market'] in ('JP', 'US'):
+            symbol = symbol.upper()
+        if not membership._valid_symbol(symbol, asset['market']):
+            continue
+        old = previous.get((asset['market'], symbol.upper()), {})
         row = {key: old[key] for key in ('ownerState', 'downsideStrictness', 'priority') if key in old}
-        rows.append({**row, 'symbol': asset['symbol'], 'market': asset['market'],
+        rows.append({**row, 'symbol': symbol, 'market': asset['market'],
                      'name': asset.get('displayNameJa') or asset['displayName'], 'enabled': True})
     valid, cleaned, _ = membership.validate_sync_payload({'items': rows})
     if not valid:

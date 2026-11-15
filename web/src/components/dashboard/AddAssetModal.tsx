@@ -97,7 +97,8 @@ export const AddAssetModal: React.FC<Props> = ({ onClose, onAdd }) => {
   }
 
   function submit() {
-    const sym = kind === 'US Stock' ? symbol.trim().toUpperCase() : symbol.trim();
+    // 2026-11-15: a JP code typed as 285a is stored as 285A, the shape every reader accepts.
+    const sym = kind === 'US Stock' || kind === 'Japan Stock' ? symbol.trim().toUpperCase() : symbol.trim();
     const dn = name.trim();
     if (!sym || !dn) { setErr('シンボルと表示名は必須です(候補をクリックすると自動入力)。'); return; }
     // v11.8.1: fall back to the well-known symbol map so a manually-typed
