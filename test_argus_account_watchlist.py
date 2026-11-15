@@ -159,6 +159,16 @@ def test_current_membership_projection_omits_archives_and_preserves_settings(acc
     assert membership_snapshot(auth, legacy)['members'] == []
 
 
+def test_one_malformed_registration_does_not_fail_the_projection(account):
+    from argus_account_watchlist import membership_snapshot
+    client, auth, a, b, env = account
+    write(client, a, 0, [{'kind': 'add', 'asset': asset('jp-7203')},
+                         {'kind': 'add', 'asset': {**asset('jp-285a'), 'symbol': '285a'}},
+                         {'kind': 'add', 'asset': {**asset('jp-bad'), 'symbol': 'トヨタ'}}])
+    projected = membership_snapshot(auth, {'members': []})
+    assert sorted(row['symbol'] for row in projected['members']) == ['285A', '7203']
+
+
 def test_scanner_universe_and_notifications_follow_shared_registration(account, monkeypatch):
     import scanner
     client, auth, a, b, env = account
