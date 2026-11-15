@@ -294,7 +294,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_jp_sector_heatmap.py': 'f8a0773084f02f1629f89a2d5b97284c3eb8e674',
     'jp_sector_heatmap_runtime.py': '8989bbfaf6a0c186c9f31ba761d2e2a4f72a1d9e',
     'jp_sector_heatmap.py': '5a149728db22320a40a0e2d00d7ce3f95dc32035',
-    'test_argus_material_translation.py': '80f68a5abad282c920926dbb8b9541d97da016ae',
+    'test_argus_material_translation.py': '82e51392f106147a83b6d50a4c8d22b221c6cd17',
     'test_argus_queue_v1152_backend.py': 'ec3d8c65c5b48755539e0dfdc0f93ccf6362cfb1',
     'test_argus_shared_bridge.py': 'b16f8565e20f2914677ccee7d346fd1f161f4f6c',
     'bridge/README.md': '48229362b8b1bd0bdfed582566f0d34f4cad8f4f',
@@ -769,6 +769,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "docs/ARGUS_AI_CALL_PATHS.md",
     "web/src/domain/lastGoodMarketView.ts",
     "test_intel_store_order.py",
     "test_production_release_manifest_workflow.py",
