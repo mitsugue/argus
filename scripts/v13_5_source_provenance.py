@@ -518,7 +518,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'web/src/hooks/useJapanSqCalendar.ts': '57a9dbc42c781a7a2ac1f4939b9084e332dba82c',
     'web/src/lib/japanMarketComparison.ts': 'ffb594c1b6e487f8afcb9c8f0af5f9784dd69c34',
     'web/src/lib/japanSqCalendar.ts': '947b1c9121f7b6f8a5e7b501211b8b43449b329b',
-    'web/src/lib/marketBrief.ts': '1d1dff2fdb622b5e48a782e738ebd52440a6c05d',
+    'web/src/lib/marketBrief.ts': '82caff387b7d37660fd3e5ded941241ff5a8b70a',
     'web/src/types/japanMarketComparison.ts': '74f40649127b5388c5ddc4c7beb00079867b0fea',
     "test_ai_cost.py": "e2e1a3094c0fe315993d027592de6e1db9a5b784",
     'web/scripts/news-polling-recovery.test.mjs': 'a5675fb01973b14712491809f7eb30c5814851f0',
@@ -769,6 +769,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "web/src/lib/cryptoIds.ts",
     "docs/ARGUS_AI_CALL_PATHS.md",
     "web/src/domain/lastGoodMarketView.ts",
     "test_intel_store_order.py",
