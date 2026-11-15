@@ -55,6 +55,11 @@ class OwnerAuth:
         mode = env.get('ARGUS_OWNER_AUTH_REQUIRED', '0')
         if mode not in ('0', '1'):
             raise RuntimeError('owner_auth_mode_invalid')
+        # A production box that lost this one line would silently serve every
+        # owner read to anyone. The Mac box launcher marks production, so the
+        # missing value fails closed there instead of opening the app.
+        if mode != '1' and str(env.get('ARGUS_RUNTIME_ENV', '')).strip().lower() == 'production':
+            raise RuntimeError('owner_auth_required_in_production')
         self.enabled = mode == '1'
         self.path = env.get('ARGUS_OWNER_AUTH_DB', '')
         self.origin = env.get('ARGUS_OWNER_AUTH_ORIGIN', '')
