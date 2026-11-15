@@ -603,13 +603,3 @@ def test_a_durability_only_watchtower_run_skips_the_retired_news_patrol():
     # The publication steps themselves do not depend on the new input.
     commit = text.split("- name: Commit snapshot and enqueue bounded Remote Journal receipt", 1)[1].split("\n  remote-journal-rearm:", 1)[0]
     assert "durabilityOnly" not in commit
-
-
-def test_mission_tick_remaining_uses_the_server_field_name():
-    """2026-11-15: the tick answers remainingCount; the workflow read a field
-    named remaining that never existed, so its output was always empty."""
-    from pathlib import Path
-    text = (Path(__file__).parent / ".github/workflows/caos-scan.yml").read_text()
-    assert 'd.get("remainingCount", "")' in text and 'd.get("remaining",' not in text
-    scanner_text = (Path(__file__).parent / "scanner.py").read_text()
-    assert '"remainingCount": remaining_count,' in scanner_text

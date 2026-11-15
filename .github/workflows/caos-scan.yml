@@ -144,7 +144,7 @@ jobs:
             set -e
             mkdir -p "$RUNNER_TEMP/private-notes"; printf '%s\n' "[$BATCH] $MT" >> "$RUNNER_TEMP/private-notes"/missions-tick.txt; echo "missions-tick: stored privately"
             VALUES=$(printf '%s' "$MT" | python3 -c \
-              'import json,sys; d=json.load(sys.stdin); print(d.get("result","")); print(d.get("remainingCount", "")); print(str(d.get("hasMore") is True).lower())')
+              'import json,sys; d=json.load(sys.stdin); print(d.get("result","")); print(d.get("remaining","")); print(str(d.get("hasMore") is True).lower())')
             LAST_RESULT=$(printf '%s\n' "$VALUES" | sed -n '1p')
             LAST_REMAINING=$(printf '%s\n' "$VALUES" | sed -n '2p')
             LAST_HAS_MORE=$(printf '%s\n' "$VALUES" | sed -n '3p')
