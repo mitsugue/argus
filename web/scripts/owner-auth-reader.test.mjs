@@ -119,6 +119,20 @@ test('failed logout cannot produce success', async () => {
   const f=fixture(c=>c.url.pathname.endsWith('/logout') && new Response('{}',{status:503}));
   await assert.rejects(withOwnerReader(f.options,async()=> 'pass'), /owner_reader:logout/);
 });
+test('a failed logout after a failed operation keeps the operation evidence', async () => {
+  // 2026-11-18: a timed-out release reconciliation used to lose its evidence.
+  const f=fixture(c=>c.url.pathname.endsWith('/logout') && new Response('{}',{status:503}));
+  const failure = Object.assign(new Error('reconciliation_deadline_exceeded'),
+    { artifact: { status: 'failed', reason: 'reconciliation_deadline_exceeded', reconciliation: { attempts: 6 } } });
+  await assert.rejects(withOwnerReader(f.options, async () => { throw failure; }), (error) => {
+    assert.ok(error instanceof OwnerReaderError);
+    assert.equal(error.message, 'owner_reader:operation_and_logout');
+    assert.deepEqual(error.artifact, { ...failure.artifact, logout: 'failed' });
+    return true;
+  });
+  await assert.rejects(withOwnerReader(f.options, async () => { throw new Error('plain'); }),
+    (error) => error.message === 'owner_reader:operation_and_logout' && error.artifact === undefined);
+});
 test('proactive renewal revokes previous session, no retry after rejected read', async () => {
   const f=fixture(); const reader=await createOwnerReader(f.options); f.advance(86380000);
   await reader.fetch(baseUrl+'/api/argus/x'); await reader.close();

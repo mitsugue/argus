@@ -919,8 +919,12 @@ def _memory_attribution_request_begin():
 
 # 2026-10-04: the market brief reached 4.9 MB uncompressed and the phone's
 # 12 s read timed out ("見立てを取得できません"). Large successful JSON bodies
-# are gzipped when the client accepts it. Streamed bodies, conditional
-# responses carrying an ETag and already-encoded bodies are left as they are.
+# are gzipped when the client accepts it. Streamed and already-encoded bodies
+# are left as they are.
+# 2026-11-18: the verified chart snapshots (4-5 MB each, with an ETag) were
+# sent uncompressed through the Mac's public entrance, about 20-30 s a read;
+# the release check's 30 s reads timed out. A compressed body now carries
+# the weak form of its ETag (W/"..."), which every reader already accepts.
 _GZIP_MIN_BYTES = 32 * 1024
 
 
@@ -929,7 +933,7 @@ def _compress_large_json(response):
     try:
         if (response.direct_passthrough or response.is_streamed
                 or not 200 <= response.status_code < 300
-                or response.headers.get("Content-Encoding") or response.headers.get("ETag")
+                or response.headers.get("Content-Encoding")
                 or response.mimetype != "application/json"
                 or "gzip" not in (request.headers.get("Accept-Encoding") or "").lower()):
             return response
@@ -941,6 +945,9 @@ def _compress_large_json(response):
         response.set_data(body)
         response.headers["Content-Encoding"] = "gzip"
         response.headers["Content-Length"] = str(len(body))
+        etag = response.headers.get("ETag")
+        if etag and not etag.lstrip().lower().startswith("w/"):
+            response.headers["ETag"] = "W/" + etag.strip()
         vary = [v.strip() for v in (response.headers.get("Vary") or "").split(",") if v.strip()]
         if "Accept-Encoding" not in vary:
             response.headers["Vary"] = ", ".join(vary + ["Accept-Encoding"])

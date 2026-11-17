@@ -594,6 +594,18 @@ def test_public_verified_get_is_read_only_and_etag_returns_304(monkeypatch):
         headers={"If-None-Match": response.headers["ETag"]})
     assert not_modified.status_code == 304
     assert not_modified.data == b""
+    # 2026-11-18: a client accepting gzip gets the compressed body with the
+    # weak tag; sending it back still answers 304.
+    packed = client.get(
+        "/api/argus/chart-intelligence?"
+        "scope=market&symbol=1321&horizon=5D&snapshot=verified",
+        headers={"Accept-Encoding": "gzip"})
+    if packed.headers.get("Content-Encoding") == "gzip":
+        assert packed.headers["ETag"] == "W/" + response.headers["ETag"]
+        assert client.get(
+            "/api/argus/chart-intelligence?"
+            "scope=market&symbol=1321&horizon=5D&snapshot=verified",
+            headers={"If-None-Match": packed.headers["ETag"]}).status_code == 304
     weak_not_modified = client.get(
         "/api/argus/chart-intelligence?"
         "scope=market&symbol=1321&horizon=5D&snapshot=verified",

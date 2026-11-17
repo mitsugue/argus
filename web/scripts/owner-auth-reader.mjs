@@ -128,7 +128,16 @@ export async function withOwnerReader(options, callback) {
   const reader = await createOwnerReader(options);
   let result, failure;
   try { result = await callback(reader); } catch (error) { failure = error; }
-  try { await reader.close(); } catch { fail(failure ? 'operation_and_logout' : 'logout'); }
+  try { await reader.close(); } catch {
+    if (!failure) fail('logout');
+    // 2026-11-18: keep what the operation itself recorded; the logout failure
+    // used to replace the reconciliation evidence of a timed-out release.
+    const masked = new OwnerReaderError('operation_and_logout');
+    if (failure?.artifact && typeof failure.artifact === 'object') {
+      masked.artifact = { ...failure.artifact, logout: 'failed' };
+    }
+    throw masked;
+  }
   if (failure) throw failure;
   return result;
 }

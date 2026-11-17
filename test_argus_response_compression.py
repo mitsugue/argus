@@ -29,7 +29,19 @@ def test_large_json_is_gzipped_only_when_accepted():
     assert json.loads(gzip.decompress(body)) == json.loads(plain.get_data())
 
 
-def test_small_json_etag_and_encoded_bodies_are_left_alone():
+def test_small_json_and_encoded_bodies_are_left_alone():
     assert _run({"ok": True}).headers.get("Content-Encoding") is None
-    assert _run(PAYLOAD, ETag='"abc"').headers.get("Content-Encoding") is None
+    assert _run({"ok": True}, ETag='"abc"').headers["ETag"] == '"abc"'
     assert _run(PAYLOAD, **{"Content-Encoding": "br"}).headers["Content-Encoding"] == "br"
+
+
+def test_large_json_with_an_etag_is_gzipped_with_the_weak_tag():
+    """2026-11-18: the 4-5 MB verified snapshots carry an ETag and were sent
+    uncompressed (20-30 s a read through the Mac's public entrance)."""
+    packed = _run(PAYLOAD, ETag='"snap-1"')
+    assert packed.headers["Content-Encoding"] == "gzip"
+    assert packed.headers["ETag"] == 'W/"snap-1"'
+    assert json.loads(gzip.decompress(packed.get_data())) == PAYLOAD
+    assert _run(PAYLOAD, ETag='W/"snap-1"').headers["ETag"] == 'W/"snap-1"'
+    plain = _run(PAYLOAD, accept=None, ETag='"snap-1"')
+    assert plain.headers["ETag"] == '"snap-1"' and plain.headers.get("Content-Encoding") is None
