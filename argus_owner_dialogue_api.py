@@ -645,11 +645,20 @@ def register(app, *, authorize, storage_path, market_brief, generate, now, recov
                             return response({'error':'subject_not_registered'},403)
                     previous=store.latest_subject_overview(path,boot_id,
                         symbol=symbol,market=market,horizon=horizon)
-                    if previous and previous['context'].get('ownerInputPolicy') == 'WATCHLIST_ONLY_V1':
-                        return response({**decorate(previous),'overviewRead':{
-                            'mode':'SAVED_ONLY','readAt':now()}})
+                    saved = previous if previous and previous['context'].get('ownerInputPolicy') == 'WATCHLIST_ONLY_V1' else None
+                    # 2026-11-18 owner: a press that ended without a new
+                    # explanation is reported; the saved one stays as it is.
+                    attempt = store.latest_subject_attempt(path,boot_id,
+                        symbol=symbol,market=market,horizon=horizon)
+                    last = ({'lastAttempt':{'requestId':attempt['requestId'],'status':attempt['status'],
+                        'completedAt':(attempt.get('result') or {}).get('completedAt')}}
+                        if attempt and attempt['status'] != 'SUCCEEDED'
+                        and (saved is None or attempt['sequence'] > saved['sequence']) else {})
+                    if saved:
+                        return response({**decorate(saved),'overviewRead':{
+                            'mode':'SAVED_ONLY','readAt':now(),**last}})
                     return response({'status':'WAITING','overviewRead':{
-                        'mode':'SAVED_ONLY','readAt':now()},'remoteBackup':remote_status(),
+                        'mode':'SAVED_ONLY','readAt':now(),**last},'remoteBackup':remote_status(),
                         'reason':'saved_overview_pending'})
                 if generation_policy is not None:
                     with lock:

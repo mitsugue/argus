@@ -16,12 +16,19 @@ console.log('銘柄説明: 認証・市場・銘柄・期間・根拠の分離�
 // answer for five minutes, and must keep the button busy while it waits.
 {
 const source=fs.readFileSync('src/components/dialogue/OwnerOverview.tsx','utf8');
-assert.ok(source.includes("awaiting.current={since:Date.now(),previous:saved?.requestId??null};setWaiting(true);"),'押して作り始めたら待ちの印を立てる');
+assert.ok(source.includes("awaiting.current={since:Date.now(),previous:saved?.requestId??null,"),'押して作り始めたら待ちの印を立てる');
+assert.ok(source.includes("started:value.overviewGenerate?.started===true&&typeof value.requestId==='string'?value.requestId:null};setWaiting(true);"),'作り始めた依頼の番号を覚える');
 assert.ok(source.includes("value.status==='SUCCEEDED'&&value.requestId!==wait?.previous"),'前と違う説明が届いた時だけ待ちを終える');
 assert.ok(source.includes("if(value.status==='SUCCEEDED'&&arrived)savedReadCache.put(cacheKey,{edition:next},300_000);"),'待っている間は前の説明を5分の控えに入れない');
 assert.ok(source.includes("else if(!arrived){pending=true;timer=window.setTimeout(()=>void load(),10_000);}"),'待っている間は10秒おきに読み直す');
 assert.ok(source.includes("Date.now()-wait.since<600_000"),'待つのは10分まで');
 assert.ok(source.includes("const busy=generating||waiting||job?.status==='RUNNING';"),'待っている間はボタンを作成中にする');
+// 2026-11-18 (owner): a failed press ends the wait at once and says so.
+assert.ok(source.includes("(wait.started?attempt?.requestId===wait.started:attempt?.requestId!==wait.previous)"),'押した依頼の失敗だけで待ちを終える');
+assert.ok(source.includes("setNotice(failureText[attempt?.status??'']+'・もう一度押せます（1日3回まで）')"),'失敗と、もう一度押せることを出す');
+assert.ok(source.includes("const stillWaiting=!failed&&"),'失敗のあとは待ち続けない');
+assert.ok(source.includes("{!notice&&!busy&&lastFailed&&"),'開き直したときも前回の失敗を出す');
+for(const status of ['FAILED','UNAVAILABLE','REJECTED','INTERRUPTED'])assert.ok(new RegExp(status+":'[^']+'").test(source),status+' の文がある');
 console.log('銘柄説明: 作成を始めたあとは出来上がるまで読み直す PASS');
 }
 
