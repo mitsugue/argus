@@ -138,8 +138,14 @@ def historical_reactions(events, *, rows, sessions, cutoff, exclude=()):
     receipts above. `exclude` holds (seriesId, date) already measured from
     evidenced records, which take precedence; a later close cannot rewrite them.
     """
-    if len(events) > MAX_HISTORICAL_EVENTS:
-        raise ValueError('historical_event_bound_exceeded')
+    # 2026-11-18: the archive grows about 64 events a year and was expected to
+    # pass the bound in mid-2028, which emptied the whole research lane. Like
+    # the stored records (2026-10-18), the newest are kept and the rest counted.
+    events = list(events)
+    omitted = max(0, len(events) - MAX_HISTORICAL_EVENTS)
+    if omitted:
+        events = sorted(events, key=lambda e: str(e.get('eventTime') or e.get('releaseDate') or '')
+                        if isinstance(e, dict) else '')[omitted:]
     taken = set(exclude); reasons = Counter(); output = []
     batch_measure = _batch_measurer()
     for event in events:
@@ -171,4 +177,5 @@ def historical_reactions(events, *, rows, sessions, cutoff, exclude=()):
         'timeBasis': 'ARCHIVED_RELEASE_DATE_FIXED_TIME_RULE',
         'availabilityBasis': 'RESEARCH_KNOWN_AT_ENDPOINT_CLOSE',
         'historicalVintageVerified': False, 'actualPublicationTimeVerified': False,
-        'automaticAiCalls': 0, 'actionAuthority': False, 'probability': None}}
+        'automaticAiCalls': 0, 'actionAuthority': False, 'probability': None,
+        **({'omittedOlderEvents': omitted} if omitted else {})}}
