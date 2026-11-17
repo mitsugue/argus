@@ -68,9 +68,17 @@ def test_evidenced_records_take_precedence_and_the_bound_holds():
     assert ('material_reaction.nfp.1', '2026-09-07') not in keys and len(out['rows']) == 5
     assert out['diagnostics']['gatedReasonCounts']['evidenced_record_takes_precedence'] == 1
     assert out['diagnostics']['availabilityBasis'] == 'RESEARCH_KNOWN_AT_ENDPOINT_CLOSE'
-    with pytest.raises(ValueError):
-        material.historical_reactions([event('2026-09-04')] * (material.MAX_HISTORICAL_EVENTS + 1),
-                                      rows=CASH, sessions=DAYS, cutoff=RECEIVED)
+    assert 'omittedOlderEvents' not in out['diagnostics']      # unchanged bytes below the bound
+
+
+def test_past_the_bound_the_newest_events_are_kept_and_the_rest_counted():
+    # 2026-11-18: about 64 archived events a year reach the bound in mid-2028;
+    # the lane used to raise and lose every research row.
+    old = [{**event('2026-08-07'), 'eventId': 'old-%d' % i} for i in range(material.MAX_HISTORICAL_EVENTS)]
+    out = material.historical_reactions(old + [event('2026-09-04')], rows=CASH, sessions=DAYS, cutoff=RECEIVED)
+    assert out['diagnostics']['eventCount'] == material.MAX_HISTORICAL_EVENTS
+    assert out['diagnostics']['omittedOlderEvents'] == 1
+    assert '2026-09-07' in {r['date'] for r in out['rows']}      # the newest event still measured
 
 
 def walk(hits_pattern, n=400):
