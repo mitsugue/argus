@@ -146,6 +146,20 @@ def latest_subject_overview(path, boot_id, *, symbol, market, horizon, before=No
     return read(path, row[0], boot_id) if row else None
 
 
+def latest_subject_attempt(path, boot_id, *, symbol, market, horizon):
+    """2026-11-18 owner: the newest request for a subject, whatever its outcome,
+    so a failed button press can be shown instead of an endless wait."""
+    if not Path(path).exists(): return None
+    with closing(connect(path, True)) as db:
+        row = db.execute('''SELECT r.request_id FROM requests r
+            WHERE json_extract(r.body, '$.context.intent') = 'SUBJECT_OVERVIEW'
+              AND json_extract(r.body, '$.context.subject.symbol') = ?
+              AND json_extract(r.body, '$.context.subject.market') = ?
+              AND json_extract(r.body, '$.context.horizonSessions') = ?
+            ORDER BY r.sequence DESC LIMIT 1''', (symbol, market, horizon)).fetchone()
+    return read(path, row[0], boot_id) if row else None
+
+
 def latest_subject_overviews(path, boot_id, *, limit=20):
     """Return the newest successful edition for each monitored subject/period."""
     if type(limit) is not int or not 1 <= limit <= 50:

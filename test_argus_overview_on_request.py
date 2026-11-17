@@ -10,7 +10,7 @@ import argus_overview_refresh as refresh
 from test_argus_owner_dialogue import market_brief, answer, AT
 
 
-def service(tmp_path, *, max_starts=3, session=False):
+def service(tmp_path, *, max_starts=3, session=False, failing=None):
     path = tmp_path / 'owner.sqlite3'
     members = [{'market':'JP', 'symbol':'5803', 'enabled':True}]
     current = [market_brief()]
@@ -24,7 +24,8 @@ def service(tmp_path, *, max_starts=3, session=False):
             g.owner_session_verified = True
     controls = api.register(app, authorize=lambda token:(token=='owner', {'error':'unauthorized'}, 401),
         storage_path=lambda:str(path), market_brief=lambda:current[0],
-        generate=lambda user, **kw:(calls.append(user), answer())[1], now=lambda:AT,
+        generate=lambda user, **kw:(calls.append(user),
+            (_ for _ in ()).throw(RuntimeError('provider')) if failing and failing[0] else answer())[1], now=lambda:AT,
         generation_policy=lambda:{'model':'test','ruleVersion':'v1'},
         subject_materials=lambda **kw:[], registered_subjects=lambda:copy.deepcopy(members),
         refresh_policy=refresh.RefreshPolicy(max_starts=max_starts), manual_overviews=True)
@@ -113,3 +114,39 @@ def test_diagnostics_keep_the_manual_only_status():
     from argus_owner_recovery_diagnostics import subject_overviews
     assert subject_overviews({'status':'MANUAL_ONLY'})['status'] == 'MANUAL_ONLY'
     assert subject_overviews({'status':'SOMETHING_ELSE'})['status'] is None
+
+
+def read_saved(client):
+    return client.post('/api/argus/owner-dialogue', json={'action':'overview', 'ownerToken':'owner',
+        'symbol':'5803', 'market':'JP', 'horizon':5}).get_json()
+
+
+def test_a_failed_press_is_reported_and_the_saved_explanation_is_kept(tmp_path):
+    """2026-11-18 owner: a failure is shown instead of waiting ten minutes."""
+    failing = [True]
+    path, current, calls, client, controls = service(tmp_path, failing=failing)
+    started = press(client).get_json()
+    assert wait(path, controls)['status'] == 'FAILED'
+    first = read_saved(client)
+    assert first['status'] == 'WAITING'
+    assert first['overviewRead']['lastAttempt']['requestId'] == started['requestId']
+    assert first['overviewRead']['lastAttempt']['status'] == 'FAILED'
+    assert first['overviewRead']['lastAttempt']['completedAt'] == AT
+    failing[0] = False
+    new_edition(current)
+    assert press(client).status_code == 202 and wait(path, controls)['status'] == 'SUCCEEDED'
+    ok = read_saved(client)
+    assert ok['status'] == 'SUCCEEDED' and 'lastAttempt' not in ok['overviewRead']
+    failing[0] = True
+    edition = copy.deepcopy(current[0])
+    edition['facts'] = edition['facts'] + [{'text':'別の市場の材料。', 'source':'trusted_mail',
+        'priority':'P1', 'verification':'UNCONFIRMED'}]
+    edition['unifiedContext'] = brief_module.unified_context(edition)
+    current[0] = edition
+    again = press(client).get_json()
+    assert wait(path, controls)['status'] == 'FAILED'
+    kept = read_saved(client)
+    assert kept['status'] == 'SUCCEEDED' and kept['requestId'] == ok['requestId']
+    assert kept['overviewRead']['lastAttempt'] == {'requestId':again['requestId'], 'status':'FAILED',
+        'completedAt':AT}
+    assert len(calls) == 3

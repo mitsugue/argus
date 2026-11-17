@@ -28,6 +28,11 @@ const firstSentence=(text:string)=>{const cut=text.indexOf('。');return cut>0?t
 const generateMessages:Record<string,string>={dialogue_busy:'ほかの説明を作成中・少し待って押してください',
   overview_daily_limit:'この銘柄は今日はもう作れません（1日3回まで）',dialogue_recovery_pending:'復旧中・少し待って押してください',
   market_context_unavailable:'市場の見立ての準備待ち',subject_not_registered:'Watchlistの銘柄だけ作れます',unauthorized:'接続設定を確認してください'};
+// 2026-11-18 (owner): a press that ended without a new explanation is shown
+// as a failure with the way out, instead of ten minutes of "作成中".
+const failureText:Record<string,string>={FAILED:'AIの見立てを作れませんでした',UNAVAILABLE:'AIから答えが返らず作れませんでした',
+  REJECTED:'AIの答えが根拠と合わず使いませんでした',INTERRUPTED:'再起動で作成が止まりました'};
+type LastAttempt={requestId?:string;status?:string;completedAt?:string|null};
 const stampText=(value?:string)=>{const at=value?Date.parse(value):NaN;return Number.isFinite(at)?new Date(at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'時刻不明';};
 export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{symbol:string;market:'JP'|'US';horizon:number;asset?:AssetItem;onReference?:(job:Job|null)=>void;line?:{fallback:string;fallbackChange?:string}}) {
   const session = useSyncExternalStore(subscribeOwner, hasOwnerSession, () => false);
@@ -38,7 +43,8 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
   // 2026-11-13: after the button starts a new explanation, the saved-only read keeps returning the
   // previous one (or nothing) until the new one is complete. Remember that a new one is on its way so
   // the read is repeated instead of being cached for five minutes, and the button stays busy.
-  const [waiting,setWaiting]=useState(false);const awaiting=useRef<{since:number;previous:string|null}|null>(null);
+  const [waiting,setWaiting]=useState(false);const awaiting=useRef<{since:number;previous:string|null;started:string|null}|null>(null);
+  const [lastFailed,setLastFailed]=useState<LastAttempt|null>(null);
   const base=(import.meta.env.VITE_ARGUS_BACKEND_URL as string|undefined)?.replace(/\/$/,'');
   const contextId=brief?.unifiedContext?.contextId;
   const owner=asset?{symbol,market,state:'WATCHING',
@@ -76,8 +82,13 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
           return;
         }
         const savedOnly=value.overviewRead?.mode==='SAVED_ONLY';
-        const wait=awaiting.current;const stillWaiting=!!wait&&Date.now()-wait.since<600_000;
-        if(wait&&!stillWaiting){awaiting.current=null;if(!stopped){setWaiting(false);setNotice('作成に時間がかかっています・少しあとで開き直してください');}}
+        const wait=awaiting.current;const attempt:LastAttempt|undefined=value.overviewRead?.lastAttempt;
+        const attemptFailed=!!attempt&&typeof attempt.status==='string'&&Object.prototype.hasOwnProperty.call(failureText,attempt.status);
+        const failed=!!wait&&attemptFailed&&(wait.started?attempt?.requestId===wait.started:attempt?.requestId!==wait.previous);
+        if(!stopped)setLastFailed(attemptFailed&&!failed?attempt??null:null);
+        if(failed){awaiting.current=null;if(!stopped){setWaiting(false);setNotice(failureText[attempt?.status??'']+'・もう一度押せます（1日3回まで）');}}
+        const stillWaiting=!failed&&!!wait&&Date.now()-wait.since<600_000;
+        if(wait&&!failed&&!stillWaiting){awaiting.current=null;if(!stopped){setWaiting(false);setNotice('作成に時間がかかっています・少しあとで開き直してください');}}
         if(savedOnly&&value.status==='WAITING'){
           // No saved explanation: nothing is written until the button is pressed.
           if(!stopped){setEdition(null);setError('');
@@ -121,7 +132,8 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
       if(value.overviewGenerate?.reason==='DAILY_START_LIMIT')setNotice(generateMessages.overview_daily_limit);
       else if(value.overviewGenerate?.started===false&&value.status==='SUCCEEDED')setNotice('材料に変化なし・前の説明のまま');
       else if(value.overviewGenerate?.started===true||value.overviewGenerate?.reason==='RUNNING'){
-        awaiting.current={since:Date.now(),previous:saved?.requestId??null};setWaiting(true);}
+        awaiting.current={since:Date.now(),previous:saved?.requestId??null,
+          started:value.overviewGenerate?.started===true&&typeof value.requestId==='string'?value.requestId:null};setWaiting(true);}
       savedReadCache.clear();setRevision(v=>v+1);
     }catch{setNotice('接続できません');}
     finally{setGenerating(false);}
@@ -136,7 +148,8 @@ export function OwnerOverview({symbol,market,horizon,asset,onReference,line}:{sy
     {withStamp&&saved&&<span>AIの見立て · {stampText(stamp)}</span>}
     <button type="button" className="asset-mini" disabled={busy} onClick={()=>void generate()}>
       {busy?'作成中':saved?'AIで作り直す':'AIの見立てを作る'}</button>
-    {notice&&<span role="status">{notice}</span>}</p>:null;
+    {notice&&<span role="status">{notice}</span>}
+    {!notice&&!busy&&lastFailed&&<span role="status">前回の作成は失敗：{failureText[lastFailed.status??'']}（{stampText(lastFailed.completedAt??undefined)}）</span>}</p>:null;
   if(line){
     const sections=saved?.result?.answer?.sections;
     const view=sections?.view?.textJa?withoutScreenNotes(sections.view.textJa):null;
