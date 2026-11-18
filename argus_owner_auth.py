@@ -272,7 +272,10 @@ class OwnerAuth:
             return self.issue(conn)
 
 
-def install(app, env=None):
+def install(app, env=None, on_admin_mismatch=None):
+    """on_admin_mismatch: called (no arguments, never with the token) when a
+    request sent an admin token that is wrong and has no owner session, so it
+    is refused here before any route's own admin check runs."""
     auth = OwnerAuth(dict(os.environ if env is None else env))
     app.extensions['argus_owner_auth'] = auth
     from argus_account_watchlist import prepare
@@ -308,6 +311,14 @@ def install(app, env=None):
                 return None
         except sqlite3.Error:
             return jsonify(error='owner_auth_unavailable'), 503
+        # 2026-11-18: a wrong admin token was refused here, before the route's
+        # own admin check, so the security alert never fired (morning test).
+        # A request without a token (the scheduled smoke test) is not reported.
+        if admin and auth.admin and on_admin_mismatch is not None:
+            try:
+                on_admin_mismatch()
+            except Exception:
+                pass
         return jsonify(error='owner_auth_required'), 401
 
     @app.after_request

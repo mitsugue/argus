@@ -844,7 +844,9 @@ app        = Flask(__name__)
 
 # Install before any data-serving middleware; operational guards remain intact.
 import argus_owner_auth
-argus_owner_auth.install(app)
+# A wrong admin token refused at this boundary is still a security alert
+# (resolved late: the alert functions are defined further down).
+argus_owner_auth.install(app, on_admin_mismatch=lambda: _record_admin_auth_failure(True))
 
 # CORS for /api/argus/* — lets the React frontend (Vercel, GitHub Pages,
 # and localhost dev) call the ledger / rates endpoints. Other routes
@@ -16455,15 +16457,22 @@ def _require_admin():
                        "message": "Admin token is not configured on the server."}, 503
     token = request.headers.get("X-ARGUS-ADMIN-TOKEN", "")
     if not token or not hmac.compare_digest(token.encode(), _ARGUS_ADMIN_TOKEN.encode()):
-        with _AI_LOCK:
-            _AI_GATE_STATE["failedAttempts"] += 1
-        # Token-less smoke checks and hostile requests have no authority to
-        # stop authenticated jobs. A global failure-triggered lock let any
-        # caller disable scheduled analysis with five rejected requests.
-        send_security_alert({"type": "admin_auth_failed", "tokenPresent": bool(token),
-                             "meta": _client_meta()})
+        _record_admin_auth_failure(bool(token))
         return False, {"error": "unauthorized"}, 401
     return True, None, 200
+
+
+def _record_admin_auth_failure(token_present):
+    """Count a refused admin request and raise the security alert. Also called
+    by the owner sign-in boundary, which refuses a wrong token without an owner
+    session before the route runs. Never sees the token."""
+    with _AI_LOCK:
+        _AI_GATE_STATE["failedAttempts"] += 1
+    # Token-less smoke checks and hostile requests have no authority to
+    # stop authenticated jobs. A global failure-triggered lock let any
+    # caller disable scheduled analysis with five rejected requests.
+    send_security_alert({"type": "admin_auth_failed", "tokenPresent": bool(token_present),
+                         "meta": _client_meta()})
 
 
 # Recovery Phase A PR B: these routes mutate owner/operational state and are no

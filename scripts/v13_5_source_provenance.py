@@ -257,10 +257,10 @@ REVIEWED_EXTENSION_BLOBS = {
     '.github/actions/warm-profile-seed/action.yml': 'eda05275ed6f5f0eb86d866c15022535194cd5bb',
     '.github/actions/warm-profile-consumer/action.yml': '12934bafbf41522ba487c3b26328f74276dfc732',
     # Exact opt-in owner authentication, UI, backup and regression candidate.
-    'argus_owner_auth.py': '3a2ee06e994b00899f8a12e25205e5dc8db3de94',
+    'argus_owner_auth.py': 'c9899c81ef8c016475db3ac408a54139b6f2b10e',
     'docs/ops/owner-server-auth.md': '42e7837b0cf4e978ed1f13260e08ed1ebad8027b',
     'scripts/owner_auth_backup.py': 'ce700f026cecfddc611cb0a310782856c0aeeb37',
-    'test_argus_owner_auth.py': '1339ade9be4609837f3be59dd3f27aa34563d685',
+    'test_argus_owner_auth.py': '8d9e246a7820aa75810ba2aaee208549a9076b02',
     'web/scripts/owner-session.test.cjs': 'b7f6d5ca51592c31e52de1ce47cd1c788fe016dd',
     'web/src/components/OwnerAccess.css': '711268ba1b8478611e939f7cfecfd822c012ff44',
     'web/src/components/OwnerAccess.tsx': 'af45043f960df5c2bf30d6fe697e3d54ce864ae9',

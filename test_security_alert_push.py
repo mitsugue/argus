@@ -39,3 +39,27 @@ def test_wrong_admin_token_marks_the_alert(monkeypatch):
     with scanner.app.test_request_context():
         assert scanner._require_admin()[2] == 401
     assert [event["tokenPresent"] for event in seen] == [True, False]
+
+
+def test_wrong_token_refused_by_the_sign_in_boundary_is_an_alert(monkeypatch):
+    # 2026-11-18 08:30 production test: a wrong admin token without an owner
+    # session was answered 401 by the sign-in boundary and no alert was made.
+    _reset(monkeypatch)
+    auth = scanner.app.extensions["argus_owner_auth"]
+    monkeypatch.setattr(auth, "enabled", True)
+    monkeypatch.setattr(auth, "admin", "synthetic-correct")
+    monkeypatch.setattr(auth, "session", lambda: None)
+    before = scanner._AI_GATE_STATE["failedAttempts"]
+    client = scanner.app.test_client()
+    response = client.get("/api/argus/security-status",
+                          headers={"X-ARGUS-ADMIN-TOKEN": "synthetic-wrong", "CF-IPCountry": "us"})
+    assert response.status_code == 401
+    row = scanner._SECURITY_PUSH["admin_token_mismatch"]
+    assert row["count"] == 1 and row["country"] == "US"
+    assert scanner._AI_GATE_STATE["failedAttempts"] == before + 1
+    # The scheduled smoke test sends no token: still not an alert.
+    assert client.get("/api/argus/security-status").status_code == 401
+    assert scanner._SECURITY_PUSH["admin_token_mismatch"]["count"] == 1
+    notices = scanner.argus_web_push.security_proposals(
+        list(scanner._SECURITY_PUSH.values()), row["at"] + 1)
+    assert [n["title"] for n in notices] == ["ARGUS 警報｜違う鍵で管理の操作が試されました"]
