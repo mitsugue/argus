@@ -448,3 +448,35 @@ def test_security_proposals_ignore_old_unknown_and_malformed_alerts():
     assert push.security_proposals([{'type':'bridge_signature_rejected','at':now+5}],now)==[]
     body=push.security_proposals([{'type':'bridge_signature_rejected','at':now,'country':'x1'}],now)[0]['body']
     assert '接続元の国' not in body
+
+
+def test_an_expired_device_is_reported_once_to_every_other_enabled_device(service):
+    # 2026-11-18 owner 「やはり作る」: the iPhone registration expired on 10/8 and
+    # no screen or notice said so for six weeks.
+    value,clock,sent=service
+    phone=value.handle({'operation':'subscribe','subscription':sub('https://web.push.apple.com/phone'),
+                        'sq':True,'news':True,'ownerChanges':True})['subscriptionId']
+    mac=value.handle({'operation':'subscribe','subscription':sub('https://fcm.googleapis.com/mac'),
+                      'sq':False,'news':False,'ownerChanges':False})['subscriptionId']
+    endpoints=lambda:[args[0]['endpoint'] for args in sent]
+    def sender(*args):
+        sent.append(args)
+        return 410 if args[0]['endpoint'].endswith('/phone') else 201
+    value.sender=sender
+    value.tick([event(clock)])                       # SQ goes to the phone only; it has expired
+    assert not value.status(phone)['enabled'] and value.status(mac)['enabled']
+    value.tick([event(clock)]);value.tick([])
+    notices=[args[1] for args in sent if args[0]['endpoint'].endswith('/mac')]
+    assert len(notices)==1                           # once, though the Mac has every switch off
+    assert notices[0]['title']=='ARGUS 通知｜端末の通知の登録が切れました'
+    assert notices[0]['hash']=='#settings' and '日本時間' in notices[0]['body']
+    assert '通知を有効にする' in notices[0]['body'] and len(notices[0]['body'])<=220
+    assert endpoints().count('https://web.push.apple.com/phone')==1   # nothing more to the expired one
+    assert value.status(mac)['deliveries'][0]['event_key']=='subscription-expired:'+phone[:16]
+
+
+def test_an_expiry_with_no_other_device_sends_nothing(service):
+    value,clock,sent=service;identity=subscribe(value)
+    value.sender=lambda *args:(sent.append(args),404)[1]
+    value.tick([event(clock)]);value.tick([])
+    assert len(sent)==1 and not value.status(identity)['enabled']

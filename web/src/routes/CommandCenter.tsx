@@ -17,6 +17,7 @@ import type { SettingsSection } from '../navigation';
 import '../components/dashboard/Dashboard.css';
 import { ArgusTodayPanel } from '../components/today/ArgusTodayPanel';
 import { BootConsole } from '../components/today/BootConsole';
+import { PushRegistrationNotice } from '../components/today/PushRegistrationNotice';
 import { buildArgusTodayView, selectTodayNews,
   importantEventDisplayLabel,
   type MarketSelectionMode, type TodayMoveInput,
@@ -622,6 +623,7 @@ export const CommandCenter: React.FC<Props> = ({ onNavigate, onNavigateToAsset, 
         decision: { loading: decisionEvidence.loading,
           error: decisionEvidence.error, subjects: decisionEvidence.subjects },
       }} />
+      <PushRegistrationNotice />
       <ArgusTodayPanel view={argusToday}
         featuredEvent={calendarHighlights.featured}
         selectedSymbol={selectedSymbol} horizon={chartHorizon}
