@@ -22657,21 +22657,46 @@ def _jquants_tdnet_fetch(limit=150):
 
 
 def _get_tdnet_yanoshin(limit=150):
-    """FALLBACK: recent TDnet via the free yanoshin third-party wrapper. official=False,
-    a LOWER-tier source than the official J-Quants Add-on. Cached 10m."""
+    """FALLBACK: TDnet via the free yanoshin third-party wrapper. official=False,
+    a LOWER-tier source than the official J-Quants Add-on. Today and the previous
+    trading day are read whole by date; the latest `limit` only when a day cannot
+    be read. Cached 10m. No owner symbol is ever sent."""
     now = time.time()
     if _TDNET_FEED_CACHE["data"] is not None and now < _TDNET_FEED_CACHE["expires"]:
         return _TDNET_FEED_CACHE["data"]
     out = {"status": "unavailable", "asOf": _ai_now_iso(), "items": [], "bySymbol": {},
            "provider": "yanoshin-tdnet", "official": False, "entitlement": "fallback"}
     try:
-        r = requests.get(f"https://webapi.yanoshin.jp/webapi/tdnet/list/recent.json?limit={limit}",
-                         timeout=12, headers={"User-Agent": "argus/1.0"})
-        if r.ok:
-            data = r.json()
+        # 2026-11-18 owner 【日付でまとめて取る】: today and the previous trading
+        # day, whole (argus_tdnet.yanoshin_dates). The latest-N list is kept only
+        # as the fallback when a day cannot be read.
+        base = "https://webapi.yanoshin.jp/webapi/tdnet/list/"
+        headers = {"User-Agent": "argus/1.0"}
+        dates = argus_tdnet.yanoshin_dates(
+            datetime.now(TZ_JST).date(),
+            lambda d: argus_market_clock.is_trading_day(argus_market_clock.JP_EQUITY, d))
+        rows, truncated, coverage = [], [], None
+        for day in dates:
+            r = requests.get(f"{base}{day}.json?limit={argus_tdnet.YANOSHIN_DAY_LIMIT}",
+                             timeout=20, headers=headers)
+            if not r.ok:
+                rows = None
+                break
+            day_rows = list(argus_tdnet.yanoshin_rows(r.json()))
+            if len(day_rows) >= argus_tdnet.YANOSHIN_DAY_LIMIT:
+                truncated.append(day)
+            rows.extend(day_rows)
+        if rows is not None:
+            coverage = {"mode": "by_date", "dates": dates, "count": len(rows),
+                        "truncatedDates": truncated}
+        else:
+            r = requests.get(f"{base}recent.json?limit={limit}", timeout=12, headers=headers)
+            rows = list(argus_tdnet.yanoshin_rows(r.json())) if r.ok else []
+            coverage = {"mode": "latest", "limit": limit, "count": len(rows)}
+        rows.sort(key=lambda td: str(td.get("pubdate") or ""), reverse=True)
+        if rows:
             items, by_sym = [], {}
-            for row in (data.get("items") or []):
-                td = row.get("Tdnet") or row.get("tdnet") or {}
+            for td in rows:
                 code5 = str(td.get("company_code") or "")
                 code = code5[:4] if len(code5) >= 4 else code5
                 title = td.get("title") or ""
@@ -22687,7 +22712,7 @@ def _get_tdnet_yanoshin(limit=150):
             if items:
                 out = {"status": "live", "asOf": _ai_now_iso(), "items": items[:200],
                        "bySymbol": by_sym, "provider": "yanoshin-tdnet", "official": False,
-                       "entitlement": "fallback"}
+                       "entitlement": "fallback", "coverage": coverage}
     except Exception:
         pass
     if out["status"] == "live":
