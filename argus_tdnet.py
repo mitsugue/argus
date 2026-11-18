@@ -125,4 +125,3 @@ def yanoshin_rows(data):
         if isinstance(row, dict):
             inner = row.get('Tdnet') or row.get('tdnet')
             yield inner if isinstance(inner, dict) else row
-
