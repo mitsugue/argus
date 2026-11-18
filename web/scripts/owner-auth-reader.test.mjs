@@ -175,8 +175,10 @@ test('the release waits allow for the public entrance', () => {
   const browser = fs.readFileSync(new URL('./owner-browser-acceptance.mjs', import.meta.url), 'utf8');
   assert.ok(browser.includes("=== 'POST', { timeout: 45000 }).catch(() => null);"));
   assert.ok(browser.includes("=== 'POST', { timeout: 30000 });"));
-  // The logout waits for the page's first reads to settle before the click.
-  const settle = browser.indexOf("waitForLoadState('networkidle', { timeout: 60000 })");
+  // The logout waits until no backend read starts or ends for 3 s (at most 90 s).
+  assert.ok(!browser.includes("waitForLoadState('networkidle'"));
+  assert.ok(browser.includes('async function backendQuiet(page, quietMs = 3000, maxMs = 90000)'));
+  const settle = browser.indexOf('await backendQuiet(page);');
   assert.ok(settle > browser.indexOf('async function logout(page)') && settle < browser.indexOf("stage = 'click';"));
   const mobile = fs.readFileSync(new URL('./mobile-today-acceptance.mjs', import.meta.url), 'utf8');
   assert.ok(mobile.includes('async function waitForTodayChart(page, timeout = 60_000)'));

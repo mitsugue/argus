@@ -99,3 +99,35 @@ test('a frontend-only release waits for readiness only, never for its own Pages 
     assert.equal(calls.filter(u => u.endsWith('/healthz')).length, 0);
   } finally { globalThis.fetch = original; }
 });
+test('logout is pressed only after the backend reads have been quiet for 3 s', async () => {
+  // 2026-11-18: a logout pressed during the first ~50 reads (about 3 s each
+  // through Tailscale Funnel) was answered by the server but never arrived.
+  const owner = createBrowserOwner({ baseUrl: backend, publicUrl, env });
+  const handlers = { request: new Set(), requestfinished: new Set(), requestfailed: new Set() };
+  const emit = (name, url) => { for (const fn of handlers[name]) fn({ url: () => url }); };
+  let clickedAt = 0, release;
+  const clicked = new Promise(resolve => { release = resolve; });
+  const response = { url: () => backend + '/api/argus/owner-auth/logout', status: () => 200,
+    json: async () => ({ loggedOut: true }), headers: () => ({ 'x-argus-owner-nonce': 'n' }),
+    request: () => ({ method: () => 'POST', headers: () => ({ 'x-argus-owner-nonce': 'n' }) }) };
+  const page = { url: () => publicUrl, isClosed: () => false,
+    on: (name, fn) => handlers[name].add(fn), off: (name, fn) => handlers[name].delete(fn),
+    waitForTimeout: ms => new Promise(resolve => setTimeout(resolve, ms)),
+    locator: () => ({ count: async () => 0 }),
+    getByRole: (role, { name }) => name === 'ログアウト'
+      ? { count: async () => 1, click: async () => { clickedAt = Date.now(); release(); } }
+      : { waitFor: async () => {} },
+    waitForResponse: async (predicate) => { await clicked; assert.ok(predicate(response)); return response; } };
+  const start = Date.now();
+  // Reads still running when logout is asked: one ends at 1.0 s, another starts
+  // at 0.6 s and ends at 1.6 s. Another origin never counts.
+  setTimeout(() => emit('request', backend + '/api/argus/market-brief'), 10);
+  setTimeout(() => emit('request', 'https://other.example/x'), 20);
+  setTimeout(() => emit('request', backend + '/api/argus/decision-evidence'), 600);
+  setTimeout(() => emit('requestfinished', backend + '/api/argus/market-brief'), 1000);
+  setTimeout(() => emit('requestfailed', backend + '/api/argus/decision-evidence'), 1600);
+  await owner.logout(page);
+  assert.ok(clickedAt - start >= 1600 + 3000 - 50, `clicked after ${clickedAt - start} ms`);
+  assert.ok(clickedAt - start < 1600 + 3000 + 1000);
+  for (const set of Object.values(handlers)) assert.equal(set.size, 0);   // listeners removed
+});
