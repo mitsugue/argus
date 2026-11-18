@@ -195,6 +195,13 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
       if (await menu.count() && !await menu.evaluate(element => element.open)) await menu.locator('summary').click();
       const control = page.getByRole('button', { name: 'ログアウト', exact: true });
       if (!await control.count()) { await locked(page); return; }
+      // 2026-11-18: through the public entrance (Tailscale Funnel) every answer
+      // takes about 3 s, even a 23-byte one, and the page sends about 50 reads
+      // in its first 40 s. A logout pressed in that burst was answered by the
+      // server in 5 s but did not arrive in 45 s. Let the reads settle first
+      // (at most 60 s); the click itself is unchanged.
+      stage = 'settle';
+      await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => {});
       const pending = page.waitForResponse(response => response.url() === config.backend + '/api/argus/owner-auth/logout'
         && response.request().method() === 'POST', { timeout: 45000 }).catch(() => null);
       stage = 'click';
