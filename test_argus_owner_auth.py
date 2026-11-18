@@ -449,3 +449,41 @@ def test_resume_early_boundary_never_runs_provider_middleware(setup):
     opt_in_resume(client, token)
     assert resume(client).status_code == 200
     assert middleware == []
+
+
+def test_wrong_admin_token_refused_here_is_reported_without_the_token(tmp_path):
+    # 2026-11-18 morning test: the boundary refused a wrong admin token before
+    # the route's own admin check, so no security alert was raised.
+    app = Flask(__name__)
+    env = {'ARGUS_OWNER_AUTH_REQUIRED': '1', 'ARGUS_OWNER_AUTH_DB': str(tmp_path / 'auth.db'),
+           'ARGUS_OWNER_AUTH_ORIGIN': ORIGIN, 'ARGUS_OWNER_PASSWORD_HASH': generate_password_hash(PASSWORD, method='pbkdf2:sha256:1000'),
+           'ARGUS_ADMIN_TOKEN': 'test-admin'}
+    calls = []
+    module.install(app, env, on_admin_mismatch=lambda *args: calls.append(args))
+    app.add_url_rule('/api/argus/data', 'data', lambda: {'ok': True})
+    client = app.test_client()
+    assert client.get('/api/argus/data', headers={'X-ARGUS-ADMIN-TOKEN': 'wrong'}).status_code == 401
+    assert calls == [()]
+    # No token (the scheduled smoke test) and the right token are not alerts.
+    assert client.get('/api/argus/data').status_code == 401
+    assert client.get('/api/argus/data', headers={'X-ARGUS-ADMIN-TOKEN': 'test-admin'}).status_code == 200
+    assert calls == [()]
+    # A wrong token with a valid owner session reaches the route's own check.
+    token = login(client)
+    assert client.get('/api/argus/data', headers={'X-ARGUS-ADMIN-TOKEN': 'wrong',
+                                                  'X-ARGUS-OWNER-SESSION': token}).status_code == 200
+    assert calls == [()]
+
+
+def test_a_failing_alert_callback_never_changes_the_refusal(tmp_path):
+    app = Flask(__name__)
+    env = {'ARGUS_OWNER_AUTH_REQUIRED': '1', 'ARGUS_OWNER_AUTH_DB': str(tmp_path / 'auth.db'),
+           'ARGUS_OWNER_AUTH_ORIGIN': ORIGIN, 'ARGUS_OWNER_PASSWORD_HASH': generate_password_hash(PASSWORD, method='pbkdf2:sha256:1000'),
+           'ARGUS_ADMIN_TOKEN': 'test-admin'}
+
+    def broken():
+        raise RuntimeError('alert down')
+    module.install(app, env, on_admin_mismatch=broken)
+    app.add_url_rule('/api/argus/data', 'data', lambda: {'ok': True})
+    response = app.test_client().get('/api/argus/data', headers={'X-ARGUS-ADMIN-TOKEN': 'wrong'})
+    assert response.status_code == 401 and response.json == {'error': 'owner_auth_required'}
