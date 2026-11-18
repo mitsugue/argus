@@ -186,6 +186,19 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
   // 2026-11-18: the logout answer left the server 5 s after the click but did
   // not reach the release browser within 15 s (Tailscale Funnel relay while
   // the page's ~30 first reads were in flight). The wait is 45 s, login 30 s.
+  async function backendQuiet(page, quietMs = 3000, maxMs = 90000) {
+    let inflight = 0, last = Date.now();
+    const mine = request => request.url().startsWith(config.backend + '/');
+    const started = request => { if (mine(request)) { inflight += 1; last = Date.now(); } };
+    const ended = request => { if (mine(request)) { inflight = Math.max(0, inflight - 1); last = Date.now(); } };
+    page.on('request', started); page.on('requestfinished', ended); page.on('requestfailed', ended);
+    try {
+      const end = Date.now() + maxMs;
+      while (Date.now() < end && (inflight > 0 || Date.now() - last < quietMs)) await page.waitForTimeout(250);
+    } finally {
+      page.off('request', started); page.off('requestfinished', ended); page.off('requestfailed', ended);
+    }
+  }
   async function logout(page) {
     if (!config.enabled || page.isClosed()) return;
     let stage = 'boundary';
@@ -198,10 +211,11 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
       // 2026-11-18: through the public entrance (Tailscale Funnel) every answer
       // takes about 3 s, even a 23-byte one, and the page sends about 50 reads
       // in its first 40 s. A logout pressed in that burst was answered by the
-      // server in 5 s but did not arrive in 45 s. Let the reads settle first
-      // (at most 60 s); the click itself is unchanged.
+      // server in 2 s but did not arrive in 45 s. The reads to the backend are
+      // counted until none starts or ends for 3 s (at most 90 s). networkidle
+      // was not enough: it had already been reached on the sign-in screen.
       stage = 'settle';
-      await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => {});
+      await backendQuiet(page);
       const pending = page.waitForResponse(response => response.url() === config.backend + '/api/argus/owner-auth/logout'
         && response.request().method() === 'POST', { timeout: 45000 }).catch(() => null);
       stage = 'click';
