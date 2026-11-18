@@ -93,9 +93,20 @@ def test_invalid_stored_references_are_rejected_before_backup(fault,tmp_path):
 
 
 def test_distinct_overflow_still_fails_instead_of_dropping_facts():
-    brief=large_brief();brief['unifiedContext']['facts']*=3
+    # 2026-11-18: identical facts are now kept once, so the overflow is made
+    # of distinct facts (the old test tripled the same 18).
+    brief=large_brief()
+    brief['unifiedContext']['facts']=[dialogue.fact('資料'+str(i)+'。'+'確認した市場資料です。'*75,
+        'market_context',kind='UNKNOWN') for i in range(54)]
     brief['unifiedContext']['contextId']=dialogue.digest({k:v for k,v in brief['unifiedContext'].items() if k!='contextId'})
     with pytest.raises(ValueError,match='private_context_size_bound'):build(brief)
+
+
+def test_repeated_identical_facts_are_kept_once_not_an_overflow():
+    once=build(large_brief())
+    brief=large_brief();brief['unifiedContext']['facts']*=3
+    brief['unifiedContext']['contextId']=dialogue.digest({k:v for k,v in brief['unifiedContext'].items() if k!='contextId'})
+    assert build(brief)['facts']==once['facts']
 
 
 def test_nonwatchlist_fiscal_hypothesis_context_keeps_existing_full_reference():

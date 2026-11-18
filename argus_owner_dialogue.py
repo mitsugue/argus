@@ -649,6 +649,11 @@ def build_context(*, brief, symbol, market, horizon, question, received_at, owne
     if watchlist_only:
         prior = [row for row in prior if row.get('source') != 'owner_report'
                  and row.get('evidenceKind') != 'OWNER_REPORTED']
+    # 2026-11-18: an identical fact (same evidenceId) from two places, such
+    # as a subject material that repeats, is kept once; a repeated reference
+    # made the presentation check refuse the whole explanation.
+    seen=set()
+    facts=[row for row in facts if not (row['evidenceId'] in seen or seen.add(row['evidenceId']))]
     context={'schemaVersion':SCHEMA,'scope':'OWNER_PRIVATE','subject':{'symbol':symbol,'market':market},
         'horizonSessions':horizon,'question':question,'receivedAt':received_at,'baseMarketContextId':public['contextId'],
         'facts':facts,'previousFacts':prior,'owner':private,'ownerContextAvailable':private is not None,

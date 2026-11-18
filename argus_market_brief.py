@@ -627,7 +627,12 @@ def unified_context(brief: Mapping[str, Any], previous: Optional[Mapping[str, An
             identity = hashlib.sha256(json.dumps(material, ensure_ascii=False,
                 sort_keys=True, separators=(",", ":")).encode()).hexdigest()
             rows.append({"evidenceId": "brief-fact-" + identity, **material})
-        return rows
+        # 2026-11-18: the same material twice has one identity; a repeated
+        # reference made the presentation check refuse the whole explanation.
+        # The copy carries nothing new, so the first one is kept.
+        seen = set()
+        return [row for row in rows
+                if not (row["evidenceId"] in seen or seen.add(row["evidenceId"]))]
     current, prior = references(brief), references(previous)
     current_ids, prior_ids = {r["evidenceId"] for r in current}, {r["evidenceId"] for r in prior}
     body = {"schemaVersion": "argus-unified-brief-context-v1", "scope": "PUBLIC_MARKET",
