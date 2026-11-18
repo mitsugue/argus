@@ -150,3 +150,17 @@ def test_a_failed_press_is_reported_and_the_saved_explanation_is_kept(tmp_path):
     assert kept['overviewRead']['lastAttempt'] == {'requestId':again['requestId'], 'status':'FAILED',
         'completedAt':AT}
     assert len(calls) == 3
+
+
+def test_the_same_market_material_twice_still_writes_the_explanation(tmp_path):
+    """2026-11-18: a repeated market fact made the press fail before the AI was called."""
+    path, current, calls, client, controls = service(tmp_path)
+    edition = copy.deepcopy(current[0])
+    twice = {'text':'同じ市場の材料。', 'source':'trusted_mail', 'priority':'P1', 'verification':'UNCONFIRMED'}
+    edition['facts'] = edition['facts'] + [dict(twice), dict(twice)]
+    edition['unifiedContext'] = brief_module.unified_context(edition)
+    ids = [row['evidenceId'] for row in edition['unifiedContext']['facts']]
+    assert len(ids) == len(set(ids))
+    current[0] = edition
+    assert press(client).status_code == 202
+    assert wait(path, controls)['status'] == 'SUCCEEDED' and len(calls) == 1

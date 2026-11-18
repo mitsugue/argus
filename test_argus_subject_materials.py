@@ -235,3 +235,18 @@ def test_changed_numeric_wording_keeps_original_saved_facts_and_new_input_identi
     assert prior==original and current['contextId']!=prior['contextId']
     policy={'model':'test','ruleVersion':'same-generation-source'}
     assert dialogue.overview_input_digest(current,policy)!=dialogue.overview_input_digest(prior,policy)
+
+
+def test_a_repeated_material_is_kept_once_and_the_overview_can_be_planned():
+    # 2026-11-18: the same fact twice made the presentation inventory refuse
+    # the whole explanation (presentation_evidence_invalid).
+    from argus_presentation_intent import dialogue_inventory
+    facts=materials.news_facts([article()],symbol='1234',cutoff=AT)
+    context=dialogue.build_context(brief=market_brief(),symbol='1234',market='JP',horizon=5,
+        question='この銘柄への影響は？',received_at=AT,material_facts=facts+[deepcopy(facts[0])])
+    ids=[row['evidenceId'] for row in context['facts']]
+    assert len(ids)==len(set(ids)) and ids.count(facts[0]['evidenceId'])==1
+    once=dialogue.build_context(brief=market_brief(),symbol='1234',market='JP',horizon=5,
+        question='この銘柄への影響は？',received_at=AT,material_facts=facts)
+    assert context['contextId']==once['contextId']
+    assert dialogue_inventory(context)['elements']
