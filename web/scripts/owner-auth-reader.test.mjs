@@ -148,3 +148,34 @@ test('business authentication failures stop at the first row without data retrie
   await assert.rejects(fetchBusinessSnapshotObservations({baseUrl,contract,fetchImpl:async()=>{calls++;throw new OwnerReaderError('rejected');}}),/rejected/);
   assert.equal(calls,1);
 });
+test('a dropped read is asked once more with a fresh nonce; a dropped POST is not repeated', async () => {
+  // 2026-11-18: the public entrance (Tailscale Funnel relay) sometimes drops a read.
+  let drops = 1;
+  const f = fixture(c => { if (c.url.pathname === '/api/argus/x' && drops-- > 0) throw new Error('reset'); });
+  const reader = await createOwnerReader(f.options);
+  assert.deepEqual(await (await reader.fetch(baseUrl + '/api/argus/x')).json(), { preserved: 'saved-result' });
+  const reads = f.calls.filter(c => c.url.pathname === '/api/argus/x');
+  assert.equal(reads.length, 2);
+  assert.notEqual(reads[0].headers.get('X-ARGUS-OWNER-NONCE'), reads[1].headers.get('X-ARGUS-OWNER-NONCE'));
+  await reader.close();
+  // Two drops in a row still fail as a transport error.
+  const g = fixture(c => { if (c.url.pathname === '/api/argus/x') throw new Error('reset'); });
+  const second = await createOwnerReader(g.options);
+  await assert.rejects(second.fetch(baseUrl + '/api/argus/x'), /owner_reader:transport/);
+  assert.equal(g.calls.filter(c => c.url.pathname === '/api/argus/x').length, 2);
+  // A dropped logout (POST) is asked once only.
+  const h = fixture(c => { if (c.url.pathname.endsWith('/logout')) throw new Error('reset'); });
+  const third = await createOwnerReader(h.options);
+  await assert.rejects(third.close(), /owner_reader:transport/);
+  assert.equal(h.calls.filter(c => c.url.pathname.endsWith('/logout')).length, 1);
+});
+test('the release waits allow for the public entrance', () => {
+  const reader = fs.readFileSync(new URL('./owner-auth-reader.mjs', import.meta.url), 'utf8');
+  assert.ok(reader.includes('AbortSignal.timeout(30_000)') && !reader.includes('AbortSignal.timeout(15_000)'));
+  const browser = fs.readFileSync(new URL('./owner-browser-acceptance.mjs', import.meta.url), 'utf8');
+  assert.ok(browser.includes("=== 'POST', { timeout: 45000 }).catch(() => null);"));
+  assert.ok(browser.includes("=== 'POST', { timeout: 30000 });"));
+  const mobile = fs.readFileSync(new URL('./mobile-today-acceptance.mjs', import.meta.url), 'utf8');
+  assert.ok(mobile.includes('async function waitForTodayChart(page, timeout = 60_000)'));
+  assert.ok(mobile.includes('async function waitForCanonicalProjectionContract(page, timeout = 60_000)'));
+});

@@ -294,13 +294,16 @@ async function waitForShell(page) {
   }
 }
 
-async function waitForTodayChart(page, timeout = 30_000) {
+// 2026-11-18: 30 s → 60 s for the chart waits. Two releases (13.9.8, 13.9.9)
+// timed out at 30 s through the public entrance (Tailscale Funnel relay,
+// 1.7-4.3 s for a tiny answer, a non-configurable bandwidth limit).
+async function waitForTodayChart(page, timeout = 60_000) {
   await page.locator(CANONICAL_SNAPSHOT_SELECTOR)
     .waitFor({ state: 'visible', timeout });
   await openCanonicalEvidence(page, timeout);
 }
 
-async function waitForCanonicalProjectionContract(page, timeout = 30_000) {
+async function waitForCanonicalProjectionContract(page, timeout = 60_000) {
   await page.waitForFunction(({ projectionSelector, snapshotSelector }) => {
     const nodes = [...document.querySelectorAll(projectionSelector)];
     const snapshot = document.querySelector(snapshotSelector);
@@ -567,7 +570,7 @@ async function run() {
           && contract?.getAttribute('data-canonical-instrument') === 'N225'
           && contract?.getAttribute('data-canonical-horizon') === '5D'
           && contract?.getAttribute('data-canonical-verification') === 'verified';
-      }, { expectedSymbol: symbol, expectedHorizon: horizon }, { timeout: 30_000 });
+      }, { expectedSymbol: symbol, expectedHorizon: horizon }, { timeout: 60_000 });
       await waitForCanonicalProjectionContract(page);
       const record = await page.evaluate(({ expectedSymbol, expectedHorizon }) => ({
         symbol: document.querySelector('[data-argus-contract="other-market-actuals-explorer-v1"]')

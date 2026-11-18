@@ -129,7 +129,7 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
     try {
       boundary(page);
       const controller = page.waitForResponse(response => response.url() === config.backend + '/api/argus/owner-auth/password'
-        && response.request().method() === 'POST', { timeout: 15000 });
+        && response.request().method() === 'POST', { timeout: 30000 });
       responsePromise = controller.catch(() => null);
       // The product proves a fresh session with an authenticated GET before it
       // unlocks; its status names a lock screen after a correct password.
@@ -183,6 +183,9 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
     } catch (error) { if (error instanceof OwnerBrowserError) throw error; fail('login'); }
     finally { if (await input.count().catch(() => 0)) await input.fill('', { timeout: 1000 }).catch(() => {}); }
   }
+  // 2026-11-18: the logout answer left the server 5 s after the click but did
+  // not reach the release browser within 15 s (Tailscale Funnel relay while
+  // the page's ~30 first reads were in flight). The wait is 45 s, login 30 s.
   async function logout(page) {
     if (!config.enabled || page.isClosed()) return;
     let stage = 'boundary';
@@ -193,7 +196,7 @@ export function createBrowserOwner({ baseUrl, publicUrl, env = process.env }) {
       const control = page.getByRole('button', { name: 'ログアウト', exact: true });
       if (!await control.count()) { await locked(page); return; }
       const pending = page.waitForResponse(response => response.url() === config.backend + '/api/argus/owner-auth/logout'
-        && response.request().method() === 'POST', { timeout: 15000 }).catch(() => null);
+        && response.request().method() === 'POST', { timeout: 45000 }).catch(() => null);
       stage = 'click';
       await control.click();
       stage = 'response';

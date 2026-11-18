@@ -34,7 +34,9 @@ export async function createOwnerReader({ baseUrl, env = process.env,
   async function send(url, init = {}) {
     try {
       const response = await fetchImpl(url, { ...init, redirect: 'error', cache: 'no-store',
-        signal: init.signal || AbortSignal.timeout(15_000) });
+        // 2026-11-18: 15 s → 30 s. Every read crosses the public entrance
+        // (Tailscale Funnel relay), measured at 1.7-4.3 s for a tiny answer.
+        signal: init.signal || AbortSignal.timeout(30_000) });
       if (response.redirected || response.status >= 300 && response.status < 400) fail('redirect');
       if (response.url && new URL(response.url).origin !== config.backend) fail('redirect');
       return response;
@@ -49,17 +51,30 @@ export async function createOwnerReader({ baseUrl, env = process.env,
     try { return await response.json(); } catch { fail('body'); }
   }
   async function authenticated(url, init = {}) {
-    if (!token || expiresAt <= now()) fail('session_expired');
-    const challenge = nonce();
-    if (!/^[0-9a-f-]{36}$/i.test(challenge)) fail('nonce');
-    const headers = new Headers(init.headers);
-    if (headers.has('X-ARGUS-ADMIN-TOKEN') || headers.has('Authorization')) fail('privilege');
-    headers.set('X-ARGUS-OWNER-SESSION', token);
-    headers.set('X-ARGUS-OWNER-NONCE', challenge);
-    const response = await send(url, { ...init, headers });
-    if ([401, 403].includes(response.status)) fail('rejected');
-    if (response.headers.get('X-ARGUS-OWNER-NONCE') !== challenge) fail('unverified');
-    return response;
+    const read = String(init.method || 'GET').toUpperCase() === 'GET';
+    for (let attempt = 1; ; attempt += 1) {
+      if (!token || expiresAt <= now()) fail('session_expired');
+      const challenge = nonce();
+      if (!/^[0-9a-f-]{36}$/i.test(challenge)) fail('nonce');
+      const headers = new Headers(init.headers);
+      if (headers.has('X-ARGUS-ADMIN-TOKEN') || headers.has('Authorization')) fail('privilege');
+      headers.set('X-ARGUS-OWNER-SESSION', token);
+      headers.set('X-ARGUS-OWNER-NONCE', challenge);
+      let response;
+      try {
+        response = await send(url, { ...init, headers });
+      } catch (error) {
+        // 2026-11-18: the public entrance's relay sometimes drops a read
+        // (owner_reader:transport). A read is asked once more with a fresh
+        // nonce; a POST (login, logout) is never repeated.
+        if (read && attempt < 2 && error instanceof OwnerReaderError
+            && error.message === 'owner_reader:transport') continue;
+        throw error;
+      }
+      if ([401, 403].includes(response.status)) fail('rejected');
+      if (response.headers.get('X-ARGUS-OWNER-NONCE') !== challenge) fail('unverified');
+      return response;
+    }
   }
   async function logout() {
     if (!token) return;
