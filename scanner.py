@@ -851,6 +851,12 @@ argus_owner_auth.install(app, on_admin_mismatch=lambda: _record_admin_auth_failu
 # CORS for /api/argus/* — lets the React frontend (Vercel, GitHub Pages,
 # and localhost dev) call the ledger / rates endpoints. Other routes
 # stay same-origin.
+# Every owner read carries X-ARGUS-OWNER-SESSION, so the browser asks a
+# preflight before each one.  Through the public entrance one round trip is
+# about 1.5 s, so an uncached preflight doubles every read.  Browsers clamp
+# this to their own ceiling (Safari 5-10 min, Chromium 2 h).  It only lets the
+# browser reuse the same allow answer; origins and credentials are unchanged.
+CORS_PREFLIGHT_MAX_AGE_SECONDS = 600
 if CORS is not None:
     _PUBLIC_BROWSER_ORIGINS = [
         re.compile(r"^http://localhost(:\d+)?$"),
@@ -868,7 +874,7 @@ if CORS is not None:
         # any browser origin from receiving an allow-origin header.
         r"/api/argus/admin/diagnostics/operational": {"origins": []},
         r"/api/argus/*": {"origins": _PUBLIC_BROWSER_ORIGINS},
-    })
+    }, max_age=CORS_PREFLIGHT_MAX_AGE_SECONDS)
 
 @app.after_request
 def add_no_cache(response):
