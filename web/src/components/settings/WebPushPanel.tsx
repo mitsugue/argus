@@ -2,6 +2,7 @@ import { TriangleStepLoader } from '../common/TriangleStepLoader';
 import React,{useState} from 'react';
 import {appPushRegistration,applicationKey,pushReceipts,pushRequest,type PushStatus} from '../../lib/webPush';
 import {pushRecordKindJa,pushRecordSentJa} from '../../lib/pushRecordLabel';
+import {rememberPushRegistered} from '../../lib/webPushHealth';
 import './AiUsagePanel.css';
 import './WebPushPanel.css';
 const initialToken=()=>{try{return localStorage.getItem('argus.ownerSyncToken.v1')||'';}catch{return '';}};
@@ -21,7 +22,8 @@ export function WebPushPanel(){
     const reg=await appPushRegistration();const sub=await reg.pushManager.getSubscription();
     if(sub){const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(sub.endpoint));
       const identity=Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('');
-      show(await pushRequest(token,'receipts',{subscriptionId:identity,receipts:await pushReceipts()}));
+      const data=await pushRequest(token,'receipts',{subscriptionId:identity,receipts:await pushReceipts()});
+      show(data);if(data.enabled)rememberPushRegistered(true);
     }else{setStatus(null);setMessage('この端末は未登録');}
   });
   const enable=()=>{
@@ -35,11 +37,13 @@ export function WebPushPanel(){
         if(actual.length!==expected.length||actual.some((b,i)=>b!==expected[i]))throw new Error('通知接続キーが変わっています。既存の通知を停止してから再登録してください。');}
       sub=sub||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:applicationKey(publicKey)});
       show(await pushRequest(token,'subscribe',{subscription:sub.toJSON(),sq,news,ownerChanges}));
+      rememberPushRegistered(true);
       setMessage('通知設定を保存しました');
     });
   };
   const disable=()=>run(async()=>{
     if(!status)return;show(await pushRequest(token,'disable',{subscriptionId:status.subscriptionId}));
+    rememberPushRegistered(false);
     const sub=await(await appPushRegistration()).pushManager.getSubscription();if(sub&&!await sub.unsubscribe())throw new Error('サーバー配信は停止しました。端末の購読解除は未確認です。');
     setMessage('この端末への外部配信を停止しました。');
   });

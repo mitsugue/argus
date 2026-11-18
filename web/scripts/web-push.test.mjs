@@ -86,12 +86,13 @@ console.log('Web Push: symbol screen links and navigate fallback to openWindow P
   assert.equal(kind('owner-change:pair:NIKKEI_2X:up:2026-11-13:4'),'監視銘柄の急騰・急落');
   assert.equal(kind('test:1234'),'確認通知');
   assert.equal(kind('security:admin_token_mismatch:1800000000'),'警報');
+  assert.equal(kind('subscription-expired:0123456789abcdef'),'登録切れの案内');
   for (const unknown of [undefined,null,'',{},'jp-monthly-sq-2026-11:LATER']) assert.equal(kind(unknown),'通知');
   assert.equal(label.exports.pushRecordSentJa(null),'未送信');
   assert.match(label.exports.pushRecordSentJa(Date.parse('2026-11-12T23:00:30Z')/1000),/2026\/11\/13 8:00:30/);
   // The server keys these exact shapes (argus_web_push / jp_market_events / argus_jp_fiscal_runtime).
   const py=['../argus_web_push.py','../jp_market_events.py','../argus_jp_fiscal_runtime.py'].map(f=>fs.readFileSync(f,'utf8')).join('\n');
-  for (const shape of ['"jp-monthly-sq-" + contract.strftime("%Y-%m")','"DAY" if today == sq_day else "PREVIOUS_SESSION"',"'news:'+event_id","'owner-change:'+event_id","'test:'+str(uuid.uuid4())","'news:fiscal:'+packet['id']","f'security:{kind}:{int(at)}'"])
+  for (const shape of ['"jp-monthly-sq-" + contract.strftime("%Y-%m")','"DAY" if today == sq_day else "PREVIOUS_SESSION"',"'news:'+event_id","'owner-change:'+event_id","'test:'+str(uuid.uuid4())","'news:fiscal:'+packet['id']","f'security:{kind}:{int(at)}'","'subscription-expired:' + expired_id[:16]"])
     assert.ok(py.includes(shape),shape);
   const panel=fs.readFileSync('src/components/settings/WebPushPanel.tsx','utf8');
   assert.ok(panel.includes('pushRecordKindJa(d.event_key)')&&panel.includes('pushRecordSentJa(d.attempted)'));

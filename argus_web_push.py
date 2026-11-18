@@ -69,6 +69,8 @@ def configuration(env):
 # 2026-11-15 owner 「警報を通知で」: security alerts reach every enabled device,
 # whatever the news/SQ/watchlist switches say, at most once per type an hour.
 SECURITY_INTERVAL_SECONDS = 3600
+# A device whose registration expired is reported to the others for three days.
+EXPIRY_NOTICE_SECONDS = 3 * 86400
 SECURITY_ALERT_LABELS = {
     'admin_token_mismatch': '違う鍵で管理の操作が試されました',
     'bridge_signature_rejected': '橋(AWS)からの署名が合わない送信を拒みました',
@@ -278,6 +280,19 @@ class PushService:
         db.execute('INSERT OR IGNORE INTO deliveries(id,subscription_id,event_key,payload,due,expires,status) VALUES(?,?,?,?,?,?,?)',
                    (delivery_id, identity, event['key'], json.dumps(payload,ensure_ascii=False), event['due'], event['expires'], 'QUEUED'))
 
+    def expiry_notice(self, db, expired_id, now):
+        """2026-11-18 owner 「やはり作る」: the owner's iPhone registration
+        expired on 10/8 and nothing said so for six weeks. Every device still
+        enabled is told once, whatever its switches say (like an alert)."""
+        local = datetime.fromtimestamp(now, _JST)
+        notice = {'key': 'subscription-expired:' + expired_id[:16],
+                  'title': 'ARGUS 通知｜端末の通知の登録が切れました',
+                  'body': (f'{local.month}/{local.day} {local:%H:%M}(日本時間)に、1台の端末で通知の登録が切れました。'
+                           'その端末の ARGUS で Settings の「アプリを閉じたときの通知」から「通知を有効にする」を押すと戻ります。'),
+                  'hash': '#settings', 'due': now, 'expires': now + EXPIRY_NOTICE_SECONDS}
+        for other in db.execute('SELECT id FROM subscriptions WHERE enabled=1 AND id<>?', (expired_id,)).fetchall():
+            self.enqueue(db, other['id'], notice, now)
+
     def tick(self, events):
         if not self.lock.acquire(blocking=False): return
         try:
@@ -310,7 +325,9 @@ class PushService:
                     status = 'SUBSCRIPTION_EXPIRED' if code in (404,410) else 'SERVICE_REJECTED' if code else 'DELIVERY_UNKNOWN'
                 with self.db() as db:
                     db.execute('UPDATE deliveries SET status=? WHERE id=?',(status,row['id']))
-                    if status=='SUBSCRIPTION_EXPIRED': db.execute('UPDATE subscriptions SET enabled=0 WHERE id=?',(row['subscription_id'],))
+                    if status=='SUBSCRIPTION_EXPIRED':
+                        db.execute('UPDATE subscriptions SET enabled=0 WHERE id=?',(row['subscription_id'],))
+                        self.expiry_notice(db,row['subscription_id'],now)
         finally: self.lock.release()
 
 

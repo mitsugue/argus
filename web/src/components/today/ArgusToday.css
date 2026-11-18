@@ -466,3 +466,8 @@
 .ad-market-context__brief > p { color: #96aab7; font-size: 14px; line-height: 1.7; }
 
 .at-news-row .at-news-row__why { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }
+
+/* 2026-11-18: this device's notification registration expired (warning only). */
+.push-lost-notice{border-color:var(--amber,#fbbf24)}
+.push-lost-notice p{margin:0;font-size:13px;line-height:1.5}
+.push-lost-notice a{color:var(--amber,#fbbf24)}

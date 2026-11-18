@@ -14,6 +14,8 @@ export function pushRecordKindJa(key: unknown): string {
   if (key.startsWith('test:')) return '確認通知';
   // 2026-11-15 (owner 「警報を通知で」): a wrong admin key or a rejected bridge signature.
   if (key.startsWith('security:')) return '警報';
+  // 2026-11-18: another device's registration expired.
+  if (key.startsWith('subscription-expired:')) return '登録切れの案内';
   return '通知';
 }
 
