@@ -97,3 +97,31 @@ def summarize_for_symbol(disclosures):
             uniq.append(c)
     return {"recent": True, "detail": "TDnet: " + "・".join(uniq),
             "confirmedNegative": negative, "source": "tdnet"}
+
+
+# 2026-11-18 owner 【日付でまとめて取る】: the free yanoshin list used to be read as
+# the latest 150 disclosures. On 2026-11-13 there were 2,232 (more than 150 at
+# 15:30 alone), so a company's 15:00 results were never seen, and the next
+# morning the list was full of evening disclosures. Today and the previous
+# trading day are now read whole by date. 5,000 a day is about twice the
+# busiest day measured (2,232); a day that reaches it is marked truncated.
+YANOSHIN_DAY_LIMIT = 5000
+
+
+def yanoshin_dates(today, is_trading_day, max_back=10):
+    """yyyymmdd for today and the trading day before it (holidays skipped)."""
+    from datetime import timedelta
+    previous = today - timedelta(days=1)
+    for _ in range(max_back):
+        if is_trading_day(previous):
+            break
+        previous -= timedelta(days=1)
+    return [today.strftime('%Y%m%d'), previous.strftime('%Y%m%d')]
+
+
+def yanoshin_rows(data):
+    """Disclosure rows of a yanoshin list (wrapped in "Tdnet" or flat)."""
+    for row in ((data or {}).get('items') or []) if isinstance(data, dict) else []:
+        if isinstance(row, dict):
+            inner = row.get('Tdnet') or row.get('tdnet')
+            yield inner if isinstance(inner, dict) else row
