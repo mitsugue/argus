@@ -27,6 +27,13 @@ def _forbid_llm(monkeypatch):
                  "_cause_explain"):
         if hasattr(scanner, name):
             monkeypatch.setattr(scanner, name, boom)
+    # 2026-11-19: these tests are about the news titles only. The watchlist and
+    # catalyst snapshots are process-wide caches other tests fill; when one of
+    # them raised under a loaded full run, the route answered attribution_failed
+    # with no news and the test failed without saying why (twice on 11/18).
+    monkeypatch.setattr(scanner, "get_japan_watchlist_snapshot", lambda *a, **k: {"stocks": []})
+    monkeypatch.setattr(scanner, "get_us_watchlist_snapshot", lambda *a, **k: {"stocks": []})
+    monkeypatch.setattr(scanner, "get_catalysts_snapshot", lambda *a, **k: {"items": []})
 
 
 def _looks_raw_english(s):
@@ -45,7 +52,7 @@ def test_cause_attribution_us_news_never_raw_english(monkeypatch):
     with scanner.app.test_client() as c:
         d = c.get("/api/argus/cause-attribution?symbol=NVDA&market=US").get_json()
     news = d.get("news") or []
-    assert news, "expected at least one US media headline"
+    assert news, {"error": d.get("error"), "message": d.get("message")}
     for n in news:
         assert not _looks_raw_english(n.get("displayTitleJa")), n
         # original English is preserved for the 原文を見る disclosure
@@ -66,7 +73,7 @@ def test_cause_attribution_us_news_uses_cache_when_present(monkeypatch):
         d = c.get("/api/argus/cause-attribution?symbol=NVDA&market=US").get_json()
     news = d.get("news") or []
     hit = [n for n in news if "エヌビディア" in (n.get("displayTitleJa") or "")]
-    assert hit, news
+    assert hit, {"error": d.get("error"), "message": d.get("message"), "news": news}
     assert hit[0]["translationStatus"] == "translated"
 
 

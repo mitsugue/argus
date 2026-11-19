@@ -56,7 +56,10 @@ US_INTEREST_MAX = 16
 # history cache by the bare asset symbol the device uses.
 CRYPTO_PAIRS = {"BTC": "BTC/USD", "ETH": "ETH/USD", "SOL": "SOL/USD", "XRP": "XRP/USD",
                 "ADA": "ADA/USD", "DOGE": "DOGE/USD", "AVAX": "AVAX/USD", "LINK": "LINK/USD",
-                "DOT": "DOT/USD", "LTC": "LTC/USD", "BNB": "BNB/USD", "MATIC": "MATIC/USD"}
+                "DOT": "DOT/USD", "LTC": "LTC/USD", "BNB": "BNB/USD",
+                # 2026-11-19: MATIC became POL (1:1). Twelve Data lists no MATIC/USD
+                # any more (its /cryptocurrencies answers 0 rows), only POL/USD.
+                "MATIC": "POL/USD", "POL": "POL/USD"}
 DEFAULT_DELAY_SECONDS = 15.0
 DEFAULT_PER_SYMBOL_SECONDS = 45.0
 DEFAULT_PAUSE_SECONDS = 2.0
