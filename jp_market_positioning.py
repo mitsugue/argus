@@ -197,3 +197,64 @@ def latest_from_ledger(state: dict, *, cutoff: str) -> dict:
             result['positionDate'], received_at=result['receivedAt']), 'basis': 'PROJECTED_AT_READ'}
         result.setdefault('sourceHeaders', {'lastModified': None, 'date': None})
     return result
+
+
+USD_NIKKEI_SCHEMA = 'argus-usd-nikkei-v1'
+USD_NIKKEI_SESSIONS = 20
+USD_NIKKEI_FX_TOLERANCE_SEC = 90
+
+
+def usd_nikkei(nikkei_rows, fx_rows, *, cutoff: str, sessions: int = USD_NIKKEI_SESSIONS) -> dict:
+    """The Nikkei 225 cash close in dollars, at the same 15:30 moment (2026-11-19, owner N31).
+
+    Each trading day's 15:30 cash close is divided by the USD/JPY kept at 15:30
+    JST that day (its own quote time within 90 seconds). The change is taken
+    over `sessions` trading days of the Nikkei rows, and only when both ends
+    have a kept rate; no rate is borrowed from another day or another hour.
+    Only rows available at the cutoff are used. Descriptive only.
+    """
+    limit = _instant(cutoff)
+    base = {'schemaVersion': USD_NIKKEI_SCHEMA, 'actionAuthority': False, 'sessions': sessions,
+            'fxObservationJst': '15:30', 'fxSource': 'yahoo:chart:JPY=X:regularMarketTime'}
+
+    def available(row):
+        try:
+            return _instant(row['availableFrom']) <= limit
+        except (KeyError, TypeError, ValueError):
+            return False
+
+    closes = {}
+    for row in nikkei_rows or ():
+        if (isinstance(row, dict) and row.get('instrumentId') == 'NIKKEI_225_INDEX' and available(row)
+                and isinstance(row.get('close'), (int, float)) and row['close'] > 0
+                and isinstance(row.get('date'), str)):
+            closes[row['date']] = float(row['close'])
+    rates = {}
+    for row in fx_rows or ():
+        if (isinstance(row, dict) and row.get('instrumentId') == 'USDJPY' and row.get('observationJst') == '15:30'
+                and available(row) and isinstance(row.get('value'), (int, float)) and row['value'] > 0
+                and isinstance(row.get('offsetSeconds'), (int, float))
+                and abs(row['offsetSeconds']) <= USD_NIKKEI_FX_TOLERANCE_SEC):
+            rates[row['date']] = row
+    days = sorted(closes)
+    kept = sum(1 for day in days if day in rates)
+    if not days or days[-1] not in rates or len(days) <= sessions:
+        return {**base, 'status': 'INSUFFICIENT', 'keptSessions': kept, 'date': None}
+    day, start = days[-1], days[-1 - sessions]
+    if start not in rates:
+        return {**base, 'status': 'INSUFFICIENT', 'keptSessions': kept, 'date': day}
+    now_usd = closes[day] / rates[day]['value']
+    then_usd = closes[start] / rates[start]['value']
+    return {**base, 'status': 'AVAILABLE', 'keptSessions': kept, 'date': day, 'baseDate': start,
+            'nikkeiClose': round(closes[day], 2), 'usdjpy': rates[day]['value'],
+            'fxSourceTimestamp': rates[day].get('sourceTimestamp'),
+            'usdNikkei': round(now_usd, 2), 'baseUsdNikkei': round(then_usd, 2),
+            'usdChangePct': round((now_usd / then_usd - 1) * 100, 2),
+            'yenChangePct': round((closes[day] / closes[start] - 1) * 100, 2)}
+
+
+def _instant(value):
+    parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    if parsed.tzinfo is None:
+        raise ValueError('timezone_required')
+    return parsed.astimezone(timezone.utc)

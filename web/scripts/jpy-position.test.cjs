@@ -30,4 +30,17 @@ assert.ok(render(null).includes('データ待ち'));
 const switched={...document,current:{...document.current,longContracts:80,netContracts:-10},change:{...document.change,longContracts:-15,netContracts:-13}};
 assert.ok(validJpyPosition(switched));assert.ok(render(switched).includes('円売り越しへ転換'));assert.ok(!render(switched).includes('偏りが拡大'));
 assert.ok(render(document).includes('円買いの偏りが拡大'));
+// 2026-11-19 (owner, N31): the dollar Nikkei line in the yen card; a bad document hides only the line.
+const {validUsdNikkei}=context.exports;
+const usd={schemaVersion:'argus-usd-nikkei-v1',status:'AVAILABLE',actionAuthority:false,fxObservationJst:'15:30',sessions:20,
+ date:'2026-11-19',baseDate:'2026-10-21',usdNikkei:372.71,usdChangePct:-8.79,yenChangePct:-8.01};
+assert.ok(validUsdNikkei(usd));
+for(const patch of [{status:'INSUFFICIENT'},{actionAuthority:true},{fxObservationJst:'09:00'},{baseDate:'2026-11-19'},
+ {usdNikkei:0},{usdChangePct:'x'},{schemaVersion:'v0'},{sessions:0}]) assert.equal(validUsdNikkei({...usd,...patch}),false);
+const withUsd=renderToStaticMarkup(React.createElement(JpyPositionCard,{document,usdNikkei:usd}));
+assert.ok(withUsd.includes('ドル建て日経 372.71ドル（20営業日で -8.8%・円建ては -8.0%）'),withUsd);
+assert.ok(withUsd.includes('90枚'));
+assert.ok(!render(document).includes('ドル建て日経'));
+assert.ok(!renderToStaticMarkup(React.createElement(JpyPositionCard,{document,usdNikkei:{...usd,status:'INSUFFICIENT'}})).includes('ドル建て日経'));
+assert.ok(renderToStaticMarkup(React.createElement(JpyPositionCard,{document,usdNikkei:{...usd,usdChangePct:1.04}})).includes('+1.0%'));
 console.log('JPY weekly scope, arithmetic, freshness and source display PASS');

@@ -31,11 +31,24 @@ export function validJpyPosition(v: unknown): v is JpyPosition {
 type Schedule = { status: string; scheduledReleaseAt: string | null; shifted: boolean };
 const schedule = (v: unknown): Schedule | null => object(v) && typeof v.status === 'string' && typeof v.shifted === 'boolean'
   && (v.scheduledReleaseAt === null || Number.isFinite(Date.parse(v.scheduledReleaseAt))) ? v as Schedule : null;
+// 2026-11-19 (owner, N31「円の欄に1行」): the Nikkei cash close in dollars at the
+// same 15:30 moment, over 20 trading days. A malformed document hides only this line.
+type UsdNikkei = { status: 'AVAILABLE'; sessions: number; date: string; baseDate: string;
+  usdNikkei: number; usdChangePct: number; yenChangePct: number };
+export function validUsdNikkei(v: unknown): v is UsdNikkei {
+  return object(v) && v.schemaVersion === 'argus-usd-nikkei-v1' && v.status === 'AVAILABLE'
+    && v.actionAuthority === false && v.fxObservationJst === '15:30'
+    && Number.isSafeInteger(v.sessions) && v.sessions > 0
+    && /^\d{4}-\d{2}-\d{2}$/.test(v.date) && /^\d{4}-\d{2}-\d{2}$/.test(v.baseDate) && v.baseDate < v.date
+    && Number.isFinite(v.usdNikkei) && v.usdNikkei > 0
+    && Number.isFinite(v.usdChangePct) && Number.isFinite(v.yenChangePct);
+}
+const pct = (value: number) => `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
 const count = (value: number) => value.toLocaleString('ja-JP');
 const signed = (value: number) => `${value > 0 ? '+' : ''}${count(value)}`;
 const time = (value: string) => new Date(value).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
-export function JpyPositionCard({ document }: { document: unknown }) {
+export function JpyPositionCard({ document, usdNikkei }: { document: unknown; usdNikkei?: unknown }) {
   if (!validJpyPosition(document)) return <section className="card at-margin-dynamics" aria-label="円の投機ポジション">
     <h3>YEN POSITIONS</h3><p>データ待ち</p>
   </section>;
@@ -48,6 +61,8 @@ export function JpyPositionCard({ document }: { document: unknown }) {
     <p className="at-context-date">{document.positionDate}の週次報告 · {document.positionAgeCalendarDays}日前の建玉</p>
     <div className="at-context-metrics"><article><span>円買い − 円売り</span><strong>{signed(current.netContracts)}<small>枚</small></strong></article>
       <article><span>{document.previousPositionDate}からの差</span><strong>{signed(change.netContracts)}<small>枚</small></strong></article></div>
+    {validUsdNikkei(usdNikkei) && <p className="at-context-date" data-usd-nikkei={usdNikkei.date}>
+      ドル建て日経 {usdNikkei.usdNikkei.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}ドル（{usdNikkei.sessions}営業日で {pct(usdNikkei.usdChangePct)}・円建ては {pct(usdNikkei.yenChangePct)}）</p>}
     <div className="at-context-use">
       <p>{current.netContracts>0?'円買いに偏っています。円が下がると円買いの手じまいが、円安を強める可能性があります。':current.netContracts<0?'円売りに偏っています。円が上がると円売りの買い戻しが、円高を強める可能性があります。':'買い・売りの差はゼロです。'}</p>
 </div>

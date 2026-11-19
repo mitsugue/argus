@@ -76,6 +76,7 @@ export interface JpMarketEngineMarketView {
   } | null;
   margin1570Dynamics?: unknown;
   jpyPosition?: unknown;
+  usdNikkei?: unknown;
   internals?: unknown;
   sourceStatus: Record<string, string>;
   actionAuthority: boolean;

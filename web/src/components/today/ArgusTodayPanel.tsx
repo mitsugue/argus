@@ -908,7 +908,7 @@ export const ArgusTodayPanel: React.FC<Props> = ({
 
     {!usSelected && <SharedMarketContext horizon={horizon} />}
     {!usSelected && <MarginDynamicsCard document={decisionEvidence.marketView?.margin1570Dynamics} refreshFailed={!!decisionEvidence.error} />}
-    {!usSelected && <JpyPositionCard document={decisionEvidence.marketView?.jpyPosition} />}
+    {!usSelected && <JpyPositionCard document={decisionEvidence.marketView?.jpyPosition} usdNikkei={decisionEvidence.marketView?.usdNikkei} />}
 
     <details className="at-other-markets card" data-argus-contract="other-markets-actuals-v1"
       onToggle={(event) => setOtherMarketsOpen(event.currentTarget.open)}>

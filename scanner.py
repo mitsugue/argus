@@ -44927,6 +44927,19 @@ def _cftc_jpy_document(*, cutoff=None):
                                      if key != "lastAttemptMonotonic"}}
 
 
+def _usd_nikkei_document(*, cutoff=None):
+    """2026-11-19 (owner, N31「円の欄に1行」): the dollar-denominated Nikkei.
+
+    The saved 15:30 cash closes (_N225_ANALOG_HISTORY) divided by the USD/JPY
+    kept at 15:30 JST each trading day (_usdjpy_tokyo_close_tick). Read-only:
+    no fetch, no write. Without the durable store nothing is computed."""
+    path = (os.path.join(_DURABILITY_PATHS["root"], "jp_market_source_history.sqlite3")
+            if _cost_policy_durable_enabled() else None)
+    fx_rows = jp_market_acquisition.selected_rows(path, "usdjpy_tokyo_1530") if path else []
+    nikkei_rows = argus_index_history.drop_stale_holiday_copies(_N225_ANALOG_HISTORY.get("data") or [])
+    return jp_market_positioning.usd_nikkei(nikkei_rows, fx_rows, cutoff=cutoff or _ai_now_iso())
+
+
 def _cftc_jpy_next_report_due(now=None):
     """持っている最新の建玉の次の週の公表(建玉日の3日後 19:30Z 前後)を過ぎているか。
 
@@ -46142,6 +46155,7 @@ def _jp_market_engine_market_view():
     for key, build in (
             ("margin1570Dynamics", lambda: _jp_market_margin_1570_dynamics(cutoff=cutoff)),
             ("jpyPosition", lambda: _cftc_jpy_document(cutoff=cutoff)),
+            ("usdNikkei", lambda: _usd_nikkei_document(cutoff=cutoff)),
             ("internals", _jp_market_internals_cached)):
         try:
             # One recorder name for the three parts (the named operations are bounded).
