@@ -508,6 +508,38 @@ def selected_sessions(path, source_id):
         db.close()
 
 
+def selected_rows(path, source_id):
+    """The kept first receipt of each session for a stable source, read-only.
+
+    2026-11-19 (owner, N31): the 15:30 USD/JPY kept every trading day is read
+    back to compute the dollar-denominated Nikkei. A body whose digest or date
+    no longer matches its row raises, as on the write path. No table: none kept.
+    """
+    if source_id not in STABLE_FEATURE_SOURCES:
+        raise ValueError('stable_feature_source_unknown')
+    import os
+    import sqlite3
+    if not path or not os.path.isfile(path):
+        return []
+    db = sqlite3.connect('file:' + path + '?mode=ro', uri=True)
+    try:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='selected_feature_inputs'").fetchone():
+            return []
+        rows = []
+        for session, body, digest in db.execute("""SELECT session,body,sha256 FROM selected_feature_inputs
+                WHERE seq IN (SELECT max(seq) FROM selected_feature_inputs WHERE source_id=?
+                              GROUP BY session) ORDER BY session""", (source_id,)):
+            if hashlib.sha256(body.encode()).hexdigest() != digest:
+                raise ValueError('selected_source_integrity')
+            row = json.loads(body)
+            if row.get('date') != session:
+                raise ValueError('selected_source_date')
+            rows.append(row)
+        return rows
+    finally:
+        db.close()
+
+
 def retain_first_receipts(rows, *, path, source_id, received_at,
                           maximum=STABLE_FEATURE_MAX_SESSIONS):
     """Keep each session's first receipt and the series' fixed origin.
