@@ -719,3 +719,10 @@ def test_chart_rotation_still_runs_when_the_market_warm_fails(monkeypatch):
     summary = boot.status()
     assert summary["status"] == "DONE" and summary["published"] == 1
     assert len(host.calls) == 1
+
+
+def test_matic_reads_the_pol_pair():
+    """2026-11-19: Twelve Data lists no MATIC/USD (MATIC became POL 1:1)."""
+    assert boot.CRYPTO_PAIRS["MATIC"] == "POL/USD"
+    assert boot.CRYPTO_PAIRS["POL"] == "POL/USD"
+    assert all(pair.endswith("/USD") and "MATIC" not in pair for pair in boot.CRYPTO_PAIRS.values())
