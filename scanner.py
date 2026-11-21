@@ -1,5 +1,6 @@
 # A.R.G.U.S. — Autonomous Risk and Global Uncertainty Scanner (backend)
 import os, time, requests, json, threading, re, math, statistics, concurrent.futures, copy, shutil, errno
+import queue as _news_shadow_queue  # 2026-11-22: the luna shadow of the news reading
 import fcntl, gc, multiprocessing, resource, signal, stat, struct, sys, tempfile
 try:
     from google import genai as google_genai
@@ -13564,6 +13565,18 @@ _LUNA_REVIEW_APPROVED = os.environ.get("ARGUS_LUNA_REVIEW_APPROVED", "0") == "1"
 # work) and gpt-6-luna (high-volume reading) are compared the same way before
 # any switch.
 _COMPARISON_OPENAI_MODELS = frozenset(("gpt-6.1-terra", "gpt-6.2-sol", "gpt-6-luna"))
+# 2026-11-22 (owner 【ニュースの読みを luna へ】, check in the shadow first):
+# the news reading's own request is ALSO sent to gpt-6-luna for a bounded
+# period and luna's answer is only recorded (counts and field values), never
+# used. This purpose may call luna and nothing else; luna stays refused for
+# every routine purpose, news_intel included, until the owner switches.
+_NEWS_LUNA_SHADOW_MODEL = "gpt-6-luna"
+_NEWS_LUNA_SHADOW_PURPOSE = "news_intel_shadow"
+# The news reading waits up to 60 s (Flex up to 300 s). The shadow runs on its
+# own worker and nothing waits on it, but a stuck request would hold the
+# worker and the next readings would be skipped: 20 s is enough for a 400-token
+# answer on a small model, and a timeout is never sent again.
+_NEWS_LUNA_SHADOW_TIMEOUT_SECONDS = 20
 # 2026-11-21 (owner 【切り替える】, after the comparison run 44891173112:
 # checks 5/5, screen plans 5/5): the three judgment-heavy lanes name
 # gpt-6.2-sol explicitly. It is routine ONLY for these purposes; every other
@@ -13585,6 +13598,8 @@ _OPENAI_JUDGMENT_TIMEOUT_SECONDS = {"market_brief": 120, "ai_judgment": 120,
 
 def _openai_request_timeout(model, purpose, default):
     """Seconds to wait for one request: wider only for the judgment model's lanes."""
+    if purpose == _NEWS_LUNA_SHADOW_PURPOSE:
+        return _NEWS_LUNA_SHADOW_TIMEOUT_SECONDS
     if model == _OPENAI_JUDGMENT_MODEL:
         return _OPENAI_JUDGMENT_TIMEOUT_SECONDS.get(purpose, default)
     return default
@@ -13592,6 +13607,9 @@ def _openai_request_timeout(model, purpose, default):
 
 def _openai_model_allowed(model, purpose):
     """Whether a routine (non-comparison) request may use `model` for `purpose`."""
+    if purpose == _NEWS_LUNA_SHADOW_PURPOSE:
+        # The shadow of the news reading calls luna only (2026-11-22).
+        return model == _NEWS_LUNA_SHADOW_MODEL
     if model not in _ROUTINE_OPENAI_MODELS:
         return False
     if model == "gpt-5.6-luna":
@@ -15064,7 +15082,10 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
         call_status.update(changes)
         if isinstance(diagnostic, dict):
             diagnostic.update(call_status)
-        _OPENAI_PROSE_LAST.update(call_status)
+        # The luna shadow keeps its own record; it must not replace the
+        # last real reading shown in the diagnostics.
+        if purpose != _NEWS_LUNA_SHADOW_PURPOSE:
+            _OPENAI_PROSE_LAST.update(call_status)
 
     publish()
     try:
@@ -16702,6 +16723,8 @@ def api_argus_ai_cost():
     if not ok:
         return jsonify(err), code
     document = {**_ai_cost_snapshot(), "featureUsage": _ai_usage_snapshot()}
+    # 2026-11-22: the luna shadow of the news reading (counts, no text).
+    document["newsLunaShadow"] = _news_luna_shadow_view()
     # The saved-view count reads many records; only the counts-only report
     # workflow asks for it, so the cost screen stays as light as before.
     if str(request.args.get("calls") or "") == "1":
@@ -20553,6 +20576,9 @@ def _news_intel_load():
             for key, value in (saved.get("durableCounters") or {}).items():
                 if isinstance(value, int):
                     _NEWS_INTEL["health"][key] = value
+            if isinstance(saved.get("lunaShadow"), dict):
+                _NEWS_INTEL["lunaShadow"] = argus_news_intelligence.shadow_normalize(
+                    saved["lunaShadow"])
     except Exception:
         pass
 
@@ -20597,6 +20623,8 @@ def _news_intel_persist():
                 "judgmentOpen": _NEWS_INTEL.get("judgmentOpen") or {},
                 "judgmentLedger": (_NEWS_INTEL.get("judgmentLedger") or [])[
                     -argus_news_intelligence.JUDGMENT_LEDGER_CAP:],
+                # 2026-11-22: the luna shadow's counts (no text; about 10 KB).
+                "lunaShadow": _NEWS_INTEL.get("lunaShadow"),
                 "durableCounters": {
                     key: _NEWS_INTEL["health"].get(key, 0)
                     for key in ("quarantined", "duplicatesSuppressed",
@@ -20833,6 +20861,10 @@ def _news_analyze_ai(subject, excerpt, fingerprint, taxonomy=None, diagnostic=No
         diagnostic.update(primary_diag)
     if raw is None:
         return None, "AI_ANALYSIS_UNAVAILABLE"
+    if validated is not None:
+        # 2026-11-22: keep this exact request for the luna shadow; it is sent
+        # (or not) after the event is classified, and never changes this one.
+        _news_luna_shadow_remember(fingerprint, user, bool(market_context), validated)
     health = _NEWS_INTEL["health"]
     models = health.setdefault("aiModels", {})
     if primary_diag:
@@ -20878,6 +20910,167 @@ def _news_analyze_ai(subject, excerpt, fingerprint, taxonomy=None, diagnostic=No
                 _NEWS_INTEL["aiCache"].pop(key, None)
         _NEWS_INTEL["health"]["aiAnalyses"] += 1
     return validated, ("ANALYZED" if validated else "AI_SCHEMA_REJECTED")
+
+
+# ── Luna shadow of the news reading (owner 2026-11-22) ──────────────────────
+# Owner decision 【ニュースの読みを luna へ】: check the cheaper model in the
+# shadow before switching. Each fresh news reading is sent once more to
+# gpt-6-luna on a separate worker; luna's answer is validated with the same
+# schema, run through the same severity rule with every other input fixed,
+# and only the comparison is kept (counts, field values, no text). The event,
+# its alert, the cache and the judgment never read it.
+#
+# Bounds: 11/11-11/21 the news reading ran 460 times (about 42 a UTC day). 80
+# a UTC day covers a busy day of about twice that and caps the shadow at about
+# 80 small requests (luna about 0.0003-0.0008 USD each). The shadow ends 7
+# days after its first request or once 200 answers were compared, whichever
+# comes first: 200 gives each agreement rate a margin of about +-7 points.
+# ARGUS_NEWS_LUNA_SHADOW=0 switches it off (read at each reading).
+_NEWS_LUNA_SHADOW_DAILY_CAP = 80
+_NEWS_LUNA_SHADOW_PERIOD_DAYS = 7
+_NEWS_LUNA_SHADOW_TARGET = 200
+_NEWS_LUNA_SHADOW_PENDING = {}        # fingerprint -> the fresh reading's request
+_NEWS_LUNA_SHADOW_PENDING_CAP = 20
+_NEWS_LUNA_SHADOW_QUEUE = _news_shadow_queue.Queue(maxsize=8)
+_NEWS_LUNA_SHADOW_WORKER = {"started": False}
+_NEWS_LUNA_SHADOW_WORKER_LOCK = threading.Lock()
+
+
+def _news_luna_shadow_enabled():
+    return str(os.environ.get("ARGUS_NEWS_LUNA_SHADOW", "1")).strip() != "0"
+
+
+def _news_luna_shadow_state():
+    """The shadow document inside the news intake state (call under the lock)."""
+    state = _NEWS_INTEL.get("lunaShadow")
+    if not isinstance(state, dict) or state.get("schemaVersion") != argus_news_intelligence.SHADOW_SCHEMA:
+        state = _NEWS_INTEL["lunaShadow"] = argus_news_intelligence.shadow_empty_state()
+    return state
+
+
+def _news_luna_shadow_remember(fingerprint, user, context_provided, baseline):
+    """Keep one fresh reading's request until its event is classified."""
+    try:
+        if not _news_luna_shadow_enabled():
+            return
+        with _NEWS_INTEL_LOCK:
+            _NEWS_LUNA_SHADOW_PENDING.pop(fingerprint, None)
+            _NEWS_LUNA_SHADOW_PENDING[fingerprint] = {
+                "user": user, "contextProvided": bool(context_provided),
+                "baseline": copy.deepcopy(baseline)}
+            while len(_NEWS_LUNA_SHADOW_PENDING) > _NEWS_LUNA_SHADOW_PENDING_CAP:
+                _NEWS_LUNA_SHADOW_PENDING.pop(next(iter(_NEWS_LUNA_SHADOW_PENDING)))
+    except Exception:
+        pass
+
+
+def _news_luna_shadow_submit(fingerprint, fresh, severity_inputs, *, family=None):
+    """Queue the shadow request for this reading, or skip it. Never raises."""
+    try:
+        with _NEWS_INTEL_LOCK:
+            pending = _NEWS_LUNA_SHADOW_PENDING.pop(fingerprint, None)
+            if pending is None or not fresh:
+                return False
+            state = _news_luna_shadow_state()
+            allowed, _reason = argus_news_intelligence.shadow_admit(
+                state, enabled=_news_luna_shadow_enabled(), now_epoch=time.time(),
+                now_iso=_ai_now_iso(), daily_cap=_NEWS_LUNA_SHADOW_DAILY_CAP,
+                period_days=_NEWS_LUNA_SHADOW_PERIOD_DAYS,
+                target_compared=_NEWS_LUNA_SHADOW_TARGET)
+            if not allowed:
+                return False
+        job = {**pending, "fingerprint": str(fingerprint), "family": family,
+               "severityInputs": copy.deepcopy(severity_inputs)}
+        try:
+            _NEWS_LUNA_SHADOW_QUEUE.put_nowait(job)
+        except _news_shadow_queue.Full:
+            with _NEWS_INTEL_LOCK:
+                argus_news_intelligence.shadow_queue_full(_news_luna_shadow_state())
+            return False
+        _news_luna_shadow_start_worker()
+        return True
+    except Exception:
+        return False
+
+
+def _news_luna_shadow_start_worker():
+    with _NEWS_LUNA_SHADOW_WORKER_LOCK:
+        if _NEWS_LUNA_SHADOW_WORKER["started"]:
+            return
+        _NEWS_LUNA_SHADOW_WORKER["started"] = True
+    threading.Thread(target=_news_luna_shadow_worker, name="news-luna-shadow",
+                     daemon=True).start()
+
+
+def _news_luna_shadow_worker():
+    while True:
+        job = _NEWS_LUNA_SHADOW_QUEUE.get()
+        try:
+            _news_luna_shadow_run(job)
+        except Exception:
+            pass
+
+
+def _news_luna_shadow_run(job):
+    """Send one shadow request and fold the comparison in. Never raises."""
+    diagnostic = {}
+    outcome, reason, baseline_fields, luna_fields, latency_ms = "error", None, None, None, None
+    try:
+        started = time.monotonic()
+        raw = _openai_prose(
+            job["user"], max_out=400,
+            system=argus_news_intelligence.ANALYSIS_SYSTEM_JA,
+            purpose=_NEWS_LUNA_SHADOW_PURPOSE, event_id=str(job["fingerprint"])[:16],
+            model=_NEWS_LUNA_SHADOW_MODEL, diagnostic=diagnostic)
+        latency_ms = int((time.monotonic() - started) * 1000)
+        luna = argus_news_intelligence.validate_ai_analysis(
+            raw, market_context_provided=job["contextProvided"]) if raw else None
+        inputs = job["severityInputs"]
+
+        def severity(analysis):
+            return argus_news_intelligence.evaluate_materiality(
+                ai_analysis=analysis, **copy.deepcopy(inputs))["severity"]
+
+        baseline_fields = argus_news_intelligence.shadow_decision_fields(
+            job["baseline"], severity(job["baseline"]))
+        if luna is not None:
+            luna_fields = argus_news_intelligence.shadow_decision_fields(luna, severity(luna))
+            outcome = "compared"
+        elif raw is not None:
+            outcome, reason = "rejected", "schema_rejected"
+        else:
+            outcome = "failed"
+            reason = (diagnostic.get("errorCode") or diagnostic.get("errorClass")
+                      or diagnostic.get("reason") or diagnostic.get("outcome"))
+    except Exception as exc:
+        outcome, reason = "error", type(exc).__name__
+    try:
+        with _NEWS_INTEL_LOCK:
+            argus_news_intelligence.shadow_record(
+                _news_luna_shadow_state(), outcome=outcome, at=_ai_now_iso(),
+                terra=baseline_fields, luna=luna_fields, reason=reason,
+                fingerprint=job.get("fingerprint") or "",
+                deterministic_family=job.get("family"), usage=diagnostic,
+                latency_ms=latency_ms if diagnostic.get("returnedModel") else None)
+    except Exception:
+        pass
+    return outcome
+
+
+def _news_luna_shadow_view():
+    """Owner-only reading of the shadow (counts and field values only)."""
+    try:
+        _news_intel_ensure_loaded()
+        with _NEWS_INTEL_LOCK:
+            state = copy.deepcopy(_news_luna_shadow_state())
+        return argus_news_intelligence.shadow_summary(
+            state, enabled=_news_luna_shadow_enabled(), now_epoch=time.time(),
+            daily_cap=_NEWS_LUNA_SHADOW_DAILY_CAP,
+            period_days=_NEWS_LUNA_SHADOW_PERIOD_DAYS,
+            target_compared=_NEWS_LUNA_SHADOW_TARGET,
+            model=_NEWS_LUNA_SHADOW_MODEL, baseline_model=_OPENAI_MODEL)
+    except Exception as exc:
+        return {"status": "UNAVAILABLE", "errorClass": type(exc).__name__}
 
 
 def _news_event_recency_epoch(event):
@@ -21001,7 +21194,14 @@ def _news_process_message(message, *, backfill=False):
         source=source,
         # A reaction already measured for this event survives a revised mail.
         market_reaction=(existing or {}).get("marketReaction"))
-    summary_headline_ja = argus_news_intelligence.summarize_headline_ja(
+    # 2026-11-22: the luna shadow reads the same request with every other
+    # severity input fixed. Recorded only; nothing below reads it.
+    _news_luna_shadow_submit(fingerprint, analysis_state == "ANALYZED", {
+        "taxonomy": taxonomy, "staleness": staleness, "source_authenticated": True,
+        "corroboration": corroboration, "subject": subject,
+        "content_text": message.get("excerpt") or "", "source": source,
+        "market_reaction": (existing or {}).get("marketReaction")}, family=family)
+    summary_headline_ja =argus_news_intelligence.summarize_headline_ja(
         subject=subject, excerpt=message.get("excerpt") or "",
         taxonomy=taxonomy, ai_analysis=analysis, source=source)
     received_ms = message.get("receivedEpoch")

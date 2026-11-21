@@ -26,6 +26,11 @@ os.environ.setdefault("ARGUS_ASSET_CHART_GENERATION", "1")
 # The existing tests replace the SDK with fixed-signature fakes, so they run
 # on the Standard path; test_argus_openai_tier.py switches Flex on itself.
 os.environ.setdefault("ARGUS_OPENAI_FLEX", "0")
+# 2026-11-22: production also sends each fresh news reading to gpt-6-luna on a
+# background worker (recorded only). Existing tests fake _openai_prose for the
+# reading itself; they must not start that worker. test_argus_news_luna_shadow.py
+# switches the shadow on itself.
+os.environ.setdefault("ARGUS_NEWS_LUNA_SHADOW", "0")
 
 if os.environ.get("PYTEST_XDIST_WORKER") and not os.environ.get("ARGUS_PERSISTENT_ROOT"):
     os.environ["ARGUS_PERSISTENT_ROOT"] = tempfile.mkdtemp(

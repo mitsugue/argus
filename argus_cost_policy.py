@@ -17,7 +17,11 @@ from typing import Any, Dict, Optional
 MODES = ("DETERMINISTIC", "EVENT_OPT_IN", "MANUAL", "RESEARCH_BENCHMARK",
          "SCHEDULED_AI")
 # The only purposes that may execute WITHOUT human confirmation in SCHEDULED_AI.
-SCHEDULED_PURPOSES = ("headline_translation", "news_intel", "market_brief")
+# 2026-11-22 (owner 【ニュースの読みを luna へ】): news_intel_shadow is the same
+# news reading sent once more to gpt-6-luna for a bounded period, recorded
+# only. It runs inside the same scheduled budget as the reading itself.
+SCHEDULED_PURPOSES = ("headline_translation", "news_intel", "market_brief",
+                      "news_intel_shadow")
 # v13.5.60 (owner 2026-09-07 「イベント AI をオン」): pre/post-release event
 # scenarios may ALSO run automatically under SCHEDULED_AI, but only when the
 # owner has opted in (ARGUS_EVENT_AI_OPT_IN=1 / eventOptIn), inside the same

@@ -34,6 +34,42 @@ def _percent(numerator, denominator):
     return f"{round(100 * numerator / denominator)}%" if denominator else None
 
 
+SHADOW_FIELD_LABELS = (("severity", "重要度"), ("alertCapable", "通知になるか(HIGH 以上)"),
+                       ("family", "種類"), ("materialityGuess", "出来事の重さ(0-3)"),
+                       ("currentRelevance", "今の相場への関係(0-3)"), ("aiComponent", "AI の1段の加点"))
+
+
+def shadow_lines(shadow):
+    """2026-11-22: the luna shadow of the news reading (counts and rates only)."""
+    if not isinstance(shadow, dict) or not shadow.get("schemaVersion"):
+        return []
+    counts = shadow.get("counts") or {}
+    agree = shadow.get("agreePercent") or {}
+    agree_counts = shadow.get("agreeCounts") or {}
+    limits = shadow.get("limits") or {}
+    alerts = shadow.get("alertDisagreements") or {}
+    luna = shadow.get("luna") or {}
+    lines = ["", "### ニュースの読みの影（gpt-6-luna・答えは使わず記録だけ）", "",
+             f"- 状態：{shadow.get('status')}（始まり {shadow.get('startedAt')}・終わり {shadow.get('endedAt')}・理由 {shadow.get('endReason')}）",
+             f"- 上限：1日(UTC) {limits.get('perUtcDay')} 回・{limits.get('periodDays')} 日間・比べた数 {limits.get('targetCompared')} 件まで",
+             f"- 送った {counts.get('submitted')}・比べた {counts.get('compared')}・形の不合格 {counts.get('lunaRejected')}・"
+             f"失敗 {counts.get('lunaFailed')}・1日の上限で見送り {counts.get('skippedDailyCap')}・待ち行列が満杯 {counts.get('skippedQueueFull')}",
+             f"- 通知の食い違い：今のモデルだけ HIGH 以上 {alerts.get('baselineOnly')} 件・luna だけ HIGH 以上 {alerts.get('lunaOnly')} 件",
+             f"- luna の入力トークン {luna.get('inputTokens')}・出力トークン {luna.get('outputTokens')}・平均の待ち {luna.get('averageLatencyMs')} ms",
+             "", "| 欄 | 一致 | 一致の割合 |", "|---|---|---|"]
+    for key, label in SHADOW_FIELD_LABELS:
+        percent = agree.get(key)
+        lines.append(f"| {label} | {agree_counts.get(key)} | {'' if percent is None else str(percent) + '%'} |")
+    pairs = shadow.get("severityPairs") or {}
+    if pairs:
+        lines += ["", "| 重要度（今のモデル>luna） | 件数 |", "|---|---|"]
+        lines += [f"| {pair} | {n} |" for pair, n in sorted(pairs.items(), key=lambda kv: -kv[1])]
+    reasons = shadow.get("failureReasons") or {}
+    if reasons:
+        lines += ["", "- 失敗の理由：" + ", ".join(f"{k}:{v}" for k, v in sorted(reasons.items(), key=lambda kv: -kv[1]))]
+    return lines
+
+
 def report(document):
     clean = strip_money(document)
     lines = ["## AI 使用量（回数・トークンのみ。金額は出さない）", ""]
@@ -76,6 +112,7 @@ def report(document):
                   f"100版あたり呼び出し {_ratio(100 * sum(r.get('aiCalls') or 0 for r in chosen), with_ai)}・"
                   f"1版あたり入力 {_ratio(sum(r.get('inputTokens') or 0 for r in chosen), with_ai)}・"
                   f"1版あたり出力 {_ratio(sum(r.get('outputTokens') or 0 for r in chosen), with_ai)}"]
+    lines += shadow_lines(clean.get("newsLunaShadow"))
     lines += ["", f"- 見立ての集計の読み取り：{brief.get('readStatus')}（保存されなかった失敗の生成は含まない）",
               f"- 使用記録の読み取り：{(clean.get('featureUsage') or {}).get('readStatus')}"]
     text = "\n".join(lines) + "\n"
