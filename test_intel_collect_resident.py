@@ -67,7 +67,7 @@ def test_market_input_diagnostics_preserve_inputs_and_measure_each_group(monkeyp
     noop = lambda *a, **k: None
     names = ("_jp_market_stored_inputs_restore _index_research_restore _n225_analog_history_restore "
              "_fred_us10y_history_dated _jquants_topix_history _fred_history_dated _jp_historical_release_refresh "
-             "_cftc_jpy_autorefresh _future_map_scoring_tick _jp_index_valuation_warm _jp_index_proxy_warm "
+             "_cftc_jpy_autorefresh _future_map_scoring_tick _jp_index_proxy_warm "
              "_level_map_warm _analyst_targets_warm _jp_internals_warm _jq_margin_history_backfill "
              "_jp_market_engine_statements_rows _fred_vix_history_dated _n225_analog_history_warm "
              "_jp_official_sources_warm _jp_market_feature_history_warm _index_research_warm "

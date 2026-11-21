@@ -4,8 +4,9 @@ The owner-confirmed existing data-use entitlement is retained. Do not request
 that same confirmation again or interpret a technical HTTP 403 as proof that
 no historical series exists. Do not purchase another contract implicitly.
 
-The active index valuation path is `jp_market_valuation.py`, sharing the
-`jp_market_valuation.sqlite3` vintage store with daily summary acquisition.
+The reviewed-export index valuation path is `jp_market_valuation.py` and its
+`jp_market_valuation.sqlite3` vintage store. The direct read of the daily
+summary page was removed on 2026-11-21 (it answered 403 to every request).
 Use `scripts/import_index_valuation.py --csv <reviewed-export> --store <existing-store>`
 to validate first, then the same command with `--apply` to append. See
 `acquisition_20260920/source_registry.json` and the acceptance checklist for the

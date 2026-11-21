@@ -132,7 +132,6 @@ def test_market_brief_route_is_cached_only_and_public_safe(monkeypatch):
 def test_brief_reuse_ignores_hour_and_release_but_not_future_input_eligibility(monkeypatch):
     """A stable saved brief is reused until newly eligible evidence changes it."""
     from datetime import datetime, timezone
-    from types import SimpleNamespace
 
     current = [datetime(2026, 1, 2, 10, 5, tzinfo=timezone.utc)]
 
@@ -151,8 +150,6 @@ def test_brief_reuse_ignores_hour_and_release_but_not_future_input_eligibility(m
         "expires": 123}})
     monkeypatch.setattr(scanner, "_JP_MARKET_FEATURE_HISTORY", {
         "status": "AVAILABLE", "features": [{"knownAt": "2026-01-02T10:15:00Z"}]})
-    monkeypatch.setattr(scanner, "_JP_INDEX_VALUATION", SimpleNamespace(
-        snapshot=lambda cutoff: None, status={"status": "NOT_ACQUIRED"}))
     monkeypatch.setattr(scanner, "datetime", Clock)
     brief = {"generatedAt": "2026-01-02T00:00:00Z",
              "facts": [{"text": "Observation", "revision": 1}]}

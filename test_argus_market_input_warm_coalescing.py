@@ -132,8 +132,10 @@ def test_actual_input_preparation_body_and_existing_public_wait_limit_are_unchan
     core = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                 and n.name == '_jp_market_engine_pit_inputs_impl')
     core.name = '_jp_market_engine_pit_inputs'
+    # 2026-11-21 (owner 【3つとも消す】): the always-403 direct read of the Nikkei
+    # summary page (_jp_index_valuation_warm) left this body; nothing else changed.
     assert hashlib.sha256(ast.dump(core).encode()).hexdigest() == (
-        'a0e28a6334bace0cb7a8d1e3451954802e96261bcda8a3ce2c00f8e753d5d58a')
+        '24d6c9c67149f5be8a37d5566f5ac745592eaf66d6bb94f9496d869a8c64be69')
     assert scanner._SINGLE_FLIGHT_WAIT_SEC == 45.0
     workflow = Path(scanner.__file__).parent / '.github/workflows/backend-warm-after-deploy.yml'
     assert 'scripts/run_intel_collect.py --base "$BE" --timeout 900' in workflow.read_text()

@@ -45,7 +45,7 @@
 | 過去のD04イベント検証 | `scanner._jp_market_feature_history_warm` → `price_series.index_per` | **旧方式の履歴**。現行方式と連結せず、旧基準の検証として区別 |
 | 現在の類似局面の円換算 | `scanner._level_map_current_valuation` / `jp_market_price_paths.current_estimate_scale` | 現行推計の対象日・指数終値・EPS・倍率・利用可能時刻を照合。欠測時は旧方式へ戻らない。旧換算は保存履歴の再現用に保持 |
 | 個別銘柄PER・銘柄群中央値 | 個別株の分析 | 対象が異なる。日経平均PERの代替や履歴の補完に使わない |
-| 旧公式値読取・指数方式の代理値 | `jp_market_valuation` / `argus_index_valuation_proxy` | 旧履歴の再現・互換用途。新しいPER機能の接続先に選ばない |
+| 旧公式値の取り込み(確かめた書き出しの取り込みだけ。日経のまとめページの直読みは 2026-11-21 に削除)・指数方式の代理値 | `jp_market_valuation` / `argus_index_valuation_proxy` | 旧履歴の再現・互換用途。新しいPER機能の接続先に選ばない |
 
 ## 残る移行と完了条件
 
