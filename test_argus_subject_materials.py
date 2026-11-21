@@ -250,3 +250,22 @@ def test_a_repeated_material_is_kept_once_and_the_overview_can_be_planned():
         question='この銘柄への影響は？',received_at=AT,material_facts=facts)
     assert context['contextId']==once['contextId']
     assert dialogue_inventory(context)['elements']
+
+
+def test_per_stock_google_news_jp_search_reaches_the_explanation():
+    """2026-11-21 (owner 【入れる】): headlines from the per-stock Japanese search
+    (sourceId google_news_jp, linked by symbolHint) become material facts."""
+    import argus_research_mesh as mesh
+    rights=mesh.source_rights('google_news_jp')
+    assert rights['accessClass']=='PUBLIC_METADATA' and rights['canSendToLLM'] and rights['canRetain']
+    item=article(sourceId='google_news_jp',canonicalUrl='https://news.google.com/rss/articles/x',
+                 publicSnippet=None,symbolHint='1234');item.pop('linkedAssets')
+    facts=materials.news_facts([item],symbol='1234',cutoff=AT)
+    assert len(facts)==2 and facts[0]['materialInput']['sourceId']=='google_news_jp'
+    assert facts[0]['materialInput']['associationBasis']=='PER_SYMBOL_SEARCH'
+    assert materials.news_facts([article()],symbol='1234',cutoff=AT)[0]['materialInput']['associationBasis']=='EXISTING_COLLECTOR_LINKED_ASSET'
+    # another stock's hint, or no link at all, is still not a fact
+    other=dict(item,symbolHint='9999')
+    assert len(materials.news_facts([other],symbol='1234',cutoff=AT))==1
+    bare=dict(item);bare.pop('symbolHint')
+    assert len(materials.news_facts([bare],symbol='1234',cutoff=AT))==1

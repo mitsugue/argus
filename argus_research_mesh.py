@@ -86,6 +86,10 @@ SOURCE_RIGHTS: Dict[str, Dict[str, Any]] = {
     "coindesk":             {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss", "notes": "CoinDesk crypto news (public RSS)"},
     "cointelegraph":        {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "rss", "notes": "Cointelegraph crypto news (public RSS)"},
     "google_news_us":       {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "search_discovery", "notes": "Google News US — DISCOVERY LAYER (items resolve to true publisher)"},
+    # 2026-11-21 (owner 【入れる】): the per-stock Japanese search the stock pages
+    # already run (_jp_stock_news_intel) was missing here, so its headlines were
+    # UNAVAILABLE and never reached a stock's explanation. Same class as the US one.
+    "google_news_jp":       {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "search_discovery", "language": "ja", "notes": "Google News JP — DISCOVERY LAYER (items resolve to true publisher)"},
     # ── rights-only news entries (no free public RSS → owner Share/Capture) ──
     "ft_public":            {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "owner_capture", "notes": "no public RSS; owner-shared metadata only"},
     "wsj_public":           {"accessClass": "PUBLIC_METADATA", "kind": "news", "licenceStatus": "public", "collection": "owner_capture", "notes": "no public RSS; owner-shared metadata only"},
