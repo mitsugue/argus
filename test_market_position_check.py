@@ -33,13 +33,65 @@ def _view(memory):
 # ── when ────────────────────────────────────────────────────────────────────
 
 def test_slots_follow_the_owner_times():
-    assert check.latest_slot(NOW, trading) == "2026-10-26 11:30"
+    # 2026-11-22 (owner 「全部やる」): once a day, the morning slot only.
+    assert check.TRADING_DAY_SLOTS == ("07:30",) and check.CLOSED_DAY_SLOTS == ("08:30",)
+    assert check.latest_slot(NOW, trading) == "2026-10-26 07:30"
     early = datetime(2026, 10, 25, 22, 0, tzinfo=timezone.utc)      # Mon 07:00 JST
     assert check.latest_slot(early, trading) == "2026-10-25 08:30"   # Sunday's one slot
     sunday = datetime(2026, 10, 25, 3, 0, tzinfo=timezone.utc)       # Sun 12:00 JST
     assert check.latest_slot(sunday, trading) == "2026-10-25 08:30"
-    assert check.due(NOW, "2026-10-26 11:30", trading) is None
-    assert check.due(NOW, "2026-10-26 07:30", trading) == "2026-10-26 11:30"
+    assert check.due(NOW, "2026-10-26 07:30", trading) is None
+    assert check.due(NOW, "2026-10-23 07:30", trading) == "2026-10-26 07:30"
+
+
+def _jst(y, m, d, hh, mm):
+    return datetime(y, m, d, hh, mm, tzinfo=check.JST)
+
+
+@pytest.mark.parametrize("hh,mm", [(11, 31), (12, 0), (15, 45), (16, 31), (20, 0), (23, 59)])
+def test_a_trading_day_is_checked_only_in_the_morning(hh, mm):
+    # Mon 2026-10-26: after the 07:30 answer, midday and evening reuse it.
+    at = _jst(2026, 10, 26, hh, mm)
+    assert check.latest_slot(at, trading) == "2026-10-26 07:30"
+    assert check.due(at, "2026-10-26 07:30", trading) is None
+
+
+def test_the_morning_slot_is_due_once_and_before_it_yesterday_stands():
+    before = _jst(2026, 10, 27, 7, 29)                               # Tue before 07:30
+    assert check.latest_slot(before, trading) == "2026-10-26 07:30"
+    assert check.due(before, "2026-10-26 07:30", trading) is None
+    morning = _jst(2026, 10, 27, 8, 0)                               # Tue, the 08:00 view
+    assert check.due(morning, "2026-10-26 07:30", trading) == "2026-10-27 07:30"
+    # A worker that was down in the morning still answers the day's slot once.
+    noon = _jst(2026, 10, 27, 12, 0)
+    assert check.due(noon, "2026-10-26 07:30", trading) == "2026-10-27 07:30"
+    assert check.due(noon, "2026-10-27 07:30", trading) is None
+
+
+def test_a_closed_day_keeps_its_one_08_30_slot():
+    holiday = date(2026, 11, 3)                                      # Tue, Culture Day
+
+    def calendar(day):
+        return trading(day) and day != holiday
+
+    assert check.due(_jst(2026, 11, 3, 8, 29), "2026-11-02 07:30", calendar) is None
+    assert check.due(_jst(2026, 11, 3, 8, 30), "2026-11-02 07:30", calendar) == "2026-11-03 08:30"
+    assert check.due(_jst(2026, 11, 3, 20, 0), "2026-11-03 08:30", calendar) is None
+    assert check.latest_slot(_jst(2026, 11, 4, 7, 0), calendar) == "2026-11-03 08:30"
+    assert check.due(_jst(2026, 11, 4, 8, 0), "2026-11-03 08:30", calendar) == "2026-11-04 07:30"
+    saturday = _jst(2026, 10, 31, 20, 0)
+    assert check.due(saturday, "2026-10-31 08:30", trading) is None
+
+
+def test_one_trading_day_and_one_closed_day_each_have_one_slot():
+    for day, closed in ((date(2026, 10, 26), False), (date(2026, 10, 31), True)):
+        labels = set()
+        for minute in range(0, 24 * 60, 5):
+            at = datetime(day.year, day.month, day.day, tzinfo=check.JST) + timedelta(minutes=minute)
+            label = check.latest_slot(at, trading)
+            if label.startswith(day.isoformat()):
+                labels.add(label)
+        assert labels == {f"{day.isoformat()} {'08:30' if closed else '07:30'}"}
 
 
 # ── what to ask ─────────────────────────────────────────────────────────────
@@ -178,13 +230,31 @@ def test_run_asks_once_per_slot_and_stores_shadow_entries(server):
     memory, state, calls = server
     scanner._market_position_check_run()
     assert calls == ["market_position_check"]
-    assert state["status"] == "OK" and state["accepted"] == 1 and state["lastSlot"] == "2026-10-26 11:30"
+    assert state["status"] == "OK" and state["accepted"] == 1 and state["lastSlot"] == "2026-10-26 07:30"
     assert sum(1 for r in memory["entries"] if r["kind"] == "PUBLIC_CHECK") == 1
     scanner._market_position_check_run()                      # same slot: no second call
     assert calls == ["market_position_check"]
     state["lastSlot"] = None                                  # restart: the stored slot is found
     scanner._market_position_check_run()
-    assert calls == ["market_position_check"] and state["lastSlot"] == "2026-10-26 11:30"
+    assert calls == ["market_position_check"] and state["lastSlot"] == "2026-10-26 07:30"
+
+
+def test_run_midday_and_evening_reuse_the_morning_answer(server, monkeypatch):
+    # 2026-11-22 (owner 「全部やる」): one call a day; 12:00/15:45 views and a
+    # restart in the evening read the morning entries, no second call.
+    memory, state, calls = server
+    scanner._market_position_check_run()                      # Mon 11:31: the 07:30 slot
+    assert calls == ["market_position_check"]
+    for iso in ("2026-10-26T03:00:00Z", "2026-10-26T06:45:00Z", "2026-10-26T07:31:00Z",
+                "2026-10-26T11:00:00Z"):                       # 12:00, 15:45, 16:31, 20:00 JST
+        monkeypatch.setattr(scanner, "_ai_now_iso", lambda iso=iso: iso)
+        scanner._market_position_check_run()
+        state["lastSlot"] = None if iso.endswith("07:31:00Z") else state["lastSlot"]
+    assert calls == ["market_position_check"] and state["lastSlot"] == "2026-10-26 07:30"
+    monkeypatch.setattr(scanner, "_ai_now_iso", lambda: "2026-10-26T23:00:00Z")   # Tue 08:00
+    scanner._market_position_check_run()
+    assert state["lastSlot"] == "2026-10-27 07:30"
+    assert len([r for r in memory["entries"] if r["kind"] == "PUBLIC_CHECK"]) >= 1
 
 
 def test_run_can_be_turned_off_and_respects_the_ai_policy(server, monkeypatch):
