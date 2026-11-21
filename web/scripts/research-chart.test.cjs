@@ -42,14 +42,16 @@ const future={rows:[{id:'a',start:'2026-10-30',end:'2026-10-30',level:{low:63300
 const points=lib.externalPoints(future,chart);
 assert.equal(points.length,2);assert.equal(points[0].value,63300);assert.equal(points[1].value,63600);
 assert.equal(points[1].at,(Date.parse('2026-11-21T00:00:00Z')+Date.parse('2026-11-24T00:00:00Z'))/2);
-const anchorDoc={rows:[{id:'fm-line-2026-10-02',start:'2026-09-29',end:'2026-10-02',level:{low:63050,high:63050},tag:'戻り'},
- {id:'fm-line-2026-10-12',start:'2026-10-09',end:'2026-10-15',level:{low:59140,high:59140},tag:'底'},
- {id:'fm-line-2026-09-01',start:'2026-08-29',end:'2026-09-04',level:{low:70000,high:70000},tag:'戻り'},
- {id:'plain-past',start:'2026-09-29',end:'2026-10-03',level:{low:61000,high:61000},tag:'過去'}]};
-const anchored=lib.externalPoints(anchorDoc,chart);
-assert.equal(JSON.stringify(anchored.map(p=>p.id)),JSON.stringify(['fm-line-2026-10-02','fm-line-2026-10-12']),'白線の過ぎた直近の1点を起点に残し、線を引けるようにする');
-assert.equal(lib.externalPoints({rows:[anchorDoc.rows[0]]},chart).length,0,'未来の点が無ければ過ぎた点だけは描かない');
-assert.equal(lib.externalPoints({rows:[anchorDoc.rows[0],{id:'fm-line-2026-10-30',start:'2026-10-27',end:'2026-11-02',level:{low:59000,high:59000},tag:'底'}]},{...chart,today:'2026-10-20'}).length,1,'起点の期限(14日)を過ぎた点は残さない');
+const lineRow=(id,start,end,price,reason)=>({id,start,end,level:{low:price,high:price},tag:'線',reason});
+const lineDoc={rows:[lineRow('fm-line-2026-09-20','2026-09-17','2026-09-23',61000,'9/30の動画の線'),
+ lineRow('fm-line-2026-09-28','2026-09-25','2026-10-01',65000,'9/30の動画の線'),
+ lineRow('fm-line-2026-10-02','2026-09-29','2026-10-05',63050,'9/30の動画の線'),
+ lineRow('fm-line-2026-10-12','2026-10-09','2026-10-15',59140,'9/30の動画の線'),
+ lineRow('fm-line-2026-08-30','2026-08-27','2026-09-02',70000,'8/30の動画の線'),
+ {id:'plain-past',start:'2026-09-29',end:'2026-10-03',level:{low:61000,high:61000},tag:'過去',reason:'9/30の動画の線'}]};
+const drawn=lib.externalPoints(lineDoc,chart);
+assert.equal(JSON.stringify(drawn.map(p=>p.id)),JSON.stringify(['fm-line-2026-09-20','fm-line-2026-09-28','fm-line-2026-10-02','fm-line-2026-10-12']),'同じ動画の白線は、過ぎた点も含めて全部結ぶ(別の動画の線・白線でない行は除く)');
+assert.equal(lib.externalPoints({rows:lineDoc.rows.slice(0,2)},chart).length,0,'未来の点が無ければ過ぎた点だけは描かない');
 const currentPeriod={rows:[{id:'current',start:'2026-10-01',end:'2026-10-10',level:{low:69700,high:72000},tag:'天井圏'}]};
 assert.equal(lib.externalPoints(currentPeriod,{...chart,today:'2026-10-07'}).length,1,'中央の日を過ぎても予測期間中は消さない');
 assert.equal(lib.externalPoints(currentPeriod,{...chart,today:'2026-10-11'}).length,0,'期間終了後は最新の参考予測から外す');

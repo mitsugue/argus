@@ -123,7 +123,13 @@ def for_display(public: Mapping[str, Any], today: str) -> Dict[str, Any]:
     validated document, not these marks.
     """
     cutoff = (date.fromisoformat(today) - timedelta(days=KEEP_PAST_DAYS)).isoformat()
-    rows = [dict(r) for r in public.get("rows") or [] if r["end"] >= cutoff]
+    # 動画の白線(id が fm-line-・同じ reason)は、まだ終わっていない点がある間は、過ぎた点も残す
+    # (2026-11-22 オーナー「この白い線を常に再現しろ」。チャートが番号1からの全体を結んで描く)。
+    all_rows = public.get("rows") or []
+    line_reasons = {r.get("reason") for r in all_rows
+                    if str(r.get("id", "")).startswith("fm-line-") and r.get("reason") and r["end"] >= today}
+    rows = [dict(r) for r in all_rows
+            if r["end"] >= cutoff or (str(r.get("id", "")).startswith("fm-line-") and r.get("reason") in line_reasons)]
     for row in rows:
         row["past"] = row["end"] < today
         row["long"] = _days(row) > LONG_DAYS
