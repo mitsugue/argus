@@ -187,8 +187,9 @@ def test_primary_judge_records_provider_response_model(monkeypatch):
     import sys
     response = SimpleNamespace(model="gpt-6-astra-served", output_text='{"labels": []}',
         usage=SimpleNamespace(input_tokens=120, output_tokens=30))
-    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=lambda **kw:
-        SimpleNamespace(responses=SimpleNamespace(create=lambda **kw: response))))
+    client = SimpleNamespace(responses=SimpleNamespace(create=lambda **kw: response))
+    client.with_options = lambda **kw: client          # one request, no SDK retry
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=lambda **kw: client))
     monkeypatch.setattr(scanner, "_OPENAI_API_KEY", "synthetic")
     monkeypatch.setattr(scanner, "_AI_LAST_RUN", {})
     settlements = []

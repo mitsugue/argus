@@ -13573,6 +13573,23 @@ _OPENAI_JUDGMENT_MODEL = "gpt-6.2-sol"
 _OPENAI_JUDGMENT_PURPOSES = frozenset(("market_brief", "market_position_check", "ai_judgment"))
 
 
+# 2026-11-21 (comparison run 44891173112): one brief on gpt-6.2-sol
+# took 40.8-45.1 s for 3,528-3,833 output tokens, so the 60 s Standard wait
+# left little room on a busy Mac (Flex used to wait up to 300 s). A timeout is
+# never sent again (it may have been billed), so the newer model gets a wider
+# bound on its three lanes; Terra lanes keep their waits. The SDK's own hidden
+# retries are switched off on these lanes so one wait stays one request.
+_OPENAI_JUDGMENT_TIMEOUT_SECONDS = {"market_brief": 120, "ai_judgment": 120,
+                                    "market_position_check": 180}
+
+
+def _openai_request_timeout(model, purpose, default):
+    """Seconds to wait for one request: wider only for the judgment model's lanes."""
+    if model == _OPENAI_JUDGMENT_MODEL:
+        return _OPENAI_JUDGMENT_TIMEOUT_SECONDS.get(purpose, default)
+    return default
+
+
 def _openai_model_allowed(model, purpose):
     """Whether a routine (non-comparison) request may use `model` for `purpose`."""
     if model not in _ROUTINE_OPENAI_MODELS:
@@ -14467,9 +14484,12 @@ def _openai_judge(snapshot):
         request_started = True
         resp = argus_openai_tier.create(_OPENAI_TIER, purpose='ai_judgment', model=_OPENAI_JUDGMENT_MODEL,
             kwargs={"model": _OPENAI_JUDGMENT_MODEL, "instructions": _OPENAI_SYSTEM, "input": user,
-                    "max_output_tokens": output_bound, "timeout": 60, "store": False},
+                    "max_output_tokens": output_bound, "store": False,
+                    "timeout": _openai_request_timeout(_OPENAI_JUDGMENT_MODEL, "ai_judgment", 60)},
             call=lambda kw, tier: _ai_usage_provider_call('openai', 'ai_judgment', _OPENAI_JUDGMENT_MODEL,
-                lambda: (client if tier == 'standard' else client.with_options(max_retries=0)).responses.create(**kw),
+                # One request per attempt on both tiers (the judgment model
+                # goes Standard; a hidden SDK retry would repeat a timeout).
+                lambda: client.with_options(max_retries=0).responses.create(**kw),
                 attempt=1, source_ref='_openai_judge' if tier == 'standard' else '_openai_judge:flex'))
         text = getattr(resp, "output_text", None)
         _AI_LAST_RUN["oaiUsage"] = _usage_tokens(resp)
@@ -14965,7 +14985,8 @@ def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose", cach
             timeout=60, store=False), attempt=1, source_ref='_openai_prose_call')
         return resp, getattr(resp, "output_text", None)
     resp = argus_openai_tier.create(_OPENAI_TIER, purpose=purpose, model=model,
-        kwargs={"model": model, "instructions": sys_prompt, "input": user, "timeout": 60,
+        kwargs={"model": model, "instructions": sys_prompt, "input": user,
+                "timeout": _openai_request_timeout(model, purpose, 60),
                 "store": False, **cache_options},
         call=lambda kw, tier: _ai_usage_provider_call('openai', purpose, model,
             lambda: client.responses.create(**kw), attempt=1,
@@ -23715,15 +23736,17 @@ def _openai_research_ex(user, role="standard", benchmark=False, purpose=None, ma
     request_started = False
     try:
         kw = {"model": model, "instructions": sysmsg, "input": user,
-              "timeout": 90, "store": False, "tools": [{"type": "web_search"}],
-              "max_output_tokens": output_bound}
+              "timeout": _openai_request_timeout(model, purpose, 90), "store": False,
+              "tools": [{"type": "web_search"}], "max_output_tokens": output_bound}
+        no_hidden_retry = model == _OPENAI_JUDGMENT_MODEL
         if benchmark:
             kw["reasoning"] = {"effort": _BENCHMARK_REASONING_EFFORT}
         request_started = True
         resp = argus_openai_tier.create(_OPENAI_TIER, purpose=purpose, model=model,
             kwargs=kw, tool_kind="web_search",
             call=lambda kw, tier: _ai_usage_provider_call('openai', purpose, model,
-                lambda: (client if tier == 'standard' else client.with_options(max_retries=0)).responses.create(**kw),
+                lambda: (client if tier == 'standard' and not no_hidden_retry
+                         else client.with_options(max_retries=0)).responses.create(**kw),
                 attempt=1, source_ref='_openai_research_ex' if tier == 'standard' else '_openai_research_ex:flex'))
         txt = getattr(resp, "output_text", None)
         u = _usage_tokens(resp) or (0, 0)

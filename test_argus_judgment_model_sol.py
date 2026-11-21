@@ -59,6 +59,7 @@ def test_judgment_model_goes_standard_from_the_first_request():
 class _Recorder:
     def __init__(self, model_suffix="-2026-11-01", fail=None):
         self.sent, self.fail, self.suffix = [], fail, model_suffix
+        self.options = []
 
     def module(self):
         recorder = self
@@ -77,6 +78,7 @@ class _Recorder:
                 self.responses = Responses()
 
             def with_options(self, **kw):
+                recorder.options.append(kw)
                 return self
 
         return SimpleNamespace(OpenAI=Client)
@@ -107,7 +109,7 @@ def test_brief_prose_sends_the_judgment_model_on_standard_without_explicit_cache
     assert out == {"labels": [], "summaryJa": "x"}
     assert [kw["model"] for kw in recorder.sent] == [SOL]
     body = recorder.sent[0]
-    assert "service_tier" not in body and body["timeout"] == 60
+    assert "service_tier" not in body and body["timeout"] == 120
     # The reviewed explicit cache is a Terra/Luna request shape; the newer
     # model gets the exact shape the owner's comparison sent (plain input).
     assert "prompt_cache_options" not in body and body["input"] == "facts"
@@ -278,3 +280,51 @@ def test_brief_polish_names_the_judgment_model_for_both_requests(monkeypatch):
     policy = result["aiDiagnostics"]["promptCachePolicy"]
     assert policy["mode"] == "NONE_MODEL_NOT_REVIEWED" and policy["dynamicSuffixCached"] is False
     assert json.dumps(result, ensure_ascii=False)
+
+
+# ── 2026-11-21: waits for the Standard-only judgment model ──────────────────
+# Comparison 44891173112: 40.8-45.1 s per brief (3,528-3,833 output tokens).
+
+def test_judgment_lanes_wait_longer_and_terra_lanes_keep_their_waits():
+    assert scanner._OPENAI_JUDGMENT_TIMEOUT_SECONDS == {
+        "market_brief": 120, "ai_judgment": 120, "market_position_check": 180}
+    assert scanner._openai_request_timeout(SOL, "market_brief", 60) == 120
+    assert scanner._openai_request_timeout(SOL, "ai_judgment", 60) == 120
+    assert scanner._openai_request_timeout(SOL, "market_position_check", 90) == 180
+    for purpose, default in (("market_brief", 60), ("ai_judgment", 60), ("news_intel", 60),
+                             ("event_analysis", 60), ("market_position_check", 90),
+                             ("osint_research", 90)):
+        assert scanner._openai_request_timeout(TERRA, purpose, default) == default
+
+
+def test_brief_requests_wait_120_seconds_and_terra_prose_keeps_60(offline):
+    recorder, _ = offline
+    scanner._openai_prose("x", purpose="market_brief", model=SOL, diagnostic={})
+    scanner._openai_prose("x", purpose="news_intel", diagnostic={})
+    assert [(kw["model"], kw["timeout"]) for kw in recorder.sent] == [(SOL, 120), (TERRA, 300)]
+    # Terra's news lane still asks Flex (300 s); with Flex off it keeps 60 s.
+    recorder.sent.clear()
+    scanner._OPENAI_TIER.enabled = False
+    scanner._openai_prose("x", purpose="news_intel", diagnostic={})
+    scanner._openai_prose("x", purpose="market_brief", model=TERRA, diagnostic={})
+    assert [kw["timeout"] for kw in recorder.sent] == [60, 60]
+    assert all(o == {"max_retries": 0} for o in recorder.options)
+
+
+def test_position_check_waits_180_seconds_with_one_request(offline):
+    recorder, _ = offline
+    scanner._openai_research_ex("q", purpose="market_position_check", model=SOL)
+    assert recorder.sent[0]["timeout"] == 180 and recorder.options == [{"max_retries": 0}]
+    recorder.sent.clear(); recorder.options.clear()
+    scanner._OPENAI_TIER.enabled = False
+    scanner._openai_research_ex("q", purpose="osint_research")
+    assert recorder.sent[0]["model"] == TERRA and recorder.sent[0]["timeout"] == 90
+    assert recorder.options == []                       # Terra Standard unchanged
+
+
+def test_ai_judgment_waits_120_seconds_with_one_request(offline, monkeypatch):
+    recorder, _ = offline
+    monkeypatch.setattr(scanner, "_AI_LAST_RUN", {})
+    scanner._openai_judge({"labels": []})
+    assert recorder.sent[0]["timeout"] == 120 and "service_tier" not in recorder.sent[0]
+    assert recorder.options == [{"max_retries": 0}]
