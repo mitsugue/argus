@@ -85,3 +85,15 @@ def test_one_edition_is_written_again_without_saving_anything(monkeypatch):
     assert row["original"] == {"model": "gpt-5.6-terra", "aiCalls": 2, "inputTokens": 30000,
                                "outputTokens": 4000, "sections": {"view": "元の見立て。"}}
     assert row["candidate"]["validation"]["status"] == "NO_ANSWER" and row["candidate"]["sections"] == {}
+
+
+def test_newer_models_are_comparison_only_and_priced():
+    """2026-11-21 (owner 【用途で分ける】): gpt-6.2-sol and gpt-6-luna may be
+    called only by the confirmed comparison, at the official Standard price."""
+    import scanner
+    assert scanner._AI_PRICING["gpt-6.2-sol"] == {"in": 2.0, "out": 10.0, "cachedIn": 0.10}
+    assert scanner._AI_PRICING["gpt-6-luna"] == {"in": 0.10, "out": 0.50, "cachedIn": 0.01}
+    for model in ("gpt-6.2-sol", "gpt-6-luna"):
+        assert model in scanner._COMPARISON_OPENAI_MODELS
+        assert model not in scanner._ROUTINE_OPENAI_MODELS
+        assert scanner._routine_openai_model(model) == "gpt-5.6-terra"
