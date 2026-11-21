@@ -216,7 +216,8 @@ assert.match(seedAction, /Publish bounded seed evidence/);
 assert.match(vite, /cleanupOutdatedCaches: true/);
 assert.match(vite, /clientsClaim: true/);
 assert.match(vite, /skipWaiting: true/);
-assert.match(vite, /chart-intelligence[\s\S]+handler: 'NetworkOnly'/);
+// 2026-11-21: the Render-host rules were removed; no rule may cache an API body.
+assert.doesNotMatch(vite, /onrender|StaleWhileRevalidate|\/api\/argus/);
 assert.match(app, /parseLocationHash/);
 assert.match(app, /history\.pushState/);
 assert.match(navigation, /export const HASH_ROUTES/);

@@ -6,10 +6,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const src = path.join(__dirname, '..', 'src');
 const vite = fs.readFileSync(path.join(__dirname, '..', 'vite.config.ts'), 'utf8');
-const networkOnly = vite.match(/important-events\|dashboard-events\|news-intelligence\|market-news\|market-shock\|index-chart[^\n]*\n\s*handler: 'NetworkOnly'/);
-assert.ok(networkOnly, 'current intelligence paths must be NetworkOnly in the service worker');
-const swrIdx = vite.indexOf("handler: 'StaleWhileRevalidate'");
-assert.ok(vite.indexOf('news-intelligence|market-news|market-shock') < swrIdx, 'NetworkOnly rule precedes the catch-all SWR rule');
+// 2026-11-21 (owner): the Render-host rules (NetworkOnly for these paths plus the
+// catch-all StaleWhileRevalidate API cache) were removed. No service-worker rule
+// may cache an API body, so current intelligence can never come from Cache Storage.
+assert.doesNotMatch(vite, /onrender/, 'no rule for the retired Render backend remains');
+assert.doesNotMatch(vite, /StaleWhileRevalidate|cacheName: 'argus-api'|\/api\/argus/,
+  'no service-worker rule caches API responses');
 for (const hook of ['useNewsIntelligence.ts', 'useMarketShock.ts']) {
   const text = fs.readFileSync(path.join(src, 'hooks', hook), 'utf8');
   assert.ok(!text.includes("status: memory ? 'data' : 'error'"), `${hook}: failed refresh must not relabel retained data as current`);
@@ -41,4 +43,4 @@ assert.ok(instruments.includes("MarketInstrumentSymbol> = { JP: 'N225', US: 'SPY
 const hookText = fs.readFileSync(path.join(src, 'hooks', 'useChartIntelligence.ts'), 'utf8');
 assert.ok(hookText.includes('/api/argus/index-chart?index='), 'index chart hook calls the cached-only route');
 assert.ok(hookText.includes("N225: '日経225', TOPIX: 'TOPIX', SPX: 'S&P500', NDX: 'ナスダック'"), 'index labels in Japanese');
-console.log('live-intelligence-cache.test: NetworkOnly current surfaces, visibility/online refresh, stale never relabelled, index selector ok');
+console.log('live-intelligence-cache.test: no API cache in the service worker, visibility/online refresh, stale never relabelled, index selector ok');

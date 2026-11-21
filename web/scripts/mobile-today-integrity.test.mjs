@@ -197,7 +197,8 @@ assert.doesNotMatch(acceptance, /nav__mobile-system|\['Assets', '#assets'\]|\['R
 assert.match(vite, /cleanupOutdatedCaches:\s*true/);
 assert.match(vite, /clientsClaim:\s*true/);
 assert.match(vite, /skipWaiting:\s*true/);
-assert.match(vite, /snapshot:\s*'verified'|chart-intelligence/);
+// 2026-11-21: the Render-host rules were removed; no rule may cache an API body.
+assert.doesNotMatch(vite, /onrender|StaleWhileRevalidate|\/api\/argus/);
 assert.doesNotMatch(command + today + hook, /method:\s*['"]POST['"]/);
 assert.doesNotMatch(indexHtml, /fonts\.(?:googleapis|gstatic)\.com/,
   'the production shell must not depend on an external font request');

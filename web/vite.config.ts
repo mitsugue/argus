@@ -126,45 +126,10 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: { cacheName: 'fonts-cache', expiration: { maxEntries: 20 } },
           },
-          {
-            // Verified market views have their own schema/hash checked
-            // IndexedDB repository. Cache Storage must not bypass that
-            // validation or manufacture a 200 in front of the ETag boundary.
-            urlPattern: /^https:\/\/argus-backend-[a-z0-9]+\.onrender\.com\/api\/argus\/chart-intelligence(?:\?.*)?$/i,
-            handler: 'NetworkOnly',
-          },
-          {
-            // v13.5.14: the Today bootstrap has its own ETag/304 contract and
-            // IndexedDB repository; a Cache-Storage body in front of it made
-            // the phone render yesterday's document (「古いまま」). Same for
-            // decision-evidence, whose resolver rejects cutoffs older than
-            // 10 minutes — a stale cached body is pure wasted work.
-            urlPattern: /^https:\/\/argus-backend-[a-z0-9]+\.onrender\.com\/api\/argus\/(?:today-headline|decision-evidence)(?:\?.*)?$/i,
-            handler: 'NetworkOnly',
-          },
-          {
-            // v13.5.50: current intelligence surfaces (events, news, market
-            // shock/news) must never be painted from a 12 h Cache-Storage body
-            // as if current; the hooks own freshness (asOf/generatedAt) and
-            // refresh on mount / visibility / online.
-            urlPattern: /^https:\/\/argus-backend-[a-z0-9]+\.onrender\.com\/api\/argus\/(?:important-events|dashboard-events|news-intelligence|market-news|market-shock|index-chart|credit-conditions)(?:\?.*)?$/i,
-            handler: 'NetworkOnly',
-          },
-          {
-            // ARGUS backend GETs — StaleWhileRevalidate (v10.190). On launch the SW
-            // serves the LAST cached snapshot INSTANTLY (so the screen is populated
-            // even while the free-plan dyno cold-starts / the fetches are in flight),
-            // then revalidates in the background. Directly targets the "画面が整うのに
-            // 時間がかかる" complaint without any extra API spend. All /api/argus/*
-            // responses already carry asOf/status, so a brief stale paint is honest.
-            urlPattern: /^https:\/\/argus-backend-[a-z0-9]+\.onrender\.com\/api\/argus\/.*/i,
-            handler: 'StaleWhileRevalidate',
-            options: {
-              cacheName: 'argus-api',
-              expiration: { maxEntries: 80, maxAgeSeconds: 60 * 60 * 12 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
+          // 2026-11-21 (owner): the four rules for the retired Render backend
+          // host were removed. No rule names the current backend host, so API
+          // reads are never served from Cache Storage; each page's own
+          // repository (IndexedDB/ETag) owns freshness.
         ],
       },
     }),

@@ -159,7 +159,6 @@ import jp_market_price_paths
 import jp_market_historical_releases
 import jp_market_series_reconciliation
 import argus_index_history
-import jp_market_valuation
 import jp_market_source_adapters
 import jp_market_dynamics
 import argus_macro_frequency
@@ -19347,8 +19346,6 @@ def _market_brief_generation_input_digest(brief, internals):
         "brief": brief_inputs,
         "index": index, "marketFeatures": copy.deepcopy(_JP_MARKET_FEATURE_HISTORY),
         "internals": internal_inputs,
-        "valuation": _JP_INDEX_VALUATION.snapshot(now.isoformat()),
-        "valuationStatus": copy.deepcopy(_JP_INDEX_VALUATION.status),
         "generationPolicy": {**_owner_overview_generation_policy(),
             "purpose": "market_brief", "maxOutputRequest": 5200},
         "digestSchemaVersion": "market-brief-generation-input-v3",
@@ -42025,7 +42022,6 @@ def _n225_analog_history_warm(current_rows):
         _N225_ANALOG_HISTORY_LOCK.release()
 
 
-_JP_INDEX_VALUATION = jp_market_valuation.ValuationCache()
 _JP_OFFICIAL_SOURCE_CACHE = jp_market_acquisition.SourceCache()
 
 
@@ -42033,12 +42029,6 @@ def _jp_official_sources_warm():
     path = (os.path.join(_DURABILITY_PATHS['root'], 'jp_market_source_history.sqlite3')
             if _cost_policy_durable_enabled() else None)
     _JP_OFFICIAL_SOURCE_CACHE.warm(path, get=requests.get)
-
-
-def _jp_index_valuation_warm():
-    path = (os.path.join(_DURABILITY_PATHS["root"], "jp_market_valuation.sqlite3")
-            if _cost_policy_durable_enabled() else None)
-    _JP_INDEX_VALUATION.warm(path, get=requests.get)
 
 
 # ── Index valuation proxy ────────────────────────────────────────────────────
@@ -45823,7 +45813,6 @@ def _jp_market_engine_pit_inputs_impl(*, warm=False):
         _intel_collect_stage("pit_future_valuation")
         _cftc_jpy_autorefresh()
         _future_map_scoring_tick(nikkei_rows)
-        _jp_index_valuation_warm()
         _jp_index_proxy_warm(nikkei_rows)
         _intel_collect_stage("pit_level_map")
         _level_map_warm(nikkei_rows)

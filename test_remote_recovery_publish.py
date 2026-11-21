@@ -2440,8 +2440,6 @@ def _reuse_inputs(monkeypatch):
         'data': [{'close': 100, 'availableFrom': '2026-01-01T00:00:00Z'}],
         'acquiredAt': '2026-01-02T00:00:00Z', 'sourceResponseSha256': 'original', 'expires': 123}})
     monkeypatch.setattr(scanner, '_JP_MARKET_FEATURE_HISTORY', {'status': 'AVAILABLE', 'features': []})
-    monkeypatch.setattr(scanner, '_JP_INDEX_VALUATION', types.SimpleNamespace(
-        snapshot=lambda cutoff: None, status={'status': 'NOT_ACQUIRED'}))
     return {'generatedAt': '2026-01-02T00:00:00Z', 'facts': [{'text': 'Observation', 'revision': 1}]}, {
         'informationCutoff': '2026-01-02T00:00:00Z', 'status': 'AVAILABLE', 'receivedAt': '2026-01-01T00:00:00Z'}
 

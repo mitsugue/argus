@@ -1,13 +1,17 @@
-"""Observed index-based valuation vintages; no historical availability inference.
+"""Index-based valuation vintages from a reviewed local export; no historical
+availability inference.
 
-Only the daily summary's named index and PER section are consumed. The EPS is
-derived from the same-session close/PER, never a separately published EPS.
+The EPS is derived from the same-session close/PER, never a separately
+published EPS. 2026-11-21 (owner): the direct read of Nikkei's daily summary
+page was removed. The page answers 403 to every non-browser request, and the
+current valuation comes from the J-Quants/weight-table lanes in scanner.py
+(_level_map_current_valuation and the index valuation proxy). SOURCE remains
+only as the identity of the page an export row claims to come from.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 import csv
-from html.parser import HTMLParser
 import hashlib
 import io
 import json
@@ -18,13 +22,10 @@ import re
 import sqlite3
 import stat
 import tempfile
-import threading
-import time
 
 from jp_market_price_paths import VALUATION_BASIS
 
 SOURCE = "https://indexes.nikkei.co.jp/nkave/archives/summary/"
-MAX_RESPONSE = 256 * 1024
 
 
 def _instant(value):
@@ -36,50 +37,6 @@ def _instant(value):
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
-
-
-class _Summary(HTMLParser):
-    def __init__(self):
-        super().__init__(); self.parts = []; self.hidden = 0
-
-    def handle_starttag(self, tag, attrs):
-        if tag in ('script', 'style'): self.hidden += 1
-        if not self.hidden: self.parts.append(' ')
-
-    def handle_endtag(self, tag):
-        if tag in ('script', 'style'): self.hidden = max(0, self.hidden - 1)
-        if not self.hidden: self.parts.append(' ')
-
-    def handle_data(self, data):
-        if not self.hidden: self.parts.append(data)
-
-
-def parse_summary(raw: bytes, *, received_at: str):
-    if not isinstance(raw, bytes) or not 1 <= len(raw) <= MAX_RESPONSE:
-        raise ValueError('valuation_response_bound')
-    receipt = _instant(received_at)
-    parser = _Summary(); parser.feed(raw.decode('utf-8-sig', errors='strict'))
-    text = re.sub(r'\s+', ' ', ''.join(parser.parts))
-    # Exact titles and adjacent labels prevent confusing PBR/dividend/weighted PER.
-    days = re.findall(r'(\d{4})年(\d{1,2})月(\d{1,2})日\([月火水木金土日]\)', text)
-    closes = re.findall(r'日経平均株価\s+([\d,]+\.\d+)\s+[+-]?[\d.]+%', text)
-    pers = re.findall(r'株価収益率\(PER\)\s+加重平均\s+[\d.]+倍\s+指数ベース\s+([\d.]+)倍', text)
-    if len(days) != 1 or len(closes) != 1 or len(pers) != 1:
-        raise ValueError('valuation_summary_missing_or_ambiguous')
-    session = date(*map(int, days[0])).isoformat()
-    # A dated page alone is not a publication timestamp. Never consume it before close.
-    if _instant(session + 'T06:30:00+00:00') > receipt:
-        raise ValueError('valuation_before_session_close')
-    index, per = float(closes[0].replace(',', '')), float(pers[0])
-    if not all(math.isfinite(v) and v > 0 for v in (index, per)) or not math.isfinite(index / per):
-        raise ValueError('valuation_nonpositive_or_nonfinite')
-    return {'instrumentId': 'NIKKEI_225_INDEX', 'basis': VALUATION_BASIS,
-            'currency': 'JPY', 'date': session, 'indexClose': index, 'per': per,
-            'knownAt': received_at, 'availableFrom': received_at,
-            'publishedAt': None, 'publicationStatus': 'UNKNOWN',
-            'sourceRef': SOURCE, 'sourceResponseSha256': hashlib.sha256(raw).hexdigest(),
-            'epsKind': 'DERIVED_FROM_INDEX_CLOSE_AND_INDEX_BASED_PER',
-            'historicalVintageVerified': False}
 
 
 def _validate(row):
@@ -214,52 +171,3 @@ def append(path, row):
         if conn.in_transaction: conn.execute('ROLLBACK')
         raise
     finally: conn.close()
-
-
-class ValuationCache:
-    """Only warm() performs IO. Failed refreshes preserve last successful vintage."""
-    def __init__(self):
-        self.row = None; self.next_attempt = 0; self.lock = threading.Lock()
-        self.status = {'status': 'NOT_ACQUIRED', 'lastSuccessfulAcquisitionAt': None,
-                       'persistenceStatus': 'UNVERIFIED'}
-
-    def snapshot(self, cutoff):
-        row = self.row
-        return dict(row) if row and _instant(row['knownAt']) <= _instant(cutoff) else None
-
-    def warm(self, path, *, get, now=lambda: datetime.now(timezone.utc).isoformat()):
-        if not self.lock.acquire(blocking=False): return
-        try:
-            if time.monotonic() < self.next_attempt: return
-            self.next_attempt = time.monotonic() + 300
-            self.status = {**self.status, 'status': 'ACQUIRING', 'lastAttemptAt': now()}
-            if path:
-                initialize(path)
-                restored = latest(path, now())
-                if restored:
-                    self.row = restored
-                    self.status = {**self.status, 'lastSuccessfulAcquisitionAt': self.row['knownAt'],
-                                   'persistenceStatus': 'LOCAL_DURABLE'}
-            deadline = time.monotonic() + 25
-            with get(SOURCE, headers={'User-Agent': 'Mozilla/5.0 (ARGUS index research)'},
-                     timeout=(5, 15), stream=True, allow_redirects=False) as response:
-                if response.status_code != 200: raise ValueError('valuation_http_'+str(response.status_code))
-                chunks = []; size = 0
-                for chunk in response.iter_content(16384):
-                    size += len(chunk)
-                    if size > MAX_RESPONSE or time.monotonic() > deadline:
-                        raise ValueError('valuation_response_bound_or_deadline')
-                    chunks.append(chunk)
-            row = parse_summary(b''.join(chunks), received_at=now())
-            if path:
-                row = append(path, row)
-                if latest(path, now()) != row: raise ValueError('valuation_readback_mismatch')
-            self.row = row
-            self.status = {**self.status, 'status': 'AVAILABLE', 'lastError': None, 'lastFailureReason': None,
-                           'lastSuccessfulAcquisitionAt': now(),
-                           'persistenceStatus': 'LOCAL_DURABLE' if path else 'MEMORY_ONLY'}
-            self.next_attempt = time.monotonic() + 1800
-        except Exception as exc:
-            self.status = {**self.status, 'status': 'FAILED', 'lastError': type(exc).__name__,
-                           'lastFailureReason': str(exc) if isinstance(exc, ValueError) else 'valuation_io_failed'}
-        finally: self.lock.release()
