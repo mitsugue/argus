@@ -165,3 +165,49 @@ def test_invalid_snapshot_row_never_discards_other_registered_prices(monkeypatch
     assert rows[1]['volume'] == 0 and rows[1]['changePct'] == 0
     import json
     json.dumps(rows, allow_nan=False)
+
+
+def test_stuck_quote_worker_ends_the_bridge_for_a_restart(monkeypatch):
+    """2026-11-21: a price worker stuck on OpenD for 15 minutes ends the bridge
+    (exit 3) so the supervisor starts a fresh one; health keeps going before."""
+    import pytest
+    m=load(monkeypatch);events=[];ticks=iter([0,301,602,903])
+    class StuckWorker:
+        def __init__(self, **kw): pass
+        def start(self): events.append('worker')
+        def is_alive(self): return True
+    monkeypatch.setattr(m,'TOKEN','test-only')
+    monkeypatch.setattr(m,'OpenQuoteContext',object)
+    monkeypatch.setattr(m,'quote_session_active',lambda now=None:True)
+    monkeypatch.setattr(m,'reference_job_due',lambda clock,last:False)
+    monkeypatch.setattr(m,'vwap_job_due',lambda clock,last:False)
+    monkeypatch.setattr(m,'Thread',StuckWorker)
+    monkeypatch.setattr(m.time,'monotonic',lambda:next(ticks))
+    monkeypatch.setattr(m,'send_heartbeat',lambda **kw:events.append('health') or 200)
+    monkeypatch.setattr(m.time,'sleep',lambda _:None)
+    assert m.QUOTE_STALL_SEC==900
+    with pytest.raises(SystemExit) as stopped:m.main()
+    assert stopped.value.code==3
+    assert events==['health','worker','health','health','health']
+
+
+def test_a_worker_that_finishes_never_trips_the_stall_guard(monkeypatch):
+    import pytest
+    m=load(monkeypatch);events=[];ticks=iter([0,301,602,903,1204])
+    class QuickWorker:
+        def __init__(self, **kw): pass
+        def start(self): events.append('worker')
+        def is_alive(self): return False
+    monkeypatch.setattr(m,'TOKEN','test-only')
+    monkeypatch.setattr(m,'OpenQuoteContext',object)
+    monkeypatch.setattr(m,'quote_session_active',lambda now=None:True)
+    monkeypatch.setattr(m,'reference_job_due',lambda clock,last:False)
+    monkeypatch.setattr(m,'vwap_job_due',lambda clock,last:False)
+    monkeypatch.setattr(m,'Thread',QuickWorker)
+    monkeypatch.setattr(m.time,'monotonic',lambda:next(ticks))
+    monkeypatch.setattr(m,'send_heartbeat',lambda **kw:200)
+    def stop(_):
+        if events.count('worker')==5: raise KeyboardInterrupt()
+    monkeypatch.setattr(m.time,'sleep',stop)
+    with pytest.raises(KeyboardInterrupt):m.main()
+    assert events.count('worker')==5
