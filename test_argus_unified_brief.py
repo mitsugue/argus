@@ -491,3 +491,45 @@ def test_ready_chart_replaces_cold_edition_once_with_frozen_calculations(monkeyp
     reused=scanner._market_brief_refresh(allow_ai=True)
     assert reused['generationReuse']['newAiCalls']==0
     assert reused['calculationSnapshots']==saved[0]['calculationSnapshots']
+
+
+# 2026-11-21 (owner 【統合AIにそろえる】): the badge at the top of Today reads the
+# integrated view's own tone, returned in the same reply (no extra call).
+@pytest.mark.parametrize('tone,kept', [('TAILWIND', True), ('HEADWIND', True), ('MIXED', True),
+                                       (None, False), ('BULLISH', False), ('tailwind', False), (1, False)])
+def test_view_tone_rides_the_same_reply_and_is_never_guessed(monkeypatch, tone, kept):
+    b = brief()
+    b['unifiedContext'] = mb.unified_context(b)
+    calls = []
+    def provider(user, **kwargs):
+        assert 'tone として、viewで述べた結論の向き' in user
+        assert '6項目とpresentationとpositionとtoneを返して' in user
+        _short, raw = model_response(user)
+        if tone is not None:
+            raw['tone'] = tone
+        calls.append(user)
+        kwargs['diagnostic'].update(outcome='ok')
+        return raw
+    monkeypatch.setattr(scanner, '_openai_prose', provider)
+    result = scanner._market_brief_ai_polish(b)
+    assert len(calls) == 1, 'the tone never costs a correction call'
+    assert result['unifiedStatus'] == result['presentationStatus'] == 'GENERATED'
+    summary = result['unifiedSummary']
+    assert summary.get('tone') == (tone if kept else None)
+    assert 'tone' not in summary['sections'] and set(summary['sections']) == set(mb.UNIFIED_SECTIONS)
+
+
+def test_view_tone_is_dropped_when_the_view_is_unknown_or_rejected():
+    from argus_explanation_contract import attach_unified_tone, UNIFIED_REPLY_EXTRAS
+    context = mb.unified_context(brief())
+    raw = response(context)
+    raw['tone'] = 'HEADWIND'
+    assert mb.validate_unified_ai(raw, context) is None, 'the six-section check itself is unchanged'
+    accepted = mb.validate_unified_ai({k: v for k, v in raw.items() if k not in UNIFIED_REPLY_EXTRAS}, context)
+    assert attach_unified_tone(accepted, raw)['tone'] == 'HEADWIND'
+    assert attach_unified_tone(None, raw) is None
+    unknown = copy.deepcopy(accepted)
+    unknown['sections']['view']['kind'] = 'UNKNOWN'
+    assert 'tone' not in attach_unified_tone(unknown, raw)
+    stale = dict(accepted, tone='TAILWIND')
+    assert 'tone' not in attach_unified_tone(stale, {}), 'an older tone never survives a reply without one'

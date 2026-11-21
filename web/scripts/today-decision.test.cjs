@@ -6,9 +6,8 @@ require.extensions['.ts'] = (mod, filename) => mod._compile(ts.transpileModule(
     target: ts.ScriptTarget.ES2022 }, fileName: filename }).outputText, filename);
 const d = require('../src/lib/todayDecision.ts');
 
-// The tone's own record: no tone beats the all-days base rate, so it is never a direction call.
-assert(Math.abs(d.TONE_HISTORY.upAfter.tail - d.TONE_HISTORY.baseUpPct) <= 3);
-assert(d.TONE_HISTORY.upAfter.head >= 50, 'after a headwind tone the index still rose more often than not');
+// 2026-11-21 【統合AIにそろえる】: the screen's own tone rule and its record are gone.
+assert.equal(d.TONE_HISTORY, undefined);
 
 // Alert cut points and the 80% band come from the 2003-2014 fit.
 assert.equal(d.alertLevel(0.10), 'low');
@@ -54,7 +53,7 @@ assert.equal(s.rows.find(r => r.id === 'm1570').lean, 'soft-head');
 assert(s.rows.every(r => r.what && r.now && (r.soWhat || r.id === 'trend')), 'every row explains what, now and so what');
 assert.equal(s.rows.find(r => r.id === 'us10y').lean, 'neutral', 'the 10-year yield has no measured direction');
 assert(s.rows.find(r => r.id === 'us10y').soWhat.includes('61%'));
-assert.equal(s.tone, 'wait', 'one headwind and a soft headwind against one tailwind');
+assert.equal(s.tone, undefined, 'the rows no longer add up to a tone');
 assert.equal(s.overnightGapPct, null);
 
 // Overnight future (2026-10-25, research step 2): measured from the open it carries no
@@ -64,7 +63,6 @@ assert.equal(night.rows[0].id, 'futures');
 assert.equal(night.rows[0].lean, 'neutral');
 assert(!/86%|17%/.test(JSON.stringify(night.rows[0])), 'the previous-close record is gone');
 assert(night.rows[0].meaning.includes('寄り付きの水準の手がかり') && night.rows[0].soWhat.includes('普段と区別できません'));
-assert.equal(night.tone, s.tone, 'a big night no longer decides the tone');
 assert(Math.abs(night.band.lower - (s.band.lower + 2.2)) < 1e-9 && Math.abs(night.band.upper - (s.band.upper + 2.2)) < 1e-9);
 assert.equal(d.overnightRecord, undefined);
 assert.equal(d.decisionStrip(path, features, 0.4).rows[0].lean, 'neutral');
@@ -79,7 +77,7 @@ assert.equal(d.overnightGap(null, 68309.46, closeAt, false), null);
 // Missing inputs never invent values.
 const empty = d.decisionStrip(null, []);
 assert.equal(empty.close, null); assert.equal(empty.alert, null); assert.equal(empty.band, null);
-assert.deepEqual(empty.rows, []); assert.equal(empty.tone, 'wait');
+assert.deepEqual(empty.rows, []); assert.equal(empty.tone, undefined);
 assert.equal(d.decisionStrip(null, [], 2).band, null, 'no band without volatility, even with a future');
 
 // Machine sentences become readable numbers, without the repeated disclaimer.
@@ -299,3 +297,64 @@ console.log('急落警戒の配信後の実績は20日から同じ1行に PASS')
   assert(source.includes('actionJa: ownerStockActionJa(canonical)'));
 }
 console.log('自分の銘柄の保留は日本語の短い表示・判断は変えない PASS');
+
+// 2026-11-21 (owner 【統合AIにそろえる】): the badge is the integrated view's own tone.
+// No view, an older one or a failed rewrite: no badge, never the screen's reading instead.
+{
+  const now = Date.parse('2026-11-21T03:00:00Z');
+  const ctx = 'a'.repeat(64);
+  const viewBrief = (tone, extra = {}) => ({ ...brief, unifiedStatus: 'GENERATED', unifiedContext: { contextId: ctx },
+    unifiedSummary: { contextId: ctx, tone, sections: { view: { textJa: '私は日本株の上値は重いと見ています。', kind: 'INFERENCE', evidenceIds: ['x'] },
+      reasons: { textJa: '理由。', kind: 'INFERENCE', evidenceIds: ['x'] } } },
+    generatedAt: '2026-11-21T02:50:00Z', aiDiagnostics: { completedAt: '2026-11-21T02:55:00Z' }, ...extra });
+  assert.equal(d.briefTone(viewBrief('TAILWIND'), true, now), 'tail');
+  assert.equal(d.briefTone(viewBrief('HEADWIND'), true, now), 'head');
+  assert.equal(d.briefTone(viewBrief('MIXED'), true, now), 'wait');
+  for (const tone of [undefined, null, 'BULLISH', 'tailwind', 1, 'toString', '__proto__']) {
+    assert.equal(d.briefTone(viewBrief(tone), true, now), null, `not a tone: ${String(tone)}`);
+  }
+  assert.equal(d.briefTone(viewBrief('TAILWIND'), false, now), null, 'a saved or failed edition: no badge');
+  assert.equal(d.briefTone(null, true, now), null, 'no view: no badge');
+  assert.equal(d.briefTone(viewBrief('TAILWIND', { unifiedStatus: 'AWAITING_AI' }), true, now), null);
+  assert.equal(d.briefTone(viewBrief('TAILWIND', { unifiedSummary: null }), true, now), null);
+  assert.equal(d.briefTone(viewBrief('TAILWIND', { unifiedContext: { contextId: 'b'.repeat(64) } }), true, now), null, 'another context');
+  const unknown = viewBrief('HEADWIND'); unknown.unifiedSummary.sections.view.kind = 'UNKNOWN';
+  assert.equal(d.briefTone(unknown, true, now), null, 'an UNKNOWN view has no direction');
+  // Older than 24 hours without a rewrite or a re-check: no badge. A re-check of unchanged inputs keeps it.
+  const old = { generatedAt: '2026-11-20T02:00:00Z', aiDiagnostics: { completedAt: '2026-11-20T02:00:00Z' } };
+  assert.equal(d.BRIEF_TONE_MAX_AGE_HOURS, 24);
+  assert.equal(d.briefTone(viewBrief('HEADWIND', old), true, now), null, '25 hours old');
+  assert.equal(d.briefTone(viewBrief('HEADWIND', { ...old, generationReuse: { inputsCheckedAt: '2026-11-21T02:58:00Z' } }), true, now), 'head');
+  assert.equal(d.briefTone(viewBrief('HEADWIND', { generatedAt: '2026-11-20T03:00:00Z', aiDiagnostics: { completedAt: '2026-11-20T03:00:00Z' } }), true, now), 'head', 'exactly 24 hours');
+  assert.equal(d.briefTone(viewBrief('HEADWIND', { generatedAt: 'x', aiDiagnostics: {} }), true, now), null, 'no time: no badge');
+
+  // The screen: the badge follows the view even when the rows lean the other way.
+  const RealDate = Date;
+  global.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [now])); } static now() { return now; } };
+  try {
+    const render = (b, current) => renderToStaticMarkup(React.createElement(stripContext.exports.TodayDecisionStrip, { brief: b, toneCurrent: current }));
+    const verdictOf = html => html.split('today-strip__verdict')[1].split('</div>')[0];
+    const tail = render(viewBrief('TAILWIND'), true);
+    assert(verdictOf(tail).includes('<span class="today-strip__badge">材料は追い風寄り</span>') && tail.includes('data-tone="tail"') && tail.includes('today-strip__verdict is-tail'), verdictOf(tail));
+    const head = render(viewBrief('HEADWIND'), true);
+    assert(head.includes('材料は逆風寄り') && head.includes('today-strip__verdict is-head'));
+    assert(render(viewBrief('MIXED'), true).includes('材料はまちまち'));
+    for (const [html, why] of [[render(viewBrief('TAILWIND'), false), 'saved edition'], [render(viewBrief(undefined), true), 'no tone'],
+      [render(viewBrief('TAILWIND', old), true), 'older than a day'], [normalStrip, 'no view'], [unavailableStrip, 'nothing at all']]) {
+      const verdict = verdictOf(html);
+      assert(!verdict.includes('today-strip__badge') && !/追い風寄り|逆風寄り|まちまち/.test(html), `${why}: ${verdict}`);
+      assert(html.includes('data-tone="none"') && !/today-strip__verdict is-/.test(html), `${why}: neutral frame`);
+      assert(!html.includes('5日後に上昇'), `${why}: the old rule's record is gone`);
+    }
+    assert(!tail.includes('5日後に上昇'), 'the old rule\'s record never sits under the view\'s tone');
+    assert(verdictOf(tail).includes('私は日本株の上値は重いと見ています。'), 'the headline stays under the badge');
+    assert(verdictOf(render(viewBrief(undefined), true)).includes('私は日本株の上値は重いと見ています。'), 'the headline stays without the badge');
+  } finally { global.Date = RealDate; }
+  // The callers hand the strip whether the shown edition is the latest one.
+  const card = fs.readFileSync('src/components/today/MarketBriefCard.tsx', 'utf8');
+  const surface = fs.readFileSync('src/components/today/ArgusEditorialSurface.tsx', 'utf8');
+  assert(card.includes('const viewCurrent = !retained && !error && !failedSinceEdition(responseBrief);'));
+  assert(card.includes('toneCurrent={viewCurrent && edition === brief}') && card.includes('toneCurrent={viewCurrent}'));
+  assert.equal((surface.match(/toneCurrent=\{toneCurrent && !retained\}/g) || []).length, 2);
+  console.log('材料の印は統合AIの見立ての向き・無い/古い/失敗は出さない PASS');
+}

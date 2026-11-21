@@ -25,6 +25,25 @@ def _digits_of(text: str) -> set:
 
 
 UNIFIED_SECTIONS = ("view", "reasons", "changes", "impact", "next", "invalidation")
+# 2026-11-21 (owner 【統合AIにそろえる】): the top of Today showed 「材料は追い風寄り・
+# 逆風寄り・まちまち」 from a screen rule that could disagree with the integrated view.
+# The same reply now names the direction of its own conclusion; no extra call.
+UNIFIED_TONES = ("TAILWIND", "HEADWIND", "MIXED")
+UNIFIED_REPLY_EXTRAS = ("presentation", "position", "tone")
+
+
+def attach_unified_tone(unified, reply):
+    """The accepted six sections plus the reply's own tone, when it is one of
+    UNIFIED_TONES and the view is not UNKNOWN. A missing or other tone never
+    rejects the sections and is never guessed from the text; the screen then
+    shows no tone."""
+    if not unified:
+        return unified
+    tone = reply.get("tone") if isinstance(reply, Mapping) else None
+    view = (unified.get("sections") or {}).get("view") or {}
+    if isinstance(tone, str) and tone in UNIFIED_TONES and view.get("kind") != "UNKNOWN":
+        return {**unified, "tone": tone}
+    return {key: value for key, value in unified.items() if key != "tone"}
 
 
 def render_event_references(value: Any, context: Mapping[str, Any]):
