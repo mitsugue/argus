@@ -26,8 +26,12 @@ def news_facts(items, *, symbol, cutoff, limit=4):
     """Association is a search candidate, not verified company impact or cause."""
     now=_instant(cutoff);selected={}
     for item in items[:2000]:
-        if (not isinstance(item,dict) or not isinstance(item.get('linkedAssets'),list)
-                or symbol not in item['linkedAssets'] or not isinstance(item.get('sourceId'),str)):continue
+        if not isinstance(item,dict) or not isinstance(item.get('sourceId'),str):continue
+        # 2026-11-21 (owner 【入れる】): the per-stock searches store the stock as
+        # symbolHint, not linkedAssets; both are the existing collectors' link.
+        linked=isinstance(item.get('linkedAssets'),list) and symbol in item['linkedAssets']
+        hinted=isinstance(item.get('symbolHint'),str) and item['symbolHint'].upper()==str(symbol).upper()
+        if not linked and not hinted:continue
         rights=argus_research_mesh.source_rights(item.get('sourceId'))
         if not rights['canSendToLLM'] or not rights['canRetain']:continue
         try:
@@ -44,7 +48,7 @@ def news_facts(items, *, symbol, cutoff, limit=4):
             selected_input={'symbol':symbol,'sourceId':item['sourceId'],'url':url,'title':title,
                 'publicSnippet':snippet[:700] if snippet else None,'publishedAt':published,'receivedAt':item['fetchedAt'],
                 'updatedAt':item.get('updatedAt'),'accessClass':rights['accessClass'],
-                'associationBasis':'EXISTING_COLLECTOR_LINKED_ASSET','companyImpactVerified':False,
+                'associationBasis':'EXISTING_COLLECTOR_LINKED_ASSET' if linked else 'PER_SYMBOL_SEARCH','companyImpactVerified':False,
                 'fullArticleVerified':False,'officialResultVerified':False}
             require_allowed(selected_input)
             record={'text':f"{symbol}への関連候補として取得した報道見出し: {title}。"
