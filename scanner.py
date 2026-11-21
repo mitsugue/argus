@@ -19015,7 +19015,10 @@ def _market_brief_prompt(brief):
         "{themeId:根拠のeventIdの『market-position-』以降の名前,expectationJa:市場が期待している展開,fearJa:市場が警戒している展開,"
         "triggerJa:読みが変わる引き金・次に確かめること,evidenceIds:根拠IDの配列,kind:INFERENCEまたはUNKNOWN} の配列を返す"
         "(各160字以内・根拠にない数値は書かない・予測や売買の助言ではなく市場の見方の整理)。"
-        "STRICT JSONで6項目とpresentationとpositionを返してください。")
+        "さらに tone として、viewで述べた結論の向きを1語で返す。今の材料全体が日本株にとって追い風寄りならTAILWIND、"
+        "逆風寄りならHEADWIND、追い風と逆風がまちまちならMIXED。点灯数や材料の数で決めず、viewの結論と食い違わせない"
+        "(予測や売買の助言ではなく、見立ての向きの要約)。"
+        "STRICT JSONで6項目とpresentationとpositionとtoneを返してください。")
     user = (instructions + argus_presentation_intent.generation_instruction(prompt_catalog).replace("\n", " ")
         + "\n" + json.dumps(prompt_context, ensure_ascii=False, separators=(",", ":")))
     # 2026-10-17: the citation rule that otherwise rejects the first answer,
@@ -19056,7 +19059,7 @@ def _market_brief_model_comparison_one(record, model):
         except ValueError as exc:
             validation.update(status="REJECTED", reason=str(exc), section="event")
     unified = (argus_market_brief.validate_unified_ai(
-        {k: v for k, v in rendered.items() if k not in ("presentation", "position")},
+        {k: v for k, v in rendered.items() if k not in argus_market_brief.UNIFIED_REPLY_EXTRAS},
         context, diagnostic=validation) if isinstance(rendered, dict) else None)
     unified = argus_macro_material.checked_coverage(unified, context, validation)
     presentation = None
@@ -19162,8 +19165,9 @@ def _market_brief_ai_polish(brief):
     original_raw = raw
     raw = render_reply(raw, validation)
     unified = argus_market_brief.validate_unified_ai(
-        {key: value for key, value in raw.items() if key not in ("presentation", "position")}, context, diagnostic=validation) if isinstance(raw, dict) else None
-    unified = argus_macro_material.checked_coverage(unified, context, validation)
+        {key: value for key, value in raw.items() if key not in argus_market_brief.UNIFIED_REPLY_EXTRAS}, context, diagnostic=validation) if isinstance(raw, dict) else None
+    unified = argus_market_brief.attach_unified_tone(
+        argus_macro_material.checked_coverage(unified, context, validation), raw)
     def checked_presentation(value, summary, diagnostic):
         if not summary or not isinstance(value, dict):
             return None
@@ -19228,8 +19232,9 @@ def _market_brief_ai_polish(brief):
         validation = {}
         raw = render_reply(raw, validation)
         unified = argus_market_brief.validate_unified_ai(
-            {key: value for key, value in raw.items() if key not in ("presentation", "position")}, context, diagnostic=validation) if isinstance(raw, dict) else None
-        unified = argus_macro_material.checked_coverage(unified, context, validation)
+            {key: value for key, value in raw.items() if key not in argus_market_brief.UNIFIED_REPLY_EXTRAS}, context, diagnostic=validation) if isinstance(raw, dict) else None
+        unified = argus_market_brief.attach_unified_tone(
+            argus_macro_material.checked_coverage(unified, context, validation), raw)
         presentation = checked_presentation(raw, unified, validation)
         attempts.append({"provider": copy.deepcopy(diag), "validation": copy.deepcopy(validation)})
     brief["presentationPlan"] = presentation

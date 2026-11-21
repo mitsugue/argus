@@ -123,6 +123,8 @@ export interface ForecastTrackRecordHorizon {
 export interface ForecastTrackRecord {
   schemaVersion: 'argus-forecast-track-record-v1'; instrumentId: 'NIKKEI_225_INDEX';
   minimumDirectionalForecasts: number; horizons: Record<string, ForecastTrackRecordHorizon>;
+  /** 2026-11-21: record of the integrated view's tone (checked where it is shown). */
+  viewTones?: unknown;
   predictiveProbabilities: null; actionAuthority: false;
 }
 

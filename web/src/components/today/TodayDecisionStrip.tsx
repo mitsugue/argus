@@ -1,14 +1,15 @@
 import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
 import type { ComparisonPoint } from '../../types/japanMarketComparison';
-import { ALERT_HISTORY, ALERT_RAISED_HISTORY, MOMENTUM_Z, liveAlertRecord, OVERNIGHT_OPEN_SHARE_PCT, TONE_HISTORY, closeBasisLabel, decisionStrip, friendlyEventText, overnightGap, type FeatureRow, type Lean } from '../../lib/todayDecision';
-import { nikkeiLiveCurrent, useJapanMarketComparison, useNikkeiLive } from '../../hooks/useJapanMarketComparison';
+import { ALERT_HISTORY, ALERT_RAISED_HISTORY, MOMENTUM_Z, liveAlertRecord, OVERNIGHT_OPEN_SHARE_PCT, briefTone, toneRecordLine, closeBasisLabel, decisionStrip, friendlyEventText, overnightGap, type FeatureRow, type Lean } from '../../lib/todayDecision';
+import { nikkeiLiveCurrent, useForecastTrackRecord, useJapanMarketComparison, useNikkeiLive } from '../../hooks/useJapanMarketComparison';
 import { marketHeadline } from '../../lib/marketWording';
 import { MarketPositionCard } from './MarketPositionCard';
 import { jumpTo } from '../../lib/todayJump';
 import type { TodayEventPreview } from '../../lib/todayEventSchedule';
 import './TodayDecisionStrip.css';
 
+// Owner decision 2026-11-21 【統合AIにそろえる】: the badge is the integrated view's own tone.
 const toneLabel = { tail: '材料は追い風寄り', head: '材料は逆風寄り', wait: '材料はまちまち' } as const;
 const leanLabel: Record<Lean, string> = { tail: '追い風', head: '逆風', 'soft-head': 'やや逆風', neutral: '中立' };
 // Owner check 2026-10-22: the tile is how likely a further fall is, not how far the market has fallen; say so.
@@ -58,8 +59,9 @@ function readLastInputs(): StripInputs | null {
   } catch { return null; }
 }
 
-/** Conclusion, four numbers and the inputs with their direction, before the detailed explanation. */
-export function TodayDecisionStrip({ brief, criticalNews = [], featuredEvent }: { brief: MarketBrief; criticalNews?: CriticalTodayNews[]; featuredEvent?: TodayEventPreview | null }) {
+/** Conclusion, four numbers and the inputs with their direction, before the detailed explanation.
+ * `toneCurrent`: the caller shows the latest edition and no rewrite failed since (default: no badge). */
+export function TodayDecisionStrip({ brief, criticalNews = [], featuredEvent, toneCurrent = false }: { brief: MarketBrief; criticalNews?: CriticalTodayNews[]; featuredEvent?: TodayEventPreview | null; toneCurrent?: boolean }) {
   const current = brief.calculationSnapshots?.['5']?.comparison as { actual?: ComparisonPoint[]; anchorDate?: string } | undefined;
   const currentFeatures = features(brief);
   const fresh = Array.isArray(current?.actual) && current!.actual.length >= 21;
@@ -77,6 +79,10 @@ export function TodayDecisionStrip({ brief, criticalNews = [], featuredEvent }: 
   const stripAnchor = typeof comparison?.anchorDate === 'string' ? comparison.anchorDate : null;
   const closeStrip = decisionStrip(stripActual, stripFeatures, null, stripAnchor);
   const headline = marketHeadline(brief.unifiedSummary?.sections.view, brief.unifiedSummary?.sections.reasons);
+  // No view, an older or failed one: no badge, never the screen's own reading in its place.
+  const tone = briefTone(brief, toneCurrent);
+  const toneRecord = useForecastTrackRecord()?.viewTones;
+  const toneLine = tone ? toneRecordLine(toneRecord, tone) : null;
   const { quote: live, futures, lastError: liveError } = useNikkeiLive();
   const recorded = (useJapanMarketComparison(5).levelMap as unknown as { dropAlert?: unknown } | null | undefined)?.dropAlert;
   // The delayed intraday value replaces the last close once it is from a later session.
@@ -108,11 +114,10 @@ export function TodayDecisionStrip({ brief, criticalNews = [], featuredEvent }: 
     {preparing && <p className="today-strip__preparing" role="status">{stored
       ? `準備中・${new Date(stored.savedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}時点の数字`
       : '準備中'}</p>}
-    <div className={`today-strip__verdict is-${strip.tone}`} data-tone={strip.tone}>
-      <span className="today-strip__badge">{toneLabel[strip.tone]}</span>
+    <div className={`today-strip__verdict${tone ? ` is-${tone}` : ''}`} data-tone={tone ?? 'none'}>
+      {tone && <span className="today-strip__badge">{toneLabel[tone]}</span>}
       {headline && <p>{headline}</p>}
-      <small className="today-strip__record" data-tone-record={strip.tone}>
-        5日後に上昇 {TONE_HISTORY.upAfter[strip.tone]}%(普段{TONE_HISTORY.baseUpPct}%・{TONE_HISTORY.since}年〜)</small>
+      {toneLine && <small className="today-strip__record" data-tone-record={tone!}>{toneLine}</small>}
       {strip.overnightGapPct !== null && Math.abs(strip.overnightGapPct) >= 1 && <p className="today-strip__overnight" data-overnight-gap={strip.overnightGapPct!.toFixed(2)}
         onClick={() => jumpTo('today-nikkei-chart', 'futures')}>
         昨夜の日経先物 <b>{signed(strip.overnightGapPct!)}</b> · 寄り付きにおよそ{OVERNIGHT_OPEN_SHARE_PCT / 10}割が反映</p>}

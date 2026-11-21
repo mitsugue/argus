@@ -502,6 +502,88 @@ def track_record(path):
             'firstTargetDate': dates[0] if dates else None, 'lastTargetDate': dates[-1] if dates else None}
     return {'schemaVersion': 'argus-forecast-track-record-v1', 'instrumentId': 'NIKKEI_225_INDEX',
             'minimumDirectionalForecasts': TRACK_RECORD_MINIMUM, 'horizons': horizons,
+            'viewTones': view_tone_record(path),
+            'predictiveProbabilities': None, 'actionAuthority': False}
+
+
+# --- Record of the integrated view's tone (2026-11-21) ----------------------------
+# Owner 2026-11-21: 「見出しとしてわかりやすいので出して欲しいが 正確な情報として統合AIの
+# 管轄のもと出してほしい」. The badge 「材料は追い風寄り・逆風寄り・まちまち」 is the view's
+# own tone (unifiedSummary.tone), so its record is that of the saved views, nothing else.
+# Nothing new is stored: each saved view already keeps its tone and the Nikkei close
+# it stood on (calculations 5 → comparison.anchorDate), and the existing scorer appends
+# the 5-session close of that anchor once it is received (outcomes, horizon 5).
+VIEW_TONES = ('TAILWIND', 'HEADWIND', 'MIXED')
+VIEW_TONE_HORIZON = 5
+# The same bar as every other record on the screen (TRACK_RECORD_MINIMUM, the drop
+# alert's 20 days, 勝率は n≥20 から): below it only the count is shown.
+VIEW_TONE_MINIMUM = 20
+
+
+def view_tone_record(path):
+    """Share of later 5-session rises of the Nikkei after each tone of the view.
+
+    One session per Nikkei close the views stood on: the LAST view saved before the
+    next session opened, i.e. the one the screen showed at the open. A view saved
+    after that open has already seen part of the move and is never counted. The
+    scorer only appends a close that was received after the view and after the
+    session closed, so no future value is read. When the chosen view has no tone
+    the session is not counted for any tone. The base rate is every chosen session
+    of the same period (first to last toned target date), with or without a tone.
+    Frequencies of past views, never a probability for the next one.
+    """
+    from datetime import date, timedelta
+    import argus_market_clock as clock
+    conn = _connect(path, True)
+    try:
+        rows = conn.execute('SELECT o.body, v.recorded_at, v.record_id FROM outcomes o JOIN views v '
+                            'ON o.record_id=v.record_id '
+                            "WHERE json_extract(o.body,'$.horizonSessions')=? "
+                            'ORDER BY julianday(v.recorded_at), v.sequence, o.sequence',
+                            (VIEW_TONE_HORIZON,)).fetchall()
+        chosen = {}
+        opens = {}
+        for body, recorded_at, record_id in rows:
+            row = json.loads(body)
+            target = row.get('targetDate')
+            change = row.get('actualChangePct')
+            if not isinstance(target, str) or type(change) not in (int, float):
+                continue
+            if target not in opens:
+                first = date.fromisoformat(target); remaining = VIEW_TONE_HORIZON - 1
+                try:
+                    while remaining:
+                        first -= timedelta(days=1)
+                        if clock.canonical_trading_day(clock.JP_EQUITY, first): remaining -= 1
+                    opens[target] = clock.market_session_bounds(clock.JP_EQUITY, first)['regularOpenUtc']
+                except clock.CalendarUnavailableError:
+                    opens[target] = None
+            opened = opens[target]
+            if not opened or _instant(recorded_at) >= _instant(opened):
+                continue
+            # Rows are in saved order: a later view replaces an earlier one for the
+            # same session, and a later result for the same view (corrected close) wins.
+            chosen[target] = {'recordId': record_id, 'up': change > 0}
+        tones = {}
+        for target, item in chosen.items():
+            found = conn.execute("SELECT json_extract(body,'$.brief.unifiedSummary.tone') FROM views "
+                                 'WHERE record_id=?', (item['recordId'],)).fetchone()
+            tone = found[0] if found else None
+            if tone in VIEW_TONES:
+                tones[target] = tone
+    finally: conn.close()
+    toned = sorted(tones)
+    def share(selected):
+        scored = len(selected); up = sum(chosen[t]['up'] for t in selected)
+        return {'scored': scored, 'up': up,
+                'upShare': up / scored if scored >= VIEW_TONE_MINIMUM else None,
+                'status': 'INSUFFICIENT_SAMPLE' if scored < VIEW_TONE_MINIMUM else 'AVAILABLE'}
+    base = [t for t in chosen if toned and toned[0] <= t <= toned[-1]]
+    return {'schemaVersion': 'argus-view-tone-record-v1', 'horizonSessions': VIEW_TONE_HORIZON,
+            'minimumSessions': VIEW_TONE_MINIMUM, 'selection': 'LAST_VIEW_BEFORE_NEXT_OPEN',
+            'tones': {tone: share([t for t in toned if tones[t] == tone]) for tone in VIEW_TONES},
+            'baseline': {**share(base), 'firstTargetDate': toned[0] if toned else None,
+                         'lastTargetDate': toned[-1] if toned else None},
             'predictiveProbabilities': None, 'actionAuthority': False}
 
 

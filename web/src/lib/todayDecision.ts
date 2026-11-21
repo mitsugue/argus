@@ -9,6 +9,7 @@
  * out of sample (2003-2014 design, 2015-2026 report; see docs below).
  */
 import type { ComparisonPoint } from '../types/japanMarketComparison';
+import type { MarketBrief } from './marketBrief';
 
 export type Lean = 'tail' | 'head' | 'soft-head' | 'neutral';
 export interface FeatureRow { seriesId: string; date: string; value: number }
@@ -25,7 +26,7 @@ export interface DecisionStrip {
   momentumZ: number | null;
   /** The session date of the latest close the drop alert, momentum and band were computed from (YYYY-MM-DD). */
   closeDate: string | null;
-  rows: MaterialRow[]; tone: 'tail' | 'head' | 'wait';
+  rows: MaterialRow[];
   overnightGapPct: number | null;
 }
 
@@ -66,21 +67,73 @@ export function liveAlertRecord(value: unknown, level: 'low' | 'normal' | 'high'
   return row.matured >= LIVE_ALERT_MINIMUM ? row : null;
 }
 /**
- * Measured record of the tone rule itself, 2012-2026 (n=2597 sessions,
- * point-in-time inputs, 1570 ratio taken as above 1): the share of 5-session
- * moves that went up after each tone, against 56.7% on all days. Neither tone
- * beats that base rate, so the badge describes the inputs and is never a
- * direction call (owner check 2026-10-02).
+ * Owner decision 2026-11-21 【統合AIにそろえる】: the badge 「材料は追い風寄り・逆風寄り・
+ * まちまち」 is the integrated view's own tone (unifiedSummary.tone, written in the
+ * same reply as the view). The screen rule that added up the rows' leans and its
+ * measured record (2012-2026, no tone beat the base rate) are gone: that record
+ * belonged to the rule, not to the view. Without a current view the badge is not
+ * shown; the rows' own leans are unchanged.
  */
-export const TONE_HISTORY = { since: 2012, baseUpPct: 57, upAfter: { tail: 59, head: 55, wait: 57 } } as const;
+export type StripTone = 'tail' | 'head' | 'wait';
+const TONE_OF_VIEW: Record<string, StripTone> = { TAILWIND: 'tail', HEADWIND: 'head', MIXED: 'wait' };
+/**
+ * Owner 2026-11-21 「見出しとしてわかりやすいので出して欲しいが 正確な情報として統合AIの管轄のもと
+ * 出してほしい」: the line under the badge is the record of the view's own tone
+ * (argus_analysis_history.view_tone_record: one session per Nikkei close, the last view
+ * saved before the next open, scored on the 5th close once received). Below the
+ * server's minimum only the count is shown; nothing when the record is unreadable.
+ */
+const TONE_KEY: Record<StripTone, string> = { tail: 'TAILWIND', head: 'HEADWIND', wait: 'MIXED' };
+const tally = (v: unknown): v is { scored: number; up: number } => {
+  const row = v as { scored?: unknown; up?: unknown } | null;
+  return !!row && Number.isInteger(row.scored) && Number.isInteger(row.up)
+    && (row.up as number) >= 0 && (row.up as number) <= (row.scored as number);
+};
+export function toneRecordLine(record: unknown, tone: StripTone): string | null {
+  const v = record as { schemaVersion?: unknown; horizonSessions?: unknown; minimumSessions?: unknown;
+    tones?: Record<string, unknown>; baseline?: unknown; actionAuthority?: unknown; predictiveProbabilities?: unknown } | null;
+  if (!v || v.schemaVersion !== 'argus-view-tone-record-v1' || v.horizonSessions !== 5
+    || !Number.isInteger(v.minimumSessions) || (v.minimumSessions as number) < 1
+    || v.actionAuthority !== false || v.predictiveProbabilities !== null || !v.tones) return null;
+  const row = v.tones[TONE_KEY[tone]];
+  if (!tally(row)) return null;
+  if (row.scored < (v.minimumSessions as number)) return `成績は記録中(${row.scored}回)`;
+  const base = v.baseline;
+  if (!tally(base) || base.scored < row.scored) return null;
+  const pct = (up: number, n: number) => Math.round(up / n * 100);
+  return `5日後に上昇 ${pct(row.up, row.scored)}%(この印の${row.scored}回・普段 ${pct(base.up, base.scored)}%)`;
+}
+/**
+ * The view is rewritten or re-confirmed at least once a day at 08:00 JST (trading
+ * days 08:00, 12:00, 15:45; other days 08:00, 20:00; argus_brief_schedule.py), and the
+ * longest gap is 15:45 to 08:00, about 16 hours. A view not written or re-confirmed
+ * for 24 hours has missed an update time, so its tone is not shown.
+ */
+export const BRIEF_TONE_MAX_AGE_HOURS = 24;
+const instantMs = (value: unknown) => typeof value === 'string' ? Date.parse(value) : NaN;
+export function briefTone(brief: Pick<MarketBrief, 'unifiedStatus' | 'unifiedSummary' | 'unifiedContext'
+  | 'aiDiagnostics' | 'generationReuse' | 'generatedAt'> | null | undefined,
+                          current: boolean, now = Date.now()): StripTone | null {
+  const summary = brief?.unifiedSummary;
+  if (!current || !brief || brief.unifiedStatus !== 'GENERATED' || !summary
+    || summary.contextId !== brief.unifiedContext?.contextId || summary.sections?.view?.kind === 'UNKNOWN') return null;
+  const tone = typeof summary.tone === 'string' && Object.prototype.hasOwnProperty.call(TONE_OF_VIEW, summary.tone)
+    ? TONE_OF_VIEW[summary.tone] : null;
+  if (!tone) return null;
+  const checked = [brief.aiDiagnostics?.completedAt, brief.generationReuse?.inputsCheckedAt, brief.generatedAt]
+    .map(instantMs).filter(Number.isFinite);
+  if (!checked.length) return null;
+  const age = now - Math.max(...checked);
+  return age <= BRIEF_TONE_MAX_AGE_HOURS * 3600_000 ? tone : null;
+}
 /**
  * Overnight CME Nikkei future against the Tokyo close, 2012-2026 (owner check
  * 2026-10-03, n=3475 nights): share of 5-session moves from that close that
  * went up, and the median move. Both halves (2012-2019, 2020-2026) agree.
  * The next session reflects about 0.9x the gap; shifting the 80% band by the
  * gap kept 84% of outcomes inside after +2% nights (65% without the shift).
- * The tone record above was re-measured with this row (weight 2) and the US
- * 10-year row read as neutral; it still does not beat the base rate.
+ * The former screen tone rule's record was re-measured with this row (weight 2)
+ * and the US 10-year row read as neutral; it still did not beat the base rate.
  */
 // 2026-10-25 (research step 2, owner: 「もっとも理にかなった方」): the old record
 // (+2% night → 86% up five days later) was measured from the previous close, so it
@@ -236,15 +289,13 @@ export function decisionStrip(actual: ComparisonPoint[] | null, features: Featur
   }
   const gap = overnightGapPct !== null && finite(overnightGapPct) ? overnightGapPct : null;
   const rows = materialRows(features, fiveDayChangePct, gap);
-  const score = rows.reduce((s, r) => s + 1
-    * (r.lean === 'tail' ? 1 : r.lean === 'head' ? -1 : r.lean === 'soft-head' ? -0.5 : 0), 0);
   const base = sigma === null ? null : fiveDayBand(sigma);
   const drop = sigma === null ? null : raisedAlert(sigma, dayChangePct, fiveDayChangePct);
   return { close: last ?? null, dayChangePct, fiveDayChangePct, sigma, momentumZ,
     closeDate: closeDate(sorted, anchorDate),
     alert: drop?.level ?? null, alertRaised: drop?.raised ?? false,
     band: base && gap !== null ? { lower: base.lower + gap, upper: base.upper + gap } : base, momentum,
-    rows, tone: score >= 1.5 ? 'tail' : score <= -1.5 ? 'head' : 'wait', overnightGapPct: gap };
+    rows, overnightGapPct: gap };
 }
 
 /**

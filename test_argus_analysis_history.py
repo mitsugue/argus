@@ -367,3 +367,64 @@ def test_public_record_builder_keeps_independent_nested_ownership():
     assert made['calculations']['5']['rows'][0]['value'] == 3
     assert made['brief']['facts'][0]['text'] != 'changed'
     assert history.validate_record(made) == made
+
+
+# 2026-11-21 (owner 「正確な情報として統合AIの管轄のもと出してほしい」): the record under the
+# badge is that of the view's own tone, kept by the existing append-only views/outcomes.
+def _five_day(anchor):
+    return {'5': {'comparison': {'schemaVersion': 'jp-market-comparison-v1', 'anchorDate': anchor,
+        'actualAnchorPrice': 100, 'unit': 'ANCHOR_100', 'forecast': {'horizonSessions': 5,
+        'line': [{'offsetSessions': 5, 'value': 101}], 'flatThresholdPct': 0.5, 'validationStatus': 'UNVALIDATED'}}}}
+
+
+def _toned(path, at, anchor, tone, closes, received):
+    item = brief(at)
+    if tone is not None:
+        item['unifiedSummary']['tone'] = tone
+    record = history.make_record(item, _five_day(anchor))
+    history.append(path, record)
+    history.append_outcomes(path, history.outcome_candidates(record, closes, received_at=received))
+    return record
+
+
+# Anchor Thu 10/1 → the 5th session is Thu 10/8; the first one (Fri 10/2) opens at 2026-10-02T00:00Z.
+UP = [{'date': '2026-10-08', 'close': 103}]
+AFTER = '2026-10-08T07:00:00Z'
+
+
+def test_view_tone_is_kept_in_the_appended_record_and_scored_by_the_last_view_before_the_open(tmp_path):
+    path = tmp_path/'history.sqlite'; history.initialize(path)
+    early = _toned(path, '2026-10-01T07:00:00Z', '2026-10-01', 'HEADWIND', UP, AFTER)
+    _toned(path, '2026-10-01T23:00:00Z', '2026-10-01', 'TAILWIND', UP, AFTER)       # 08:00 JST: shown at the open
+    _toned(path, '2026-10-02T03:00:00Z', '2026-10-01', 'MIXED', UP, AFTER)          # 12:00 JST: saw the morning
+    assert history.read_record(path, early['recordId'])['brief']['unifiedSummary']['tone'] == 'HEADWIND'
+    tones = history.track_record(path)['viewTones']
+    assert tones['selection'] == 'LAST_VIEW_BEFORE_NEXT_OPEN' and tones['horizonSessions'] == 5
+    assert tones['tones']['TAILWIND'] == {'scored': 1, 'up': 1, 'upShare': None, 'status': 'INSUFFICIENT_SAMPLE'}
+    assert tones['tones']['HEADWIND']['scored'] == tones['tones']['MIXED']['scored'] == 0
+    assert tones['minimumSessions'] == 20 and tones['predictiveProbabilities'] is None and tones['actionAuthority'] is False
+
+
+def test_view_tone_is_not_scored_before_its_fifth_close_is_received(tmp_path):
+    path = tmp_path/'history.sqlite'; history.initialize(path)
+    # The close exists in the rows, but it was "received" before the session closed: never used.
+    _toned(path, '2026-10-01T23:00:00Z', '2026-10-01', 'TAILWIND', UP, '2026-10-08T05:00:00Z')
+    tones = history.track_record(path)['viewTones']
+    assert tones['tones']['TAILWIND']['scored'] == 0 and tones['baseline']['scored'] == 0
+    assert tones['baseline']['firstTargetDate'] is None
+
+
+def test_view_tone_share_appears_only_from_the_minimum_with_the_same_period_base(tmp_path, monkeypatch):
+    path = tmp_path/'history.sqlite'; history.initialize(path)
+    # Three sessions: tail (up), tail (down), and one whose shown view had no tone (up).
+    _toned(path, '2026-10-01T23:00:00Z', '2026-10-01', 'TAILWIND', UP, AFTER)
+    _toned(path, '2026-10-02T23:00:00Z', '2026-10-02', None, [{'date': '2026-10-09', 'close': 101}], '2026-10-09T07:00:00Z')
+    _toned(path, '2026-10-05T23:00:00Z', '2026-10-05', 'TAILWIND', [{'date': '2026-10-13', 'close': 99}], '2026-10-13T07:00:00Z')
+    tones = history.view_tone_record(path)
+    assert tones['tones']['TAILWIND']['upShare'] is None and tones['tones']['TAILWIND']['scored'] == 2
+    monkeypatch.setattr(history, 'VIEW_TONE_MINIMUM', 2)
+    tones = history.view_tone_record(path)
+    assert tones['tones']['TAILWIND'] == {'scored': 2, 'up': 1, 'upShare': 0.5, 'status': 'AVAILABLE'}
+    base = tones['baseline']
+    assert (base['scored'], base['up'], base['upShare']) == (3, 2, 2 / 3), 'the untoned session in the period counts for the base'
+    assert (base['firstTargetDate'], base['lastTargetDate']) == ('2026-10-08', '2026-10-13')

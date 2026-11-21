@@ -78,9 +78,12 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
     {updateState ?? <p role="status">見立てなし</p>}<CreditConditionsDetails /><MarketAnalysisHistory key="saved-history" /></div>;
   const edition = editorial ? editorialEdition(brief) : null;
   const gateNote = gateNoteJa(responseBrief ?? brief);
+  // 2026-11-21 【統合AIにそろえる】: the view's tone only for the latest edition, checked
+  // without a request failure and with no rewrite failed since it was written.
+  const viewCurrent = !retained && !error && !failedSinceEdition(responseBrief);
   if (edition) return <ArgusEditorialSurface brief={edition} updateState={updateState} retained={edition !== brief}
     generationStatus={responseBrief?.generationWorker?.status} retainedNote={gateNote} criticalNews={criticalNews}
-    featuredEvent={featuredEvent} />;
+    toneCurrent={viewCurrent && edition === brief} featuredEvent={featuredEvent} />;
   const unified = brief.unifiedSummary;
   const hasSixSections = unified && ['view', 'reasons', 'changes', 'impact', 'next', 'invalidation'].every(key => {
     const row = unified.sections?.[key as keyof typeof unified.sections];
@@ -95,7 +98,7 @@ export const MarketBriefCard: React.FC<{ signals?: { activeCount: number; total:
     return <div className={`at-brief at-unified-brief${editorial ? ' at-brief--current' : ''}`} data-layout={editorial ? 'current-four-cards' : 'reference'} aria-label="ARGUSの今日の見立て" data-argus-contract="unified-brief-v1">
       <header className="at-brief__edition"><span>MARKET VIEW</span><time dateTime={brief.aiDiagnostics?.completedAt ?? brief.generatedAt}>
         {new Date(brief.aiDiagnostics?.completedAt ?? brief.generatedAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 更新</time>{updateState}</header>
-      {editorial ? <TodayDecisionStrip brief={brief} criticalNews={criticalNews} featuredEvent={featuredEvent} />
+      {editorial ? <TodayDecisionStrip brief={brief} criticalNews={criticalNews} toneCurrent={viewCurrent} featuredEvent={featuredEvent} />
         : <p className="at-unified-brief__view">{unified.sections.view.textJa}</p>}
       <div className="at-brief__rows">{(Object.keys(labels) as Array<keyof typeof labels>).filter(key => editorial ? ['reasons', 'changes', 'invalidation'].includes(key) : key !== 'view').map(key =>
         <div key={key} data-brief-section={key}><b>{labels[key]}</b><span>{editorial ? (key === 'changes' ? marketChanges(unified.sections[key].textJa) : marketWording(unified.sections[key].textJa)) : unified.sections[key].textJa}

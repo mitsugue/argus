@@ -48,6 +48,8 @@ export interface MarketBrief {
     ownerContextAvailable: boolean; historyStatus: 'PROCESS_MEMORY_ONLY' | 'LOCAL_DURABLE';
     sections: Record<'view' | 'reasons' | 'changes' | 'impact' | 'next' | 'invalidation',
       { textJa: string; evidenceIds: string[]; kind: 'FACT' | 'INFERENCE' | 'UNKNOWN' }>;
+    /** 2026-11-21: the direction of the view's own conclusion, from the same reply (absent when not given). */
+    tone?: string;
   } | null;
   unifiedContext?: { contextId: string; facts: Array<MarketBriefFact & { evidenceId: string }>;
     fiscalEnvironment?: unknown;
@@ -60,6 +62,8 @@ export interface MarketBrief {
   unifiedStatus?: string;
   generationWorker?: { status: string; lastAttemptAt?: string | null; lastCompletedAt?: string | null; lastFailedAt?: string | null; errorClass?: string | null };
   lastSuccessfulAiAt?: string | null;
+  /** Set when the server kept this edition for unchanged inputs or between update times; when it last checked. */
+  generationReuse?: { inputsCheckedAt?: string | null } | null;
   /** Why regeneration is gated (budget/mode), owner wording and resume time; no secrets. */
   generationGate?: { outcome?: string | null; reason?: string | null; reasonJa?: string | null;
     resumesAt?: string | null; monthlyBudgetUsd?: number | null; monthSpentUsd?: number | null;
