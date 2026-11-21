@@ -531,6 +531,293 @@ def calculation_facts(calculations):
     return facts
 
 
+# ── 2026-11-21 owner【足す】: five materials the view did not read ──────────
+# FUTURE MAP, the PER level map, the overnight Nikkei future, the breakdown of
+# the six signs and the view's own issued-forecast record. Each builder takes a
+# value ARGUS already holds; a missing or malformed value adds nothing. All are
+# P1 so bound_facts never lets them push out a P0, and each text stays within
+# the 160-character fact limit by leaving optional parts out (never by cutting
+# a number in half).
+FACT_TEXT_LIMIT = 160
+
+
+def _row_sha(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
+        separators=(",", ":"), default=str).encode()).hexdigest()
+
+
+def _finite_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def _join_within(head: str, parts: Sequence[str], tail: str = "") -> str:
+    """head + as many optional parts as fit (in order) + tail; "" when even the head is too long."""
+    if len(head) + len(tail) > FACT_TEXT_LIMIT:
+        return ""
+    text = head
+    for part in parts:
+        if len(text) + len(part) + len(tail) <= FACT_TEXT_LIMIT:
+            text += part
+    return text + tail
+
+
+# FUTURE MAP tags are the external table's words. 売り時 reads as a trading
+# instruction, so the view receives a neutral wording of the same mark.
+_FUTURE_MAP_TAG_JA = {"売り時": "高値警戒"}
+
+
+def future_map_facts(display: Optional[Mapping[str, Any]], *,
+                     scoring: Optional[Mapping[str, Any]] = None,
+                     read_at: Optional[str] = None) -> List[Dict[str, Any]]:
+    """The external FUTURE MAP table (argus_future_map.for_display output).
+
+    It is a list of external views, not ARGUS's judgment (argusValidated is
+    False); the fact says so. `scoring` is ARGUS's own touch scoring of the
+    first received rows (argus_future_map_scoring.summarize), shown only when
+    it was computed.
+    """
+    if not isinstance(display, Mapping) or display.get("externalViewsOnly") is not True:
+        return []
+    status = display.get("status") or {}
+    position = status.get("position")
+    if not isinstance(position, str) or not position.strip():
+        return []
+    updated = str(display.get("updatedAt") or "")
+    origin = {"eventId": "future-map", "sourceLabelJa": "FUTURE MAP（外部の見立て・ARGUS未検証）",
+              "sourceReceivedAt": read_at, "asOf": updated or None}
+    head = f"FUTURE MAP（外部の見立てでARGUSは未検証{'・' + updated[:10] + '更新' if updated[:10] else ''}）: 現在の位置「{position}」。"
+    parts = []
+    for key, label in (("nextAlert", "次の注意"), ("nextBottom", "次の底")):
+        row = status.get(key) or {}
+        if isinstance(row.get("date"), str) and isinstance(row.get("label"), str):
+            parts.append(f"{label} {row['date']}「{row['label']}」。")
+    facts = [_fact(_join_within(head, parts), "P1", "future_map", "UNCONFIRMED",
+                   {**origin, "sourceRowSha256": _row_sha(status)})]
+    now = next((row for row in display.get("rows") or []
+                if isinstance(row, Mapping) and row.get("isNow")), None)
+    if now and all(isinstance(now.get(k), str) for k in ("periodLabel", "start", "end", "view", "tag")):
+        tag = _FUTURE_MAP_TAG_JA.get(now["tag"], now["tag"])
+        head = f"FUTURE MAPの今の行（外部の見立て）: {now['periodLabel']}（{now['start']}〜{now['end']}）{now['view']}［{tag}］。"
+        parts = []
+        level = now.get("level") or {}
+        low, high = _finite_number(level.get("low")), _finite_number(level.get("high"))
+        if low and high:
+            parts.append(f"水準{low:,.0f}〜{high:,.0f}円。")
+        if isinstance(scoring, Mapping) and type(scoring.get("scored")) is int and type(scoring.get("reached")) is int \
+                and scoring["scored"] > 0:
+            note = "10件未満で判断できない" if scoring["scored"] < 10 else "有効性は未検証"
+            parts.append(f"ARGUSの答え合わせ: 採点{scoring['scored']}件中{scoring['reached']}件が到達（{note}）。")
+        facts.append(_fact(_join_within(head, parts), "P1", "future_map", "UNCONFIRMED",
+                           {**origin, "eventId": "future-map-now",
+                            "sourceRowSha256": _row_sha({"row": now, "scoring": scoring})}))
+    return [row for row in facts if row["text"]]
+
+
+def jst_day(value: Any) -> Optional[str]:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone(timedelta(hours=9))).date().isoformat()
+
+
+LEVEL_MAP_MAX_AGE_DAYS = 7   # an older morning map is not today's map
+# The next session's map is fixed right after the close (about 16:10 JST), so
+# in the evening and over a holiday the latest map is for a later morning.
+LEVEL_MAP_MAX_AHEAD_DAYS = 10
+
+
+def level_map_facts(morning: Optional[Mapping[str, Any]], *, now_iso: str) -> List[Dict[str, Any]]:
+    """The latest stored morning PER level map (jp_market_level_map.morning_map).
+
+    Lines come from ARGUS's estimated EPS, not the official value; the fact
+    says so. Only the nearest map line on each side is named. The map may be
+    for the next session's morning (built from the latest close); its date is
+    stated.
+    """
+    if not isinstance(morning, Mapping):
+        return []
+    day, today = morning.get("morningOf"), jst_day(now_iso)
+    close, eps, per = (_finite_number(morning.get(k)) for k in ("previousClose", "eps", "per"))
+    if not (isinstance(day, str) and today and close and eps and per and close > 0 and eps > 0):
+        return []
+    try:
+        age = (datetime.fromisoformat(today).date() - datetime.fromisoformat(day).date()).days
+    except ValueError:
+        return []
+    if not -LEVEL_MAP_MAX_AHEAD_DAYS <= age <= LEVEL_MAP_MAX_AGE_DAYS:
+        return []
+    lines = []
+    for side, label in (("UP", "上の線"), ("DOWN", "下の線")):
+        rows = [r for r in morning.get("rows") or [] if isinstance(r, Mapping) and r.get("side") == side
+                and _finite_number(r.get("price")) and _finite_number(r.get("distancePct")) is not None
+                and _finite_number(r.get("multiple"))]
+        if not rows:
+            continue
+        row = min(rows, key=lambda r: abs(r["distancePct"]))
+        multiple = float(row["multiple"])
+        shown = f"{multiple:.0f}" if multiple == int(multiple) else f"{multiple:.2f}"
+        lines.append(f"{label} PER{shown}倍＝{row['price']:,.0f}円（{row['distancePct']:+.1f}%）。")
+    if not lines:
+        return []
+    head = (f"PER水準の地図（{day}朝・ARGUS推計EPS{eps:,.2f}円で公式値ではない）: "
+            f"{morning.get('previousSession') or '前日'}終値{close:,.0f}円はPER{per:.2f}倍。")
+    origin = {"eventId": "level-map-" + day, "sourceLabelJa": "PER水準の地図（ARGUS推計EPS）",
+              "sourceReceivedAt": morning.get("createdAt"),
+              "asOf": morning.get("previousSession") if isinstance(morning.get("previousSession"), str) else None,
+              "sourceRowSha256": _row_sha({k: morning.get(k) for k in
+                  ("recordId", "morningOf", "previousClose", "eps", "per", "rows")})}
+    text = _join_within(head, lines)
+    return [_fact(text, "P1", "level_map_calculation", "UNCONFIRMED", origin)] if text and text != head else []
+
+
+OVERNIGHT_FUTURES_MAX_DAYS = 4   # the same window as Today's overnight row
+
+
+def overnight_futures_facts(futures: Optional[Mapping[str, Any]], *, close: Optional[float],
+                            close_day: Optional[str], close_at: Optional[str],
+                            tokyo_session_open: bool) -> List[Dict[str, Any]]:
+    """The CME Nikkei future read outside the Tokyo session, against the close it followed.
+
+    Mirrors Today's overnight row (web/src/lib/todayDecision.ts overnightGap):
+    nothing while Tokyo is open, nothing when the future traded before that
+    close or more than four days after it.
+    """
+    if tokyo_session_open or not isinstance(futures, Mapping) or futures.get("symbol") != "NKD=F":
+        return []
+    price, close = _finite_number(futures.get("price")), _finite_number(close)
+    if not (price and close and price > 0 and close > 0 and isinstance(close_day, str)):
+        return []
+    try:
+        traded = datetime.fromisoformat(str(futures.get("tradedAt")).replace("Z", "+00:00"))
+        closed = datetime.fromisoformat(str(close_at).replace("Z", "+00:00"))
+    except ValueError:
+        return []
+    if traded.tzinfo is None or closed.tzinfo is None:
+        return []
+    if traded <= closed or traded - closed > timedelta(days=OVERNIGHT_FUTURES_MAX_DAYS):
+        return []
+    gap = (price / close - 1) * 100
+    local = traded.astimezone(timezone(timedelta(hours=9)))
+    text = (f"日経先物（CME・遅延、{local.month}/{local.day} {local:%H:%M}時点）: {price:,.0f}。"
+            f"{close_day}の日経平均{close:,.0f}円との差{gap:+.2f}%（東京の取引時間外の値）。")
+    origin = {"eventId": "nikkei-cme-futures", "sourceLabelJa": "CME日経先物（Yahoo Finance・遅延）",
+              "sourceReceivedAt": futures.get("receivedAt"), "asOf": futures.get("tradedAt"),
+              "sourceRowSha256": _row_sha({"price": price, "tradedAt": futures.get("tradedAt"),
+                                           "close": close, "closeDay": close_day})}
+    return [_fact(text, "P1", "overnight_futures", "VERIFIED", origin)]
+
+
+# The page's six signs (web/src/domain/marketSignals.ts, warning path): the
+# closed seventh condition (D07) is left out, and a row counts as 点灯/消灯
+# only under the same gates the page applies.
+_SIGN_STATE_JA = {"ACTIVE": "点灯", "CLEAR": "消灯", "DATA_GATED": "判定不能", "STALE": "古い",
+                  "LICENSE_BLOCKED": "要ライセンス", "NOT_APPLICABLE": "該当なし", "UNAVAILABLE": "欠測"}
+_SIGN_FAMILIES = ("D01", "D02", "D03", "D04", "D05", "D06", "D07")
+_SIGN_SHOWN = ("D01", "D02", "D03", "D04", "D05", "D06")
+
+
+def _sign_instant(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not re.search(r"T.*(?:Z|[+-]\d{2}:\d{2})$", value):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def warning_sign_facts(projection: Optional[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Each of the six signs and its state, as the screen shows them."""
+    if not isinstance(projection, Mapping):
+        return []
+    warning = projection.get("warningSignals")
+    if not isinstance(warning, Mapping):
+        return []
+    adopted = warning.get("schemaVersion") == "jp-warning-conditions-v3"
+    cutoff = warning.get("informationCutoff")
+    limit = _sign_instant(cutoff)
+    rows = warning.get("signals")
+    if (limit is None or not (adopted or warning.get("schemaVersion") == "jp-warning-conditions-v2")
+            or warning.get("countPredictsCrash") is not False or warning.get("actionAuthority") is not False
+            or warning.get("rejectedEvidence") is not False or cutoff != projection.get("informationCutoff")
+            or not isinstance(rows, list) or len(rows) != 7):
+        return []
+    by_family = {}
+    for row in rows:
+        if isinstance(row, Mapping) and row.get("family") in _SIGN_FAMILIES:
+            by_family.setdefault(row["family"], []).append(row)
+    if any(len(by_family.get(f, [])) != 1 for f in _SIGN_FAMILIES):
+        return []
+    shown = []
+    for family in _SIGN_SHOWN:
+        row = by_family[family][0]
+        state = row.get("state") if row.get("state") in _SIGN_STATE_JA else "UNAVAILABLE"
+        if family in ("D03", "D04") and (not adopted or row.get("lineage") != "ARGUS_VALIDATION_RULE") \
+                and state in ("ACTIVE", "CLEAR"):
+            state = "DATA_GATED"
+        if row.get("ruleStatus") == "RULE_NOT_DEFINED" and state in ("ACTIVE", "CLEAR"):
+            state = "DATA_GATED"
+        if state in ("ACTIVE", "CLEAR"):
+            known = _sign_instant(row.get("knowledgeTime"))
+            if (row.get("status") != "AVAILABLE" or row.get("conditionMet") is not (state == "ACTIVE")
+                    or _finite_number(row.get("value")) is None or known is None or known > limit):
+                state = "DATA_GATED"
+        name = row.get("nameJa") if isinstance(row.get("nameJa"), str) and row["nameJa"] else family
+        shown.append((name[:20], state))
+    active = sum(state == "ACTIVE" for _, state in shown)
+    head = f"6サインの内訳（点灯{active}/6）: "
+    text = head + "、".join(f"{name}={_SIGN_STATE_JA[state]}" for name, state in shown) + "。"
+    if len(text) > FACT_TEXT_LIMIT:
+        return []
+    origin = {"eventId": "six-signs", "sourceLabelJa": "日本株分析エンジン・6サイン（警戒条件）",
+              "asOf": cutoff, "sourceRowSha256": _row_sha(shown)}
+    return [_fact(text, "P1", "market_view", "VERIFIED", origin)]
+
+
+def track_record_facts(record: Optional[Mapping[str, Any]], *,
+                       checked_at: Optional[str] = None) -> List[Dict[str, Any]]:
+    """The direction record of the Nikkei paths ARGUS actually issued.
+
+    Read from argus_analysis_history.track_record (the same tally as the
+    chart's 「実際に出した…見通しの成績」). Frequencies of past issued paths
+    against 「いつも多数派の方向」, never a statement about the next one.
+    """
+    if not isinstance(record, Mapping) or record.get("instrumentId") != "NIKKEI_225_INDEX":
+        return []
+    horizons = record.get("horizons") or {}
+    parts, last = [], []
+    for key in ("1", "5", "10", "20"):
+        row = horizons.get(key)
+        if not isinstance(row, Mapping):
+            continue
+        n, hits = row.get("directionalForecasts"), row.get("hits")
+        if type(n) is not int or type(hits) is not int or n <= 0:
+            continue
+        if isinstance(row.get("lastTargetDate"), str):
+            last.append(row["lastTargetDate"])
+        naive = _finite_number(row.get("naiveMajorityRate"))
+        if row.get("status") == "INSUFFICIENT_SAMPLE" or naive is None:
+            parts.append(f"{key}日後{n}件採点・{record.get('minimumDirectionalForecasts', 20)}件未満。")
+        else:
+            verdict = "上回る" if row.get("status") == "ABOVE_BASELINE" else "上回らず"
+            parts.append(f"{key}日後{n}件中{hits}件一致・多数派{naive * 100:.0f}%を{verdict}。")
+    if not parts:
+        return []
+    head = "ARGUS見通しの成績（日経平均・営業日後の方向一致を常に多数派と統計比較）: "
+    text = _join_within(head, parts)
+    if not text or text == head:
+        return []
+    origin = {"eventId": "forecast-track-record", "sourceLabelJa": "ARGUSの見立ての答え合わせ",
+              "sourceReceivedAt": checked_at, "asOf": max(last) if last else None,
+              "sourceRowSha256": _row_sha(horizons)}
+    return [_fact(text, "P1", "forecast_track_record", "UNCONFIRMED", origin)]
+
+
 _PAGE_INSTANT_KEYS = ("publishedAt", "receivedAt", "observedAt")
 _PAGE_EVENT_ID = re.compile(r"^[a-zA-Z0-9_.:-]{1,160}$")
 _PAGE_SHA256 = re.compile(r"^[a-f0-9]{64}$")

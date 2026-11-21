@@ -18942,6 +18942,64 @@ def _compose_market_brief():
         brief["facts"].extend(argus_macro_frequency.explanation_facts(cpi, vix_level))
     except Exception as exc:
         add_log(f"[brief] macro frequency facts unavailable: {type(exc).__name__}")
+    # 2026-11-21 owner【足す】: five materials the view did not read. Cached
+    # values only (no provider request, no AI call); each fails on its own and a
+    # missing value adds nothing.
+    today_jst = datetime.fromisoformat(brief["generatedAt"].replace("Z", "+00:00")).astimezone(TZ_JST).date().isoformat()
+    try:
+        # FUTURE MAP: the saved external table, marked for today as on its card.
+        _future_map_load_saved()
+        public = _FUTURE_MAP.get("public")
+        if public:
+            display = argus_future_map.for_display({k: v for k, v in public.items() if k != "remoteSha"}, today_jst)
+            scoring = _FUTURE_MAP_SCORING.get("record") if _FUTURE_MAP_SCORING.get("status") == "AVAILABLE" else None
+            brief["facts"].extend(argus_market_brief.future_map_facts(
+                display, scoring=scoring, read_at=_FUTURE_MAP.get("lastReadOkAt")))
+    except Exception as exc:
+        add_log(f"[brief] future map facts unavailable: {type(exc).__name__}")
+    try:
+        # PER level map: the latest stored morning map, also when it is for the
+        # next session (fixed from the latest close). Estimated EPS only: the
+        # owner's manual PER reference never enters the brief.
+        mornings = [m for m in _LEVEL_MAP.get("mornings") or []
+                    if jp_market_level_map.morning_input_usable(m) and isinstance(m.get("morningOf"), str)]
+        if mornings:
+            brief["facts"].extend(argus_market_brief.level_map_facts(
+                max(mornings, key=lambda m: m["morningOf"]), now_iso=brief["generatedAt"]))
+    except Exception as exc:
+        add_log(f"[brief] level map facts unavailable: {type(exc).__name__}")
+    try:
+        # Overnight Nikkei future against the close it followed (Today's row).
+        live = argus_index_live.current_quote_safe() or {}
+        quote = live.get("quote") if isinstance(live.get("quote"), dict) else None
+        bars = _level_map_completed_bars(_nikkei_chart_rows(), brief["generatedAt"])
+        close = close_day = close_at = None
+        if bars:
+            close, close_day = bars[-1]["close"], bars[-1]["date"]
+            close_at = close_day + "T06:30:00Z"      # 15:30 JST
+        if quote and not quote.get("sessionOpen") and quote.get("price") and quote.get("tradedAt"):
+            quote_day = argus_market_brief.jst_day(quote["tradedAt"])
+            if quote_day and (close_day is None or quote_day > close_day):
+                close, close_day, close_at = quote["price"], quote_day, quote["tradedAt"]
+        brief["facts"].extend(argus_market_brief.overnight_futures_facts(
+            live.get("overnightFutures"), close=close, close_day=close_day, close_at=close_at,
+            tokyo_session_open=bool(quote and quote.get("sessionOpen"))))
+    except Exception as exc:
+        add_log(f"[brief] overnight futures facts unavailable: {type(exc).__name__}")
+    try:
+        # Six signs, each with its state (the count alone is in the market view fact).
+        brief["facts"].extend(argus_market_brief.warning_sign_facts(
+            (_jp_market_engine_market_view() or {}).get("projection")))
+    except Exception as exc:
+        add_log(f"[brief] six sign facts unavailable: {type(exc).__name__}")
+    try:
+        # The view's own record: the issued Nikkei paths scored against later closes.
+        record, checked_at = _market_brief_track_record_cached()
+        brief["facts"].extend(argus_market_brief.track_record_facts(record, checked_at=checked_at))
+    except FileNotFoundError:
+        pass   # no history file yet: no record exists, so nothing is said
+    except Exception as exc:
+        add_log(f"[brief] track record facts unavailable: {type(exc).__name__}")
     return brief
 
 
@@ -19766,21 +19824,34 @@ _MARKET_BRIEF_TRACK_RECORD = {"value": None, "at": 0.0}
 _MARKET_BRIEF_TRACK_RECORD_TTL_SEC = 600
 
 
-def _market_brief_track_record_response():
-    """Tally of the issued Nikkei paths (read-only, cached; no provider or AI call)."""
+def _market_brief_track_record_cached():
+    """(track record, when it was tallied) from the shared ten-minute cache.
+
+    2026-11-21: the view reads the same tally as the route (owner【足す】).
+    (None, None) when no history file is configured; read errors pass up.
+    """
     path = _market_brief_history_path()
     if not path:
-        return jsonify({"status": "UNAVAILABLE", "reason": "history_storage_not_configured"}), 503
+        return None, None
     cached = _MARKET_BRIEF_TRACK_RECORD
     if cached["value"] is None or time.time() - cached["at"] > _MARKET_BRIEF_TRACK_RECORD_TTL_SEC:
-        try:
-            cached["value"] = argus_analysis_history.track_record(path)
-            cached["at"] = time.time()
-        except FileNotFoundError:
-            return jsonify({"status": "UNAVAILABLE", "reason": "history_not_recorded"}), 503
-        except Exception as exc:
-            return jsonify({"status": "UNAVAILABLE", "reason": type(exc).__name__}), 503
-    return jsonify({"status": "AVAILABLE", "trackRecord": cached["value"], "scope": "PUBLIC_MARKET",
+        cached["value"] = argus_analysis_history.track_record(path)
+        cached["at"] = time.time()
+        cached["tallied"] = _ai_now_iso()
+    return cached["value"], cached.get("tallied")
+
+
+def _market_brief_track_record_response():
+    """Tally of the issued Nikkei paths (read-only, cached; no provider or AI call)."""
+    try:
+        value, _ = _market_brief_track_record_cached()
+    except FileNotFoundError:
+        return jsonify({"status": "UNAVAILABLE", "reason": "history_not_recorded"}), 503
+    except Exception as exc:
+        return jsonify({"status": "UNAVAILABLE", "reason": type(exc).__name__}), 503
+    if value is None:
+        return jsonify({"status": "UNAVAILABLE", "reason": "history_storage_not_configured"}), 503
+    return jsonify({"status": "AVAILABLE", "trackRecord": value, "scope": "PUBLIC_MARKET",
                     "readOnly": True, "actionAuthority": False})
 
 

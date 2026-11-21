@@ -40,6 +40,9 @@ _ALLOWED_SCANNER_SCOPES = {
     "_market_brief_worker_tick", "_market_brief_history_restore", "_market_brief_history_save", "_market_brief_history_outcomes", "_market_brief_history_sync",
     "_market_brief_history_head_load", "_market_brief_history_head_save", "_market_brief_history_head_path",
     "_market_brief_track_record_response",
+    # 2026-11-21 (owner【足す】): the route's ten-minute track-record cache, shared
+    # with the view's composer; reads the history file's tally only.
+    "_market_brief_track_record_cached",
     "_owner_dialogue_market_reference",
     # 2026-10-17: counts and tokens of the saved views for the owner-only cost
     # report; reads the history file path only, never the brief's content.
