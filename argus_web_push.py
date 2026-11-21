@@ -97,6 +97,30 @@ def security_proposals(alerts, now):
     return out
 
 
+# 2026-11-21 (owner, 起こし直す・見張りも足す): from 11/14 to 11/20 the bridge's
+# heartbeat kept arriving while no US price did, and nobody noticed for six
+# days. When that state lasts 30 minutes into the regular session, every
+# enabled device is told once a day (the key holds the Japanese date).
+US_PRICE_STALL_SECONDS = 1800
+
+
+def us_price_stall_proposals(note, now):
+    """One notice a day while the bridge is alive but sends no US price."""
+    if not isinstance(note, dict):
+        return []
+    at = note.get('at')
+    if isinstance(at, bool) or not isinstance(at, (int, float)) or not 0 <= now - at < SECURITY_INTERVAL_SECONDS:
+        return []
+    local = datetime.fromtimestamp(at, _JST)
+    when = f'{local.month}/{local.day} {local:%H:%M}'
+    return [{'key': f'bridge-us-prices:{local:%Y-%m-%d}', 'kind': 'security',
+             'title': 'ARGUS 警報｜米国株の値段が届いていません',
+             'body': (f'{when}(日本時間)の時点で、橋の心拍は届いていますが、米国株の値段が'
+                      '30分以上届いていません。OpenD のログインと橋の様子を確かめてください。'
+                      '1日に1回まで知らせます。'),
+             'hash': '#settings', 'due': at, 'expires': at + SECURITY_INTERVAL_SECONDS}]
+
+
 def _per_kind(events, limit=20):
     """Up to `limit` events of each kind, so a burst of news never pushes a stock move out (2026-10-23)."""
     seen = {}

@@ -19615,6 +19615,36 @@ _WEB_PUSH = argus_web_push.PushService(
     config=lambda: argus_web_push.configuration(os.environ), now=time.time)
 
 
+def _us_regular_open_epoch(now):
+    """The epoch of today's US regular open (None when it cannot be told)."""
+    try:
+        moment = datetime.fromtimestamp(now, pytz.utc)
+        state = argus_market_clock.market_session(argus_market_clock.US_EQUITY, moment)
+        day = datetime.strptime(str(state.get("marketDate")), "%Y-%m-%d").date()
+        opened = argus_market_clock.market_session_bounds(argus_market_clock.US_EQUITY, day)["regularOpenUtc"]
+        return datetime.fromisoformat(str(opened).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def _us_price_stall_note(now=None):
+    """2026-11-21: the bridge is alive (heartbeat within 3 minutes) during the
+    regular session, the session opened 30 minutes ago or more, and no US
+    price has been received in the last 30 minutes. None otherwise."""
+    now = time.time() if now is None else now
+    if not _BRIDGE_HB.get("data") or now - float(_BRIDGE_HB.get("receivedAt") or 0) > 180:
+        return None
+    if not _us_market_open():
+        return None
+    opened = _us_regular_open_epoch(now)
+    if opened is None or now - opened < argus_web_push.US_PRICE_STALL_SECONDS:
+        return None
+    ages = [now - rec["ts"] for rec in (_PUSHED_QUOTES.get("US") or {}).values() if rec.get("ts")]
+    if ages and min(ages) <= argus_web_push.US_PRICE_STALL_SECONDS:
+        return None
+    return {"at": now, "lastPriceAgeSeconds": int(min(ages)) if ages else None}
+
+
 def _web_push_tick():
     try:
         if not argus_web_push.configuration(os.environ)['configured']: return
@@ -19659,6 +19689,7 @@ def _web_push_tick():
         with _SECURITY_PUSH_LOCK:
             alerts = [dict(row) for row in _SECURITY_PUSH.values()]
         proposals.extend(argus_web_push.security_proposals(alerts, time.time()))
+        proposals.extend(argus_web_push.us_price_stall_proposals(_us_price_stall_note(), time.time()))
         _WEB_PUSH.tick(proposals)
     except Exception as exc:
         add_log(f"web-push tick unavailable: {type(exc).__name__}")
