@@ -16,7 +16,7 @@ on:
         required: true
         default: gpt-6.1-terra
         type: choice
-        options: [gpt-6.1-terra]
+        options: [gpt-6.1-terra, gpt-6.2-sol, gpt-6-luna]
       editions:
         description: Saved editions to write again (1-6)
         required: true

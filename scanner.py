@@ -13560,7 +13560,10 @@ _ROUTINE_OPENAI_MODELS = frozenset(("gpt-5.6-terra", "gpt-5.6-luna"))
 _LUNA_REVIEW_APPROVED = os.environ.get("ARGUS_LUNA_REVIEW_APPROVED", "0") == "1"
 # 2026-11-11 (owner 「見比べを作る」): a model that only the confirmed, owner-
 # started comparison may call. It never writes an edition or becomes routine.
-_COMPARISON_OPENAI_MODELS = frozenset(("gpt-6.1-terra",))
+# 2026-11-21 (owner 【用途で分ける】): the newer gpt-6.2-sol (judgment-heavy
+# work) and gpt-6-luna (high-volume reading) are compared the same way before
+# any switch. They stay comparison-only until the owner decides.
+_COMPARISON_OPENAI_MODELS = frozenset(("gpt-6.1-terra", "gpt-6.2-sol", "gpt-6-luna"))
 
 
 def _routine_openai_model(value, fallback="gpt-5.6-terra", *, allow_luna=False):
@@ -13734,6 +13737,10 @@ _AI_PRICING = {
     # 2026-11-11: the next generation of the same class, official pricing page
     # (Standard). Used only by the owner's one-shot model comparison.
     "gpt-6.1-terra": {"in": 1.0, "out": 5.0, "cachedIn": 0.05},
+    # 2026-11-21: official pricing page (Standard; no Flex on new models).
+    # Comparison-only until the owner decides (【用途で分ける】).
+    "gpt-6.2-sol": {"in": 2.0, "out": 10.0, "cachedIn": 0.10},
+    "gpt-6-luna": {"in": 0.10, "out": 0.50, "cachedIn": 0.01},
     # v13.5.63: GPT-6 Astra list price (official pricing page, read 2026-09-07).
     "gpt-6-astra": {"in": 10.0, "out": 50.0, "cachedIn": 1.00},
     "gemini-3.1-pro-preview": {"in": 2.0, "out": 12.0},
