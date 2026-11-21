@@ -13556,14 +13556,32 @@ _OPENAI_API_KEY        = os.environ.get("OPENAI_API_KEY", "")
 # A legacy Astra/Sol environment value is ignored rather than becoming an
 # automatic escalation path.  A failed Terra call remains a visible failure;
 # it does not retry on a higher priced model.
-_ROUTINE_OPENAI_MODELS = frozenset(("gpt-5.6-terra", "gpt-5.6-luna"))
+_ROUTINE_OPENAI_MODELS = frozenset(("gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.2-sol"))
 _LUNA_REVIEW_APPROVED = os.environ.get("ARGUS_LUNA_REVIEW_APPROVED", "0") == "1"
 # 2026-11-11 (owner 「見比べを作る」): a model that only the confirmed, owner-
 # started comparison may call. It never writes an edition or becomes routine.
 # 2026-11-21 (owner 【用途で分ける】): the newer gpt-6.2-sol (judgment-heavy
 # work) and gpt-6-luna (high-volume reading) are compared the same way before
-# any switch. They stay comparison-only until the owner decides.
+# any switch.
 _COMPARISON_OPENAI_MODELS = frozenset(("gpt-6.1-terra", "gpt-6.2-sol", "gpt-6-luna"))
+# 2026-11-21 (owner 【切り替える】, after the comparison run 44891173112:
+# checks 5/5, screen plans 5/5): the three judgment-heavy lanes name
+# gpt-6.2-sol explicitly. It is routine ONLY for these purposes; every other
+# lane stays on Terra, no environment role can select it, and a failed Terra
+# call is never repeated on it (the no-escalation rule above still holds).
+_OPENAI_JUDGMENT_MODEL = "gpt-6.2-sol"
+_OPENAI_JUDGMENT_PURPOSES = frozenset(("market_brief", "market_position_check", "ai_judgment"))
+
+
+def _openai_model_allowed(model, purpose):
+    """Whether a routine (non-comparison) request may use `model` for `purpose`."""
+    if model not in _ROUTINE_OPENAI_MODELS:
+        return False
+    if model == "gpt-5.6-luna":
+        return _LUNA_REVIEW_APPROVED
+    if model == _OPENAI_JUDGMENT_MODEL:
+        return purpose in _OPENAI_JUDGMENT_PURPOSES
+    return True
 
 
 def _routine_openai_model(value, fallback="gpt-5.6-terra", *, allow_luna=False):
@@ -13738,7 +13756,7 @@ _AI_PRICING = {
     # (Standard). Used only by the owner's one-shot model comparison.
     "gpt-6.1-terra": {"in": 1.0, "out": 5.0, "cachedIn": 0.05},
     # 2026-11-21: official pricing page (Standard; no Flex on new models).
-    # Comparison-only until the owner decides (【用途で分ける】).
+    # gpt-6.2-sol: the three judgment lanes (owner 【切り替える】).
     "gpt-6.2-sol": {"in": 2.0, "out": 10.0, "cachedIn": 0.10},
     "gpt-6-luna": {"in": 0.10, "out": 0.50, "cachedIn": 0.01},
     # v13.5.63: GPT-6 Astra list price (official pricing page, read 2026-09-07).
@@ -13857,8 +13875,8 @@ def _ai_record_cost(run_id, oai_status, gem_status, grounding_enabled):
     rows, total = [], 0.0
     oai_u = _AI_LAST_RUN.get("oaiUsage")
     if oai_u:
-        c = argus_ai_cost.estimate_cost(_OPENAI_MODEL, oai_u[0], oai_u[1], _AI_PRICING)
-        rows.append({"provider": "openai", "model": _AI_LAST_RUN.get("oaiModel") or _OPENAI_MODEL, "fallbackUsed": False,
+        c = argus_ai_cost.estimate_cost(_OPENAI_JUDGMENT_MODEL, oai_u[0], oai_u[1], _AI_PRICING)
+        rows.append({"provider": "openai", "model": _AI_LAST_RUN.get("oaiModel") or _OPENAI_JUDGMENT_MODEL, "fallbackUsed": False,
                      "inputTokens": oai_u[0], "outputTokens": oai_u[1], "grounding": False, "estUsd": c})
         total += c
     gem_u = _AI_LAST_RUN.get("gemUsage")
@@ -14411,7 +14429,7 @@ def _openai_judge(snapshot):
     _AI_LAST_RUN["oaiUsage"] = None
     _AI_LAST_RUN["oaiModel"] = None
     _AI_LAST_RUN["oaiPolicyRecorded"] = False
-    _AI_LAST_RUN["oaiDiagnostic"] = {"requestedModel": _OPENAI_MODEL, "returnedModel": None}
+    _AI_LAST_RUN["oaiDiagnostic"] = {"requestedModel": _OPENAI_JUDGMENT_MODEL, "returnedModel": None}
     try:
         argus_product_naming.require_allowed(snapshot)
     except argus_product_naming.NamingPolicyError:
@@ -14429,7 +14447,7 @@ def _openai_judge(snapshot):
     input_bound = max(1200, (len(user) + len(_OPENAI_SYSTEM) + 2) // 3)
     output_bound = 4800
     reserved_cost = argus_ai_cost.estimate_cost(
-        _OPENAI_MODEL, input_bound, output_bound, _AI_PRICING)
+        _OPENAI_JUDGMENT_MODEL, input_bound, output_bound, _AI_PRICING)
     if reserved_cost is None:
         return None, "price_unknown"
     decision, reservation = _cost_policy_reserve(
@@ -14447,20 +14465,20 @@ def _openai_judge(snapshot):
         # Responses is the only routine endpoint.  Falling back to a second
         # request made daily cost indeterminate and could silently alter output.
         request_started = True
-        resp = argus_openai_tier.create(_OPENAI_TIER, purpose='ai_judgment', model=_OPENAI_MODEL,
-            kwargs={"model": _OPENAI_MODEL, "instructions": _OPENAI_SYSTEM, "input": user,
+        resp = argus_openai_tier.create(_OPENAI_TIER, purpose='ai_judgment', model=_OPENAI_JUDGMENT_MODEL,
+            kwargs={"model": _OPENAI_JUDGMENT_MODEL, "instructions": _OPENAI_SYSTEM, "input": user,
                     "max_output_tokens": output_bound, "timeout": 60, "store": False},
-            call=lambda kw, tier: _ai_usage_provider_call('openai', 'ai_judgment', _OPENAI_MODEL,
+            call=lambda kw, tier: _ai_usage_provider_call('openai', 'ai_judgment', _OPENAI_JUDGMENT_MODEL,
                 lambda: (client if tier == 'standard' else client.with_options(max_retries=0)).responses.create(**kw),
                 attempt=1, source_ref='_openai_judge' if tier == 'standard' else '_openai_judge:flex'))
         text = getattr(resp, "output_text", None)
         _AI_LAST_RUN["oaiUsage"] = _usage_tokens(resp)
         _AI_LAST_RUN["oaiModel"] = str(getattr(resp, "model", None) or "")[:60] or None
-        _AI_LAST_RUN["oaiDiagnostic"] = {"requestedModel": _OPENAI_MODEL,
+        _AI_LAST_RUN["oaiDiagnostic"] = {"requestedModel": _OPENAI_JUDGMENT_MODEL,
             "returnedModel": _AI_LAST_RUN["oaiModel"], "completedAt": _ai_now_iso(),
             "inputTokens": _AI_LAST_RUN["oaiUsage"][0], "outputTokens": _AI_LAST_RUN["oaiUsage"][1]}
         actual_cost = argus_ai_cost.estimate_cost(
-            _OPENAI_MODEL, _AI_LAST_RUN["oaiUsage"][0], _AI_LAST_RUN["oaiUsage"][1], _AI_PRICING)
+            _OPENAI_JUDGMENT_MODEL, _AI_LAST_RUN["oaiUsage"][0], _AI_LAST_RUN["oaiUsage"][1], _AI_PRICING)
         _cost_policy_settle(reservation, ok=True,
                             actual_cost_usd=(actual_cost if actual_cost is not None
                                              and any(_AI_LAST_RUN["oaiUsage"])
@@ -14790,7 +14808,7 @@ def _ai_judgment_truth(*, allow_restore=True):
 def _ai_disabled_payload(status="disabled", reason="AI judgment is not enabled yet."):
     return {"status": status, "reason": reason,
             "asOf": _ai_now_iso(), "engineVersion": "ai-judge-v1", "runMode": "cached",
-            "models": {"primary": _OPENAI_MODEL, "checker": _GEMINI_FALLBACK_MODEL},
+            "models": {"primary": _OPENAI_JUDGMENT_MODEL, "checker": _GEMINI_FALLBACK_MODEL},
             "summaryJa": "", "marketRiskJa": "", "labels": [],
             "globalRedFlags": [], "groundingSources": []}
 
@@ -14871,7 +14889,7 @@ def _execute_ai_judgment(run_mode="manual", checker=None):
     if status != "mock":
         # Persist the final model/usage fields, not the earlier partial payload.
         _ai_persist_latest(payload)
-    add_log(f"[AI] run mode={run_mode} models={_OPENAI_MODEL}/{_AI_LAST_RUN.get('gemModel') or _GEMINI_FALLBACK_MODEL} "
+    add_log(f"[AI] run mode={run_mode} models={_OPENAI_JUDGMENT_MODEL}/{_AI_LAST_RUN.get('gemModel') or _GEMINI_FALLBACK_MODEL} "
             f"symbols={len(labels)} oai={oai_status} gem={gem_status} grounding={grounding_enabled} status={status}")
     return payload
 
@@ -14903,6 +14921,17 @@ _CAOS_EVENT_SYSTEM = (
 )
 
 
+# The reviewed explicit-cache request shape (13.8.121) was measured on Terra.
+# 2026-11-21: gpt-6.2-sol is sent the plain request its comparison passed
+# with (no cache options) until that shape is checked on it as well.
+_BRIEF_EXPLICIT_CACHE_MODELS = frozenset(("gpt-5.6-terra", "gpt-5.6-luna"))
+
+
+def _brief_cache_prefix(model, user):
+    """The explicit cache boundary for a brief request, or None (no cache options)."""
+    return len(user) if model in _BRIEF_EXPLICIT_CACHE_MODELS else None
+
+
 def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose", cache_prefix_chars=None):
     """Perform exactly one Responses API request and return its text.
 
@@ -14920,7 +14949,7 @@ def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose", cach
         # Only this reviewed lane/model pair uses explicit caching. Keep both
         # blocks in the same user message and preserve every source byte.
         # Changing facts/catalog/correction text stays outside the write.
-        if (purpose != "market_brief" or model not in {"gpt-5.6-terra", "gpt-5.6-luna"}
+        if (purpose != "market_brief" or model not in _BRIEF_EXPLICIT_CACHE_MODELS
                 or type(cache_prefix_chars) is not int or not isinstance(user, str)
                 or not 0 < cache_prefix_chars <= len(user)):
             raise ValueError("brief_cache_boundary_invalid")
@@ -15018,8 +15047,7 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
     mdl = model or _OPENAI_MODEL
     comparison = (confirmed is True and purpose == "manual_api"
                   and mdl in _COMPARISON_OPENAI_MODELS and cache_prefix_chars is None)
-    if ((mdl not in _ROUTINE_OPENAI_MODELS and not comparison)
-            or (mdl == "gpt-5.6-luna" and not _LUNA_REVIEW_APPROVED)):
+    if not comparison and not _openai_model_allowed(mdl, purpose):
         # Never turn an unavailable cheap/standard model into a premium retry.
         publish(outcome="skipped", reason="production_model_not_allowed")
         return None
@@ -16607,7 +16635,7 @@ def api_argus_ai_judgment():
         return jsonify({**cached, "runMode": run_mode,
                         "freshness": freshness, "ageMin": age_min,
                         "cacheExpiresInMin": expires_in,
-                        "models": cached.get("models") or {"primary": _OPENAI_MODEL,
+                        "models": cached.get("models") or {"primary": _OPENAI_JUDGMENT_MODEL,
                                                             "checker": _GEMINI_FALLBACK_MODEL},
                         "nextScheduledRun": _next_weekday_run_iso(16, 5),
                         "nextScheduledRunJa": "平日16:05 JST(予測台帳cron)",
@@ -17233,7 +17261,7 @@ def api_argus_ai_provider_status():
         "aiJudgeEnabled": _AI_JUDGE_ENABLED,
         "openai": {
             "apiKeyConfigured": bool(_OPENAI_API_KEY),
-            "model": _OPENAI_MODEL,
+            "model": _OPENAI_JUDGMENT_MODEL,
             "lastRunStatus": _AI_LAST_RUN.get("oai"),
             "lastErrorType": None,
         },
@@ -18801,7 +18829,8 @@ def _market_position_check_run():
     prompt = argus_market_position_check.build_prompt(questions, now=now)
     text, execution = _openai_research_ex(prompt, role="standard",
                                           purpose="market_position_check",
-                                          max_output=_MARKET_POSITION_CHECK_MAX_OUTPUT)
+                                          max_output=_MARKET_POSITION_CHECK_MAX_OUTPUT,
+                                          model=_OPENAI_JUDGMENT_MODEL)
     state["runs"] = int(state.get("runs") or 0) + 1
     if not text:
         state.update(status=str((execution or {}).get("status") or "FAILED").upper(),
@@ -19183,7 +19212,7 @@ def _market_brief_model_comparison_worker(job_id, model, editions):
             record = argus_analysis_history.read_record(path, row["recordId"])
             brief = (record or {}).get("brief") or {}
             if (brief.get("presentationStatus") != "GENERATED"
-                    or (brief.get("aiDiagnostics") or {}).get("requestedModel") != _OPENAI_MODEL):
+                    or (brief.get("aiDiagnostics") or {}).get("requestedModel") != _OPENAI_JUDGMENT_MODEL):
                 continue
             results.append(_market_brief_model_comparison_one(record, model))
             with _MODEL_COMPARISON_LOCK:
@@ -19216,9 +19245,13 @@ def _market_brief_ai_polish(brief):
     # instructions was written and never read. The bounded correction resends
     # this whole request seconds later (most editions need it), so the cache
     # boundary is the end of the request: the correction reads it at 0.1x.
+    # 2026-11-21 (owner 【切り替える】): the brief names the judgment model.
+    brief_model = _OPENAI_JUDGMENT_MODEL
+    cache_prefix = _brief_cache_prefix(brief_model, user)
     raw = _openai_prose(user, max_out=5200,
                        system=argus_presentation_intent.VOICE,
-                       purpose="market_brief", diagnostic=diag, cache_prefix_chars=len(user))
+                       purpose="market_brief", model=brief_model, diagnostic=diag,
+                       cache_prefix_chars=cache_prefix)
     validation = {}
     event_renderer = argus_market_brief.render_event_references
     def render_reply(value, diagnostic):
@@ -19293,7 +19326,8 @@ def _market_brief_ai_polish(brief):
         diag = {}
         raw = _openai_prose(correction, max_out=5200,
             system=argus_presentation_intent.VOICE,
-            purpose="market_brief", diagnostic=diag, cache_prefix_chars=len(user))
+            purpose="market_brief", model=brief_model, diagnostic=diag,
+            cache_prefix_chars=cache_prefix)
         validation = {}
         raw = render_reply(raw, validation)
         unified = argus_market_brief.validate_unified_ai(
@@ -19363,10 +19397,14 @@ def _market_brief_ai_polish(brief):
         "schema": "argus-brief-call-reduction-v1", "eventRendering": "CITED_CURRENT_CALENDAR",
         "attemptCount": len(attempts), "correctionCalls": len(attempts) - 1,
         "acceptanceGatesChanged": False}
-    brief["aiDiagnostics"]["promptCachePolicy"] = {
+    brief["aiDiagnostics"]["promptCachePolicy"] = ({
         "schema": "argus-brief-prompt-cache-v2", "mode": "EXPLICIT_FULL_REQUEST_FOR_CORRECTION",
         "stablePrefixCharacters": len(user), "dynamicSuffixCached": True,
         "prewarmCalls": 0, "sourceTextChanged": False, "invoiceSavingsVerified": False}
+        if cache_prefix is not None else {
+        "schema": "argus-brief-prompt-cache-v2", "mode": "NONE_MODEL_NOT_REVIEWED",
+        "stablePrefixCharacters": 0, "dynamicSuffixCached": False,
+        "prewarmCalls": 0, "sourceTextChanged": False, "invoiceSavingsVerified": False})
     brief["aiDiagnostics"]["promptFactReuse"] = {
         "schema": "argus-prompt-fact-reuse-v1", "requestOnly": True,
         "previousFactsReused": reused_previous_facts,
@@ -19416,7 +19454,10 @@ def _market_brief_generation_input_digest(brief, internals):
         "brief": brief_inputs,
         "index": index, "marketFeatures": copy.deepcopy(_JP_MARKET_FEATURE_HISTORY),
         "internals": internal_inputs,
+        # The brief's own model (owner 【切り替える】); the individual-stock
+        # explanation policy it extends stays on its own model.
         "generationPolicy": {**_owner_overview_generation_policy(),
+            "model": _OPENAI_JUDGMENT_MODEL,
             "purpose": "market_brief", "maxOutputRequest": 5200},
         "digestSchemaVersion": "market-brief-generation-input-v3",
     }
@@ -23605,14 +23646,17 @@ def _openai_model_for(role):
     return _routine_openai_model(_OPENAI_MODEL_ROLES.get(role) or _OPENAI_MODEL)
 
 
-def _openai_research_ex(user, role="standard", benchmark=False, purpose=None, max_output=None):
+def _openai_research_ex(user, role="standard", benchmark=False, purpose=None, max_output=None,
+                        model=None):
     """v12.2.0 中央実行: GPT LIVE web調査。(text, AiExecutionResult)を返す。
     - store=False固定・usageは同一応答から取得
     - 価格不明モデルはfail-closed(呼ばない)
     - no-toolフォールバックは status=model_only(検証済み調査に偽装不可)"""
     started = _ai_now_iso()
+    # A caller may name its model (2026-11-21: the position check names the
+    # judgment model); the purpose check below decides whether it may run.
     model = (_OPENAI_BENCHMARK_MODEL if benchmark and role == "standard"
-             else _openai_model_for(role))
+             else (model or _openai_model_for(role)))
     try:
         argus_product_naming.require_allowed(user)
     except argus_product_naming.NamingPolicyError as exc:
@@ -23623,8 +23667,7 @@ def _openai_research_ex(user, role="standard", benchmark=False, purpose=None, ma
     # 2026-10-24 (N-19): a scheduled caller may name its own purpose so its
     # cost is counted on its own line of the usage report.
     purpose = "research_benchmark" if benchmark else (purpose or "osint_research")
-    if not benchmark and (model not in _ROUTINE_OPENAI_MODELS
-                          or (model == "gpt-5.6-luna" and not _LUNA_REVIEW_APPROVED)):
+    if not benchmark and not _openai_model_allowed(model, purpose):
         return None, argus_ai_gate.ai_execution_result(
             provider="openai", model=model, role=role, mode="research",
             status="unavailable", started_at=started, completed_at=started,
@@ -38637,7 +38680,7 @@ def api_argus_admin_model_comparison():
         job_id = "cmp-" + hashlib.sha256(f"{model}|{editions}|{time.time_ns()}".encode()).hexdigest()[:12]
         _MODEL_COMPARISON.clear()
         _MODEL_COMPARISON.update(status="RUNNING", jobId=job_id, model=model, editions=editions,
-                                 baselineModel=_OPENAI_MODEL, startedAt=_ai_now_iso(), results=[])
+                                 baselineModel=_OPENAI_JUDGMENT_MODEL, startedAt=_ai_now_iso(), results=[])
     threading.Thread(target=_memory_operation_run,
                      args=("background", "model_comparison_worker",
                            _market_brief_model_comparison_worker, job_id, model, editions),
@@ -50229,7 +50272,7 @@ def _source_registry(*, allow_provider_fetch=True):
         S("VWAP", "—", "JP/US", "unavailable", "入力未接続", "—", "—", "VWAP入力は未接続。"),
         S("FX / 先物 / 商品", "—", "GLOBAL", "unavailable", "プロバイダ未確認", "—", "—",
           "確認済みプロバイダが無いためliveにしない(枠だけ確保)。"),
-        S(f"AI判定({_OPENAI_MODEL})", "OpenAI", "—", {"live": "confirmed_live", "partial": "partial"}.get(rt("openai"), "missing"),
+        S(f"AI判定({_OPENAI_JUDGMENT_MODEL})", "OpenAI", "—", {"live": "confirmed_live", "partial": "partial"}.get(rt("openai"), "missing"),
           "管理者実行のみ", "paid", "ok", "ルール判定の第二意見。"),
         S("AIチェック(Gemini)", "Gemini", "—", {"live": "confirmed_live", "partial": "partial"}.get(rt("gemini"), "missing"),
           "管理者実行のみ", "paid/free", "ok", "OpenAI判断の二重チェック。"),
@@ -52369,7 +52412,7 @@ def _ledger_health():
         "lastUpdated": (ai_asof[:10] if isinstance(ai_asof, str) else None),
         "lastSuccessAt": ai_asof, "ageMin": ai_age,
         "truthStatus": ai_truth.get("status"),
-        "models": {"primary": _OPENAI_MODEL, "checker": _GEMINI_FALLBACK_MODEL},
+        "models": {"primary": _OPENAI_JUDGMENT_MODEL, "checker": _GEMINI_FALLBACK_MODEL},
         "sampleCount": None, "tradingDays": None, "hitRate": None,
         "nextRunJa": "平日16:05 JST(トークン設定時)", "trigger": "予測台帳cron",
         "noteJa": "ルールベースが主、AIは時刻付き第二意見。失効してもルール判定は不変。"})

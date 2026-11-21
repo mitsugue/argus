@@ -16,6 +16,11 @@ import threading
 
 FLEX_PURPOSES = frozenset({"market_brief", "news_intel", "ai_judgment",
                            "event_analysis", "market_position_check"})
+# 2026-11-21 (owner 【切り替える】): models the provider offers without Flex.
+# The official pricing page (read 2026-11-21) says Flex will not be added to
+# new models, so these go Standard from the first request instead of being
+# refused once (HTTP 400) and then sent again.
+STANDARD_ONLY_MODELS = frozenset({"gpt-6.2-sol"})
 # Flex answers are slower. The brief holds the shared heavy-task lane while it
 # waits, so the wait is bounded; its update times (08:00, 12:00, 15:45) are
 # outside the continuous trading sessions.
@@ -70,6 +75,7 @@ class TierState:
     def wants_flex(self, purpose, model, tool_kind=None):
         with self._lock:
             return (self.enabled and purpose in FLEX_PURPOSES
+                    and model not in STANDARD_ONLY_MODELS
                     and (model, tool_kind) not in self._unsupported)
 
     def _row(self, purpose):
@@ -95,6 +101,7 @@ class TierState:
         with self._lock:
             return {"enabled": self.enabled, "purposes": sorted(FLEX_PURPOSES),
                     "timeoutSeconds": FLEX_TIMEOUT_SECONDS,
+                    "standardOnlyModels": sorted(STANDARD_ONLY_MODELS),
                     "unsupported": sorted(f"{m}|{t or 'text'}" for m, t in self._unsupported),
                     "counts": {k: {**v, "refusals": dict(v["refusals"])} for k, v in self._counts.items()}}
 

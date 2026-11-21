@@ -197,7 +197,7 @@ def test_primary_judge_records_provider_response_model(monkeypatch):
     _, status = scanner._openai_judge({"labels": []})
     assert status == "live"
     diag = scanner._AI_LAST_RUN["oaiDiagnostic"]
-    assert diag["requestedModel"] == scanner._OPENAI_MODEL
+    assert diag["requestedModel"] == scanner._OPENAI_JUDGMENT_MODEL == "gpt-6.2-sol"
     assert diag["returnedModel"] == "gpt-6-astra-served"
     assert (diag["inputTokens"], diag["outputTokens"]) == (120, 30)
     assert len(settlements) == 1 and settlements[0][1]["ok"] is True

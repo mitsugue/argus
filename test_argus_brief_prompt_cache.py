@@ -66,6 +66,9 @@ def test_correction_reads_the_first_request_from_the_cache(monkeypatch):
         kwargs['diagnostic'].update(outcome='ok',cacheWriteInputTokens=150,estUsd=.01)
         return raw
     monkeypatch.setattr(scanner,'_openai_prose',provider)
+    # The explicit cache stays reviewed for Terra; 2026-11-21 the brief names
+    # gpt-6.2-sol, which is sent without it (test_argus_judgment_model_sol).
+    monkeypatch.setattr(scanner,'_OPENAI_JUDGMENT_MODEL','gpt-5.6-terra')
     brief=scheduled_brief();brief['unifiedContext']=scanner.argus_market_brief.unified_context(brief)
     result=scanner._market_brief_ai_polish(brief)
     assert len(requests)==2 and result['unifiedStatus']=='GENERATED'

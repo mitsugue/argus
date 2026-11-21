@@ -50,3 +50,13 @@
 - 管理者だけの入口 `/api/argus/admin/model-comparison`（確認 `confirm: true` が必須・同時に1つ・最大6版）。費用の許可は手動の用途（`manual_api`）として通る。
 - 実行は GitHub の `model-comparison` の手順から。結果（両方の文章・検査の結果・トークン）は非公開のリポジトリの `diagnostics/model-comparison/<実行番号>/result.json` だけに置く。公開の画面と記録には回数と状態だけ。
 - 費用の見込みは1版あたり約0.1ドル（5版で約0.5ドル）。
+
+## 判断の重い3つの用途を gpt-6.2-sol に（2026-11-21 オーナー【切り替える】）
+
+- 根拠: 11/21 の見比べ（`model-comparison`・実行 44891173112）で、`gpt-6.2-sol` は保存した見立て5回で検査 5/5・表示の計画 5/5。公式の値段（11/21 確認・100万トークンあたり）は通常の窓口で入力 2・キャッシュ 0.10・出力 10 ドル。
+- 切り替えた用途: 統合AIの見立て（`market_brief`・修正の2回目も同じモデル）・市場の位置の確認（`market_position_check`・web_search の道具つき）・平日のAI判定（`ai_judgment`）。3つとも呼び出しの所で `_OPENAI_JUDGMENT_MODEL` を明示する。
+- 切り替えない用途: ニュース読み・発表の分析・見出しの翻訳・銘柄の画面のボタン（`owner_dialogue`）・調査・手動の呼び出しなど。`gpt-5.6-terra` のまま。`gpt-6.2-sol` はこの3用途の時だけ許可（`_openai_model_allowed`）。環境変数の役割の設定では選べない。Terra の失敗を sol でやり直すことはしない。
+- Flex: 新しいモデルには Flex が付かない（公式「We won't be adding Flex to new models」）。`argus_openai_tier.STANDARD_ONLY_MODELS` にあるモデルは、最初から通常の窓口に送る（400 で断られてから回すのではない）。Terra の用途は Flex のまま。
+- 見立ての明示のキャッシュ（`prompt_cache_breakpoint`）は Terra で確かめた形なので、sol には付けない（見比べで通った形と同じ依頼）。sol で確かめたら `_BRIEF_EXPLICIT_CACHE_MODELS` に足す。
+- 見立ての使い回しの指紋（`generationPolicy.model`）と見比べの元の版の選び方は、見立てのモデル（sol）で比べる。切り替えの直後に一度だけ作り直しになる。
+- 位置の確認で sol が web_search の道具を受け付けない時は、その回は `search_failed`（道具なしでの送り直しはしない）。
