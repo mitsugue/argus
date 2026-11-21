@@ -383,3 +383,39 @@ def test_claim_is_only_for_reports_and_needs_a_source():
     assert news["publicCheck"]["claim"] == "UNVERIFIED"
     later = (NOW + timedelta(days=15)).isoformat().replace("+00:00", "Z")
     assert mpm.public_check_marks(memory, NOW + timedelta(days=15)) == {}, f"{later}: 古い印は使わない"
+
+
+def test_the_repeat_windows_fit_the_morning_slot():
+    """Owner 【期間を朝の枠に合わせる】 2026-11-22: with one morning check a day,
+    a daily question is asked every morning and a three-day one every third
+    morning, although the answer is saved minutes after the slot (24h/72h
+    measured from 07:32 were still open at 07:30 the next day / three days on)."""
+    from datetime import date
+    assert check.REPEAT_HOURS == {"CONFIRM": 68, "NEXT_EVENT": 20, "PRICING": 8, "STALE": 68}
+    morning = {True: check.TRADING_DAY_SLOTS[0], False: check.CLOSED_DAY_SLOTS[0]}
+    for answer_delay in (timedelta(minutes=1), timedelta(minutes=3), timedelta(hours=2, minutes=50)):
+        asked = {qtype: [] for qtype in check.QUESTION_TYPES}
+        rows = []
+        for offset in range(35):
+            day = date(2026, 11, 2) + timedelta(days=offset)
+            hour, minute = (int(x) for x in morning[day.weekday() < 5].split(":"))
+            slot = datetime(day.year, day.month, day.day, hour, minute, tzinfo=check.JST)
+            # The previous run may have been late; this one starts at its slot.
+            open_now = check._recently_answered(rows, slot)
+            for qtype in check.QUESTION_TYPES:
+                about = "same-report" if qtype == "CONFIRM" else None
+                key = ("T", qtype, check.about_key(about) if about else None)
+                if key not in open_now:
+                    asked[qtype].append(offset)
+                    rows.append({"themeId": "T", "at": (slot + answer_delay).isoformat(),
+                                 "ref": {"questionType": qtype,
+                                         **({"aboutKey": check.about_key(about)} if about else {})}})
+        for qtype in ("NEXT_EVENT", "PRICING"):
+            assert asked[qtype] == list(range(35)), (qtype, answer_delay)
+        for qtype in ("CONFIRM", "STALE"):
+            assert asked[qtype] == list(range(0, 35, 3)), (qtype, answer_delay)
+    # A morning answer is not asked again at a later slot of the same day (11:30, 16:30).
+    at = datetime(2026, 11, 25, 7, 33, tzinfo=check.JST)
+    row = {"themeId": "T", "at": at.isoformat(), "ref": {"questionType": "NEXT_EVENT"}}
+    for later in (timedelta(hours=4), timedelta(hours=9)):
+        assert ("T", "NEXT_EVENT", None) in check._recently_answered([row], at + later)

@@ -18085,7 +18085,8 @@ _MARKET_BRIEF_WORKER = {"lastAttemptMonotonic": None, "lastAttemptAt": None,
 _MARKET_BRIEF_SCHEDULE = {"coveredSlot": None, "handledEventIds": [], "eventDay": None,
                           "eventCount": 0, "lastCheckMonotonic": None,
                           "lastOutcomesMonotonic": None, "lastDecision": None,
-                          "editionsByKind": {}, "reusedNotScheduled": 0}
+                          "editionsByKind": {}, "reusedNotScheduled": 0,
+                          "reusedNoMaterialChange": 0}
 
 
 def _market_brief_edition_at(previous):
@@ -19584,6 +19585,35 @@ def _market_brief_urgent_signature(brief):
         separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
+def _market_brief_nikkei_level():
+    """The Nikkei 225 level for the material-change rule: (price, time) or (None, None).
+
+    The intraday quote the current judgment already reads (立花 or the delayed
+    Yahoo value, argus_index_live); before the first quote after a restart, the
+    latest daily close held in the index cache. Cached values only, no fetch.
+    """
+    try:
+        quote = (argus_index_live.current_quote_safe() or {}).get("quote") or {}
+        price = quote.get("price")
+        if isinstance(price, (int, float)) and not isinstance(price, bool) and price > 0:
+            return float(price), quote.get("tradedAt")
+    except Exception:
+        pass
+    rows = (_JP_MARKET_ENGINE_INDEX_OHLCV_CACHE.get("^N225") or {}).get("data") or []
+    last = rows[-1] if rows and isinstance(rows[-1], dict) else {}
+    close = last.get("close")
+    if isinstance(close, (int, float)) and not isinstance(close, bool) and close > 0:
+        return float(close), (str(last.get("date")) if last.get("date") else None)
+    return None, None
+
+
+def _market_brief_material_basis(brief):
+    price, at = _market_brief_nikkei_level()
+    return argus_brief_schedule.material_basis(
+        facts=brief.get("facts") or [], nikkei_price=price, nikkei_at=at, checked_at=_ai_now_iso(),
+        fiscal=brief.get("fiscalEnvironment"))
+
+
 def _market_brief_refresh(allow_ai=True):
     brief = _memory_operation_run("internal", "brief.compose", _compose_market_brief)
     previous = _MARKET_BRIEF.get("lastSuccessful") or {}
@@ -19621,6 +19651,29 @@ def _market_brief_refresh(allow_ai=True):
         _market_brief_schedule_mark(decision, wrote=False)
         _MARKET_BRIEF.update(data=retained, composedAt=time.time())
         return retained
+    # 2026-11-22 (owner 【見立ては変わった時だけ】): an update time after the
+    # morning one rewrites the view only when a material input changed since
+    # the saved edition (argus_brief_schedule.material_change). Otherwise the
+    # saved edition stands and its check time moves, as between update times.
+    material_basis = _market_brief_material_basis(brief) if allow_ai else None
+    if allow_ai and decision.get("kind") == "SCHEDULED" and complete and not comparison_completed:
+        check = argus_brief_schedule.material_change(
+            previous_basis=(previous.get("generationTrigger") or {}).get("materialBasis"),
+            basis=material_basis, slot=decision.get("slot"),
+            previous_edition_at=_market_brief_edition_at(previous),
+            now=datetime.fromisoformat(str(_ai_now_iso()).replace("Z", "+00:00")),
+            event_ids=decision.get("eventIds") or ())
+        decision = {**decision, "materialCheck": check}
+        if not check["material"]:
+            retained = copy.deepcopy(previous)
+            retained["generationReuse"] = {"inputsCheckedAt": _ai_now_iso(),
+                "originalGeneratedAt": previous.get("generatedAt"), "newAiCalls": 0,
+                "reason": "NO_MATERIAL_CHANGE", "schedule": decision}
+            _MARKET_BRIEF_SCHEDULE["reusedNoMaterialChange"] = int(
+                _MARKET_BRIEF_SCHEDULE.get("reusedNoMaterialChange") or 0) + 1
+            _market_brief_schedule_mark(decision, wrote=False)
+            _MARKET_BRIEF.update(data=retained, composedAt=time.time())
+            return retained
     # 2026-10-17: the one-hour coalescing of non-urgent changes is replaced
     # by the owner's fixed update times above (urgent changes had bypassed it
     # on almost every ten-minute tick: 80-99 editions a day).
@@ -19686,7 +19739,11 @@ def _market_brief_refresh(allow_ai=True):
                 previous.get("facts"), brief.get("facts"),
                 lambda value: hashlib.sha256(json.dumps(value, ensure_ascii=False).encode()).hexdigest()),
             "wordingChange": argus_brief_schedule.wording_change(previous.get("aiText"), brief.get("aiText")),
-            "reusedText": bool(same)}
+            "reusedText": bool(same),
+            # 2026-11-22: what the next update time compares against (saved
+            # with the edition, so a restart keeps it) and why this one was written.
+            "materialBasis": material_basis,
+            "materialCheck": decision.get("materialCheck")}
         _market_brief_schedule_mark(decision, wrote=True)
         _market_brief_history_save(brief)
         _MARKET_BRIEF["lastSuccessful"] = copy.deepcopy(brief)

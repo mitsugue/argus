@@ -61,7 +61,24 @@ QUESTION_TYPES = ("CONFIRM", "NEXT_EVENT", "PRICING", "STALE")
 # 2026-10-27: the shadow week asked the same report three or four times with
 # the same answer. A question answered within its window is not asked again;
 # a CONFIRM is the same only for the same report.
-REPEAT_HOURS = {"CONFIRM": 72, "NEXT_EVENT": 24, "PRICING": 8, "STALE": 72}
+# 2026-11-22 (owner 【期間を朝の枠に合わせる】): the windows are measured from
+# the answer, which is saved one to three minutes after the morning slot
+# (after the search), and the next morning's check starts at the slot itself.
+# With 24h and 72h a question answered at 07:32 was still "inside its window"
+# at 07:30 the next day (23h58m) or three days later (71h58m), so a daily
+# question ran every second morning and a three-day one every fourth. The
+# morning slot is 07:30 on trading days and 08:30 on closed days, so two
+# consecutive mornings are 23h to 25h apart and three days 71h to 73h.
+#   NEXT_EVENT 20h: every morning. Over 9h (a morning answer is not asked
+#     again at a later slot of the same day) and under 23h by 3 hours (a
+#     late run or answer the day before still lets the next morning ask).
+#   CONFIRM / STALE 68h: every third morning. Over the two-morning gap (49h
+#     plus a late run) and under 71h by 3 hours, for the same reason.
+#   PRICING 8h, unchanged: any window under 23h already asks every morning;
+#     8h also keeps the after-close re-check if the day has later slots
+#     again (07:30 answered, 16:30 asked: how far a theme is priced in moves
+#     within the day).
+REPEAT_HOURS = {"CONFIRM": 68, "NEXT_EVENT": 20, "PRICING": 8, "STALE": 68}
 
 
 about_key = memory_mod.about_key

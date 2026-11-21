@@ -111,7 +111,7 @@ def _reset_rate_limit_buckets():
         if isinstance(getattr(scanner, "_MARKET_BRIEF_SCHEDULE", None), dict):
             scanner._MARKET_BRIEF_SCHEDULE.update(coveredSlot=None, handledEventIds=[], eventDay=None,
                 eventCount=0, lastCheckMonotonic=None, lastOutcomesMonotonic=None, lastDecision=None,
-                editionsByKind={}, reusedNotScheduled=0)
+                editionsByKind={}, reusedNotScheduled=0, reusedNoMaterialChange=0)
         if isinstance(getattr(scanner, "_JP_FINANCIAL_VERIFY", None), dict):
             # Tests read the originals synchronously unless they test the warm.
             scanner._JP_FINANCIAL_VERIFY.update(state="DONE", errorClass=None)

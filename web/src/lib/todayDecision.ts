@@ -105,8 +105,8 @@ export function toneRecordLine(record: unknown, tone: StripTone): string | null 
 }
 /**
  * The view is rewritten or re-confirmed at least once a day at 08:00 JST (trading
- * days 08:00, 12:00, 15:45; other days 08:00, 20:00; argus_brief_schedule.py), and the
- * longest gap is 15:45 to 08:00, about 16 hours. A view not written or re-confirmed
+ * days 08:00, 12:00, 16:10; other days 08:00, 20:00; argus_brief_schedule.py), and the
+ * longest gap is 16:10 to 08:00, about 16 hours. A view not written or re-confirmed
  * for 24 hours has missed an update time, so its tone is not shown.
  */
 export const BRIEF_TONE_MAX_AGE_HOURS = 24;
