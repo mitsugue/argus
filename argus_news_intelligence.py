@@ -2516,3 +2516,223 @@ def split_digest_message(message: Mapping[str, Any]) -> List[Dict[str, Any]]:
         single.pop("digestBody", None)
         return [single]
     return out
+
+
+# ── Shadow reading on a cheaper model (owner 2026-11-22) ────────────────────
+# Owner decision 【ニュースの読みを luna へ】: before the news reading moves from
+# the current model to gpt-6-luna, the same request is sent to luna for a
+# bounded period and its answer is RECORDED ONLY — never used for any event,
+# alert, judgment or cache. These helpers keep the comparison as counts and
+# field values; no subject, excerpt, fact or explanation text is stored.
+SHADOW_SCHEMA = "news-luna-shadow-v1"
+# The fields a reading feeds into a decision: the severity it leads to (with
+# every other input fixed), whether that severity can alert (HIGH/CRITICAL),
+# the model's family label, its two numbers, and the one-step AI component.
+SHADOW_FIELDS = ("severity", "alertCapable", "family", "materialityGuess",
+                 "currentRelevance", "aiComponent")
+SHADOW_MISMATCH_CAP = 30
+SHADOW_REASON_CAP = 12
+_SHADOW_COUNTS = ("submitted", "compared", "lunaRejected", "lunaFailed",
+                  "skippedDailyCap", "skippedQueueFull", "workerErrors")
+
+
+def shadow_empty_state() -> Dict[str, Any]:
+    return {"schemaVersion": SHADOW_SCHEMA, "startedAt": None, "startedEpoch": None,
+            "endedAt": None, "endReason": None, "day": None, "dayAttempts": 0,
+            "counts": {key: 0 for key in _SHADOW_COUNTS},
+            "agree": {key: 0 for key in SHADOW_FIELDS},
+            "severityPairs": {}, "failureReasons": {},
+            "luna": {"inputTokens": 0, "outputTokens": 0, "cachedInputTokens": 0,
+                     "estUsd": 0.0, "latencyMsTotal": 0, "answered": 0},
+            "mismatches": [], "lastAt": None}
+
+
+def shadow_normalize(saved: Any) -> Dict[str, Any]:
+    """A saved shadow document, or a fresh one when it is missing or foreign."""
+    state = shadow_empty_state()
+    if not isinstance(saved, Mapping) or saved.get("schemaVersion") != SHADOW_SCHEMA:
+        return state
+    for key in ("startedAt", "endedAt", "endReason", "day", "lastAt"):
+        if isinstance(saved.get(key), str):
+            state[key] = saved[key]
+    if isinstance(saved.get("startedEpoch"), (int, float)) and not isinstance(saved.get("startedEpoch"), bool):
+        state["startedEpoch"] = float(saved["startedEpoch"])
+    if isinstance(saved.get("dayAttempts"), int):
+        state["dayAttempts"] = max(0, saved["dayAttempts"])
+    for group in ("counts", "agree"):
+        for key in state[group]:
+            value = (saved.get(group) or {}).get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                state[group][key] = max(0, value)
+    for group in ("severityPairs", "failureReasons"):
+        state[group] = {str(k)[:40]: v for k, v in (saved.get(group) or {}).items()
+                        if isinstance(v, int) and not isinstance(v, bool)}
+    luna = saved.get("luna") or {}
+    for key in state["luna"]:
+        value = luna.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            state["luna"][key] = value
+    state["mismatches"] = [row for row in (saved.get("mismatches") or [])
+                           if isinstance(row, Mapping)][-SHADOW_MISMATCH_CAP:]
+    return state
+
+
+def shadow_decision_fields(analysis: Optional[Mapping[str, Any]],
+                           severity: Optional[str]) -> Dict[str, Any]:
+    """The decision-relevant values of one validated reading (no text)."""
+    analysis = analysis or {}
+    return {"severity": severity,
+            "alertCapable": severity in ("HIGH", "CRITICAL"),
+            "family": analysis.get("eventTypeCandidate"),
+            "materialityGuess": analysis.get("materialityGuess"),
+            "currentRelevance": analysis.get("currentRelevance"),
+            "aiComponent": ai_component(analysis)[1]}
+
+
+def shadow_admit(state: Dict[str, Any], *, enabled: bool, now_epoch: float,
+                 now_iso: str, daily_cap: int, period_days: float,
+                 target_compared: int) -> tuple:
+    """Whether one more shadow request may be sent: (allowed, reason).
+
+    The period starts at the first admitted request and ends after
+    ``period_days`` or once ``target_compared`` answers were compared,
+    whichever comes first; an ended shadow never restarts by itself.
+    """
+    if not enabled:
+        return False, "switched_off"
+    if state.get("endedAt"):
+        return False, "ended"
+    started = state.get("startedEpoch")
+    if isinstance(started, (int, float)) and now_epoch - started >= period_days * 86400:
+        state.update(endedAt=now_iso, endReason="period")
+        return False, "ended"
+    if int(state["counts"].get("compared") or 0) >= target_compared:
+        state.update(endedAt=now_iso, endReason="count")
+        return False, "ended"
+    day = str(now_iso)[:10]
+    if state.get("day") != day:
+        state.update(day=day, dayAttempts=0)
+    if int(state.get("dayAttempts") or 0) >= daily_cap:
+        state["counts"]["skippedDailyCap"] += 1
+        return False, "daily_cap"
+    state["dayAttempts"] = int(state.get("dayAttempts") or 0) + 1
+    state["counts"]["submitted"] += 1
+    if state.get("startedEpoch") is None:
+        state.update(startedAt=now_iso, startedEpoch=float(now_epoch))
+    return True, None
+
+
+def shadow_queue_full(state: Dict[str, Any]) -> None:
+    """An admitted request that could not be queued is not counted as sent."""
+    state["dayAttempts"] = max(0, int(state.get("dayAttempts") or 0) - 1)
+    state["counts"]["submitted"] = max(0, state["counts"]["submitted"] - 1)
+    state["counts"]["skippedQueueFull"] += 1
+
+
+def shadow_record(state: Dict[str, Any], *, outcome: str, at: str,
+                  terra: Optional[Mapping[str, Any]] = None,
+                  luna: Optional[Mapping[str, Any]] = None,
+                  reason: Optional[str] = None, fingerprint: str = "",
+                  deterministic_family: Optional[str] = None,
+                  usage: Optional[Mapping[str, Any]] = None,
+                  latency_ms: Optional[int] = None) -> None:
+    """Fold one finished shadow request into the counts (no text kept)."""
+    counts = state["counts"]
+    state["lastAt"] = at
+    usage = usage or {}
+    if usage.get("returnedModel") or usage.get("inputTokens") or usage.get("outputTokens"):
+        totals = state["luna"]
+        for key in ("inputTokens", "outputTokens", "cachedInputTokens"):
+            value = usage.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                totals[key] += value
+        cost = usage.get("estUsd")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            totals["estUsd"] = round(float(totals["estUsd"]) + float(cost), 6)
+        if isinstance(latency_ms, int):
+            totals["latencyMsTotal"] += max(0, latency_ms)
+            totals["answered"] += 1
+    if outcome != "compared" or terra is None or luna is None:
+        key = {"rejected": "lunaRejected", "error": "workerErrors"}.get(outcome, "lunaFailed")
+        counts[key] += 1
+        reasons = state["failureReasons"]
+        label = str(reason or outcome)[:40]
+        if label in reasons or len(reasons) < SHADOW_REASON_CAP:
+            reasons[label] = reasons.get(label, 0) + 1
+        else:
+            reasons["other"] = reasons.get("other", 0) + 1
+        return
+    counts["compared"] += 1
+    differing = []
+    for key in SHADOW_FIELDS:
+        if terra.get(key) == luna.get(key):
+            state["agree"][key] += 1
+        else:
+            differing.append(key)
+    pair = f"{terra.get('severity')}>{luna.get('severity')}"
+    state["severityPairs"][pair] = state["severityPairs"].get(pair, 0) + 1
+    if differing:
+        state["mismatches"].append({
+            "at": at, "fingerprint": str(fingerprint)[:12],
+            "deterministicFamily": deterministic_family, "fields": differing,
+            "baseline": {key: terra.get(key) for key in SHADOW_FIELDS},
+            "luna": {key: luna.get(key) for key in SHADOW_FIELDS}})
+        del state["mismatches"][:-SHADOW_MISMATCH_CAP]
+
+
+def _shadow_percent(part: int, whole: int) -> Optional[int]:
+    return round(100 * part / whole) if whole else None
+
+
+def shadow_summary(state: Mapping[str, Any], *, enabled: bool, now_epoch: float,
+                   daily_cap: int, period_days: float, target_compared: int,
+                   model: str, baseline_model: str) -> Dict[str, Any]:
+    """Owner-only reading of the shadow: counts, agreement and examples."""
+    counts = dict(state.get("counts") or {})
+    compared = int(counts.get("compared") or 0)
+    agree = dict(state.get("agree") or {})
+    pairs = dict(state.get("severityPairs") or {})
+    baseline_only = sum(n for pair, n in pairs.items()
+                        if pair.split(">")[0] in ("HIGH", "CRITICAL")
+                        and pair.split(">")[-1] not in ("HIGH", "CRITICAL"))
+    luna_only = sum(n for pair, n in pairs.items()
+                    if pair.split(">")[0] not in ("HIGH", "CRITICAL")
+                    and pair.split(">")[-1] in ("HIGH", "CRITICAL"))
+    started = state.get("startedEpoch")
+    if not enabled:
+        status = "SWITCHED_OFF"
+    elif state.get("endedAt"):
+        status = "COMPLETE"
+    elif started is None:
+        status = "WAITING_FOR_FIRST_READING"
+    elif now_epoch - float(started) >= period_days * 86400 or compared >= target_compared:
+        status = "COMPLETE"
+    else:
+        status = "RUNNING"
+    luna = dict(state.get("luna") or {})
+    answered = int(luna.get("answered") or 0)
+    return {
+        "schemaVersion": SHADOW_SCHEMA, "status": status,
+        "model": model, "baselineModel": baseline_model,
+        "answerUsed": False,
+        "startedAt": state.get("startedAt"), "endedAt": state.get("endedAt"),
+        "endReason": state.get("endReason"),
+        "limits": {"perUtcDay": daily_cap, "periodDays": period_days,
+                   "targetCompared": target_compared},
+        "todayUtc": state.get("day"), "todayAttempts": state.get("dayAttempts"),
+        "counts": counts,
+        "agreeCounts": agree,
+        "agreePercent": {key: _shadow_percent(int(agree.get(key) or 0), compared)
+                         for key in SHADOW_FIELDS},
+        "severityPairs": pairs,
+        "alertDisagreements": {"baselineOnly": baseline_only, "lunaOnly": luna_only},
+        "failureReasons": dict(state.get("failureReasons") or {}),
+        "luna": {"inputTokens": luna.get("inputTokens"),
+                 "outputTokens": luna.get("outputTokens"),
+                 "cachedInputTokens": luna.get("cachedInputTokens"),
+                 "estUsd": luna.get("estUsd"),
+                 "averageLatencyMs": round(int(luna.get("latencyMsTotal") or 0) / answered)
+                 if answered else None},
+        "mismatches": list(state.get("mismatches") or []),
+        "lastAt": state.get("lastAt"),
+    }
