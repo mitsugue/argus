@@ -100,13 +100,14 @@ const wordingCode = ts.transpileModule(fs.readFileSync('src/lib/marketWording.ts
 const wordingContext = {exports:{},require,Date}; vm.runInNewContext(wordingCode,wordingContext);
 let stripLive={quote:null,futures:null};
 let stripRecorded=null;
+let stripTrackRecord=null;
 const stripContext = {exports:{},localStorage:{getItem:()=>null},require(name){
   if(name.endsWith('.css')) return {};
   if(name.includes('/todayDecision')) return d;
   if(name.includes('/marketWording')) return wordingContext.exports;
   if(name.includes('/todayJump')) return {jumpTo:()=>{}};
   if(name.includes('/hooks/')) return {useNikkeiLive:()=>stripLive,nikkeiLiveCurrent:q=>!!q,
-    useJapanMarketComparison:()=>({levelMap:stripRecorded?{dropAlert:stripRecorded}:null})};
+    useJapanMarketComparison:()=>({levelMap:stripRecorded?{dropAlert:stripRecorded}:null}),useForecastTrackRecord:()=>stripTrackRecord};
   if(name.includes('/MarketPositionCard')) return {MarketPositionCard:()=>React.createElement('section',{'data-market-position':'slot'})};
   return require(name);
 }};
@@ -210,7 +211,7 @@ assert(unavailableStrip.includes('データ待ち'));
 const stripWith = (storage, hook) => {
   const ctx = { ...stripContext, exports: {}, localStorage: { getItem: () => storage, setItem() {} }, require(name) {
     if (name.includes('/hooks/')) return { useNikkeiLive: hook, nikkeiLiveCurrent: (q) => !q.realtime,
-      useJapanMarketComparison: () => ({ levelMap: null }) }; return stripContext.require(name); } };
+      useJapanMarketComparison: () => ({ levelMap: null }), useForecastTrackRecord: () => null }; return stripContext.require(name); } };
   vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/components/today/TodayDecisionStrip.tsx', 'utf8'),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText, ctx);
   return ctx.exports.TodayDecisionStrip;
@@ -346,10 +347,34 @@ console.log('自分の銘柄の保留は日本語の短い表示・判断は変�
       assert(html.includes('data-tone="none"') && !/today-strip__verdict is-/.test(html), `${why}: neutral frame`);
       assert(!html.includes('5日後に上昇'), `${why}: the old rule's record is gone`);
     }
-    assert(!tail.includes('5日後に上昇'), 'the old rule\'s record never sits under the view\'s tone');
+    assert(!tail.includes('5日後に上昇') && !tail.includes('today-strip__record'), 'no record read yet: no line, never the old rule\'s numbers');
     assert(verdictOf(tail).includes('私は日本株の上値は重いと見ています。'), 'the headline stays under the badge');
     assert(verdictOf(render(viewBrief(undefined), true)).includes('私は日本株の上値は重いと見ています。'), 'the headline stays without the badge');
-  } finally { global.Date = RealDate; }
+    // Owner 2026-11-21 「正確な情報として統合AIの管轄のもと」: the line is the record of the view's own tone.
+    const tones = (tail, head, mixed, base) => ({ schemaVersion: 'argus-view-tone-record-v1', horizonSessions: 5, minimumSessions: 20,
+      selection: 'LAST_VIEW_BEFORE_NEXT_OPEN', tones: { TAILWIND: tail, HEADWIND: head, MIXED: mixed }, baseline: base,
+      predictiveProbabilities: null, actionAuthority: false });
+    const few = tones({ scored: 7, up: 6 }, { scored: 0, up: 0 }, { scored: 19, up: 10 }, { scored: 30, up: 17 });
+    assert.equal(d.toneRecordLine(few, 'tail'), '成績は記録中(7回)', 'under 20: the count only, never 86%');
+    assert.equal(d.toneRecordLine(few, 'head'), '成績は記録中(0回)');
+    assert.equal(d.toneRecordLine(few, 'wait'), '成績は記録中(19回)');
+    const enough = tones({ scored: 20, up: 13 }, { scored: 24, up: 11 }, { scored: 3, up: 1 }, { scored: 47, up: 25 });
+    assert.equal(d.toneRecordLine(enough, 'tail'), '5日後に上昇 65%(この印の20回・普段 53%)');
+    assert.equal(d.toneRecordLine(enough, 'head'), '5日後に上昇 46%(この印の24回・普段 53%)');
+    for (const bad of [null, { ...enough, schemaVersion: 'other' }, { ...enough, actionAuthority: true },
+      { ...enough, predictiveProbabilities: 0.6 }, { ...enough, horizonSessions: 1 },
+      tones({ scored: 20, up: 21 }, null, null, { scored: 47, up: 25 }), tones({ scored: 20, up: 13 }, null, null, { scored: 10, up: 5 })]) {
+      assert.equal(d.toneRecordLine(bad, 'tail'), null, JSON.stringify(bad));
+    }
+    stripTrackRecord = { viewTones: enough };
+    const scoredTail = render(viewBrief('TAILWIND'), true);
+    assert(verdictOf(scoredTail).includes('<small class="today-strip__record" data-tone-record="tail">5日後に上昇 65%(この印の20回・普段 53%)</small>'), verdictOf(scoredTail));
+    stripTrackRecord = { viewTones: few };
+    assert(verdictOf(render(viewBrief('TAILWIND'), true)).includes('>成績は記録中(7回)</small>'));
+    assert(!render(viewBrief('TAILWIND'), false).includes('today-strip__record'), 'no badge, no record line');
+    assert(!render(viewBrief(undefined), true).includes('today-strip__record'));
+    stripTrackRecord = null;
+  } finally { global.Date = RealDate; stripTrackRecord = null; }
   // The callers hand the strip whether the shown edition is the latest one.
   const card = fs.readFileSync('src/components/today/MarketBriefCard.tsx', 'utf8');
   const surface = fs.readFileSync('src/components/today/ArgusEditorialSurface.tsx', 'utf8');

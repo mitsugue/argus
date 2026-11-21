@@ -1,8 +1,8 @@
 import React from 'react';
 import type { MarketBrief } from '../../lib/marketBrief';
 import type { ComparisonPoint } from '../../types/japanMarketComparison';
-import { ALERT_HISTORY, ALERT_RAISED_HISTORY, MOMENTUM_Z, liveAlertRecord, OVERNIGHT_OPEN_SHARE_PCT, briefTone, closeBasisLabel, decisionStrip, friendlyEventText, overnightGap, type FeatureRow, type Lean } from '../../lib/todayDecision';
-import { nikkeiLiveCurrent, useJapanMarketComparison, useNikkeiLive } from '../../hooks/useJapanMarketComparison';
+import { ALERT_HISTORY, ALERT_RAISED_HISTORY, MOMENTUM_Z, liveAlertRecord, OVERNIGHT_OPEN_SHARE_PCT, briefTone, toneRecordLine, closeBasisLabel, decisionStrip, friendlyEventText, overnightGap, type FeatureRow, type Lean } from '../../lib/todayDecision';
+import { nikkeiLiveCurrent, useForecastTrackRecord, useJapanMarketComparison, useNikkeiLive } from '../../hooks/useJapanMarketComparison';
 import { marketHeadline } from '../../lib/marketWording';
 import { MarketPositionCard } from './MarketPositionCard';
 import { jumpTo } from '../../lib/todayJump';
@@ -81,6 +81,8 @@ export function TodayDecisionStrip({ brief, criticalNews = [], featuredEvent, to
   const headline = marketHeadline(brief.unifiedSummary?.sections.view, brief.unifiedSummary?.sections.reasons);
   // No view, an older or failed one: no badge, never the screen's own reading in its place.
   const tone = briefTone(brief, toneCurrent);
+  const toneRecord = useForecastTrackRecord()?.viewTones;
+  const toneLine = tone ? toneRecordLine(toneRecord, tone) : null;
   const { quote: live, futures, lastError: liveError } = useNikkeiLive();
   const recorded = (useJapanMarketComparison(5).levelMap as unknown as { dropAlert?: unknown } | null | undefined)?.dropAlert;
   // The delayed intraday value replaces the last close once it is from a later session.
@@ -115,6 +117,7 @@ export function TodayDecisionStrip({ brief, criticalNews = [], featuredEvent, to
     <div className={`today-strip__verdict${tone ? ` is-${tone}` : ''}`} data-tone={tone ?? 'none'}>
       {tone && <span className="today-strip__badge">{toneLabel[tone]}</span>}
       {headline && <p>{headline}</p>}
+      {toneLine && <small className="today-strip__record" data-tone-record={tone!}>{toneLine}</small>}
       {strip.overnightGapPct !== null && Math.abs(strip.overnightGapPct) >= 1 && <p className="today-strip__overnight" data-overnight-gap={strip.overnightGapPct!.toFixed(2)}
         onClick={() => jumpTo('today-nikkei-chart', 'futures')}>
         昨夜の日経先物 <b>{signed(strip.overnightGapPct!)}</b> · 寄り付きにおよそ{OVERNIGHT_OPEN_SHARE_PCT / 10}割が反映</p>}

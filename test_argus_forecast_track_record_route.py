@@ -14,6 +14,10 @@ def test_market_brief_serves_the_issued_forecast_record_read_only(tmp_path, monk
     one = body['trackRecord']['horizons']['1']
     assert one['directionalForecasts'] == 1 and one['hits'] == 0 and one['status'] == 'INSUFFICIENT_SAMPLE'
     assert body['trackRecord']['predictiveProbabilities'] is None
+    # 2026-11-21: the view's tone record rides the same read-only reply.
+    tones = body['trackRecord']['viewTones']
+    assert tones['schemaVersion'] == 'argus-view-tone-record-v1' and tones['actionAuthority'] is False
+    assert set(tones['tones']) == {'TAILWIND', 'HEADWIND', 'MIXED'}
 
 
 def test_track_record_without_history_storage_is_unavailable(monkeypatch):

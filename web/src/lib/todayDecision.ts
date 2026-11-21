@@ -77,6 +77,33 @@ export function liveAlertRecord(value: unknown, level: 'low' | 'normal' | 'high'
 export type StripTone = 'tail' | 'head' | 'wait';
 const TONE_OF_VIEW: Record<string, StripTone> = { TAILWIND: 'tail', HEADWIND: 'head', MIXED: 'wait' };
 /**
+ * Owner 2026-11-21 「見出しとしてわかりやすいので出して欲しいが 正確な情報として統合AIの管轄のもと
+ * 出してほしい」: the line under the badge is the record of the view's own tone
+ * (argus_analysis_history.view_tone_record: one session per Nikkei close, the last view
+ * saved before the next open, scored on the 5th close once received). Below the
+ * server's minimum only the count is shown; nothing when the record is unreadable.
+ */
+const TONE_KEY: Record<StripTone, string> = { tail: 'TAILWIND', head: 'HEADWIND', wait: 'MIXED' };
+const tally = (v: unknown): v is { scored: number; up: number } => {
+  const row = v as { scored?: unknown; up?: unknown } | null;
+  return !!row && Number.isInteger(row.scored) && Number.isInteger(row.up)
+    && (row.up as number) >= 0 && (row.up as number) <= (row.scored as number);
+};
+export function toneRecordLine(record: unknown, tone: StripTone): string | null {
+  const v = record as { schemaVersion?: unknown; horizonSessions?: unknown; minimumSessions?: unknown;
+    tones?: Record<string, unknown>; baseline?: unknown; actionAuthority?: unknown; predictiveProbabilities?: unknown } | null;
+  if (!v || v.schemaVersion !== 'argus-view-tone-record-v1' || v.horizonSessions !== 5
+    || !Number.isInteger(v.minimumSessions) || (v.minimumSessions as number) < 1
+    || v.actionAuthority !== false || v.predictiveProbabilities !== null || !v.tones) return null;
+  const row = v.tones[TONE_KEY[tone]];
+  if (!tally(row)) return null;
+  if (row.scored < (v.minimumSessions as number)) return `成績は記録中(${row.scored}回)`;
+  const base = v.baseline;
+  if (!tally(base) || base.scored < row.scored) return null;
+  const pct = (up: number, n: number) => Math.round(up / n * 100);
+  return `5日後に上昇 ${pct(row.up, row.scored)}%(この印の${row.scored}回・普段 ${pct(base.up, base.scored)}%)`;
+}
+/**
  * The view is rewritten or re-confirmed at least once a day at 08:00 JST (trading
  * days 08:00, 12:00, 15:45; other days 08:00, 20:00; argus_brief_schedule.py), and the
  * longest gap is 15:45 to 08:00, about 16 hours. A view not written or re-confirmed
