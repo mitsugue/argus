@@ -14952,7 +14952,8 @@ def _brief_cache_prefix(model, user):
     return len(user) if model in _BRIEF_EXPLICIT_CACHE_MODELS else None
 
 
-def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose", cache_prefix_chars=None):
+def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose", cache_prefix_chars=None,
+                       comparison_cache=False):
     """Perform exactly one Responses API request and return its text.
 
     A second endpoint attempt can duplicate an accepted request after a
@@ -14969,7 +14970,13 @@ def _openai_prose_call(client, model, sys_prompt, user, *, purpose="prose", cach
         # Only this reviewed lane/model pair uses explicit caching. Keep both
         # blocks in the same user message and preserve every source byte.
         # Changing facts/catalog/correction text stays outside the write.
-        if (purpose != "market_brief" or model not in _BRIEF_EXPLICIT_CACHE_MODELS
+        # 2026-11-22 (owner 「全部やる」): the owner-started comparison may send
+        # the same shape to a comparison model, to see whether it is accepted
+        # and read back before any production lane uses it.
+        reviewed = purpose == "market_brief" and model in _BRIEF_EXPLICIT_CACHE_MODELS
+        trial = (comparison_cache is True and purpose == "manual_api"
+                 and model in _COMPARISON_OPENAI_MODELS)
+        if (not (reviewed or trial)
                 or type(cache_prefix_chars) is not int or not isinstance(user, str)
                 or not 0 < cache_prefix_chars <= len(user)):
             raise ValueError("brief_cache_boundary_invalid")
@@ -15035,7 +15042,8 @@ def _ai_record_prose_cost(model, input_tokens, output_tokens, est_usd, *,
 
 def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
                   event_id="", event_phase="", model=None, diagnostic=None,
-                  fallback_model=None, cache_prefix_chars=None, confirmed=False):
+                  fallback_model=None, cache_prefix_chars=None, confirmed=False,
+                  comparison_cache=False):
     """Generic GPT STRICT-JSON call. Returns a non-empty dict or None. Used by the C.A.O.S.
     event analyzer (default system) and the entity-profile generator (system= override).
 
@@ -15067,7 +15075,8 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
     sys_prompt = system or _CAOS_EVENT_SYSTEM
     mdl = model or _OPENAI_MODEL
     comparison = (confirmed is True and purpose == "manual_api"
-                  and mdl in _COMPARISON_OPENAI_MODELS and cache_prefix_chars is None)
+                  and mdl in _COMPARISON_OPENAI_MODELS
+                  and (cache_prefix_chars is None or comparison_cache is True))
     if not comparison and not _openai_model_allowed(mdl, purpose):
         # Never turn an unavailable cheap/standard model into a premium retry.
         publish(outcome="skipped", reason="production_model_not_allowed")
@@ -15100,6 +15109,8 @@ def _openai_prose(user, max_out=600, system=None, *, purpose="prose",
         try:
             cache_options = ({"cache_prefix_chars": cache_prefix_chars}
                              if cache_prefix_chars is not None else {})
+            if cache_options and comparison and comparison_cache is True:
+                cache_options["comparison_cache"] = True
             resp, text = _openai_prose_call(client, mdl, sys_prompt, user,
                                           purpose=purpose, **cache_options)
         except Exception as first:
@@ -18810,8 +18821,9 @@ def _market_position_check_mode():
 
 def _market_position_check_run():
     """N-19 (owner 2026-10-23): check the saved market position against public
-    sources at the owner's times (trading days 07:30/11:30/16:30, closed days
-    08:30 JST), before the integrated view. One search-backed model call with
+    sources once a day before the morning integrated view (trading days 07:30,
+    closed days 08:30 JST; 11:30/16:30 dropped 2026-11-22 for cost — the
+    midday and evening views read the morning answers). One search-backed model call with
     at most five questions; answers without an allowed source are dropped.
     Accepted answers are PUBLIC_CHECK entries of the same memory (shadow:
     stored and counted, not shown). Runs inside the brief worker, never on a
@@ -19149,13 +19161,19 @@ def _market_brief_prompt(brief):
             "reused_previous_facts": reused_previous_facts}
 
 
-def _market_brief_model_comparison_one(record, model):
+def _market_brief_model_comparison_one(record, model, cache=False, read_check=False):
     """One saved edition written again by `model`, with nothing saved.
 
     2026-11-11 (owner 「見比べを作る」): the exact production request of that
     edition (its own facts, context and calculations) goes to the candidate
     model once, and the reply passes the same checks as a production reply.
     No correction call, no position memory, no history write.
+
+    2026-11-22 (owner 「全部やる」): with `cache` the request carries the
+    production explicit-cache shape (boundary at the end of the request, as
+    the brief's correction reads it). With `read_check` the same request is
+    sent once more right after, as the correction would, and only its token
+    counts are kept: whether the model accepted the shape and read it back.
     """
     brief = copy.deepcopy(record["brief"])
     brief["calculationSnapshots"] = copy.deepcopy(record.get("calculations") or {})
@@ -19163,9 +19181,26 @@ def _market_brief_model_comparison_one(record, model):
     context, catalog = prompt["context"], prompt["presentation_catalog"]
     diag, validation = {}, {}
     started = time.monotonic()
+    cache_kwargs = ({"cache_prefix_chars": len(prompt["user"]), "comparison_cache": True}
+                    if cache is True and prompt["user"] else {})
     raw = _openai_prose(prompt["user"], max_out=5200, system=argus_presentation_intent.VOICE,
-                        purpose="manual_api", model=model, diagnostic=diag, confirmed=True)
+                        purpose="manual_api", model=model, diagnostic=diag, confirmed=True,
+                        **cache_kwargs)
     elapsed = round(time.monotonic() - started, 1)
+    cache_result = None
+    if cache_kwargs:
+        def counts(d):
+            return {k: d.get(k) for k in ("outcome", "reason", "errorCode", "inputTokens",
+                                          "cachedInputTokens", "cacheWriteInputTokens",
+                                          "outputTokens", "estUsd")}
+        cache_result = {"requested": True, "boundaryChars": cache_kwargs["cache_prefix_chars"],
+                        "first": counts(diag), "readCheck": None}
+        if read_check and diag.get("outcome") in ("ok", "empty_output", "rejected"):
+            again = {}
+            _openai_prose(prompt["user"], max_out=5200, system=argus_presentation_intent.VOICE,
+                          purpose="manual_api", model=model, diagnostic=again, confirmed=True,
+                          **cache_kwargs)
+            cache_result["readCheck"] = counts(again)
     rendered = None
     if isinstance(raw, dict):
         try:
@@ -19213,7 +19248,10 @@ def _market_brief_model_comparison_one(record, model):
                                      "reason": validation.get("reason"), "detail": validation.get("detail")},
                       "presentation": presentation, "inputTokens": diag.get("inputTokens"),
                       "outputTokens": diag.get("outputTokens"), "estimatedCostUsd": diag.get("estUsd"),
-                      "elapsedSeconds": elapsed, "sections": texts(unified)},
+                      "cachedInputTokens": diag.get("cachedInputTokens"),
+                      "cacheWriteInputTokens": diag.get("cacheWriteInputTokens"),
+                      "elapsedSeconds": elapsed, "sections": texts(unified),
+                      **({"cache": cache_result} if cache_result is not None else {})},
     }
 
 
@@ -19222,7 +19260,7 @@ _MODEL_COMPARISON_LOCK = threading.Lock()
 _MODEL_COMPARISON_MAX_EDITIONS = 6
 
 
-def _market_brief_model_comparison_worker(job_id, model, editions):
+def _market_brief_model_comparison_worker(job_id, model, editions, cache=False):
     path = _market_brief_history_path()
     results = []
     try:
@@ -19235,7 +19273,10 @@ def _market_brief_model_comparison_worker(job_id, model, editions):
             if (brief.get("presentationStatus") != "GENERATED"
                     or (brief.get("aiDiagnostics") or {}).get("requestedModel") != _OPENAI_JUDGMENT_MODEL):
                 continue
-            results.append(_market_brief_model_comparison_one(record, model))
+            # With `cache`, only the first edition is sent twice (read check);
+            # without it the call is the one the comparison always made.
+            trial = ({"cache": True, "read_check": not results} if cache is True else {})
+            results.append(_market_brief_model_comparison_one(record, model, **trial))
             with _MODEL_COMPARISON_LOCK:
                 _MODEL_COMPARISON["results"] = copy.deepcopy(results)
         status = "COMPLETED"
@@ -38688,25 +38729,30 @@ def api_argus_admin_model_comparison():
     body = request.get_json(silent=True) or {}
     model = body.get("model")
     editions = body.get("editions", 5)
+    cache = body.get("cache", False)
     if body.get("confirm") is not True:
         return jsonify({"ok": False, "status": "confirmation_required"}), 409
     if model not in _COMPARISON_OPENAI_MODELS:
         return jsonify({"ok": False, "status": "model_not_allowed"}), 400
     if type(editions) is not int or not 1 <= editions <= _MODEL_COMPARISON_MAX_EDITIONS:
         return jsonify({"ok": False, "status": "editions_out_of_range"}), 400
+    # 2026-11-22 (owner 「全部やる」): optional explicit-cache trial, comparison only.
+    if type(cache) is not bool:
+        return jsonify({"ok": False, "status": "cache_invalid"}), 400
     if not _market_brief_history_path():
         return jsonify({"ok": False, "status": "history_not_configured"}), 503
     with _MODEL_COMPARISON_LOCK:
         if _MODEL_COMPARISON.get("status") == "RUNNING":
             return jsonify({"ok": False, "status": "already_running",
                             "jobId": _MODEL_COMPARISON.get("jobId")}), 409
-        job_id = "cmp-" + hashlib.sha256(f"{model}|{editions}|{time.time_ns()}".encode()).hexdigest()[:12]
+        job_id = "cmp-" + hashlib.sha256(f"{model}|{editions}|{cache}|{time.time_ns()}".encode()).hexdigest()[:12]
         _MODEL_COMPARISON.clear()
         _MODEL_COMPARISON.update(status="RUNNING", jobId=job_id, model=model, editions=editions,
-                                 baselineModel=_OPENAI_JUDGMENT_MODEL, startedAt=_ai_now_iso(), results=[])
+                                 cache=cache, baselineModel=_OPENAI_JUDGMENT_MODEL,
+                                 startedAt=_ai_now_iso(), results=[])
     threading.Thread(target=_memory_operation_run,
                      args=("background", "model_comparison_worker",
-                           _market_brief_model_comparison_worker, job_id, model, editions),
+                           _market_brief_model_comparison_worker, job_id, model, editions, cache),
                      daemon=True, name="model-comparison").start()
     return jsonify({"ok": True, "status": "RUNNING", "jobId": job_id}), 202
 

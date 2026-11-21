@@ -6,6 +6,10 @@
 # repository only; this public run page shows counts and states only.
 # The admin token travels only as a request header from the repository
 # secret and is never printed. Paid: about 0.1 USD per edition (estimate).
+# 2026-11-22 (owner 「全部やる」): `cache` sends the production explicit-cache
+# shape to the candidate and sends the first edition once more (read check),
+# so one run shows whether the model accepts it and reads it back. The run
+# page prints token counts only. Nothing in production changes.
 name: model-comparison
 
 on:
@@ -23,6 +27,11 @@ on:
         default: '5'
         type: choice
         options: ['1', '2', '3', '4', '5', '6']
+      cache:
+        description: Send with the explicit cache and read it back once (trial)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -44,6 +53,7 @@ jobs:
           ARGUS_ADMIN_TOKEN: ${{ secrets.ARGUS_ADMIN_TOKEN }}
           MODEL: ${{ inputs.model }}
           EDITIONS: ${{ inputs.editions }}
+          CACHE: ${{ inputs.cache }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/model-comparison
@@ -60,7 +70,7 @@ jobs:
               except urllib.error.HTTPError as error:
                   return error.code, json.loads(error.read() or b"{}")
           code, started = call("POST", {"model": os.environ["MODEL"], "editions": int(os.environ["EDITIONS"]),
-                                        "confirm": True})
+                                        "cache": os.environ.get("CACHE") == "true", "confirm": True})
           print("start:", code, started.get("status"))
           if code != 202:
               raise SystemExit(1)
@@ -79,6 +89,14 @@ jobs:
           rows = state.get("results") or []
           print("editions:", len(rows), "accepted:",
                 sum(1 for r in rows if r["candidate"]["validation"]["status"] == "ACCEPTED"))
+          for r in rows:
+              cache = r["candidate"].get("cache")
+              if cache:
+                  for name in ("first", "readCheck"):
+                      part = cache.get(name) or {}
+                      print("cache", name, "outcome:", part.get("outcome"), "error:", part.get("errorCode"),
+                            "input:", part.get("inputTokens"), "cached:", part.get("cachedInputTokens"),
+                            "written:", part.get("cacheWriteInputTokens"))
           raise SystemExit(0 if state.get("status") == "COMPLETED" else 1)
           PY
       # The texts stay out of the public run page and its artifacts.

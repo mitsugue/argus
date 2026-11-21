@@ -32,7 +32,10 @@ JST = timezone(timedelta(hours=9))
 
 # Owner design (2026-10-24): before the integrated view on trading days,
 # once on weekends and Tokyo holidays.
-TRADING_DAY_SLOTS = ("07:30", "11:30", "16:30")
+# 2026-11-22 (owner 「全部やる」, cost by design): once a day — the morning
+# slot only (trading days 07:30, closed days 08:30). The 12:00 and 15:45
+# views read the morning answers; the REPEAT_HOURS windows are unchanged.
+TRADING_DAY_SLOTS = ("07:30",)
 CLOSED_DAY_SLOTS = ("08:30",)
 
 MAX_QUESTIONS = 5
