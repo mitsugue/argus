@@ -139,6 +139,7 @@ def test_each_material_enters_when_the_value_exists():
     lambda: mb.future_map_facts({**_future_display(), "status": {}}),
     lambda: mb.level_map_facts(None, now_iso=NOW),
     lambda: mb.level_map_facts(_morning("2026-11-10"), now_iso=NOW),          # older than seven days
+    lambda: mb.level_map_facts(_morning("2026-12-10"), now_iso=NOW),          # not the next session's map
     lambda: mb.level_map_facts({**_morning(), "rows": []}, now_iso=NOW),
     lambda: mb.level_map_facts({**_morning(), "eps": None}, now_iso=NOW),
     lambda: mb.overnight_futures_facts(None, close=48521.3, close_day="2026-11-20",
@@ -190,6 +191,12 @@ def test_texts_fit_even_with_long_external_wording_and_large_counts():
         assert len(row["text"]) <= 160 and not row["text"].endswith("「")
     record = mb.track_record_facts(_record(n=4321))[0]["text"]
     assert len(record) <= 160 and "20日後4321件中2160件一致" in record
+
+
+def test_level_map_reads_the_next_sessions_map_fixed_after_the_close():
+    # The 11/24 (Mon) map is fixed on 11/20 (Fri) at about 16:10 JST from that close.
+    text = mb.level_map_facts(_morning("2026-11-24"), now_iso=NOW)[0]["text"]
+    assert text.startswith("PER水準の地図（2026-11-24朝・") and "2026-11-20終値48,521円" in text
 
 
 def test_sell_mark_reaches_the_view_in_neutral_words():
@@ -256,7 +263,8 @@ def test_composer_reads_the_cached_values_and_adds_nothing_without_them(monkeypa
         monkeypatch.setitem(scanner._FUTURE_MAP, "public", public if with_values else None)
         monkeypatch.setitem(scanner._FUTURE_MAP, "lastReadOkAt", "2026-11-21T00:00:05Z")
         monkeypatch.setattr(scanner, "_FUTURE_MAP_SCORING", {"status": "AVAILABLE", "record": {"scored": 3, "reached": 1}})
-        monkeypatch.setitem(scanner._LEVEL_MAP, "mornings", [_morning()] if with_values else [])
+        monkeypatch.setitem(scanner._LEVEL_MAP, "mornings",
+                            [_morning("2026-11-20"), _morning()] if with_values else [])
         live = {"status": "AVAILABLE", "quote": {"price": 48521.3, "tradedAt": "2026-11-20T06:15:00Z",
                                                   "sessionOpen": False},
                 "overnightFutures": _futures() if with_values else None}
@@ -274,6 +282,8 @@ def test_composer_reads_the_cached_values_and_adds_nothing_without_them(monkeypa
     sources = [r["source"] for r in brief["facts"]]
     assert NEW_SOURCES <= set(sources)
     assert sum(r["text"].startswith("6サインの内訳") for r in brief["facts"]) == 1
+    level = [r["text"] for r in brief["facts"] if r["source"] == "level_map_calculation"]
+    assert len(level) == 1 and level[0].startswith("PER水準の地図（2026-11-21朝")   # the latest map only
     futures = next(r for r in brief["facts"] if r["source"] == "overnight_futures")
     # The delayed quote after the 11/20 close is newer than the stored 11/19 bar, as on Today.
     assert "2026-11-20の日経平均48,521円との差+1.02%" in futures["text"]

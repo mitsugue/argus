@@ -627,13 +627,18 @@ def jst_day(value: Any) -> Optional[str]:
 
 
 LEVEL_MAP_MAX_AGE_DAYS = 7   # an older morning map is not today's map
+# The next session's map is fixed right after the close (about 16:10 JST), so
+# in the evening and over a holiday the latest map is for a later morning.
+LEVEL_MAP_MAX_AHEAD_DAYS = 10
 
 
 def level_map_facts(morning: Optional[Mapping[str, Any]], *, now_iso: str) -> List[Dict[str, Any]]:
     """The latest stored morning PER level map (jp_market_level_map.morning_map).
 
     Lines come from ARGUS's estimated EPS, not the official value; the fact
-    says so. Only the nearest map line on each side is named.
+    says so. Only the nearest map line on each side is named. The map may be
+    for the next session's morning (built from the latest close); its date is
+    stated.
     """
     if not isinstance(morning, Mapping):
         return []
@@ -645,7 +650,7 @@ def level_map_facts(morning: Optional[Mapping[str, Any]], *, now_iso: str) -> Li
         age = (datetime.fromisoformat(today).date() - datetime.fromisoformat(day).date()).days
     except ValueError:
         return []
-    if not 0 <= age <= LEVEL_MAP_MAX_AGE_DAYS:
+    if not -LEVEL_MAP_MAX_AHEAD_DAYS <= age <= LEVEL_MAP_MAX_AGE_DAYS:
         return []
     lines = []
     for side, label in (("UP", "上の線"), ("DOWN", "下の線")):

@@ -18958,10 +18958,11 @@ def _compose_market_brief():
     except Exception as exc:
         add_log(f"[brief] future map facts unavailable: {type(exc).__name__}")
     try:
-        # PER level map: the latest stored morning map (estimated EPS; the
-        # owner's manual PER reference never enters the brief).
+        # PER level map: the latest stored morning map, also when it is for the
+        # next session (fixed from the latest close). Estimated EPS only: the
+        # owner's manual PER reference never enters the brief.
         mornings = [m for m in _LEVEL_MAP.get("mornings") or []
-                    if jp_market_level_map.morning_input_usable(m) and str(m.get("morningOf") or "") <= today_jst]
+                    if jp_market_level_map.morning_input_usable(m) and isinstance(m.get("morningOf"), str)]
         if mornings:
             brief["facts"].extend(argus_market_brief.level_map_facts(
                 max(mornings, key=lambda m: m["morningOf"]), now_iso=brief["generatedAt"]))
