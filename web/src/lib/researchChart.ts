@@ -56,14 +56,21 @@ export function validResearchChart(value: unknown): value is ResearchChart {
       && Number.isFinite(n.reachedWithin10SessionsPct) && n.reachedWithin10SessionsPct >= 0 && n.reachedWithin10SessionsPct <= 100 && Number.isFinite(n.sessionsMedian) && n.sessionsMedian >= 0);
 }
 
+/** 動画の白線の山・谷(id が fm-line- で始まる行)は、過ぎた直近の1点を線の起点に残す。 */
+export const LINE_ANCHOR_MAX_DAYS = 14;
 export function externalPoints(doc: FutureMapDoc | null, chart: ResearchChart) {
-  return (doc?.rows ?? []).filter(r => day(r.start) && day(r.end) && r.end >= r.start && r.level
+  const priced = (doc?.rows ?? []).filter(r => day(r.start) && day(r.end) && r.end >= r.start && r.level
     && positive(r.level.low) && positive(r.level.high) && r.level.high >= r.level.low)
     .map(r => ({ id: r.id, tag: r.tag, start: r.start, end: r.end,
       at: (dayNumber(r.start) + dayNumber(r.end)) / 2, low: r.level!.low, high: r.level!.high,
       value: (r.level!.low + r.level!.high) / 2 }))
-    .filter(r => dayNumber(r.end) >= dayNumber(chart.today) && r.at >= dayNumber(chart.start) && r.at <= dayNumber(chart.end))
-    .sort((a, b) => a.at - b.at);
+    .filter(r => r.at >= dayNumber(chart.start) && r.at <= dayNumber(chart.end));
+  const ahead = priced.filter(r => dayNumber(r.end) >= dayNumber(chart.today));
+  const anchor = ahead.length
+    ? priced.filter(r => r.id.startsWith('fm-line-') && dayNumber(r.end) < dayNumber(chart.today)
+      && dayNumber(chart.today) - r.at <= LINE_ANCHOR_MAX_DAYS * DAY).sort((a, b) => b.at - a.at).slice(0, 1)
+    : [];
+  return [...anchor, ...ahead].sort((a, b) => a.at - b.at);
 }
 
 /** 欠けたEPSをまたいで線をつながない。 */
