@@ -37,7 +37,7 @@ except ImportError:
     OpenQuoteContext = None
     RET_OK = 0
 
-BRIDGE_VERSION = "13.8.166"
+BRIDGE_VERSION = "13.9.18"
 
 BACKEND  = os.environ.get("ARGUS_BACKEND", "https://argus-backend-3j2m.onrender.com").rstrip("/")
 TOKEN    = os.environ.get("ARGUS_ADMIN_TOKEN", "")
@@ -58,6 +58,12 @@ HEARTBEAT_INTERVAL = max(30, int(os.environ.get("BRIDGE_HEARTBEAT_SEC", "60")))
 # One bounded snapshot every 30 seconds; do not subscribe to a stream or
 # acquire flow/boards/orders. The registered set comes only from admin sync.
 INTERVAL = 30
+# 2026-11-21: the price worker waits for OpenD without a time limit (the SDK can
+# wait indefinitely). From 11/14 to 11/20 one such wait stopped every US price
+# for six days while the heartbeat kept reporting a healthy bridge. A worker
+# still alive after this long ends the bridge so its supervisor (systemd or the
+# Mac box loop) starts a fresh one.
+QUOTE_STALL_SEC = max(300, int(os.environ.get("BRIDGE_QUOTE_STALL_SEC", "900")))
 _REGIME_ETF_CODES = ["US.SPY", "US.QQQ", "US.IWM", "US.XLK", "US.XLU", "US.GLD", "US.TLT", "US.HYG"]
 CODES = list(_REGIME_ETF_CODES)
 
@@ -1321,6 +1327,11 @@ def main():
             status = send_heartbeat(disable_jp=True)
             if status != 200:
                 print('bridge heartbeat unavailable:', status, flush=True)
+        if (worker is not None and worker.is_alive()
+                and clock - last_quote_at >= QUOTE_STALL_SEC):
+            print(f'shared market quote worker stuck for {int(clock - last_quote_at)}s;'
+                  ' exiting so the supervisor restarts the bridge', flush=True)
+            raise SystemExit(3)
         if (clock - last_quote_at >= INTERVAL and quote_session_active()
                 and (worker is None or not worker.is_alive())):
             last_quote_at = clock
