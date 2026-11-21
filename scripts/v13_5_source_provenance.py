@@ -421,7 +421,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'requirements.txt': 'c386fa3dda67a5fa3f25752b87de62954fa8116f',
     'jp_market_valuation.py': '8813012bcab02e9269007a8850870da2ef050565',
     'docs/V13_6_INDEX_VALUATION.md': '86f949af07f9cee61e570dc11d3062542c832269',
-    'argus_web_push.py': 'e8af86c4717c66c8f32635056d447da25cd05472',
+    'argus_web_push.py': '62a980cb7e9d3c101364c21173cfa6665de59a06',
     'argus_owner_vault.py': '9c3d105716b1115a205bc69dbbbd18e3a7356457',
     'argus_ai_usage_view.py': 'cd86138feaaa5f61a305b2eaa4e74f2b8de3b163',
     'argus_ai_usage_runtime.py': 'a547929955acabfd3ae74d3cbd9224f1448d2862',
@@ -769,6 +769,7 @@ AUTHORIZED_EXTENSION_PATHS = frozenset({
     # row stays LICENSE_BLOCKED and is never impersonated.
     "argus_index_valuation_proxy.py",
     "test_argus_index_valuation_proxy.py",
+    "test_us_price_stall_alert.py",
     "test_argus_news_i18n_v1151_backend.py",
     "test_usd_nikkei.py",
     "test_argus_cors_preflight_cache.py",
