@@ -53,6 +53,10 @@ _ALLOWED_SCANNER_SCOPES = {
     # 2026-10-25: the same schedule plus one layout retry; reads the saved
     # edition's status and time, not its advice.
     "_market_brief_due",
+    # 2026-11-22 (owner 【見立ては変わった時だけ】): the material-change basis
+    # (P0 facts, six signs, Nikkei level) the update times compare; it reads
+    # the composed facts and the cached Nikkei level, not the view's advice.
+    "_market_brief_material_basis", "_market_brief_nikkei_level",
     # 2026-10-20: starts the history backup on its own cadence; never reads the brief.
     "_analysis_history_backup_tick",
 }

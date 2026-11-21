@@ -125,3 +125,142 @@ def wording_change(previous_text, text):
     keys = sorted(set(previous_text) | set(text))
     return {"conclusion": previous_text.get("nowJa") != text.get("nowJa"),
             "sections": [k for k in keys if previous_text.get(k) != text.get(k)]}
+
+
+# ── Material change (owner decision 2026-11-22 【見立ては変わった時だけ】) ──
+#
+# Measured 2026-11-11..21 (market_analysis_history views): every update time
+# wrote a new paid edition (33 editions, one per due time plus one release).
+# The unchanged-input reuse never applied at an update time, because its
+# digest binds the whole cached input set (index bars, feature history,
+# market-position memory, receipt times, eligible input times), and several
+# of those move every few minutes. Each edition also listed "market_position"
+# and "other" among the changed fact groups, i.e. text that moves on every
+# collection without being a new market fact.
+#
+# From 2026-11-22 an update time after the morning one rewrites the view only
+# when one of the owner's material inputs changed since the saved edition.
+# Otherwise the saved edition stands and only its check time moves. When a
+# rule cannot be evaluated the view is rewritten (an old view must not stay up
+# silently).
+MATERIAL_BASIS_VERSION = "brief-material-basis-v1"
+# The first update time of every JST day (both day kinds start at 08:00):
+# one edition a day is always written, so the screen's 24-hour age rule
+# (web/src/lib/todayDecision.ts BRIEF_TONE_MAX_AGE_HOURS) is never reached by
+# design; the longest gap between update times is 15:45 to 08:00 (16h15m).
+MORNING_SLOT = TRADING_DAY_SLOTS[0]   # CLOSED_DAY_SLOTS[0] is the same time (tested)
+# A Nikkei 225 move of 1% or more from the level the saved edition was written
+# with. 2026-11-11..20 the close-to-close moves were +1.31, -0.70, +0.53,
+# -2.42, -1.34, +0.28, +0.71, -5.06%: a 1% move is a day the view's numbers
+# and tone may no longer hold; smaller moves are inside a normal session.
+NIKKEI_MOVE_PCT = 1.0
+_SIGN_ROW = "six-signs"
+
+
+def _sha(value):
+    import hashlib
+    import json
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _p0_identity(fact):
+    """One P0 fact as compared between editions.
+
+    The source, its event id and its text: a new or replaced official result,
+    material headline, imminent event or release news, or a change in its
+    confirmation (市場確認待ち → 市場確認済み), is a change. One exception: an
+    objective market-shock sensor (official_sensor) with an event id is
+    compared by its id only, so the same sensor's value moving (米30年債利回り
+    5.41% → 5.40%) does not rewrite the view; a shock appearing or clearing
+    does. Market moves are covered by the Nikkei rule.
+    """
+    provenance = fact.get("provenance") if isinstance(fact.get("provenance"), dict) else {}
+    event_id = provenance.get("eventId")
+    source = str(fact.get("source") or "")
+    if source == "official_sensor" and event_id:
+        return [source, event_id, None]
+    return [source, event_id, _sha(str(fact.get("text") or ""))[:16]]
+
+
+def _six_signs(facts):
+    """Lit sign names from the breakdown row, else the count from the market view."""
+    import re
+    for fact in facts:
+        provenance = fact.get("provenance") if isinstance(fact.get("provenance"), dict) else {}
+        if fact.get("source") == "market_view" and provenance.get("eventId") == _SIGN_ROW:
+            body = str(fact.get("text") or "").split(": ", 1)[-1].rstrip("。")
+            lit = sorted(part.rsplit("=", 1)[0] for part in body.split("、")
+                         if part.rsplit("=", 1)[-1] == "点灯")
+            return {"lit": lit, "count": len(lit)}
+    for fact in facts:
+        if fact.get("source") == "market_view":
+            match = re.search(r"6サイン成立(\d+)/(\d+)", str(fact.get("text") or ""))
+            if match:
+                return {"lit": None, "count": int(match.group(1))}
+    return {"lit": None, "count": None}
+
+
+def material_basis(*, facts, nikkei_price=None, nikkei_at=None, checked_at=None):
+    """What the material-change rule compares, from the composed (pre-AI) facts."""
+    rows = [f for f in facts or () if isinstance(f, dict)]
+    p0 = sorted({tuple(_p0_identity(f)) for f in rows if f.get("priority") == "P0"},
+                key=lambda key: tuple("" if part is None else str(part) for part in key))
+    price = (float(nikkei_price) if isinstance(nikkei_price, (int, float))
+             and not isinstance(nikkei_price, bool) and nikkei_price > 0 else None)
+    return {"schemaVersion": MATERIAL_BASIS_VERSION, "p0": [list(key) for key in p0],
+            "sixSigns": _six_signs(rows),
+            "nikkei": {"price": price, "at": nikkei_at if isinstance(nikkei_at, str) else None},
+            "checkedAt": checked_at}
+
+
+def _signs_changed(before, after):
+    before = before if isinstance(before, dict) else {}
+    after = after if isinstance(after, dict) else {}
+    if before.get("lit") is not None and after.get("lit") is not None:
+        return before["lit"] != after["lit"]
+    return before.get("count") != after.get("count")
+
+
+def material_change(*, previous_basis, basis, slot, previous_edition_at, now, event_ids=()):
+    """Whether a due update time must write a new edition.
+
+    Returns {"material": bool, "reasons": [...], "nikkeiMovePct": float|None}.
+    Any one reason writes. Reasons, in the owner's order:
+      morning_edition    the first update time of the JST day (once a day, always)
+      new_day            the saved edition is from an earlier JST day (a missed
+                         or failed morning edition is written at the next time)
+      release_received   an important official result arrived with this time
+      no_previous_basis  the saved edition predates this rule or its version
+      p0_changed         a P0 fact was added, removed or replaced
+      six_signs_changed  the lit six signs (or their count) differ
+      nikkei_moved       the Nikkei 225 moved 1% or more from the saved level
+      nikkei_unknown     either level is missing, so the move cannot be judged
+    """
+    now = _jst(now)
+    reasons = []
+    label = str(slot or "")
+    if label.endswith(" " + MORNING_SLOT):
+        reasons.append("morning_edition")
+    last = _jst(previous_edition_at) if isinstance(previous_edition_at, datetime) else None
+    if last is None or last.date() != now.date():
+        reasons.append("new_day")
+    if event_ids:
+        reasons.append("release_received")
+    move = None
+    if not isinstance(previous_basis, dict) or previous_basis.get("schemaVersion") != MATERIAL_BASIS_VERSION:
+        reasons.append("no_previous_basis")
+    else:
+        if previous_basis.get("p0") != basis.get("p0"):
+            reasons.append("p0_changed")
+        if _signs_changed(previous_basis.get("sixSigns"), basis.get("sixSigns")):
+            reasons.append("six_signs_changed")
+        before = (previous_basis.get("nikkei") or {}).get("price")
+        after = (basis.get("nikkei") or {}).get("price")
+        if isinstance(before, (int, float)) and isinstance(after, (int, float)) and before > 0:
+            move = (after / before - 1) * 100
+            if abs(move) >= NIKKEI_MOVE_PCT:
+                reasons.append("nikkei_moved")
+        else:
+            reasons.append("nikkei_unknown")
+    return {"material": bool(reasons), "reasons": reasons,
+            "nikkeiMovePct": None if move is None else round(move, 3)}
