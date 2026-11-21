@@ -27,7 +27,10 @@ def test_the_line_follows_the_data_so_the_reusable_prefix_is_unchanged():
     source = (ROOT / "scanner.py").read_text(encoding="utf-8")
     at = source.index('required = argus_macro_material.required_citation_line(prompt_context.get("facts"))')
     assert source.index('json.dumps(prompt_context, ensure_ascii=False, separators=(",", ":")))') < at
-    assert 'cache_prefix_chars=len(user)' in source
+    # 2026-11-21: the boundary is still the end of the request (len(user)); it is
+    # now chosen per model by _brief_cache_prefix (gpt-6.2-sol has no explicit cache yet).
+    assert 'return len(user) if model in _BRIEF_EXPLICIT_CACHE_MODELS else None' in source
+    assert source.count('cache_prefix_chars=cache_prefix)') == 2
 
 
 def test_presentation_rejections_are_counted_by_rule(tmp_path):

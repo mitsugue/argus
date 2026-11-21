@@ -203,8 +203,9 @@ def test_rejected_judge_content_cannot_influence_labels_but_retains_billed_token
         return SimpleNamespace(output_text=output, text=output,
             usage=SimpleNamespace(input_tokens=120, output_tokens=30),
             usage_metadata=SimpleNamespace(prompt_token_count=120, candidates_token_count=30))
-    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=lambda **kw:
-        SimpleNamespace(responses=SimpleNamespace(create=respond))))
+    client = SimpleNamespace(responses=SimpleNamespace(create=respond))
+    client.with_options = lambda **kw: client      # the judge sends one request, no SDK retry
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=lambda **kw: client))
     monkeypatch.setattr(scanner, "google_genai", SimpleNamespace(Client=lambda **kw:
         SimpleNamespace(models=SimpleNamespace(generate_content=respond))))
     if provider == "openai":

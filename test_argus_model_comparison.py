@@ -88,12 +88,17 @@ def test_one_edition_is_written_again_without_saving_anything(monkeypatch):
 
 
 def test_newer_models_are_comparison_only_and_priced():
-    """2026-11-21 (owner 【用途で分ける】): gpt-6.2-sol and gpt-6-luna may be
-    called only by the confirmed comparison, at the official Standard price."""
+    """2026-11-21 (owner 【用途で分ける】): gpt-6-luna may be called only by the
+    confirmed comparison, at the official Standard price. gpt-6.2-sol is
+    routine only for the three judgment lanes (owner 【切り替える】,
+    test_argus_judgment_model_sol) and stays comparable."""
     import scanner
     assert scanner._AI_PRICING["gpt-6.2-sol"] == {"in": 2.0, "out": 10.0, "cachedIn": 0.10}
     assert scanner._AI_PRICING["gpt-6-luna"] == {"in": 0.10, "out": 0.50, "cachedIn": 0.01}
     for model in ("gpt-6.2-sol", "gpt-6-luna"):
         assert model in scanner._COMPARISON_OPENAI_MODELS
-        assert model not in scanner._ROUTINE_OPENAI_MODELS
         assert scanner._routine_openai_model(model) == "gpt-5.6-terra"
+    assert "gpt-6-luna" not in scanner._ROUTINE_OPENAI_MODELS
+    assert not scanner._openai_model_allowed("gpt-6-luna", "market_brief")
+    assert scanner._openai_model_allowed("gpt-6.2-sol", "market_brief")
+    assert not scanner._openai_model_allowed("gpt-6.2-sol", "news_intel")
