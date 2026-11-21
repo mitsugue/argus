@@ -96,6 +96,22 @@ def test_ties_take_the_later_start_and_only_long_rows_fall_back_to_a_long_now():
     assert f.LONG_DAYS == 45 and f.LEAD_ROWS == 4 and f.OUTLOOK_ROWS == 2 and f.KEEP_PAST_DAYS == 14
 
 
+def test_white_line_rows_of_the_same_video_stay_while_the_line_is_not_over():
+    def row(i, a, b, reason, price=60000):
+        return {"id": i, "periodLabel": i, "start": a, "end": b, "view": i, "tag": "底", "agree": 1,
+                "level": {"low": price, "high": price}, "reason": reason}
+    line = "11/21の動画の線"
+    rows = [row("fm-line-2026-10-26", "2026-10-23", "2026-10-29", line),
+            row("fm-line-2026-11-17", "2026-11-14", "2026-11-20", line),
+            row("fm-line-2026-11-26", "2026-11-23", "2026-11-29", line),
+            row("fm-line-2026-09-01", "2026-08-29", "2026-09-04", "9/1の動画の線"),
+            row("plain-old", "2026-10-23", "2026-10-29", line)]
+    view = f.for_display(f.validate({**DOC, "rows": rows}), "2026-11-22")
+    assert sorted(r["id"] for r in view["rows"]) == ["fm-line-2026-10-26", "fm-line-2026-11-17", "fm-line-2026-11-26"]
+    over = f.for_display(f.validate({**DOC, "rows": rows}), "2026-12-20")
+    assert over["rows"] == [], "終点も過ぎたら、線の点も14日の決まりに戻る"
+
+
 def test_display_marks_leave_registration_and_scoring_unchanged():
     import argus_future_map_scoring as scoring
     public = _shaped()
