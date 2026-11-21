@@ -2486,7 +2486,8 @@ def test_between_update_times_nothing_calls_gpt_and_the_next_time_writes_once(mo
     """Owner decision 2026-10-17: the view is written at fixed JST times and
     right after an important release; a headline or an objective shock between
     those times no longer starts a full GPT rewrite (80-99 editions a day).
-    From 2026-11-10 a trading day has three times: 08:00, 12:00, 15:45 JST."""
+    From 2026-11-10 a trading day has three times: 08:00, 12:00 and (from
+    2026-11-22) 16:10 JST."""
     from datetime import datetime, timezone
     current = [datetime(2026, 1, 5, 1, 20, tzinfo=timezone.utc)]    # Monday 10:20 JST
     class Clock(datetime):

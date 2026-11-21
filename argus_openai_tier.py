@@ -22,7 +22,7 @@ FLEX_PURPOSES = frozenset({"market_brief", "news_intel", "ai_judgment",
 # refused once (HTTP 400) and then sent again.
 STANDARD_ONLY_MODELS = frozenset({"gpt-6.2-sol"})
 # Flex answers are slower. The brief holds the shared heavy-task lane while it
-# waits, so the wait is bounded; its update times (08:00, 12:00, 15:45) are
+# waits, so the wait is bounded; its update times (08:00, 12:00, 16:10) are
 # outside the continuous trading sessions.
 FLEX_TIMEOUT_SECONDS = 300
 FLEX_PRICE_FACTOR = 0.5

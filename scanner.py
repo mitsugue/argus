@@ -19610,7 +19610,8 @@ def _market_brief_nikkei_level():
 def _market_brief_material_basis(brief):
     price, at = _market_brief_nikkei_level()
     return argus_brief_schedule.material_basis(
-        facts=brief.get("facts") or [], nikkei_price=price, nikkei_at=at, checked_at=_ai_now_iso())
+        facts=brief.get("facts") or [], nikkei_price=price, nikkei_at=at, checked_at=_ai_now_iso(),
+        fiscal=brief.get("fiscalEnvironment"))
 
 
 def _market_brief_refresh(allow_ai=True):

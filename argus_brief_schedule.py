@@ -1,4 +1,4 @@
-"""When the integrated view is written again (owner decisions 2026-10-17, 2026-11-10).
+"""When the integrated view is written again (owner decisions 2026-10-17, 2026-11-10, 2026-11-22).
 
 The measured cost (ai-usage-report, 2026-10-17) showed 80-99 saved editions a
 day while the wording rarely changed. The owner fixed the update times in
@@ -12,12 +12,20 @@ current time, the last edition's time and whether a JST day is a trading day.
 from datetime import datetime, timedelta, timezone
 
 JST = timezone(timedelta(hours=9))
-SCHEDULE_VERSION = "brief-schedule-v2"
+SCHEDULE_VERSION = "brief-schedule-v3"
 # Trading days (owner, 2026-11-10 「1日3回にする」「10/17から3つ」): three of
 # the times fixed on 2026-10-17 (07:00, 08:00, 09:15, 10:00, 12:00, 13:00,
 # 15:45, 17:00, 20:00, 22:00, 24:00) -- before the open, the lunch break and
 # after the close. A "24:00" label would still mean midnight after that day.
-TRADING_DAY_SLOTS = ("08:00", "12:00", "15:45")
+# 2026-11-22 (owner 【15:45を16:10にずらす】): the after-close time moved from
+# 15:45 to 16:10. Measured 2026-11-11..20: every 15:45 edition was written
+# while the day's Nikkei close was still pending (the 1-session fact read
+# 「最新営業日…は取得待ち」) and its six-sign count dropped (5/6 to 3/6 or
+# 4/6) only to return the next morning. The close is read at the 16:05
+# close-refresh slot (jp_market_close_refresh) and the delayed quote is read
+# once more after 16:05 (argus_index_live.SETTLED_CLOSE_MINUTE), so a 16:10
+# edition is written from the day's close.
+TRADING_DAY_SLOTS = ("08:00", "12:00", "16:10")
 # Weekends and Tokyo exchange holidays (unchanged since 2026-10-17).
 CLOSED_DAY_SLOTS = ("08:00", "20:00")
 EVENT_EDITIONS_PER_DAY = 3
@@ -143,11 +151,11 @@ def wording_change(previous_text, text):
 # Otherwise the saved edition stands and only its check time moves. When a
 # rule cannot be evaluated the view is rewritten (an old view must not stay up
 # silently).
-MATERIAL_BASIS_VERSION = "brief-material-basis-v1"
+MATERIAL_BASIS_VERSION = "brief-material-basis-v2"
 # The first update time of every JST day (both day kinds start at 08:00):
 # one edition a day is always written, so the screen's 24-hour age rule
 # (web/src/lib/todayDecision.ts BRIEF_TONE_MAX_AGE_HOURS) is never reached by
-# design; the longest gap between update times is 15:45 to 08:00 (16h15m).
+# design; the longest gap between update times is 16:10 to 08:00 (15h50m).
 MORNING_SLOT = TRADING_DAY_SLOTS[0]   # CLOSED_DAY_SLOTS[0] is the same time (tested)
 # A Nikkei 225 move of 1% or more from the level the saved edition was written
 # with. 2026-11-11..20 the close-to-close moves were +1.31, -0.70, +0.53,
@@ -200,15 +208,38 @@ def _six_signs(facts):
     return {"lit": None, "count": None}
 
 
-def material_basis(*, facts, nikkei_price=None, nikkei_at=None, checked_at=None):
-    """What the material-change rule compares, from the composed (pre-AI) facts."""
+def _fiscal_warning(fiscal):
+    """The Japanese fiscal warning state (owner 【入れる】 2026-11-22).
+
+    The levels the fiscal monitor decided (argus_jp_fiscal_monitor): each
+    case's warningLevel and the market side's warningLevel and adverse groups
+    (long and super-long JGB yields, USD/JPY), from the brief's
+    fiscalEnvironment (argus_jp_fiscal_runtime.context_reference). The fact
+    texts are not compared: 「更新確認が未完了」 follows the acquisition of
+    every poll and the projection numbers carry no level of their own.
+    Measured 2026-11-11..21: the cases went UNKNOWN to WATCH once (11/12
+    12:00) and the market side moved between WATCH and UNKNOWN four times.
+    The earlier unused urgent signature (scanner) also counted these facts.
+    """
+    if not isinstance(fiscal, dict) or not fiscal:
+        return None
+    cases = fiscal.get("cases") if isinstance(fiscal.get("cases"), dict) else {}
+    market = fiscal.get("market") if isinstance(fiscal.get("market"), dict) else {}
+    adverse = market.get("adverseGroups") if isinstance(market.get("adverseGroups"), list) else []
+    return {"cases": {str(case): (row or {}).get("warningLevel") for case, row in sorted(cases.items())},
+            "market": {"warningLevel": market.get("warningLevel"),
+                       "adverseGroups": sorted(str(group) for group in adverse)}}
+
+
+def material_basis(*, facts, nikkei_price=None, nikkei_at=None, checked_at=None, fiscal=None):
+    """What the material-change rule compares, from the composed (pre-AI) brief."""
     rows = [f for f in facts or () if isinstance(f, dict)]
     p0 = sorted({tuple(_p0_identity(f)) for f in rows if f.get("priority") == "P0"},
                 key=lambda key: tuple("" if part is None else str(part) for part in key))
     price = (float(nikkei_price) if isinstance(nikkei_price, (int, float))
              and not isinstance(nikkei_price, bool) and nikkei_price > 0 else None)
     return {"schemaVersion": MATERIAL_BASIS_VERSION, "p0": [list(key) for key in p0],
-            "sixSigns": _six_signs(rows),
+            "sixSigns": _six_signs(rows), "fiscalWarning": _fiscal_warning(fiscal),
             "nikkei": {"price": price, "at": nikkei_at if isinstance(nikkei_at, str) else None},
             "checkedAt": checked_at}
 
@@ -233,6 +264,7 @@ def material_change(*, previous_basis, basis, slot, previous_edition_at, now, ev
       no_previous_basis  the saved edition predates this rule or its version
       p0_changed         a P0 fact was added, removed or replaced
       six_signs_changed  the lit six signs (or their count) differ
+      fiscal_warning_changed  the Japanese fiscal warning levels differ
       nikkei_moved       the Nikkei 225 moved 1% or more from the saved level
       nikkei_unknown     either level is missing, so the move cannot be judged
     """
@@ -254,6 +286,8 @@ def material_change(*, previous_basis, basis, slot, previous_edition_at, now, ev
             reasons.append("p0_changed")
         if _signs_changed(previous_basis.get("sixSigns"), basis.get("sixSigns")):
             reasons.append("six_signs_changed")
+        if previous_basis.get("fiscalWarning") != basis.get("fiscalWarning"):
+            reasons.append("fiscal_warning_changed")
         before = (previous_basis.get("nikkei") or {}).get("price")
         after = (basis.get("nikkei") or {}).get("price")
         if isinstance(before, (int, float)) and isinstance(after, (int, float)) and before > 0:

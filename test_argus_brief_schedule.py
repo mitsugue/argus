@@ -1,4 +1,5 @@
-"""Owner-fixed update times of the integrated view (2026-10-17, three a trading day from 2026-11-10)."""
+"""Owner-fixed update times of the integrated view (2026-10-17, three a trading day from 2026-11-10,
+the after-close time 16:10 from 2026-11-22)."""
 from datetime import date, datetime, timedelta, timezone
 
 import argus_brief_schedule as bs
@@ -15,20 +16,24 @@ def weekdays(day):
 
 
 def test_three_owner_times_on_trading_days_and_two_on_closed_days():
-    assert bs.TRADING_DAY_SLOTS == ("08:00", "12:00", "15:45")
+    assert bs.TRADING_DAY_SLOTS == ("08:00", "12:00", "16:10")
     assert bs.CLOSED_DAY_SLOTS == ("08:00", "20:00") and bs.EVENT_EDITIONS_PER_DAY == 3
-    assert bs.SCHEDULE_VERSION == "brief-schedule-v2"
-    assert [label for _, label in bs.slots_for_day(date(2026, 10, 16), True)] == ["08:00", "12:00", "15:45"]
+    assert bs.SCHEDULE_VERSION == "brief-schedule-v3"
+    assert [label for _, label in bs.slots_for_day(date(2026, 10, 16), True)] == ["08:00", "12:00", "16:10"]
     assert [label for _, label in bs.slots_for_day(date(2026, 10, 17), False)] == ["08:00", "20:00"]
 
 
 def test_latest_slot_reads_yesterday_and_weekends():
-    assert bs.latest_slot(at("2026-10-17T00:30"), weekdays)[1] == "2026-10-16 15:45"   # Friday close
-    assert bs.latest_slot(at("2026-10-17T07:30"), weekdays)[1] == "2026-10-16 15:45"   # Saturday before 08:00
+    assert bs.latest_slot(at("2026-10-17T00:30"), weekdays)[1] == "2026-10-16 16:10"   # Friday close
+    assert bs.latest_slot(at("2026-10-17T07:30"), weekdays)[1] == "2026-10-16 16:10"   # Saturday before 08:00
     assert bs.latest_slot(at("2026-10-17T08:05"), weekdays)[1] == "2026-10-17 08:00"
     assert bs.latest_slot(at("2026-10-19T00:30"), weekdays)[1] == "2026-10-18 20:00"   # Sunday evening
     assert bs.latest_slot(at("2026-10-19T09:20"), weekdays)[1] == "2026-10-19 08:00"   # no 09:15 any more
-    assert bs.latest_slot(at("2026-10-19T23:59"), weekdays)[1] == "2026-10-19 15:45"   # no evening slot
+    assert bs.latest_slot(at("2026-10-19T23:59"), weekdays)[1] == "2026-10-19 16:10"   # no evening slot
+    # 2026-11-22: the old 15:45 time is gone; until 16:10 the 12:00 edition is the latest.
+    assert bs.latest_slot(at("2026-10-19T15:50"), weekdays)[1] == "2026-10-19 12:00"
+    assert bs.latest_slot(at("2026-10-19T16:09"), weekdays)[1] == "2026-10-19 12:00"
+    assert bs.latest_slot(at("2026-10-19T16:10"), weekdays)[1] == "2026-10-19 16:10"
 
 
 def test_three_editions_on_a_trading_day():
@@ -41,7 +46,7 @@ def test_three_editions_on_a_trading_day():
         if decision["due"]:
             last = minute
         minute += timedelta(minutes=5)
-    assert written == ["2026-10-19 08:00", "2026-10-19 12:00", "2026-10-19 15:45"]
+    assert written == ["2026-10-19 08:00", "2026-10-19 12:00", "2026-10-19 16:10"]
 
 
 def test_a_slot_is_due_once_after_it_passes():
@@ -184,7 +189,7 @@ def test_the_morning_edition_is_always_written_and_a_missed_morning_is_caught_up
 
 def test_the_view_is_checked_well_inside_the_screens_24_hours():
     """Every JST day starts with a written edition, and consecutive update
-    times are at most 16h15m apart, so the time the view was written or
+    times are at most 15h50m apart (16:10 to 08:00), so the time the view was written or
     re-confirmed never reaches the screen's 24 hours (BRIEF_TONE_MAX_AGE_HOURS)."""
     base = bs.material_basis(facts=_facts(), nikkei_price=50000.0)
     instants = []
@@ -197,7 +202,7 @@ def test_the_view_is_checked_well_inside_the_screens_24_hours():
                                        previous_edition_at=when - timedelta(hours=4), now=when)
             assert check["material"] is (label == "08:00"), (day, label)
     gaps = [b - a for a, b in zip(instants, instants[1:])]
-    assert max(gaps) == timedelta(hours=16, minutes=15) and max(gaps) < timedelta(hours=24)
+    assert max(gaps) == timedelta(hours=15, minutes=50) and max(gaps) < timedelta(hours=24)
 
 
 def _material_scenario(monkeypatch):
@@ -269,11 +274,11 @@ def test_an_unchanged_update_time_calls_no_ai_and_moves_the_check_time(monkeypat
 def test_a_new_p0_fact_at_the_next_update_time_writes_once(monkeypatch):
     scanner, current, price, facts, previous, calls, saved = _material_scenario(monkeypatch)
     facts[0] = _facts(news=("nie-1", "nie-2"))
-    current[0] = datetime(2026, 11, 25, 6, 46, tzinfo=current[0].tzinfo)   # 15:46 JST
+    current[0] = datetime(2026, 11, 25, 7, 11, tzinfo=current[0].tzinfo)   # 16:11 JST
     written = scanner._market_brief_refresh(allow_ai=True)
     assert len(calls) == 1 and written["unifiedSummary"] == {"view": "new"}
     trigger = saved[0]["generationTrigger"]
-    assert trigger["slot"] == "2026-11-25 15:45" and trigger["materialCheck"]["reasons"] == ["p0_changed"]
+    assert trigger["slot"] == "2026-11-25 16:10" and trigger["materialCheck"]["reasons"] == ["p0_changed"]
     assert trigger["materialBasis"]["p0"] == bs.material_basis(facts=facts[0])["p0"]
     assert trigger["materialBasis"]["nikkei"]["price"] == 50000.0
 
@@ -292,3 +297,29 @@ def test_a_saved_edition_without_a_basis_is_rewritten_once(monkeypatch):
     scanner._market_brief_refresh(allow_ai=True)
     assert len(calls) == 1
     assert saved[0]["generationTrigger"]["materialCheck"]["reasons"] == ["no_previous_basis"]
+
+
+def _fiscal(cases="WATCH", market="WATCH", adverse=("JGB",)):
+    return {"status": "AVAILABLE",
+            "cases": {name: {"id": name, "warningLevel": cases, "currentReasons": ["r"]}
+                      for name in ("baseline", "growth_1", "growth_2")},
+            "market": {"id": "m", "status": "PARTIAL", "warningLevel": market, "adverseGroups": list(adverse)}}
+
+
+def test_a_change_in_the_fiscal_warning_writes_a_new_edition():
+    """Owner 【入れる】 2026-11-22: the Japanese fiscal warning state is a material
+    input (it was in the earlier, unused urgent signature). Its levels are
+    compared, not the fact texts that follow every acquisition."""
+    base = bs.material_basis(facts=_facts(), nikkei_price=50000.0, fiscal=_fiscal())
+    same = bs.material_basis(facts=_facts(), nikkei_price=50000.0,
+                             fiscal={**_fiscal(), "status": "PARTIAL", "auctions": {"x": 1}})
+    assert not _check(base, same)["material"]
+    for changed in (_fiscal(cases="UNKNOWN"), _fiscal(market="UNKNOWN", adverse=()),
+                    _fiscal(adverse=("FX", "JGB")), None):
+        result = _check(base, bs.material_basis(facts=_facts(), nikkei_price=50000.0, fiscal=changed))
+        assert result["reasons"] == ["fiscal_warning_changed"], changed
+    # The acquisition fact text alone does not count.
+    flapping = _facts() + [{"priority": "P1", "source": "jp_fiscal_environment",
+                            "text": "日本の財政・金利環境は更新確認が未完了。保存した警戒を取得障害だけで解除しません。"}]
+    assert not _check(base, bs.material_basis(facts=flapping, nikkei_price=50000.0, fiscal=_fiscal()))["material"]
+    assert base["schemaVersion"] == "brief-material-basis-v2"
