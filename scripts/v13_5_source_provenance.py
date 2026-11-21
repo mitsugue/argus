@@ -149,7 +149,7 @@ REVIEWED_EXTENSION_BLOBS = {
     'test_argus_heavy_tick_serialization.py': 'f6b244ebf34477d9b974a56cd36cbd6df4efe4ad',
     # the acceptance evidence churn diagnostic
     # the second store-residency slice
-    'conftest.py': '9f4e0a367559d3bcc47b23d71c8cde86c46c2030',
+    'conftest.py': '0a9d7cea1281e62a8ae1761f269ecc2b304dd627',
     'test_argus_v13_4_3_rss_retention.py': '384a21253e6632bdcdcdde246724a2fc659ab869',
     # the Settings identity card (v13.7.57)
     # the Settings identity card (v13.7.59)
