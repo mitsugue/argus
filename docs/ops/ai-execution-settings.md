@@ -61,7 +61,7 @@
 - 切り替えた用途: 統合AIの見立て（`market_brief`・修正の2回目も同じモデル）・市場の位置の確認（`market_position_check`・web_search の道具つき）・平日のAI判定（`ai_judgment`）。3つとも呼び出しの所で `_OPENAI_JUDGMENT_MODEL` を明示する。
 - 切り替えない用途: ニュース読み・発表の分析・見出しの翻訳・銘柄の画面のボタン（`owner_dialogue`）・調査・手動の呼び出しなど。`gpt-5.6-terra` のまま。`gpt-6.2-sol` はこの3用途の時だけ許可（`_openai_model_allowed`）。環境変数の役割の設定では選べない。Terra の失敗を sol でやり直すことはしない。
 - Flex: 新しいモデルには Flex が付かない（公式「We won't be adding Flex to new models」）。`argus_openai_tier.STANDARD_ONLY_MODELS` にあるモデルは、最初から通常の窓口に送る（400 で断られてから回すのではない）。Terra の用途は Flex のまま。
-- 見立ての明示のキャッシュ（`prompt_cache_breakpoint`）は Terra で確かめた形なので、sol には付けない（見比べで通った形と同じ依頼）。sol で確かめたら `_BRIEF_EXPLICIT_CACHE_MODELS` に足す。
+- 見立ての明示のキャッシュ（`prompt_cache_breakpoint`）は Terra で確かめた形なので、最初は sol に付けなかった。2026-11-26 に sol で確かめて合格したので `_BRIEF_EXPLICIT_CACHE_MODELS` に足した（下の節）。
 - 見立ての使い回しの指紋（`generationPolicy.model`）と見比べの元の版の選び方は、見立てのモデル（sol）で比べる。切り替えの直後に一度だけ作り直しになる。
 - 位置の確認で sol が web_search の道具を受け付けない時は、その回は `search_failed`（道具なしでの送り直しはしない）。
 - 待ち時間の上限（2026-11-21 追記）: 見比べで sol の見立ては1回 40.8〜45.1 秒（出力 3,528〜3,833 トークン）だったので、sol の3用途だけ上限を広げた。見立て（1回目・修正の2回目）と AI判定は 120 秒、位置の確認（web_search つき）は 180 秒（`_OPENAI_JUDGMENT_TIMEOUT_SECONDS`）。Terra の用途は今までどおり（通常 60・90 秒、Flex 300 秒）。時間切れは送り直さない。sol の AI判定と位置の確認では、SDK の隠れた送り直し（既定2回）も止めて、1回の待ちを1回の依頼にした。
@@ -70,4 +70,5 @@
 
 - 市場の位置の確認（`market_position_check`）は1日1回にした。取引日は 7:30、土日祝は 8:30 の枠だけ（`argus_market_position_check.TRADING_DAY_SLOTS`/`CLOSED_DAY_SLOTS`）。11:30・16:30 の枠はやめ、昼と夕方の見立ては朝の答えを読む。同じ問いを期間内に聞き直さない決まり（`REPEAT_HOURS`・確認72時間など）はそのまま。確認は見立ての係が動いた時（見立てを作る時刻・発表の直後）にだけ走るので、実際に走るのはその枠のあとの最初の見立ての直前。
 - 見比べ（`model-comparison`）に、明示のキャッシュを付けて送る選択（入口の `cache: true`・手順の入力 `cache`）を足した。本番の見立てと同じ形（境目は依頼の終わり）で送り、最初の1版だけ同じ依頼をすぐもう1回送って、`cachedInputTokens`（読めた量）と `cacheWriteInputTokens`（書いた量）を結果の `candidate.cache` に残す。公開の実行画面にはトークンの数だけを出す。保存・画面・記憶には何も書かない。
-- 本番の見立ての sol には、まだキャッシュを付けない（`_BRIEF_EXPLICIT_CACHE_MODELS` は Terra・Luna のまま）。見比べの結果を見てから決める。
+- 本番の見立ての sol には、（11/22 時点では）まだキャッシュを付けない（`_BRIEF_EXPLICIT_CACHE_MODELS` は Terra・Luna のまま）。見比べの結果を見てから決める。
+- 2026-11-26（オーナー【確かめてから入れる】）: 見比べ（実行 45737678112・`cache: true`・1版）で sol は明示のキャッシュの形を断らず、画面の検査は ACCEPTED、2回目の依頼では入力 32,627 トークンのうち 31,625 を読めた（約97%）。合格の基準（断られない・2回目に読めた量が0より多い・見立てが検査に通る）を満たしたので、`_BRIEF_EXPLICIT_CACHE_MODELS` に `gpt-6.2-sol` を足した。使うのは見立て（`market_brief`）だけで、位置の確認・AI判定・見比べ以外の手動の呼び出しには付けない。

@@ -14960,9 +14960,12 @@ _CAOS_EVENT_SYSTEM = (
 
 
 # The reviewed explicit-cache request shape (13.8.121) was measured on Terra.
-# 2026-11-21: gpt-6.2-sol is sent the plain request its comparison passed
-# with (no cache options) until that shape is checked on it as well.
-_BRIEF_EXPLICIT_CACHE_MODELS = frozenset(("gpt-5.6-terra", "gpt-5.6-luna"))
+# 2026-11-21: gpt-6.2-sol was sent the plain request its comparison passed
+# with (no cache options) until that shape was checked on it as well.
+# 2026-11-26 (owner 【確かめてから入れる】): the comparison run 45737678112
+# sent this shape to gpt-6.2-sol: accepted, the screen check ACCEPTED, and the
+# read check reused 31,625 of 32,627 input tokens. The brief on sol uses it.
+_BRIEF_EXPLICIT_CACHE_MODELS = frozenset(("gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.2-sol"))
 
 
 def _brief_cache_prefix(model, user):
