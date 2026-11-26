@@ -230,26 +230,22 @@ def test_comparison_cache_request_serializes_for_the_candidate(offline):  # noqa
     assert reserved[-1][0] == "manual_api" and reserved[-1][1]["confirmation"] is True
 
 
-def test_production_brief_on_sol_stays_without_the_cache(offline):  # noqa: F811
+def test_production_brief_on_sol_uses_the_reviewed_cache(offline):  # noqa: F811
     recorder, _ = offline
-    # The production brief names sol and its cache boundary is still None.
-    assert SOL not in scanner._BRIEF_EXPLICIT_CACHE_MODELS
+    # 2026-11-26 (owner 【確かめてから入れる】, comparison run 45737678112):
+    # the production brief on sol sends the reviewed explicit-cache shape.
+    assert SOL in scanner._BRIEF_EXPLICIT_CACHE_MODELS
     assert scanner._OPENAI_JUDGMENT_MODEL == SOL
-    assert scanner._brief_cache_prefix(SOL, "facts") is None
-    # The trial flag opens the shape only for the comparison lane and models.
-    for model, purpose in ((SOL, "market_brief"), ("gpt-5.6-sol", "manual_api"),
-                           ("gpt-6-astra", "manual_api"), (SOL, "ai_judgment")):
+    assert scanner._brief_cache_prefix(SOL, "facts") == len("facts")
+    # The other sol lanes and other models still may not use the shape.
+    for model, purpose in (("gpt-5.6-sol", "manual_api"), ("gpt-6-astra", "manual_api"),
+                           (SOL, "ai_judgment"), (SOL, "market_position_check")):
         with pytest.raises(ValueError, match="brief_cache_boundary_invalid"):
             scanner._openai_prose_call(SimpleNamespace(), model, "p", "facts", purpose=purpose,
                                        cache_prefix_chars=5, comparison_cache=True)
     with pytest.raises(ValueError, match="brief_cache_boundary_invalid"):
         scanner._openai_prose_call(SimpleNamespace(), SOL, "p", "facts", purpose="manual_api",
                                    cache_prefix_chars=5)          # no flag: refused
-    # A production brief call that tried the flag sends nothing to the provider.
-    diag = {}
-    assert scanner._openai_prose("facts", purpose="market_brief", model=SOL, diagnostic=diag,
-                                 cache_prefix_chars=5, comparison_cache=True) is None
-    assert recorder.sent == [] and diag["outcome"] == "error"
     # Unconfirmed manual use with the flag is not the comparison either.
     diag = {}
     assert scanner._openai_prose("facts", purpose="manual_api", model=SOL, diagnostic=diag,

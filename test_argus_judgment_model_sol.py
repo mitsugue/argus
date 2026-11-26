@@ -100,7 +100,7 @@ def offline(monkeypatch):
     return recorder, reserved
 
 
-def test_brief_prose_sends_the_judgment_model_on_standard_without_explicit_cache(offline):
+def test_brief_prose_sends_the_judgment_model_on_standard_with_the_reviewed_cache(offline):
     recorder, _ = offline
     diag = {}
     out = scanner._openai_prose("facts", max_out=5200, system="voice", purpose="market_brief",
@@ -110,14 +110,17 @@ def test_brief_prose_sends_the_judgment_model_on_standard_without_explicit_cache
     assert [kw["model"] for kw in recorder.sent] == [SOL]
     body = recorder.sent[0]
     assert "service_tier" not in body and body["timeout"] == 120
-    # The reviewed explicit cache is a Terra/Luna request shape; the newer
-    # model gets the exact shape the owner's comparison sent (plain input).
-    assert "prompt_cache_options" not in body and body["input"] == "facts"
+    # 2026-11-26 (owner 【確かめてから入れる】, comparison run 45737678112):
+    # the reviewed explicit cache shape was checked on sol and is now sent.
+    assert body["prompt_cache_options"] == {"mode": "explicit"}
+    assert body["input"] == [{"role": "user", "content": [
+        {"type": "input_text", "text": "facts", "prompt_cache_breakpoint": {"mode": "explicit"}}]}]
     assert diag["requestedModel"] == SOL and diag["outcome"] == "ok"
     assert scanner._brief_cache_prefix(TERRA, "facts") == len("facts")
+    assert scanner._brief_cache_prefix(SOL, "facts") == len("facts")
     with pytest.raises(ValueError, match="brief_cache_boundary_invalid"):
         scanner._openai_prose_call(SimpleNamespace(), SOL, "p", "facts",
-                                   purpose="market_brief", cache_prefix_chars=2)
+                                   purpose="ai_judgment", cache_prefix_chars=2)
 
 
 @pytest.mark.parametrize("purpose", ["news_intel", "event_analysis", "owner_dialogue",
@@ -275,10 +278,12 @@ def test_brief_polish_names_the_judgment_model_for_both_requests(monkeypatch):
     assert len(requests) == 2 and result["unifiedStatus"] == "GENERATED"
     assert [r["model"] for r in requests] == [SOL, SOL]
     assert [r["purpose"] for r in requests] == ["market_brief", "market_brief"]
-    assert [r["cache_prefix_chars"] for r in requests] == [None, None]
+    # 2026-11-26: both requests carry the reviewed cache boundary on sol.
+    assert all(isinstance(r["cache_prefix_chars"], int) and r["cache_prefix_chars"] > 0
+               for r in requests)
     assert result["aiDiagnostics"]["requestedModel"] == SOL
     policy = result["aiDiagnostics"]["promptCachePolicy"]
-    assert policy["mode"] == "NONE_MODEL_NOT_REVIEWED" and policy["dynamicSuffixCached"] is False
+    assert policy["mode"] == "EXPLICIT_FULL_REQUEST_FOR_CORRECTION" and policy["dynamicSuffixCached"] is True
     assert json.dumps(result, ensure_ascii=False)
 
 
