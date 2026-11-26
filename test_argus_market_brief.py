@@ -181,9 +181,9 @@ def test_market_brief_retains_legacy_text_but_retries_missing_six_part_analysis(
     def fake_prose(user, max_out=600, system=None, *, purpose="prose",
                    event_id="", event_phase="", model=None, diagnostic=None,
                    cache_prefix_chars=None):
-        # 2026-11-21 (owner 【切り替える】): the brief names gpt-6.2-sol and
-        # sends it without the Terra-reviewed explicit cache options.
-        assert purpose == "market_brief" and cache_prefix_chars is None
+        # 2026-11-21 (owner 【切り替える】): the brief names gpt-6.2-sol.
+        # 2026-11-26 (owner 【確かめてから入れる】): with the cache boundary checked on sol.
+        assert purpose == "market_brief" and isinstance(cache_prefix_chars, int) and cache_prefix_chars > 0
         calls.append((purpose, model))
         if isinstance(diagnostic, dict):
             diagnostic["requestedModel"] = model or scanner._OPENAI_MODEL
